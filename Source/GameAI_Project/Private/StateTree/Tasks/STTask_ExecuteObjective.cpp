@@ -291,12 +291,13 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 	// Agent must learn to aim via LookDirection output
 	if (LookDir.SizeSquared() > 0.01f)
 	{
+		// FIXED: Agent-relative aiming (not world-based)
 		// LookDir.X = Yaw [-1,1], LookDir.Y = Pitch [-1,1]
-		float TargetYaw = LookDir.X * 180.0f; // Convert to degrees
-		float TargetPitch = LookDir.Y * 45.0f; // Limit pitch range
+		float DeltaYaw = LookDir.X * 180.0f; // Relative yaw change (degrees)
+		float DeltaPitch = LookDir.Y * 45.0f; // Relative pitch change (limit range)
 
 		FRotator CurrentRotation = Pawn->GetActorRotation();
-		FRotator TargetRotation = FRotator(TargetPitch, TargetYaw, 0.0f);
+		FRotator TargetRotation = CurrentRotation + FRotator(DeltaPitch, DeltaYaw, 0.0f);
 
 		// Interpolate rotation
 		float RotSpeed = InstanceData.RotationSpeed;
