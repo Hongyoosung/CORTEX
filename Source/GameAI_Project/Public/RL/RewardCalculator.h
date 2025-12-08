@@ -120,6 +120,9 @@ public:
 	/** Register combined fire event (multiple agents targeting same enemy) */
 	void RegisterCombinedFire(AActor* Target);
 
+	/** Check if agent is complying with current objective */
+	void CheckObjectiveCompliance();
+
 	//--------------------------------------------------------------------------
 	// CONFIGURATION
 	//--------------------------------------------------------------------------
@@ -150,15 +153,15 @@ public:
 
 	/** Reward for using cover when under fire (Sprint 6) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")
-	float CoverUnderFireReward = 5.0f;
+	float CoverUnderFireReward = 10.0f;
 
 	/** Penalty for being exposed when enemies are visible (Sprint 6) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")
-	float ExposedPenalty = -2.0f;
+	float ExposedPenalty = -5.0f;
 
 	/** Reward for crouching in cover (Sprint 6) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")
-	float CrouchInCoverReward = 2.0f;
+	float CrouchInCoverReward = 5.0f;
 
 	/** Distance to cover to consider "in cover" (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")

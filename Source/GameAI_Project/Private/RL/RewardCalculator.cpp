@@ -47,6 +47,9 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	RecentCombinedFires.RemoveAll([CurrentTime, this](const FCombinedFireRecord& Record) {
 		return (CurrentTime - Record.Timestamp) > CombinedFireWindow;
 	});
+
+	// Check objective compliance (MCTS-RL alignment)
+	CheckObjectiveCompliance();
 }
 
 //--------------------------------------------------------------------------
@@ -96,6 +99,18 @@ float URewardCalculator::CalculateIndividualReward()
 	Reward += KillsSinceLastUpdate * 10.0f;  // +10 per kill
 	Reward += DamageSinceLastUpdate * 0.05f; // +5 per 100 damage
 	Reward -= DamageTakenSinceLastUpdate * 0.05f; // -5 per 100 damage taken
+
+	// Penalty for wasted ammo (firing with no visible targets)
+	if (FollowerComponent)
+	{
+		FObservationElement Obs = FollowerComponent->GetLocalObservation();
+		bool bFiredThisTick = FollowerComponent->LastTacticalAction.bFire;
+
+		if (bFiredThisTick && Obs.VisibleEnemyCount == 0)
+		{
+			Reward -= 1.0f; // -1 per wasted shot
+		}
+	}
 
 	return Reward;
 }
@@ -214,6 +229,21 @@ float URewardCalculator::CalculateCoverReward()
 	if (bInCover && FollowerComponent->LastTacticalAction.bCrouch)
 	{
 		Reward += CrouchInCoverReward;
+	}
+
+	// Reward for moving toward cover when under fire (new)
+	if (bUnderFire && !bInCover && Obs.bHasCover && Obs.NearestCoverDistance < 5000.0f)
+	{
+		FVector2D CoverDir = Obs.CoverDirection;
+		FVector2D MoveDir = FollowerComponent->LastTacticalAction.MoveDirection;
+
+		// Calculate alignment between movement and cover direction
+		float Alignment = FVector2D::DotProduct(MoveDir.GetSafeNormal(), CoverDir.GetSafeNormal());
+
+		if (Alignment > 0.5f) // Moving toward cover (dot product > 0.5 = < 60 degrees)
+		{
+			Reward += 3.0f * Alignment; // Up to +3 for direct approach
+		}
 	}
 
 	// Update tracking state
@@ -391,4 +421,108 @@ void URewardCalculator::RegisterCombinedFire(AActor* Target)
 	NewRecord.Target = Target;
 	NewRecord.Timestamp = CurrentTime;
 	RecentCombinedFires.Add(NewRecord);
+}
+
+void URewardCalculator::CheckObjectiveCompliance()
+{
+	if (!CurrentObjective || !FollowerComponent)
+	{
+		return;
+	}
+
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return;
+	}
+
+	FVector AgentLocation = Owner->GetActorLocation();
+	FObservationElement Obs = FollowerComponent->GetLocalObservation();
+
+	switch (CurrentObjective->Type)
+	{
+		case EObjectiveType::Eliminate:
+		{
+			// Disobey if moving AWAY from target enemy
+			if (CurrentObjective->TargetActor)
+			{
+				FVector ToTarget = CurrentObjective->TargetActor->GetActorLocation() - AgentLocation;
+				FVector Velocity = Owner->GetVelocity();
+
+				if (Velocity.SizeSquared() > 100.0f) // Agent is moving (threshold: 10 cm/s)
+				{
+					float Alignment = FVector::DotProduct(Velocity.GetSafeNormal(), ToTarget.GetSafeNormal());
+					if (Alignment < -0.5f) // Moving away (dot product < -0.5 = > 120 degrees)
+					{
+						bDisobeyedObjective = true;
+					}
+				}
+			}
+			break;
+		}
+
+		case EObjectiveType::DefendObjective:
+		case EObjectiveType::CaptureObjective:
+		{
+			// Disobey if leaving objective zone
+			float DistToObjective = FVector::Dist(AgentLocation, CurrentObjective->TargetLocation);
+			if (DistToObjective > ObjectiveRadiusThreshold * 1.5f) // 50% buffer
+			{
+				bDisobeyedObjective = true;
+			}
+			break;
+		}
+
+		case EObjectiveType::Retreat:
+		{
+			// Disobey if moving TOWARD enemies instead of away
+			if (Obs.VisibleEnemyCount > 0 && Obs.NearbyEnemies.Num() > 0)
+			{
+				// Get direction to nearest enemy
+				float EnemyYawAngle = Obs.NearbyEnemies[0].RelativeAngle;
+				FVector ToEnemy = FRotator(0.0f, EnemyYawAngle, 0.0f).Vector();
+				ToEnemy.Normalize();
+
+				FVector Velocity = Owner->GetVelocity();
+
+				if (Velocity.SizeSquared() > 100.0f)
+				{
+					float Alignment = FVector::DotProduct(Velocity.GetSafeNormal(), ToEnemy);
+					if (Alignment > 0.5f) // Moving toward enemies (dot product > 0.5 = < 60 degrees)
+					{
+						bDisobeyedObjective = true;
+					}
+				}
+			}
+			break;
+		}
+
+		case EObjectiveType::SupportAlly:
+		{
+			// Disobey if NOT moving toward ally or NOT providing cover
+			if (CurrentObjective->TargetActor)
+			{
+				float DistToAlly = FVector::Dist(AgentLocation, CurrentObjective->TargetActor->GetActorLocation());
+				if (DistToAlly > 3000.0f && !FollowerComponent->LastTacticalAction.bFire)
+				{
+					// Too far from ally (>30m) and not providing covering fire
+					bDisobeyedObjective = true;
+				}
+			}
+			break;
+		}
+
+		case EObjectiveType::FormationMove:
+		{
+			// Disobey if breaking formation
+			if (!IsInFormation())
+			{
+				bDisobeyedObjective = true;
+			}
+			break;
+		}
+
+		default:
+			break;
+	}
 }

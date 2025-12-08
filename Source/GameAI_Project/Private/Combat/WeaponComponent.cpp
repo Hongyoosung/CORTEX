@@ -10,6 +10,7 @@
 #include "TimerManager.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/KismetMathLibrary.h"
 
 UWeaponComponent::UWeaponComponent()
@@ -306,12 +307,27 @@ bool UWeaponComponent::FireInternal(const FVector& FireDirection, AActor* Target
 	// Calculate randomized damage
 	float RandomizedDamage = CalculateRandomizedDamage();
 
-	// Apply weapon spread
+	// Apply weapon spread (with crouch accuracy bonus)
 	FVector SpreadDirection = FireDirection;
 	if (WeaponSpread > 0.0f)
 	{
+		// Calculate final spread (reduced when crouching)
+		float FinalSpread = WeaponSpread;
+
+		// Check if owner is crouching (accuracy bonus)
+		if (ACharacter* OwnerChar = Cast<ACharacter>(GetOwner()))
+		{
+			if (UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement())
+			{
+				if (MoveComp->IsCrouching())
+				{
+					FinalSpread *= 0.5f; // 50% spread reduction when crouching (e.g., 2.0° → 1.0°)
+				}
+			}
+		}
+
 		// Add random spread
-		float SpreadRadians = FMath::DegreesToRadians(WeaponSpread);
+		float SpreadRadians = FMath::DegreesToRadians(FinalSpread);
 		FVector RandomCone = UKismetMathLibrary::RandomUnitVectorInConeInRadians(FireDirection, SpreadRadians);
 		SpreadDirection = RandomCone;
 	}
