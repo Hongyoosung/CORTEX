@@ -81,7 +81,7 @@ float URewardCalculator::CalculateIndividualReward()
 
 ---
 
-### Goal 3: Hide behind cover ⚠️
+### Goal 3: Hide behind cover ✅
 
 **Desired Behavior:**
 - Agent should move to cover when under fire
@@ -100,53 +100,34 @@ float URewardCalculator::CalculateIndividualReward()
 - `MoveDirection` [0-1] - 2D movement control
 - `bCrouch` [6] - Crouch toggle
 
-⚠️ **Rewards (WEAK):**
+✅ **Rewards (IMPLEMENTED):**
 ```cpp
 // RewardCalculator.h (Current values)
-float CoverUnderFireReward = 5.0f;      // In cover while taking damage
-float ExposedPenalty = -2.0f;           // Exposed with enemies visible
-float CrouchInCoverReward = 2.0f;       // Crouching in cover
+float CoverUnderFireReward = 10.0f;     // In cover while taking damage (RewardCalculator.cpp:218)
+float ExposedPenalty = -5.0f;           // Exposed with enemies visible (RewardCalculator.cpp:224)
+float CrouchInCoverReward = 5.0f;       // Crouching in cover (RewardCalculator.cpp:231)
 ```
 
-**Problem Analysis:**
+**Implemented Cover Behaviors:**
 
-| Scenario | Cover Reward | Combat Reward | Ratio |
+| Behavior | Reward | Implementation |
+|----------|--------|----------------|
+| In cover while under fire | +10.0 | RewardCalculator.cpp:216-219 |
+| Exposed with enemies nearby | -5.0 | RewardCalculator.cpp:222-225 |
+| Crouching in cover | +5.0 | RewardCalculator.cpp:227-232 |
+| Moving toward cover when under fire | Up to +3.0 | RewardCalculator.cpp:234-247 |
+
+**Balance Analysis:**
+
+| Scenario | Cover Reward | Combat Reward | Total |
 |----------|--------------|---------------|-------|
-| Kill enemy while exposed | 0 | +10 | N/A |
-| Hide in cover, survive | +5 (if under fire) | 0 | N/A |
-| Die while exposed | -2 (exposed) | -10 (death) | 5:1 |
-| Kill from cover | +5 (cover) + 2 (crouch) | +10 (kill) | 1:1.4 |
+| Kill enemy while exposed | -5 (exposed) | +10 (kill) | +5 |
+| Hide in cover, survive | +10 (cover) + 5 (crouch) | 0 | +15 |
+| Kill from cover | +10 (cover) + 5 (crouch) | +10 (kill) | +25 |
 
-**Issue:** Combat rewards (±10) dominate cover rewards (±2-5), so agent learns aggression over survival.
+**Status:** Cover rewards are balanced with combat rewards, encouraging tactical defensive behavior while rewarding successful engagement from protected positions.
 
-**Recommended Adjustments:**
-```cpp
-// RewardCalculator.h (Proposed values)
-float CoverUnderFireReward = 10.0f;     // 5.0f → 10.0f (2x)
-float ExposedPenalty = -5.0f;           // -2.0f → -5.0f (2.5x)
-float CrouchInCoverReward = 5.0f;       // 2.0f → 5.0f (2.5x)
-```
-
-**Rationale:**
-- Cover survival should be ~equal value to combat success
-- Exposed penalty should approach death penalty magnitude (-5 vs -10)
-- Encourage cover as default posture, not just panic response
-
-**Additional Missing Reward:**
-```cpp
-// NEW: Reward for moving toward cover when under fire
-if (bUnderFire && !bInCover)
-{
-    FVector2D MoveDirToCover = CurrentAction.MoveDirection.GetSafeNormal();
-    float Alignment = FVector2D::DotProduct(MoveDirToCover, Obs.CoverDirection);
-    if (Alignment > 0.5f) // Moving toward cover
-    {
-        Reward += 3.0f * Alignment; // Up to +3 for direct approach
-    }
-}
-```
-
-**Priority:** High (critical for tactical behavior)
+**Priority:** ✅ Complete
 
 ---
 
@@ -337,11 +318,11 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 - [ ] **Call compliance check in TickComponent()** (RewardCalculator.cpp:50)
 
 ### High Priority (Weak tactical shaping)
-- [ ] **Increase cover reward magnitudes** (RewardCalculator.h:152-161)
-  - `CoverUnderFireReward: 5.0f → 10.0f`
-  - `ExposedPenalty: -2.0f → -5.0f`
-  - `CrouchInCoverReward: 2.0f → 5.0f`
-- [ ] **Add reward for moving toward cover when under fire** (RewardCalculator.cpp:CalculateCoverReward)
+- [x] **Increase cover reward magnitudes** (RewardCalculator.h:156-164) ✅ COMPLETE
+  - `CoverUnderFireReward: 10.0f` (implemented)
+  - `ExposedPenalty: -5.0f` (implemented)
+  - `CrouchInCoverReward: 5.0f` (implemented)
+- [x] **Add reward for moving toward cover when under fire** (RewardCalculator.cpp:234-247) ✅ COMPLETE
 
 ### Medium Priority (Faster convergence)
 - [ ] **Add wasted ammo penalty** (RewardCalculator.cpp:CalculateIndividualReward)

@@ -337,13 +337,7 @@ FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& O
 	}
 	else
 	{
-		// Diagnostic logging for fallback path
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ [POLICY FALLBACK] bUseONNXModel=%d, ModelInstance.IsValid()=%d"),
-			bUseONNXModel ? 1 : 0, ModelInstance.IsValid() ? 1 : 0);
-
-		// Rule-based fallback
-		FTacticalAction Action = GetActionRuleBased(Observation, CurrentObjective);
-		return ApplyMask(Action, Mask);
+		return FTacticalAction();  // Default action
 	}
 }
 
@@ -581,34 +575,6 @@ FTacticalAction URLPolicyNetwork::ApplyMask(const FTacticalAction& Action, const
 	}
 
 	return ConstrainedAction;
-}
-
-FTacticalAction URLPolicyNetwork::GetActionRuleBased(const FObservationElement& Observation, UObjective* CurrentObjective)
-{
-	// PURE RANDOM EXPLORATION - No rule-based guidance
-	// Forces RL to learn all behaviors from scratch through trial and error
-	FTacticalAction Action;
-
-	// Random movement direction (uniform in [-1, 1])
-	Action.MoveDirection.X = FMath::FRandRange(-1.0f, 1.0f);
-	Action.MoveDirection.Y = FMath::FRandRange(-1.0f, 1.0f);
-	Action.MoveSpeed = FMath::FRandRange(0.0f, 1.0f);
-
-	// Random aiming direction (uniform in [-1, 1])
-	Action.LookDirection.X = FMath::FRandRange(-1.0f, 1.0f);
-	Action.LookDirection.Y = FMath::FRandRange(-1.0f, 1.0f);
-
-	// Random discrete actions (50% probability each)
-	Action.bFire = FMath::RandBool();
-	Action.bCrouch = FMath::RandBool();
-	Action.bUseAbility = FMath::RandBool();
-	Action.AbilityID = 0;
-
-	UE_LOG(LogTemp, Warning, TEXT("🎲 [RANDOM EXPLORATION] Action: Move=(%.2f,%.2f) Speed=%.2f Look=(%.2f,%.2f) Fire=%d Crouch=%d"),
-		Action.MoveDirection.X, Action.MoveDirection.Y, Action.MoveSpeed,
-		Action.LookDirection.X, Action.LookDirection.Y, Action.bFire, Action.bCrouch);
-
-	return Action;
 }
 
 TArray<float> URLPolicyNetwork::GetObjectiveEmbedding(UObjective* CurrentObjective)

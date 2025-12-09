@@ -41,11 +41,6 @@ void FSTEvaluator_SyncObjective::TreeStart(FStateTreeExecutionContext& Context) 
 			InstanceData.LastObjectiveType = CurrentObjective->Type;
 			InstanceData.LastObjective = CurrentObjective;
 
-			UE_LOG(LogTemp, Warning, TEXT("[SYNC OBJECTIVE] '%s' TreeStart: ✅ Type=%s, Active=%d, Target=%s"),
-				*PawnName,
-				*UEnum::GetValueAsString(CurrentObjective->Type),
-				bHasObjective,
-				CurrentObjective->TargetActor ? *CurrentObjective->TargetActor->GetName() : TEXT("None"));
 		}
 		else
 		{

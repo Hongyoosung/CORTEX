@@ -21,14 +21,6 @@ FBoxSpace UTacticalActuator::GetActionSpace()
 
 	FBoxSpace ActionSpace = FBoxSpace(LowBounds, HighBounds, Shape);
 
-	// Debug: Verify shape is correctly set
-	UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] GetActionSpace(): Dimensions=%d, Shape.Num()=%d"),
-		ActionSpace.Dimensions.Num(), ActionSpace.Shape.Num());
-	if (ActionSpace.Shape.Num() > 0)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] Shape[0]=%d"), ActionSpace.Shape[0]);
-	}
-
 	return ActionSpace;
 }
 
@@ -119,15 +111,15 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 
 	LastAction = ParsedAction;
 
-	// Debug logging (ALWAYS log to diagnose integration)
+	// Debug logging
 	AActor* Owner = GetTypedOuter<AActor>();
-	UE_LOG(LogTemp, Warning, TEXT("🎮 [SCHOLA ACTUATOR] '%s': Received action from Python → Move=(%.2f,%.2f) Speed=%.2f, Look=(%.2f,%.2f), Fire=%d"),
+	UE_LOG(LogTemp, Verbose, TEXT("🎮 [SCHOLA ACTUATOR] '%s': Received action from Python → Move=(%.2f,%.2f) Speed=%.2f, Look=(%.2f,%.2f), Fire=%d"),
 		*GetNameSafe(Owner),
 		ParsedAction.MoveDirection.X, ParsedAction.MoveDirection.Y, ParsedAction.MoveSpeed,
 		ParsedAction.LookDirection.X, ParsedAction.LookDirection.Y,
 		ParsedAction.bFire ? 1 : 0);
 
-	UE_LOG(LogTemp, Warning, TEXT("    → SharedContext.bScholaActionReceived = %d (should be TRUE)"),
+	UE_LOG(LogTemp, Verbose, TEXT("    → SharedContext.bScholaActionReceived = %d (should be TRUE)"),
 		SharedContext.bScholaActionReceived ? 1 : 0);
 }
 

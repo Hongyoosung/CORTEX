@@ -15,6 +15,7 @@ Requirements:
 import os
 import sys
 import warnings
+from pathlib import Path
 
 # Suppress Ray deprecation warnings
 os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
@@ -111,6 +112,10 @@ def create_ppo_config():
             count_steps_by="agent_steps",
         )
         .debugging(log_level="INFO")
+        .reporting(
+            metrics_num_episodes_for_smoothing=10,
+            min_sample_timesteps_per_iteration=100,
+        )
     )
 
     # Set training parameters directly on config object (Ray 2.6+ API)
@@ -160,8 +165,12 @@ def export_onnx(algo, output_dir):
         import torch
         import torch.nn as nn
 
-        # Get policy
-        policy = algo.get_policy()
+        # Get policy (must specify policy name for multi-agent training)
+        policy = algo.get_policy("shared_policy")
+        if not policy:
+            print("ERROR: Could not get 'shared_policy'. Available policies:", algo.workers.local_worker().policy_map.keys())
+            return False
+
         model = policy.model
 
         # ========================================
@@ -244,17 +253,24 @@ def train(args):
     # Register environment
     register_env()
 
-    # Create config and algorithm
-    config = create_ppo_config()
-    algo = config.build()
-
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(SBDAPMConfig.OUTPUT_DIR, timestamp)
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"\nOutput directory: {output_dir}")
+    print(f"TensorBoard logs: {output_dir}")
     print(f"Training for {args.iterations} iterations\n")
+
+    # Create config and algorithm with TensorBoard logging
+    config = create_ppo_config()
+
+    # Enable TensorBoard by setting local_dir for checkpoints
+    # RLlib automatically writes TensorBoard event files to the trial directory
+    algo = config.build(logger_creator=lambda config: ray.tune.logger.UnifiedLogger(
+        config, output_dir, loggers=None
+    ))
+
 
 
     # Training loop
@@ -302,14 +318,31 @@ def train(args):
     final_checkpoint = algo.save(output_dir)
     print(f"Final checkpoint: {final_checkpoint}")
 
-    # Export ONNX (dual-head actor-critic)
-    from pathlib import Path
-    if export_onnx(algo, Path(output_dir)):
-        print(f"\nModel exported to: {output_dir}")
-        print("\nTo use in Unreal Engine:")
-        print("  1. Copy rl_policy_network.onnx to Content/Models/")
-        print("  2. RLPolicyNetwork loads single model with dual heads")
-        print("  3. Actor head used for actions, Critic head used by MCTS")
+    # Export ONNX from best checkpoint (dual-head actor-critic)
+
+    # Try to export from best checkpoint first
+    best_checkpoint_dir = os.path.join(output_dir, "best")
+    if os.path.exists(best_checkpoint_dir):
+        print(f"\nExporting best model from: {best_checkpoint_dir}")
+        # Restore best checkpoint (convert to absolute path for PyArrow)
+        algo.restore(os.path.abspath(best_checkpoint))
+        if export_onnx(algo, Path(output_dir)):
+            print(f"\nBest model exported to: {output_dir}/rl_policy_network.onnx")
+        else:
+            print("\nBest model export failed, trying final checkpoint...")
+            # Fallback to final checkpoint (convert to absolute path for PyArrow)
+            algo.restore(os.path.abspath(final_checkpoint))
+            export_onnx(algo, Path(output_dir))
+    else:
+        # No best checkpoint, use final
+        print(f"\nExporting final model...")
+        if export_onnx(algo, Path(output_dir)):
+            print(f"\nModel exported to: {output_dir}/rl_policy_network.onnx")
+
+    print("\nTo use in Unreal Engine:")
+    print("  1. Copy rl_policy_network.onnx to Content/Models/")
+    print("  2. RLPolicyNetwork loads single model with dual heads")
+    print("  3. Actor head used for actions, Critic head used by MCTS")
 
     # Cleanup
     algo.stop()

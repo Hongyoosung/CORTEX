@@ -348,20 +348,13 @@ int32 URLReplayBuffer::ImportFromJSON(const FString& FilePath)
 		FRLExperience Experience;
 
 		// Parse observation
-		// Note: FromFlatArray not implemented for FObservationElement
-		// TODO: Implement proper deserialization if needed for replay buffer loading
+		// Note: Observation deserialization not needed for real-time RLlib training
 		if (ExpObject->HasTypedField<EJson::Array>(TEXT("observation")))
 		{
 			const TArray<TSharedPtr<FJsonValue>>& ObsArray = ExpObject->GetArrayField(TEXT("observation"));
 			if (ObsArray.Num() == 71)  // Expected observation size
 			{
-				// TArray<float> ObsFeatures;
-				// for (const TSharedPtr<FJsonValue>& Val : ObsArray)
-				// {
-				// 	ObsFeatures.Add(Val->AsNumber());
-				// }
-				// Experience.State.FromFlatArray(ObsFeatures);  // Not implemented
-				UE_LOG(LogTemp, Warning, TEXT("URLReplayBuffer: Observation deserialization not implemented"));
+				UE_LOG(LogTemp, Warning, TEXT("URLReplayBuffer: Observation deserialization not implemented (not needed for real-time training)"));
 			}
 		}
 
@@ -389,13 +382,7 @@ int32 URLReplayBuffer::ImportFromJSON(const FString& FilePath)
 			const TArray<TSharedPtr<FJsonValue>>& NextObsArray = ExpObject->GetArrayField(TEXT("next_observation"));
 			if (NextObsArray.Num() == 71)
 			{
-				// TArray<float> NextObsFeatures;
-				// for (const TSharedPtr<FJsonValue>& Val : NextObsArray)
-				// {
-				// 	NextObsFeatures.Add(Val->AsNumber());
-				// }
-				// Experience.NextState.FromFlatArray(NextObsFeatures);  // Not implemented
-				UE_LOG(LogTemp, Warning, TEXT("URLReplayBuffer: NextObservation deserialization not implemented"));
+				UE_LOG(LogTemp, Warning, TEXT("URLReplayBuffer: NextObservation deserialization not implemented (not needed for real-time training)"));
 			}
 		}
 

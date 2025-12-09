@@ -185,15 +185,6 @@ private:
 	FTacticalAction ApplyMask(const FTacticalAction& Action, const FActionSpaceMask& Mask);
 
 	/**
-	 * Generate random exploration action (fallback when no trained model)
-	 * Pure random actions to force RL learning from scratch
-	 * @param Observation - Current observation (unused in random mode)
-	 * @param CurrentObjective - Current objective context (unused in random mode)
-	 * @return Random atomic action for exploration
-	 */
-	FTacticalAction GetActionRuleBased(const FObservationElement& Observation, class UObjective* CurrentObjective);
-
-	/**
 	 * Build objective embedding for network input
 	 * @param CurrentObjective - Current objective (can be nullptr)
 	 * @return 7-element objective embedding

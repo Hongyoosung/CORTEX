@@ -67,22 +67,11 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 	TickCounter++;
 
 	APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-	UE_LOG(LogTemp, Warning, TEXT("🔄 [EXEC OBJ TICK] '%s': Tick #%d (DeltaTime=%.3f), Alive=%d, Objective=%s, ScholaAction=%d"),
-		*GetNameSafe(Pawn),
-		TickCounter,
-		DeltaTime,
-		SharedContext.bIsAlive ? 1 : 0,
-		SharedContext.CurrentObjective ? *UEnum::GetValueAsString(SharedContext.CurrentObjective->Type) : TEXT("NULL"),
-		SharedContext.bScholaActionReceived ? 1 : 0);
+
 
 	// Check abort conditions
 	if (!SharedContext.bIsAlive || !SharedContext.CurrentObjective)
 	{
-		Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-		UE_LOG(LogTemp, Warning, TEXT("❌ [EXEC OBJ EXIT] '%s': Exiting - Alive=%d, Objective=%s"),
-			*GetNameSafe(Pawn),
-			SharedContext.bIsAlive ? 1 : 0,
-			SharedContext.CurrentObjective ? TEXT("Valid") : TEXT("NULL"));
 		return EStateTreeRunStatus::Succeeded;
 	}
 
@@ -141,19 +130,13 @@ void FSTTask_ExecuteObjective::ExecuteAtomicAction(FStateTreeExecutionContext& C
 		SharedContext.bScholaActionReceived = false; // Reset flag
 
 		APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-		UE_LOG(LogTemp, Display, TEXT("🔗 [SCHOLA ACTION] '%s': Move=(%.2f,%.2f) Speed=%.2f, Look=(%.2f,%.2f), Fire=%d"),
-			*GetNameSafe(Pawn),
-			RawAction.MoveDirection.X, RawAction.MoveDirection.Y, RawAction.MoveSpeed,
-			RawAction.LookDirection.X, RawAction.LookDirection.Y,
-			RawAction.bFire ? 1 : 0);
 	}
 	// Priority 2: Query local RL policy (inference mode)
 	else if (SharedContext.TacticalPolicy && SharedContext.CurrentObjective)
 	{
 		// Diagnostic: Log why Schola action wasn't used
 		APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-		UE_LOG(LogTemp, Display, TEXT("📊 [POLICY MODE] '%s': bScholaActionReceived=%d → Using local RL policy"),
-			*GetNameSafe(Pawn), SharedContext.bScholaActionReceived ? 1 : 0);
+
 		// Get action with objective context and mask
 		RawAction = SharedContext.TacticalPolicy->GetActionWithMask(
 			SharedContext.CurrentObservation,
@@ -260,8 +243,6 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[MOVE EXEC STOP] No movement input"));
-
 		// Stop movement
 		if (InstanceData.AIController)
 		{
@@ -346,12 +327,7 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 	FVector FireDirection = Pawn->GetActorForwardVector();
 	bool bFired = WeaponComp->FireInDirection(FireDirection);
 
-	if (bFired)
-	{
-		UE_LOG(LogTemp, Display, TEXT("[EXEC FIRE] ✅ '%s': FIRING in direction (%.2f, %.2f, %.2f)"),
-			*Pawn->GetName(), FireDirection.X, FireDirection.Y, FireDirection.Z);
-	}
-	else
+	if (!bFired)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[EXEC FIRE] ❌ '%s': Fire failed (weapon state)"),
 			*Pawn->GetName());

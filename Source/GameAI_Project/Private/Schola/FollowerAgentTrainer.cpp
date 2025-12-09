@@ -138,22 +138,22 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 
 	if (bDead)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Agent died (Episode reward: %.2f, Steps: %d)"),
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Agent died (Episode reward: %.2f, Steps: %d) → COMPLETED"),
 			*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
 		return EAgentTrainingStatus::Completed;
 	}
 
 	if (bRewardTerminated)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Episode terminated by RewardProvider"),
-			*TrainerConfiguration.Name);
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Episode terminated by RewardProvider (Episode reward: %.2f, Steps: %d) → COMPLETED"),
+			*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
 		return EAgentTrainingStatus::Completed;
 	}
 
 	if (bTimeout)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s - Episode timeout"),
-			*TrainerConfiguration.Name);
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Episode timeout (Episode reward: %.2f, Steps: %d) → TRUNCATED"),
+			*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
 		return EAgentTrainingStatus::Truncated;
 	}
 
@@ -235,6 +235,8 @@ bool AFollowerAgentTrainer::IsAgentDead() const
 bool AFollowerAgentTrainer::IsEpisodeTimeout() const
 {
 	// Check for max episode steps (configured in TrainerConfiguration)
-	const int32 MaxSteps = 10000; // ~5 minutes at 30 FPS
+	// Reduced from 10000 to 1000 for faster episode completion during training
+	// This ensures RLlib sees completed episodes within each iteration
+	const int32 MaxSteps = 1000; // ~30 seconds at 30 FPS
 	return EpisodeSteps >= MaxSteps;
 }

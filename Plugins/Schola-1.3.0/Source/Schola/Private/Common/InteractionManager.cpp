@@ -95,7 +95,6 @@ void UInteractionManager::CollectActionSpaceFromActuators(const TArray<UActuator
 		Id = Actuator->GetSanitizedId();
 		if (Id == LastId)
 		{
-			UE_LOG(LogSchola, Warning, TEXT("Duplicate Actuator ID: %s, adding suffix _%03d"), *Id, CurrentIncrement);
 			Id.Appendf(TEXT("_%03d"), CurrentIncrement);
 			CurrentIncrement++;
 		}

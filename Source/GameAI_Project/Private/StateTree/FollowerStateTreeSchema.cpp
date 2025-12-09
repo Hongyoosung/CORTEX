@@ -102,15 +102,13 @@ UFollowerStateTreeSchema::UFollowerStateTreeSchema()
 
 bool UFollowerStateTreeSchema::SetContextRequirements(UStateTreeComponent& InComponent, FStateTreeExecutionContext& Context, bool bLogErrors)
 {
-	UE_LOG(LogTemp, Warning, TEXT("🔵 FollowerStateTreeSchema::SetContextRequirements START for '%s'"),
-		InComponent.GetOwner() ? *InComponent.GetOwner()->GetName() : TEXT("NULL"));
 
 	// Call parent implementation first to set up base framework
 	if (!Super::SetContextRequirements(InComponent, Context, bLogErrors))
 	{
 		if (bLogErrors)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("FollowerStateTreeSchema: Parent SetContextRequirements failed (may be expected for custom schema)"));
+			//UE_LOG(LogTemp, Warning, TEXT("FollowerStateTreeSchema: Parent SetContextRequirements failed (may be expected for custom schema)"));
 		}
 	}
 
@@ -144,7 +142,6 @@ bool UFollowerStateTreeSchema::SetContextRequirements(UStateTreeComponent& InCom
 		}
 		return false;
 	}
-	UE_LOG(LogTemp, Log, TEXT("  ✅ Pawn context set: %s"), *OwnerPawn->GetName());
 
 	// REQUIRED: AIController (includes AAbstractTrainer which now inherits from AAIController)
 	AAIController* AIController = Cast<AAIController>(OwnerPawn->GetController());
@@ -165,7 +162,6 @@ bool UFollowerStateTreeSchema::SetContextRequirements(UStateTreeComponent& InCom
 		}
 		return false;
 	}
-	UE_LOG(LogTemp, Log, TEXT("  ✅ AIController context set: %s"), *AIController->GetName());
 
 	// REQUIRED: Actor
 	if (!Context.SetContextDataByName(TEXT("Actor"), FStateTreeDataView(Owner)))
@@ -176,9 +172,7 @@ bool UFollowerStateTreeSchema::SetContextRequirements(UStateTreeComponent& InCom
 		}
 		return false;
 	}
-	UE_LOG(LogTemp, Log, TEXT("  ✅ Actor context set: %s"), *Owner->GetName());
 
-	UE_LOG(LogTemp, Warning, TEXT("🔵 FollowerStateTreeSchema::SetContextRequirements SUCCESS for '%s'"), *Owner->GetName());
 	return true;
 }
 

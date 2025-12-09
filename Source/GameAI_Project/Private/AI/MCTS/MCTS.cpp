@@ -68,7 +68,7 @@ float UMCTS::CalculateTeamReward(const FTeamObservation& TeamObs) const
     // ============================================================================
     // PROXIMITY DIAGNOSIS: Log FormationCoherence value
     // ============================================================================
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS] FormationCoherence=%.3f (reward component: %.1f)"),
+    UE_LOG(LogTemp, Verbose, TEXT("[MCTS] FormationCoherence=%.3f (reward component: %.1f)"),
         TeamObs.FormationCoherence, FormationReward);
 
     // Objective progress (0-100 points)
@@ -646,7 +646,7 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
     const TArray<AActor*>& Followers,
     UObjectiveManager* ObjectiveManager)
 {
-    UE_LOG(LogTemp, Warning, TEXT("🎯 MCTS OBJECTIVE SEARCH: Starting for %d followers (%d simulations)"),
+    UE_LOG(LogTemp, Verbose, TEXT("🎯 MCTS OBJECTIVE SEARCH: Starting for %d followers (%d simulations)"),
         Followers.Num(), MaxSimulations);
 
     // Cache for simulation
@@ -741,7 +741,7 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
     {
         // Fallback to uniform priors if no RL policy available
         ObjectivePriors.Init(1.0f / FMath::Max(1, ObjectiveAssignments.Num()), ObjectiveAssignments.Num());
-        UE_LOG(LogTemp, Warning, TEXT("🎯 MCTS: Using uniform priors (no RL policy available)"));
+        UE_LOG(LogTemp, Verbose, TEXT("🎯 MCTS: Using uniform priors (no RL policy available)"));
     }
 
     // Store objective assignments as untried actions (convert to command format for compatibility)
@@ -795,7 +795,7 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
     if (BestChild.IsValid())
     {
         float AvgReward = BestChild->TotalReward / FMath::Max(1, BestChild->VisitCount);
-        UE_LOG(LogTemp, Warning, TEXT("🎯 MCTS OBJECTIVE SEARCH: Best child found (Visits: %d, Avg Reward: %.1f)"),
+        UE_LOG(LogTemp, Verbose, TEXT("🎯 MCTS OBJECTIVE SEARCH: Best child found (Visits: %d, Avg Reward: %.1f)"),
             MaxVisits, AvgReward);
 
         // Find corresponding objective assignment
@@ -806,7 +806,7 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("🎯 MCTS: Could not map best child to objective assignment, using first"));
+            UE_LOG(LogTemp, Verbose, TEXT("🎯 MCTS: Could not map best child to objective assignment, using first"));
             if (ObjectiveAssignments.Num() > 0)
             {
                 BestObjectives = ObjectiveAssignments[0];

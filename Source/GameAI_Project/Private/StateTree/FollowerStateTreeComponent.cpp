@@ -73,7 +73,7 @@ void UFollowerStateTreeComponent::BeginPlay()
 	// [핵심] 초기화가 끝난 후 마지막에 시작 시도
 	if (CheckRequirementsAndStart())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: StateTree started immediately in BeginPlay!"));
+		//UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: StateTree started immediately in BeginPlay!"));
 	}
 	else
 	{
@@ -94,15 +94,6 @@ void UFollowerStateTreeComponent::BeginPlay()
 }
 void UFollowerStateTreeComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	
-	// [수정 1] 멤버 변수를 사용하여 개별 에이전트 로그 출력 (60프레임마다)
-	if (TickLogCounter++ % 60 == 0)
-	{
-		EStateTreeRunStatus Status = GetStateTreeRunStatus();
-		UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: 🔄 [Tick] '%s' | Status: %s"),
-			*GetNameSafe(GetOwner()), *UEnum::GetValueAsString(Status));
-	}
-
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	// Deferred initialization if BeginPlay failed to find FollowerComponent
@@ -167,9 +158,6 @@ TSubclassOf<UStateTreeSchema> UFollowerStateTreeComponent::GetSchema() const
 
 bool UFollowerStateTreeComponent::SetContextRequirements(FStateTreeExecutionContext& InContext, bool bLogErrors)
 {
-	UE_LOG(LogTemp, Warning, TEXT("🔵 UFollowerStateTreeComponent::SetContextRequirements START for '%s'"),
-		GetOwner() ? *GetOwner()->GetName() : TEXT("NULL"));
-
 	InContext.SetLinkedStateTreeOverrides(LinkedStateTreeOverrides);
 	InContext.SetCollectExternalDataCallback(FOnCollectStateTreeExternalData::CreateUObject(
 		this, &UFollowerStateTreeComponent::CollectExternalData));
@@ -218,17 +206,13 @@ bool UFollowerStateTreeComponent::SetContextRequirements(FStateTreeExecutionCont
 	}
 
 	// Use our custom schema's SetContextRequirements which makes AIController optional for Schola
-	UE_LOG(LogTemp, Warning, TEXT("  🔄 Calling Schema SetContextRequirements..."));
 	const bool bResult = UFollowerStateTreeSchema::SetContextRequirements(*this, InContext, true);
 
 	if (!bResult)
 	{
 		UE_LOG(LogTemp, Error, TEXT("🔵 UFollowerStateTreeComponent::SetContextRequirements FAILED"));
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("🔵 UFollowerStateTreeComponent::SetContextRequirements SUCCESS"));
-	}
+
 
 	return bResult;
 }
