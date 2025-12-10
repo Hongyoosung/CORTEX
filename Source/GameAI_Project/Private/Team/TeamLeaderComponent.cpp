@@ -3,6 +3,7 @@
 #include "Team/ObjectiveManager.h"
 #include "Team/Objective.h"
 #include "AI/MCTS/MCTS.h"
+#include "AI/MCTS/MCTSAsyncTask.h"
 #include "RL/CurriculumManager.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "DrawDebugHelpers.h"
@@ -17,6 +18,7 @@
 
 
 UTeamLeaderComponent::UTeamLeaderComponent()
+	: AsyncMCTSTask(nullptr)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickInterval = 0.5f;  // Update every 0.5s
@@ -126,6 +128,41 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		}
 	}
 
+	// Check if async MCTS task completed
+	if (AsyncMCTSTask != nullptr && AsyncMCTSTask->IsDone())
+	{
+		// Get results from completed task
+		TMap<AActor*, UObjective*> NewObjectives = AsyncMCTSTask->GetTask().GetResults();
+		float ExecutionTime = AsyncMCTSTask->GetTask().GetExecutionTime();
+
+		UE_LOG(LogTemp, Warning, TEXT("🎯 [OBJECTIVE MCTS] '%s': Async task completed in %.2fms - Generated %d objectives"),
+			*TeamName, ExecutionTime, NewObjectives.Num());
+
+		// Update performance stats
+		MCTSExecutionCount++;
+		AverageMCTSExecutionTime = ((AverageMCTSExecutionTime * (MCTSExecutionCount - 1)) + ExecutionTime) / MCTSExecutionCount;
+
+		// Performance warning if exceeding target
+		const float TargetTime = 50.0f;
+		if (ExecutionTime > TargetTime)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⚠️ [PERFORMANCE] '%s': MCTS took %.2fms (exceeds target of %.0fms) - Avg: %.2fms over %d runs"),
+				*TeamName, ExecutionTime, TargetTime, AverageMCTSExecutionTime, MCTSExecutionCount);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("✓ [PERFORMANCE] '%s': MCTS took %.2fms (within target) - Avg: %.2fms over %d runs"),
+				*TeamName, ExecutionTime, AverageMCTSExecutionTime, MCTSExecutionCount);
+		}
+
+		// Delete completed task (FAsyncTask requires manual cleanup)
+		delete AsyncMCTSTask;
+		AsyncMCTSTask = nullptr;
+
+		// Process results on game thread
+		OnObjectiveMCTSComplete(NewObjectives);
+	}
+
 	// Process pending events (can interrupt if critical and bAllowEventInterrupts=true)
 	ProcessPendingEvents();
 
@@ -191,10 +228,12 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 void UTeamLeaderComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// Clean up any running async tasks
-	if (AsyncMCTSTask.IsValid() && !AsyncMCTSTask->IsComplete())
+	if (AsyncMCTSTask != nullptr)
 	{
-		// Wait for task to complete
-		FTaskGraphInterface::Get().WaitUntilTaskCompletes(AsyncMCTSTask);
+		// FAsyncTask requires manual cleanup
+		AsyncMCTSTask->EnsureCompletion();  // Wait for task to finish
+		delete AsyncMCTSTask;
+		AsyncMCTSTask = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -782,68 +821,22 @@ void UTeamLeaderComponent::RunObjectiveDecisionMakingAsync()
 	// Build observation (on game thread)
 	CurrentTeamObservation = BuildTeamObservation();
 
-	UE_LOG(LogTemp, Display, TEXT("🎯 [OBJECTIVE MCTS] '%s': Observation built, launching async task..."),
+	UE_LOG(LogTemp, Display, TEXT("🎯 [OBJECTIVE MCTS] '%s': Observation built, launching FMCTSAsyncTask..."),
 		*TeamName);
 
-	// Capture necessary data for async task
-	FTeamObservation TeamObsCopy = CurrentTeamObservation;
-	TArray<AActor*> FollowersCopy = GetAliveFollowers();
-	UObjectiveManager* ObjMgrCopy = ObjectiveManager;
+	// Create async task (FAsyncTask requires manual deletion after completion)
+	AsyncMCTSTask = new FAsyncTask<FMCTSAsyncTask>(
+		StrategicMCTS,
+		CurrentTeamObservation,
+		GetAliveFollowers(),
+		ObjectiveManager
+	);
 
-	// Capture MCTS pointer for async task
-	UMCTS* MCTSPtr = StrategicMCTS;
+	// Start background execution
+	AsyncMCTSTask->StartBackgroundTask();
 
-	// Launch async task
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, MCTSPtr, TeamObsCopy, FollowersCopy, ObjMgrCopy, StartTime]()
-	{
-		UE_LOG(LogTemp, Display, TEXT("🎯 [OBJECTIVE MCTS] '%s': Background thread executing MCTS..."),
-			*TeamName);
-
-		// Run objective-based MCTS on background thread
-		TMap<AActor*, UObjective*> NewObjectives = MCTSPtr->RunTeamMCTSWithObjectives(
-			TeamObsCopy,
-			FollowersCopy,
-			ObjMgrCopy
-		);
-
-		float ExecutionTime = (FPlatformTime::Seconds() - StartTime) * 1000.0f; // ms
-		UE_LOG(LogTemp, Warning, TEXT("🎯 [OBJECTIVE MCTS] '%s': MCTS COMPLETED in %.2fms - Generated %d objectives"),
-			*TeamName,
-			ExecutionTime,
-			NewObjectives.Num());
-
-		// Return to game thread to issue commands
-		AsyncTask(ENamedThreads::GameThread, [this, NewObjectives, ExecutionTime]()
-		{
-			// Update rolling average (v3.0 Sprint 6 - Performance Profiling)
-			MCTSExecutionCount++;
-			AverageMCTSExecutionTime = ((AverageMCTSExecutionTime * (MCTSExecutionCount - 1)) + ExecutionTime) / MCTSExecutionCount;
-
-			// Performance warning if exceeding target
-			const float TargetTime = 50.0f; // Target: 30-50ms
-			if (ExecutionTime > TargetTime)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("⚠️ [PERFORMANCE] '%s': MCTS took %.2fms (exceeds target of %.0fms) - Avg: %.2fms over %d runs"),
-					*TeamName,
-					ExecutionTime,
-					TargetTime,
-					AverageMCTSExecutionTime,
-					MCTSExecutionCount);
-			}
-			else
-			{
-				UE_LOG(LogTemp, Log, TEXT("✓ [PERFORMANCE] '%s': MCTS took %.2fms (within target) - Avg: %.2fms over %d runs"),
-					*TeamName,
-					ExecutionTime,
-					AverageMCTSExecutionTime,
-					MCTSExecutionCount);
-			}
-
-			UE_LOG(LogTemp, Display, TEXT("🎯 [OBJECTIVE MCTS] '%s': Returning to game thread to assign objectives"),
-				*TeamName);
-			OnObjectiveMCTSComplete(NewObjectives);
-		});
-	});
+	UE_LOG(LogTemp, Verbose, TEXT("🎯 [OBJECTIVE MCTS] '%s': FMCTSAsyncTask started, will poll for completion in Tick"),
+		*TeamName);
 }
 
 

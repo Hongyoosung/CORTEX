@@ -443,8 +443,8 @@ public:
 
 
 private:
-	/** Async task for MCTS */
-	FGraphEventRef AsyncMCTSTask;
+	/** Async task for MCTS (using FAsyncTask to check completion and get results) */
+	FAsyncTask<class FMCTSAsyncTask>* AsyncMCTSTask;
 
 	/** Statistics tracking */
 	int32 TotalCommandsIssued = 0;

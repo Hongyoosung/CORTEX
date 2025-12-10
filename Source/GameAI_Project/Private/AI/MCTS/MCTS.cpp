@@ -11,6 +11,8 @@ UMCTS::UMCTS()
     , DiscountFactor(0.95f)
     , ExplorationParameter(1.41f)
     , MaxCombinationsPerExpansion(10)
+    , bEnableParallelSimulations(true)
+    , ParallelBatchSize(50)
     , TeamRootNode(nullptr)
 {
 }
@@ -193,6 +195,49 @@ float UMCTS::SimulateNode(TSharedPtr<FTeamMCTSNode> Node, const FTeamObservation
 
     // Return averaged team value (normalized to [-1, 1])
     return ValidCount > 0 ? (TotalValue / ValidCount) : 0.0f;
+}
+
+void UMCTS::RunSingleSimulation(
+    TSharedPtr<FTeamMCTSNode> Root,
+    const TArray<AActor*>& Followers,
+    const FTeamObservation& TeamObs)
+{
+    if (!Root.IsValid())
+    {
+        return;
+    }
+
+    // Selection: Traverse tree to leaf node
+    TSharedPtr<FTeamMCTSNode> LeafNode = SelectNode(Root);
+    if (!LeafNode.IsValid())
+    {
+        return;
+    }
+
+    // Expansion: Expand leaf node if not terminal and visited
+    TSharedPtr<FTeamMCTSNode> NodeToSimulate = LeafNode;
+    if (!LeafNode->IsTerminal() && LeafNode->VisitCount > 0)
+    {
+        NodeToSimulate = ExpandNode(LeafNode, Followers);
+        if (!NodeToSimulate.IsValid())
+        {
+            NodeToSimulate = LeafNode;
+        }
+    }
+
+    // Simulation: Estimate value using PPO critic
+    float Reward = SimulateNode(NodeToSimulate, TeamObs);
+
+    // Backpropagation: Update node stats
+    // Use thread-safe version for parallel MCTS
+    if (bEnableParallelSimulations)
+    {
+        NodeToSimulate->BackpropagateThreadSafe(Reward);
+    }
+    else
+    {
+        NodeToSimulate->Backpropagate(Reward);
+    }
 }
 
 
@@ -751,29 +796,37 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
     TeamRootNode->ActionPriors = ObjectivePriors;
     TeamRootNode->UntriedActions = ObjectiveAssignments;
 
-    // Run MCTS simulations (same as before)
-    for (int32 i = 0; i < MaxSimulations; ++i)
+    // Run MCTS simulations (parallel or sequential based on config)
+    if (bEnableParallelSimulations && MaxSimulations >= ParallelBatchSize * 2)
     {
-        TSharedPtr<FTeamMCTSNode> LeafNode = SelectNode(TeamRootNode);
+        // Parallel root parallelization: Run simulations in batches
+        const int32 NumBatches = FMath::CeilToInt(static_cast<float>(MaxSimulations) / ParallelBatchSize);
 
-        if (!LeafNode.IsValid())
+        UE_LOG(LogTemp, Warning, TEXT("🔄 MCTS: Parallel mode enabled (%d simulations, %d batches of %d)"),
+            MaxSimulations, NumBatches, ParallelBatchSize);
+
+        for (int32 Batch = 0; Batch < NumBatches; ++Batch)
         {
-            break;
-        }
+            const int32 BatchStart = Batch * ParallelBatchSize;
+            const int32 BatchEnd = FMath::Min(BatchStart + ParallelBatchSize, MaxSimulations);
+            const int32 BatchSize = BatchEnd - BatchStart;
 
-        TSharedPtr<FTeamMCTSNode> NodeToSimulate = LeafNode;
-
-        if (!LeafNode->IsTerminal() && LeafNode->VisitCount > 0)
-        {
-            NodeToSimulate = ExpandNode(LeafNode, Followers);
-            if (!NodeToSimulate.IsValid())
+            // Run batch in parallel
+            ParallelFor(BatchSize, [&](int32 SimIdx)
             {
-                NodeToSimulate = LeafNode;
-            }
+                RunSingleSimulation(TeamRootNode, Followers, TeamObs);
+            });
         }
+    }
+    else
+    {
+        // Sequential fallback (original implementation)
+        UE_LOG(LogTemp, Warning, TEXT("🔄 MCTS: Sequential mode (%d simulations)"), MaxSimulations);
 
-        float Reward = SimulateNode(NodeToSimulate, TeamObs);
-        NodeToSimulate->Backpropagate(Reward);
+        for (int32 i = 0; i < MaxSimulations; ++i)
+        {
+            RunSingleSimulation(TeamRootNode, Followers, TeamObs);
+        }
     }
 
     // Find best child

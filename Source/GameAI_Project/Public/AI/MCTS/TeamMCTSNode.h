@@ -47,12 +47,21 @@ public:
 	/** Calculate UCT value with prior probability guidance (v3.0 Sprint 4) */
 	float CalculateUCTValueWithPrior(float ExplorationParam, float Prior) const;
 
+	/** Thread-safe backpropagation for parallel MCTS */
+	void BackpropagateThreadSafe(float Reward);
+
+	/** Thread-safe visit/reward update */
+	void UpdateStatsThreadSafe(float Reward);
+
 public:
 	/** Parent node (nullptr for root) */
 	TWeakPtr<FTeamMCTSNode> Parent;
 
 	/** Child nodes (expanded actions) */
 	TArray<TSharedPtr<FTeamMCTSNode>> Children;
+
+	/** Critical section for thread-safe updates (parallel MCTS) */
+	mutable FCriticalSection NodeMutex;
 
 	/** Objective assignment for this node (follower -> objective) (v3.0) */
 	TMap<AActor*, UObjective*> Objectives;

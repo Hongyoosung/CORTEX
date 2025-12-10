@@ -324,14 +324,14 @@ def train(args):
     best_checkpoint_dir = os.path.join(output_dir, "best")
     if os.path.exists(best_checkpoint_dir):
         print(f"\nExporting best model from: {best_checkpoint_dir}")
-        # Restore best checkpoint (convert to absolute path for PyArrow)
-        algo.restore(os.path.abspath(best_checkpoint))
+        # Restore best checkpoint (pass result object directly)
+        algo.restore(best_checkpoint)
         if export_onnx(algo, Path(output_dir)):
             print(f"\nBest model exported to: {output_dir}/rl_policy_network.onnx")
         else:
             print("\nBest model export failed, trying final checkpoint...")
-            # Fallback to final checkpoint (convert to absolute path for PyArrow)
-            algo.restore(os.path.abspath(final_checkpoint))
+            # Fallback to final checkpoint (pass result object directly)
+            algo.restore(final_checkpoint)
             export_onnx(algo, Path(output_dir))
     else:
         # No best checkpoint, use final

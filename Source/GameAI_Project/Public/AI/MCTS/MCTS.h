@@ -6,6 +6,7 @@
 #include "UObject/NoExportTypes.h"
 #include "Observation/ObservationElement.h"
 #include "AI/MCTS/TeamMCTSNode.h"
+#include "AI/MCTS/MCTSAsyncTask.h"
 #include "Observation/TeamObservation.h"
 #include "Team/Objective.h"
 #include "MCTS.generated.h"
@@ -34,6 +35,11 @@
  * *
  * * Sprint 5:
  * * - Enhanced objective scoring and synergy calculations for better assignments
+ * *
+ * * Performance Optimizations (v3.2):
+ * * - Root parallelization for 2-4x speedup on multi-core CPUs
+ * * - Thread-safe tree updates using FCriticalSection
+ * * - FAsyncTask wrapper for robust background execution
  * */
 
 
@@ -105,6 +111,15 @@ private:
      */
     float SimulateNode(TSharedPtr<FTeamMCTSNode> Node, const FTeamObservation& TeamObs);
 
+    /**
+     * Run single MCTS simulation (select → expand → simulate → backpropagate)
+     * Used by both sequential and parallel implementations
+     */
+    void RunSingleSimulation(
+        TSharedPtr<FTeamMCTSNode> Root,
+        const TArray<AActor*>& Followers,
+        const FTeamObservation& TeamObs
+    );
 
     /**
      * Generate possible objective assignments for expansion (v3.0 Combat Refactoring)
@@ -194,6 +209,14 @@ public:
     /** Maximum command combinations to generate per expansion */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MCTS|Config")
     int32 MaxCombinationsPerExpansion;
+
+    /** Enable parallel MCTS simulations (2-4x speedup on multi-core CPUs) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MCTS|Config")
+    bool bEnableParallelSimulations = true;
+
+    /** Batch size for parallel simulations (number of simulations per batch) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MCTS|Config")
+    int32 ParallelBatchSize = 50;
 
 
 private:

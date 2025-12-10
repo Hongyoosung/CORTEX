@@ -223,10 +223,10 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 			SharedContext.MovementDestination = TargetLocation;
 			SharedContext.bIsMoving = true;
 
-			UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC AI] '%s': MoveToLocation(%.1f, %.1f, %.1f), Speed=%.1f"),
+			/*UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC AI] '%s': MoveToLocation(%.1f, %.1f, %.1f), Speed=%.1f"),
 				*Pawn->GetName(),
 				TargetLocation.X, TargetLocation.Y, TargetLocation.Z,
-				Pawn->FindComponentByClass<UCharacterMovementComponent>()->MaxWalkSpeed);
+				Pawn->FindComponentByClass<UCharacterMovementComponent>()->MaxWalkSpeed);*/
 		}
 		else
 		{
@@ -317,7 +317,7 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 
 	if (!WeaponComp->CanFire())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[EXEC FIRE] '%s': Weapon cannot fire (cooldown/ammo)"), *Pawn->GetName());
+		//UE_LOG(LogTemp, Warning, TEXT("[EXEC FIRE] '%s': Weapon cannot fire (cooldown/ammo)"), *Pawn->GetName());
 		return;
 	}
 

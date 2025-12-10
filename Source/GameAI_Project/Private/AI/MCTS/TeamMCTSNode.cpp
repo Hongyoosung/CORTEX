@@ -38,15 +38,22 @@ bool FTeamMCTSNode::IsTerminal() const
 
 TSharedPtr<FTeamMCTSNode> FTeamMCTSNode::SelectBestChild(float ExplorationParam) const
 {
-	if (Children.Num() == 0)
+	// Thread-safe: Copy Children array before iteration to prevent race condition
+	// (Expand() can modify Children from another thread during parallel MCTS)
+	TArray<TSharedPtr<FTeamMCTSNode>> ChildrenCopy;
 	{
-		return nullptr;
+		FScopeLock Lock(&NodeMutex);
+		if (Children.Num() == 0)
+		{
+			return nullptr;
+		}
+		ChildrenCopy = Children;
 	}
 
 	TSharedPtr<FTeamMCTSNode> BestChild = nullptr;
 	float BestValue = -FLT_MAX;
 
-	for (const TSharedPtr<FTeamMCTSNode>& Child : Children)
+	for (const TSharedPtr<FTeamMCTSNode>& Child : ChildrenCopy)
 	{
 		if (!Child.IsValid()) continue;
 
@@ -103,6 +110,9 @@ float FTeamMCTSNode::CalculateUCTValueWithPrior(float ExplorationParam, float Pr
 
 TSharedPtr<FTeamMCTSNode> FTeamMCTSNode::Expand(const TArray<AActor*>& Followers)
 {
+	// Thread-safe expansion for parallel MCTS
+	FScopeLock Lock(&NodeMutex);
+
 	if (UntriedActions.Num() == 0) return nullptr;
 
 	int32 SelectedIndex = 0;
@@ -158,4 +168,24 @@ void FTeamMCTSNode::Backpropagate(float Reward)
 	{
 		ParentPinned->Backpropagate(Reward);
 	}
+}
+
+void FTeamMCTSNode::BackpropagateThreadSafe(float Reward)
+{
+	// Thread-safe update of node stats
+	UpdateStatsThreadSafe(Reward);
+
+	// Recursively backpropagate to parent
+	TSharedPtr<FTeamMCTSNode> ParentPinned = Parent.Pin();
+	if (ParentPinned.IsValid())
+	{
+		ParentPinned->BackpropagateThreadSafe(Reward);
+	}
+}
+
+void FTeamMCTSNode::UpdateStatsThreadSafe(float Reward)
+{
+	FScopeLock Lock(&NodeMutex);
+	VisitCount++;
+	TotalReward += Reward;
 }
