@@ -778,7 +778,26 @@ if SCHOLA_AVAILABLE:
 
             # Extract configuration
             host = kwargs.get("host", "localhost")
-            port = kwargs.get("port", 50051)
+
+            # Handle dynamic port assignment for multi-worker setups
+            base_port = kwargs.get("base_port", None)
+            if base_port is not None:
+                # Multi-worker mode: calculate port from worker_index
+                try:
+                    import ray
+                    worker = ray.get_runtime_context()
+                    worker_index = getattr(worker, 'worker_index', 0)
+                    port = base_port + worker_index
+                    print(f"[SBDAPMMultiAgentEnv] Worker {worker_index} connecting to port {port}")
+                except:
+                    # Fallback: use base_port as-is
+                    port = base_port
+                    print(f"[SBDAPMMultiAgentEnv] Using base_port {port} (no worker context)")
+            else:
+                # Single-worker mode: use explicit port
+                port = kwargs.get("port", 50051)
+                print(f"[SBDAPMMultiAgentEnv] Using explicit port {port}")
+
             self.max_episode_steps = kwargs.get("max_episode_steps", 100000)
 
             # Create Schola connection with CDO workaround

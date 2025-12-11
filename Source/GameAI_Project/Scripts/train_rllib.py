@@ -70,7 +70,7 @@ class SBDAPMConfig:
     VF_LOSS_COEFF = 0.5
 
     # Training
-    NUM_WORKERS = 0  # Use main process for UE connection
+    NUM_WORKERS = 4  # 4 parallel UE instances (ports 50051-50054)
     NUM_ENVS_PER_WORKER = 1
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
@@ -84,7 +84,7 @@ def create_env_config():
     """Create environment configuration for Schola."""
     return {
         "host": SBDAPMConfig.HOST,
-        "port": SBDAPMConfig.PORT,
+        "base_port": SBDAPMConfig.PORT,  # Base port, each worker adds worker_index
         "max_episode_steps": SBDAPMConfig.MAX_EPISODE_STEPS,
     }
 
