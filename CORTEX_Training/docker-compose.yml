@@ -1,0 +1,52 @@
+
+services:
+  # Single-worker training (NUM_WORKERS=0, runs in main process)
+  training-single:
+    build: .
+    container_name: sbdapm_training_single
+    volumes:
+      - ./training_results:/app/training_results
+      - ./models:/app/models
+    environment:
+      - NUM_WORKERS=0
+      - NUM_ITERATIONS=100
+      - HOST=host.docker.internal  # Connect to UE on host machine
+      - PORT=50051
+    # Note: network_mode: "host" doesn't work on Windows/macOS Docker Desktop
+    # Using default bridge network with host.docker.internal instead
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Ensure host.docker.internal works
+    command: python train_rllib.py --iterations 100 --host host.docker.internal --port 50051
+    profiles:
+      - single
+
+  # Multi-worker training (NUM_WORKERS=4, parallel environments)
+  # Requires 4 UE instances running on ports 50051-50054
+  training-multi:
+    build: .
+    container_name: sbdapm_training_multi
+    volumes:
+      - ./training_results:/app/training_results
+      - ./models:/app/models
+    environment:
+      - NUM_WORKERS=4
+      - NUM_ITERATIONS=100
+      - HOST=host.docker.internal
+      - PORT=50051  # Base port, workers use 50051-50054
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: python train_rllib.py --iterations 100 --host host.docker.internal --port 50051
+    profiles:
+      - multi
+
+  # TensorBoard for monitoring
+  tensorboard:
+    build: .
+    container_name: sbdapm_tensorboard
+    volumes:
+      - ./training_results:/app/training_results
+    ports:
+      - "6006:6006"
+    command: tensorboard --logdir=/app/training_results --host=0.0.0.0
+    profiles:
+      - monitor

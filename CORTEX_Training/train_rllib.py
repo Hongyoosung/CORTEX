@@ -129,6 +129,7 @@ def create_ppo_config():
     config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
     config.vf_loss_coeff = SBDAPMConfig.VF_LOSS_COEFF
     config.model = {
+        "custom_model": None,  # Use default RLlib model
         "fcnet_hiddens": SBDAPMConfig.HIDDEN_LAYERS,
         "fcnet_activation": "relu",
         "max_seq_len": 20,  # Required by RLlib (not used for feedforward nets)

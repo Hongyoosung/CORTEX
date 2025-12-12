@@ -1,0 +1,34 @@
+# Python dependencies for AlphaZero-Inspired Multi-Agent Combat AI
+#
+# Install all: pip install -r requirements.txt
+# For live training: pip install schola[rllib]
+
+# Deep Learning
+torch>=2.0.0
+numpy>=1.24.0
+
+# Reinforcement Learning
+stable-baselines3>=2.0.0
+
+# Ray RLlib (for live training via Schola)
+ray[rllib]>=2.7.0
+
+# AMD Schola (UE5 gRPC bridge)
+# Note: Schola is installed from local source in Dockerfile, not from PyPI
+
+# Visualization
+tensorboard>=2.12.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ONNX support
+onnx>=1.14.0
+onnxruntime>=1.15.0
+
+# Data processing and evaluation (Sprint 7)
+pandas>=2.0.0
+
+# Utilities
+tqdm>=4.65.0
+gymnasium>=0.29.0
+onnxruntime>=1.15.0
