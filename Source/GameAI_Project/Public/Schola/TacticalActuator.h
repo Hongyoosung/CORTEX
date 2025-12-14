@@ -45,6 +45,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
 	bool bDebugLogging = true;
 
+	/** Enable firing mask (disable fire when no enemies detected) - for early training curriculum */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator|Training")
+	bool bEnableFiringMask = true;
+
+	/** Enable look direction smoothing (prevent spinning) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator|Training")
+	bool bEnableLookSmoothing = true;
+
+	/** Look smoothing factor [0-1] (0 = no smoothing, 1 = full smoothing) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator|Training", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float LookSmoothingFactor = 0.3f;
+
 protected:
 	/** Find follower agent component */
 	UFollowerAgentComponent* FindFollowerAgent() const;

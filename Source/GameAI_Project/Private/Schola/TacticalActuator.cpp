@@ -89,8 +89,25 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 	// [2]: move_speed
 	ParsedAction.MoveSpeed = Action.Values[2];
 
-	// [3-4]: look_direction
-	ParsedAction.LookDirection = FVector2D(Action.Values[3], Action.Values[4]);
+	// [3-4]: look_direction (with optional smoothing to prevent spinning)
+	FVector2D RawLook = FVector2D(Action.Values[3], Action.Values[4]);
+
+	// Normalize look direction to unit circle (prevent magnitude > 1)
+	float LookMagnitude = RawLook.Size();
+	if (LookMagnitude > 1.0f)
+	{
+		RawLook /= LookMagnitude;
+	}
+
+	// Apply temporal smoothing to prevent sudden spinning (exponential moving average)
+	if (bEnableLookSmoothing && LastAction.LookDirection.Size() > 0.001f)
+	{
+		ParsedAction.LookDirection = RawLook * (1.0f - LookSmoothingFactor) + LastAction.LookDirection * LookSmoothingFactor;
+	}
+	else
+	{
+		ParsedAction.LookDirection = RawLook;
+	}
 
 	// [5]: fire (interpret as binary: >= 0.5 = true)
 	ParsedAction.bFire = (Action.Values[5] >= 0.5f);
@@ -99,6 +116,27 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 	ParsedAction.bCrouch = (Action.Values[6] >= 0.5f);
 
 	// Note: bUseAbility removed from action space, defaults to false
+
+	// CRITICAL FIX: Action masking for early training curriculum
+	// Block firing when no enemies detected to prevent "spray and pray" reinforcement
+	if (bEnableFiringMask && ParsedAction.bFire && FollowerAgent)
+	{
+		// Check if agent has detected any enemies via observation system
+		const FObservationElement& CurrentObs = FollowerAgent->GetLocalObservation();
+		bool bHasTargets = (CurrentObs.VisibleEnemyCount > 0);
+
+		if (!bHasTargets)
+		{
+			// Mask fire action - disable firing without targets
+			ParsedAction.bFire = false;
+
+			if (bDebugLogging)
+			{
+				UE_LOG(LogTemp, Verbose, TEXT("[TacticalActuator] %s: Masked Fire action (no targets detected, VisibleEnemyCount=%d)"),
+					*GetNameSafe(GetOuter()), CurrentObs.VisibleEnemyCount);
+			}
+		}
+	}
 
 	// Store action in shared context for StateTree execution
 	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();

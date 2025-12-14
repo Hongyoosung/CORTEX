@@ -101,6 +101,7 @@ float URewardCalculator::CalculateIndividualReward()
 	Reward -= DamageTakenSinceLastUpdate * 0.05f; // -5 per 100 damage taken
 
 	// Penalty for wasted ammo (firing with no visible targets)
+	// INCREASED from -1.0 to -2.0 to discourage spray-and-pray during early training
 	if (FollowerComponent)
 	{
 		FObservationElement Obs = FollowerComponent->GetLocalObservation();
@@ -108,7 +109,7 @@ float URewardCalculator::CalculateIndividualReward()
 
 		if (bFiredThisTick && Obs.VisibleEnemyCount == 0)
 		{
-			Reward -= 1.0f; // -1 per wasted shot
+			Reward -= 2.0f; // -2 per wasted shot (increased penalty for curriculum learning)
 		}
 	}
 
