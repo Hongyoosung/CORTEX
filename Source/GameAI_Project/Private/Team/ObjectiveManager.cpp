@@ -312,9 +312,11 @@ T* UObjectiveManager::CreateObjectiveOfType(EObjectiveType Type)
 
 void UObjectiveManager::TickObjectives(float DeltaTime)
 {
-    // CRITICAL: Add nullptr check BEFORE IsValid() to prevent crash from corrupted pointers
-    // During rapid agent respawning (Schola training), objectives can be GC'd mid-iteration
-    for (const TObjectPtr<UObjective>& ObjectivePtr : Objectives)
+    // CRITICAL: Copy array before iteration to avoid "Array has changed during ranged-for iteration" error
+    // Objectives can modify the array during Tick() (e.g., spawning sub-objectives, removing themselves)
+    TArray<TObjectPtr<UObjective>> ObjectivesCopy = Objectives;
+
+    for (const TObjectPtr<UObjective>& ObjectivePtr : ObjectivesCopy)
     {
         UObjective* Objective = ObjectivePtr.Get();
         if (Objective != nullptr && IsValid(Objective) && Objective->IsActive())

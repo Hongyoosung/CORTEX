@@ -15,9 +15,9 @@ UTacticalActuator::UTacticalActuator()
 
 FBoxSpace UTacticalActuator::GetActionSpace()
 {
-	TArray<float> LowBounds = { -1.0f, -1.0f, 0.0f, -1.0f, -1.0f, 0.0f, 0.0f, 0.0f };
-	TArray<float> HighBounds = { 1.0f,  1.0f, 1.0f,  1.0f,  1.0f, 1.0f, 1.0f, 1.0f };
-	TArray<int> Shape = { 8 };
+	TArray<float> LowBounds = { -1.0f, -1.0f, 0.0f, -1.0f, -1.0f, 0.0f, 0.0f };
+	TArray<float> HighBounds = { 1.0f,  1.0f, 1.0f,  1.0f,  1.0f, 1.0f, 1.0f };
+	TArray<int> Shape = { 7 };
 
 	FBoxSpace ActionSpace = FBoxSpace(LowBounds, HighBounds, Shape);
 
@@ -52,15 +52,15 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 	}
 
 	// Validate action dimensions
-	if (Action.Values.Num() < 8)
+	if (Action.Values.Num() < 7)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 8, got %d)"),
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 7, got %d)"),
 			*GetNameSafe(GetOuter()), Action.Values.Num());
 		return;
 	}
 
 	// CRITICAL FIX: Ignore zero-filled dummy actions from VectorEnv batching
-	// VectorEnv sends (num_envs, 8) batches where only one row is the real action
+	// VectorEnv sends (num_envs, 7) batches where only one row is the real action
 	// Schola dispatches ALL rows, so we get multiple TakeAction calls (1 real + N-1 zeros)
 	// Skip if all values are near zero (tolerance for floating point errors)
 	bool bIsZeroAction = true;
@@ -80,7 +80,7 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 		return;
 	}
 
-	// Parse 8-dimensional action vector
+	// Parse 7-dimensional action vector
 	FTacticalAction ParsedAction;
 
 	// [0-1]: move_direction
@@ -98,8 +98,7 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 	// [6]: crouch
 	ParsedAction.bCrouch = (Action.Values[6] >= 0.5f);
 
-	// [7]: use_ability
-	ParsedAction.bUseAbility = (Action.Values[7] >= 0.5f);
+	// Note: bUseAbility removed from action space, defaults to false
 
 	// Store action in shared context for StateTree execution
 	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
@@ -138,7 +137,7 @@ void UTacticalActuator::InitializeActuator()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=8D Box)"),
+	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=7D Box)"),
 		*GetNameSafe(GetOuter()), *GetNameSafe(FollowerAgent));
 }
 

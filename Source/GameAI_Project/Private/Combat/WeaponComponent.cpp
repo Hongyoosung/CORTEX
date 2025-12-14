@@ -307,24 +307,13 @@ bool UWeaponComponent::FireInternal(const FVector& FireDirection, AActor* Target
 	// Calculate randomized damage
 	float RandomizedDamage = CalculateRandomizedDamage();
 
-	// Apply weapon spread (with crouch accuracy bonus)
+	// Apply weapon spread with movement/stance accuracy modifiers
 	FVector SpreadDirection = FireDirection;
 	if (WeaponSpread > 0.0f)
 	{
-		// Calculate final spread (reduced when crouching)
-		float FinalSpread = WeaponSpread;
-
-		// Check if owner is crouching (accuracy bonus)
-		if (ACharacter* OwnerChar = Cast<ACharacter>(GetOwner()))
-		{
-			if (UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement())
-			{
-				if (MoveComp->IsCrouching())
-				{
-					FinalSpread *= 0.5f; // 50% spread reduction when crouching (e.g., 2.0° → 1.0°)
-				}
-			}
-		}
+		// Calculate accuracy modifier (lower = better accuracy = less spread)
+		float AccuracyModifier = CalculateAccuracyModifier();
+		float FinalSpread = WeaponSpread * AccuracyModifier;
 
 		// Add random spread
 		float SpreadRadians = FMath::DegreesToRadians(FinalSpread);
@@ -460,6 +449,55 @@ float UWeaponComponent::CalculateRandomizedCooldown() const
 	float RandomCooldown = FMath::RandRange(MinCooldown, MaxCooldown);
 
 	return FMath::Max(RandomCooldown, 0.01f); // Ensure positive cooldown
+}
+
+float UWeaponComponent::CalculateAccuracyModifier() const
+{
+	// Default modifier (baseline accuracy)
+	float Modifier = 1.0f;
+
+	// Get owner character
+	ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
+	if (!OwnerChar)
+	{
+		return Modifier; // Not a character, use baseline
+	}
+
+	// Get movement component
+	UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement();
+	if (!MoveComp)
+	{
+		return Modifier;
+	}
+
+	// Check movement state
+	bool bIsCrouching = MoveComp->IsCrouching();
+	bool bIsMoving = OwnerChar->GetVelocity().Size() > 10.0f; // Moving if velocity > 10 cm/s
+
+	// Apply accuracy modifiers based on stance and movement
+	// Lower modifier = better accuracy = less spread
+	if (bIsCrouching && !bIsMoving)
+	{
+		// Crouching stationary: +20% accuracy (0.8x spread)
+		Modifier = 0.8f;
+	}
+	else if (bIsCrouching && bIsMoving)
+	{
+		// Crouching while moving: -10% accuracy (1.1x spread)
+		Modifier = 1.1f;
+	}
+	else if (!bIsCrouching && !bIsMoving)
+	{
+		// Standing still: Baseline (1.0x spread)
+		Modifier = 1.0f;
+	}
+	else // !bIsCrouching && bIsMoving
+	{
+		// Moving while standing: -20% accuracy (1.2x spread)
+		Modifier = 1.2f;
+	}
+
+	return Modifier;
 }
 
 void UWeaponComponent::UpdateCooldown(float DeltaTime)

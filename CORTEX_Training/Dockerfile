@@ -14,19 +14,24 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements first for layer caching
-COPY requirements.txt .
+COPY CORTEX_Training/requirements.txt .
 
 # Install Python dependencies (without schola)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy Schola Python package from plugin directory
-COPY ../Plugins/Schola-1.3.0/Resources/python /tmp/schola
+COPY Plugins/Schola-1.3.0/Resources/python /tmp/schola
 
 # Install Schola with rllib extras from local source
-RUN pip install --no-cache-dir /tmp/schola[rllib] && rm -rf /tmp/schola
+RUN echo "Schola Placeholder" > /README.md && \
+    pip install --no-cache-dir /tmp/schola[rllib] && \
+    rm -rf /tmp/schola /README.md
 
 # Copy training scripts
-COPY . .
+COPY CORTEX_Training/ .
+
+# Patch Schola for Docker insecure channel compatibility
+RUN python patch_schola_insecure.py
 
 # Expose TensorBoard port
 EXPOSE 6006

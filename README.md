@@ -1,7 +1,7 @@
-# SBDAPM: Hierarchical Multi-Agent AI System for Unreal Engine
 
-This project implements a sophisticated, hierarchical AI system for multi-agent tactical decision-making in Unreal Engine 5. It combines Monte Carlo Tree Search (MCTS) for high-level strategy with Reinforcement Learning (RL) for low-level tactics, all orchestrated through Behavior Trees (BT) and a Finite State Machine (FSM).
+# CORTEX: Coordinated Orchestrated Real-Time Tactical EXecution
 
+A sophisticated, hierarchical multi-agent AI system for Unreal Engine 5. CORTEX combines Monte Carlo Tree Search (MCTS) for high-level strategy with Reinforcement Learning (RL) for low-level tactics, all orchestrated through Behavior Trees (BT) and a Finite State Machine (FSM) to deliver real-time tactical decision-making.
 **Engine:** Unreal Engine 5.6 | **Language:** C++17 | **Platform:** Windows
 
 ## Architecture

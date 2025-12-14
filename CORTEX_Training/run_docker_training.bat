@@ -29,9 +29,10 @@ echo Select training mode:
 echo   1. Single-worker (NUM_WORKERS=0, local only)
 echo   2. Multi-worker (NUM_WORKERS=4, requires 4 UE instances)
 echo   3. TensorBoard only (monitoring)
+echo   4. Test connection to UE5 (diagnostics)
 echo.
 
-set /p MODE="Enter choice (1-3): "
+set /p MODE="Enter choice (1-4): "
 
 if "%MODE%"=="1" (
     echo Starting single-worker training...
@@ -44,6 +45,10 @@ if "%MODE%"=="1" (
     echo Starting TensorBoard...
     echo Open http://localhost:6006 in your browser
     docker-compose --profile monitor up --build
+) else if "%MODE%"=="4" (
+    echo Testing connection to UE5...
+    echo Make sure UE5 is running first!
+    docker-compose --profile test up --build
 ) else (
     echo Invalid choice
     pause

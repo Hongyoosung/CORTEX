@@ -66,7 +66,7 @@ class SBDAPMConfig:
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.01
+    ENTROPY_COEFF = 0.1
     VF_LOSS_COEFF = 0.5
 
     # Training
@@ -246,6 +246,11 @@ def train(args):
     print("=" * 60)
     print("SBDAPM RLlib Training")
     print("=" * 60)
+    print(f"\nConnection Configuration:")
+    print(f"  Host: {SBDAPMConfig.HOST}")
+    print(f"  Port: {SBDAPMConfig.PORT}")
+    print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
+    print()
 
     # Initialize Ray
     # include_dashboard=False is often required on Windows to prevent timeouts

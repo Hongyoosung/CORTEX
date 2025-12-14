@@ -2,7 +2,9 @@
 services:
   # Single-worker training (NUM_WORKERS=0, runs in main process)
   training-single:
-    build: .
+    build:
+      context: ..
+      dockerfile: CORTEX_Training/Dockerfile
     container_name: sbdapm_training_single
     volumes:
       - ./training_results:/app/training_results
@@ -23,7 +25,9 @@ services:
   # Multi-worker training (NUM_WORKERS=4, parallel environments)
   # Requires 4 UE instances running on ports 50051-50054
   training-multi:
-    build: .
+    build:
+      context: ..
+      dockerfile: CORTEX_Training/Dockerfile
     container_name: sbdapm_training_multi
     volumes:
       - ./training_results:/app/training_results
@@ -41,7 +45,9 @@ services:
 
   # TensorBoard for monitoring
   tensorboard:
-    build: .
+    build:
+      context: ..
+      dockerfile: CORTEX_Training/Dockerfile
     container_name: sbdapm_tensorboard
     volumes:
       - ./training_results:/app/training_results
@@ -50,3 +56,18 @@ services:
     command: tensorboard --logdir=/app/training_results --host=0.0.0.0
     profiles:
       - monitor
+
+  # Connection diagnostics
+  test-connection:
+    build:
+      context: ..
+      dockerfile: CORTEX_Training/Dockerfile
+    container_name: sbdapm_connection_test
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - HOST=host.docker.internal
+      - PORT=50051
+    command: python test_connection.py
+    profiles:
+      - test

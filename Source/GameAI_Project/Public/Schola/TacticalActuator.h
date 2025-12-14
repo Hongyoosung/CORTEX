@@ -13,13 +13,12 @@ class UFollowerStateTreeComponent;
 /**
  * Schola actuator that receives actions from Python and applies them to follower agents.
  *
- * Action space: 8-dimensional Box (continuous)
+ * Action space: 7-dimensional Box (continuous)
  * - [0-1]: move_direction (continuous [-1, 1])
  * - [2]:   move_speed (continuous [0, 1])
  * - [3-4]: look_direction (continuous [-1, 1])
  * - [5]:   fire (continuous [0, 1], interpreted as binary: <0.5 = false, >=0.5 = true)
  * - [6]:   crouch (continuous [0, 1], interpreted as binary)
- * - [7]:   use_ability (continuous [0, 1], interpreted as binary)
  */
 UCLASS(BlueprintType, meta = (DisplayName = "Tactical Actuator"))
 class GAMEAI_PROJECT_API UTacticalActuator : public UBoxActuator

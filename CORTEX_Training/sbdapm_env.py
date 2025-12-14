@@ -4,13 +4,12 @@ SBDAPM Environment Wrapper for Schola/RLlib Training (v3.1 Multi-Agent)
 Multi-agent environment for 4 follower agents with shared PPO policy.
 
 Observation: 78 features per agent (71 FObservationElement + 7 current objective embedding)
-Action: 8-dimensional Box per agent (continuous, flattened)
+Action: 7-dimensional Box per agent (continuous, flattened)
   - [0-1]: MoveDirection (continuous): [-1, 1] x [-1, 1]
   - [2]:   MoveSpeed (continuous): [0, 1]
   - [3-4]: LookDirection (continuous): [-1, 1] x [-1, 1]
   - [5]:   Fire (continuous [0,1], interpreted as binary >= 0.5)
   - [6]:   Crouch (continuous [0,1], interpreted as binary >= 0.5)
-  - [7]:   UseAbility (continuous [0,1], interpreted as binary >= 0.5)
 """
 
 from gymnasium import spaces
@@ -42,11 +41,11 @@ class SBDAPMEnv:
 
     Connects to Unreal Engine via Schola gRPC and exposes:
     - Observation: 78 float features (71 FObservationElement + 7 objective embedding)
-    - Action: 8-dimensional Box (continuous, flattened)
+    - Action: 7-dimensional Box (continuous, flattened)
       - [0-1]: move_direction [-1, 1]
       - [2]:   move_speed [0, 1]
       - [3-4]: look_direction [-1, 1]
-      - [5-7]: fire, crouch, use_ability [0, 1] (interpreted as binary)
+      - [5-6]: fire, crouch [0, 1] (interpreted as binary)
     - Reward: Hierarchical (individual + coordination + strategic)
     """
 
@@ -68,15 +67,15 @@ class SBDAPMEnv:
             shape=(78,),  # 71 observation + 7 objective embedding
             dtype=np.float32
         )
-        # Flattened 8D continuous action space
+        # Flattened 7D continuous action space
         # [0-1]: move_x, move_y in [-1, 1]
         # [2]:   speed in [0, 1]
         # [3-4]: look_x, look_y in [-1, 1]
-        # [5-7]: fire, crouch, ability in [0, 1] (binary interpreted)
+        # [5-6]: fire, crouch in [0, 1] (binary interpreted)
         self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0, 0.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-            shape=(8,),
+            low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            shape=(7,),
             dtype=np.float32
         )
 
@@ -176,13 +175,12 @@ class SBDAPMEnv:
         Execute action and return result.
 
         Args:
-            action: (8,) numpy array in Box space:
+            action: (7,) numpy array in Box space:
                 [0-1]: move_direction (x, y)
                 [2]:   move_speed
                 [3-4]: look_direction (x, y)
                 [5]:   fire (0-1, binary interpreted)
                 [6]:   crouch (0-1, binary interpreted)
-                [7]:   use_ability (0-1, binary interpreted)
 
         Returns:
             observation, reward, terminated, truncated, info
@@ -204,8 +202,7 @@ class SBDAPMEnv:
                 "speed": float(action[2]),
                 "look": [float(action[3]), float(action[4])],
                 "fire": action[5] >= 0.5,
-                "crouch": action[6] >= 0.5,
-                "ability": action[7] >= 0.5
+                "crouch": action[6] >= 0.5
             },
             "total_reward": self.total_reward
         }
@@ -345,8 +342,8 @@ if SCHOLA_AVAILABLE:
                 for cdo_key in self._cdo_keys:
                     if cdo_key not in actions:
                         # Create dummy zero action with correct batch size
-                        # Assuming Box(8,) for simplicity as we know the space
-                        dummy_action = np.zeros((batch_size, 8), dtype=np.float32)
+                        # Assuming Box(7,) as we know the space
+                        dummy_action = np.zeros((batch_size, 7), dtype=np.float32)
                         actions[cdo_key] = dummy_action
                         # print(f"[SafeUnrealVectorEnv] Injected dummy action for {cdo_key}")
 
@@ -491,9 +488,9 @@ if SCHOLA_AVAILABLE:
                 dtype=np.float32
             )
             self.action_space = spaces.Box(
-                low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0, 0.0], dtype=np.float32),
-                high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-                shape=(8,),
+                low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
+                high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+                shape=(7,),
                 dtype=np.float32
             )
 
@@ -508,12 +505,12 @@ if SCHOLA_AVAILABLE:
 
         def _format_action_for_schola(self, action):
             """
-            Convert flat 8-dim action to Schola's expected format.
+            Convert flat 7-dim action to Schola's expected format.
 
             Handles:
-            1. Box((N, 8)) - Schola vector env, reshape (8,) to (N, 8) by tiling
+            1. Box((N, 7)) - Schola vector env, reshape (7,) to (N, 7) by tiling
             2. Dict - map flat action to dict keys
-            3. Box((8,)) - return as-is
+            3. Box((7,)) - return as-is
             """
             # Ensure action is numpy array
             if not isinstance(action, np.ndarray):
@@ -522,12 +519,12 @@ if SCHOLA_AVAILABLE:
             # Handle Box space
             if isinstance(self.action_space_structure, spaces.Box):
                 expected_shape = self.action_space_structure.shape
-                if len(expected_shape) == 2 and expected_shape[1] == 8:
-                    # Vector env expecting (N, 8) matrix
-                    # Reshape our (8,) action to (N, 8) by repeating rows
+                if len(expected_shape) == 2 and expected_shape[1] == 7:
+                    # Vector env expecting (N, 7) matrix
+                    # Reshape our (7,) action to (N, 7) by repeating rows
                     num_envs = expected_shape[0]
                     return np.tile(action.reshape(1, -1), (num_envs, 1)).astype(np.float32)
-                elif expected_shape == (8,):
+                elif expected_shape == (7,):
                     # Correct shape
                     return action.astype(np.float32)
                 else:
@@ -537,8 +534,8 @@ if SCHOLA_AVAILABLE:
             # Handle nested Dict
             if isinstance(self.action_space_structure, spaces.Dict):
                 # If nested Dict, we need to map flat action to dict structure
-                # Common structure: {'move': Box(2), 'look': Box(2), 'actions': Box(3)}
-                # Our action: [move_x, move_y, speed, look_x, look_y, fire, crouch, ability]
+                # Common structure: {'move': Box(2), 'look': Box(2), 'actions': Box(2)}
+                # Our action: [move_x, move_y, speed, look_x, look_y, fire, crouch]
                 action_dict = {}
                 subspace_keys = list(self.action_space_structure.keys())
 
@@ -813,9 +810,9 @@ if SCHOLA_AVAILABLE:
                 dtype=np.float32
             )
             self._action_space = spaces.Box(
-                low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0, 0.0], dtype=np.float32),
-                high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-                shape=(8,),
+                low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
+                high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+                shape=(7,),
                 dtype=np.float32
             )
 
@@ -914,10 +911,10 @@ if SCHOLA_AVAILABLE:
         def step(self, action_dict):
             """
             Execute actions for all agents.
-            
+
             Args:
-                action_dict: {agent_id: action} where action is (8,) numpy array
-            
+                action_dict: {agent_id: action} where action is (7,) numpy array
+
             Returns:
                 obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
             """
@@ -925,7 +922,7 @@ if SCHOLA_AVAILABLE:
                 # Validate action_dict
                 if not isinstance(action_dict, dict):
                     print(f"[SBDAPMMultiAgentEnv] ERROR: Expected action dict, got {type(action_dict)}")
-                    action_dict = {agent_id: np.zeros(8, dtype=np.float32) for agent_id in self._agent_ids}
+                    action_dict = {agent_id: np.zeros(7, dtype=np.float32) for agent_id in self._agent_ids}
                 
                 received_agents = set(action_dict.keys())
                 expected_agents = self._agent_ids
@@ -941,10 +938,10 @@ if SCHOLA_AVAILABLE:
                 formatted_actions = {}
                 num_envs = self.schola_env.num_envs
 
-                print(f"[SBDAPMMultiAgentEnv.step] num_envs={num_envs}, action_dict keys={list(action_dict.keys())}")
-                print(f"[SBDAPMMultiAgentEnv.step] _agent_id_list (sorted)={self._agent_id_list}")
+                #print(f"[SBDAPMMultiAgentEnv.step] num_envs={num_envs}, action_dict keys={list(action_dict.keys())}")
+                #print(f"[SBDAPMMultiAgentEnv.step] _agent_id_list (sorted)={self._agent_id_list}")
 
-                # Build batched actions for VectorEnv (num_envs, 8)
+                # Build batched actions for VectorEnv (num_envs, 7)
                 # CRITICAL: Only place action at the agent's own env_idx, use zeros elsewhere
                 # VectorEnv will dispatch each row to the corresponding agent index
                 for env_idx, agent_id in enumerate(self._agent_id_list):
@@ -952,19 +949,22 @@ if SCHOLA_AVAILABLE:
                         action = action_dict[agent_id]
                         if not isinstance(action, np.ndarray):
                             action = np.array(action, dtype=np.float32)
-                        if action.shape != (8,):
+                        if action.shape != (7,):
                             print(f"[SBDAPMMultiAgentEnv] Warning: Invalid shape for {agent_id}: {action.shape}")
-                            action = np.zeros(8, dtype=np.float32)
+                            action = np.zeros(7, dtype=np.float32)
 
-                        # Create (num_envs, 8) batch - standard VectorEnv format
-                        batched_action = np.zeros((num_envs, 8), dtype=np.float32)
+                        # Create (num_envs, 7) batch - standard VectorEnv format
+                        batched_action = np.zeros((num_envs, 7), dtype=np.float32)
                         batched_action[env_idx] = action
                         formatted_actions[agent_id] = batched_action
 
-                        print(f"[SBDAPMMultiAgentEnv.step] Agent {agent_id} (env_idx={env_idx}): action={action[:3]}... placed at row {env_idx}")
+                        #print(f"[SBDAPMMultiAgentEnv.step] Agent {agent_id} (env_idx={env_idx}): "
+                        #      f"move=[{action[0]:.3f},{action[1]:.3f}] speed={action[2]:.3f} "
+                        #      f"look=[{action[3]:.3f},{action[4]:.3f}] fire={action[5]:.3f} "
+                        #      f"crouch={action[6]:.3f}")
                     else:
                         print(f"[SBDAPMMultiAgentEnv] Warning: Missing action for {agent_id}, using zeros")
-                        formatted_actions[agent_id] = np.zeros((num_envs, 8), dtype=np.float32)
+                        formatted_actions[agent_id] = np.zeros((num_envs, 7), dtype=np.float32)
 
                 # Call UnrealEnv step (dict in, dict out)
                 obs_vec, reward_vec, terminated_vec, truncated_vec, info_vec = self.schola_env.step(formatted_actions)

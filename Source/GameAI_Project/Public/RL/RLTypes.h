@@ -8,7 +8,7 @@
 
 /**
  * Atomic action space for v3.0 combat system
- * Replaces 16 discrete tactical actions with 8-dimensional continuous space
+ * Replaces 16 discrete tactical actions with 7-dimensional continuous space
  * Easier for world model prediction and more expressive
  */
 USTRUCT(BlueprintType)
@@ -34,6 +34,7 @@ struct FTacticalAction
 	UPROPERTY(BlueprintReadWrite, Category = "Action|Stance")
 	bool bCrouch = false;
 
+	// NOTE: Removed from action space (was dimension 7), kept for backwards compatibility
 	UPROPERTY(BlueprintReadWrite, Category = "Action|Ability")
 	bool bUseAbility = false;
 
@@ -51,7 +52,7 @@ struct FTacticalAction
 	{
 	}
 
-	// Total dimensions: 8 (move_x, move_y, speed, look_x, look_y, fire, crouch, ability)
+	// Total dimensions: 7 (move_x, move_y, speed, look_x, look_y, fire, crouch)
 };
 
 
@@ -259,7 +260,7 @@ struct FRLPolicyConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RL")
 	int32 InputSize;
 
-	// Number of output dimensions (8 atomic action dimensions)
+	// Number of output dimensions (7 atomic action dimensions)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RL")
 	int32 OutputSize;
 
@@ -293,7 +294,7 @@ struct FRLPolicyConfig
 
 	FRLPolicyConfig()
 		: InputSize(78)  // 71 observation + 7 objective embedding
-		, OutputSize(8)  // 8 atomic action dimensions
+		, OutputSize(7)  // 7 atomic action dimensions
 		, HiddenLayers({128, 128, 64})
 		, LearningRate(0.0003f)
 		, DiscountFactor(0.99f)

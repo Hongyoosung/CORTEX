@@ -22,7 +22,7 @@
 **Config:** Symmetrical layout, balanced spawns, collect experiences
 
 ### 2. Evaluation Levels (Baseline Comparison)
-**Purpose:** Benchmark SBDAPM against baseline AIs
+**Purpose:** Benchmark CORTEX against baseline AIs
 **Path:** `Content/Maps/Evaluation/`
 **Config:** Varied terrain, objective types, no experience collection
 

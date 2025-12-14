@@ -1,121 +1,62 @@
 """
-Minimal connection test to isolate crash point.
-Tests connection to UE5 step-by-step.
+Simple TCP connection test for Docker -> UE5.
+Tests if Docker can reach the UE5 Schola gRPC server.
 """
 
+import socket
 import sys
-import time
+import os
+
+# Get connection params from environment or use defaults
+host = os.environ.get("HOST", "host.docker.internal")
+port = int(os.environ.get("PORT", "50051"))
 
 print("=" * 60)
-print("SCHOLA CONNECTION DIAGNOSTIC TEST")
+print("Docker -> UE5 Connection Test")
 print("=" * 60)
 
-# Step 1: Check imports
-print("\n[1/6] Testing imports...")
+# Step 1: DNS resolution
+print(f"\n[1/2] Resolving hostname '{host}'...")
 try:
-    from schola.core.unreal_connections.editor_connection import UnrealEditorConnection
-    from schola.gym.env import GymVectorEnv as UnrealVectorEnv
-    print("  ✓ Schola imports successful")
-except ImportError as e:
-    print(f"  ✗ Schola import failed: {e}")
-    sys.exit(1)
-
-# Step 2: Create connection
-print("\n[2/6] Creating connection to UE5...")
-try:
-    connection = UnrealEditorConnection(url="localhost", port=50051)
-    print("  ✓ Connection object created")
+    ip = socket.gethostbyname(host)
+    print(f"  ✓ Resolved to {ip}")
 except Exception as e:
-    print(f"  ✗ Connection creation failed: {e}")
-    import traceback
-    traceback.print_exc()
+    print(f"  ✗ DNS resolution failed: {e}")
     sys.exit(1)
 
-# Step 3: Create environment
-print("\n[3/6] Creating Schola environment...")
+# Step 2: TCP connection
+print(f"\n[2/2] Testing TCP connection to {host}:{port}...")
 try:
-    env = UnrealVectorEnv(unreal_connection=connection, verbosity=2)
-    print("  ✓ Environment created")
-    print(f"  - Num envs: {env.num_envs}")
-    print(f"  - Action space type: {type(env.action_space)}")
-    print(f"  - Observation space type: {type(env.observation_space)}")
-except Exception as e:
-    print(f"  ✗ Environment creation failed: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(10)
+    result = sock.connect_ex((host, port))
+    sock.close()
 
-# Step 4: First reset (CRITICAL - often crashes here)
-print("\n[4/6] Calling env.reset() - FIRST CONNECTION TO UE5...")
-print("  WARNING: If UE5 crashes, the issue is during initial reset/registration")
-try:
-    obs, info = env.reset()
-    print("  ✓ Reset successful!")
-    print(f"  - Observation type: {type(obs)}")
-    if isinstance(obs, dict):
-        print(f"  - Agent count: {len(obs)}")
-        print(f"  - Agent IDs: {list(obs.keys())}")
-        for agent_id, agent_obs in obs.items():
-            print(f"    - {agent_id}: shape {agent_obs.shape if hasattr(agent_obs, 'shape') else 'N/A'}")
+    if result == 0:
+        print(f"  ✓ TCP connection successful!")
+        print("\n" + "=" * 60)
+        print("SUCCESS - Docker can reach UE5")
+        print("=" * 60)
+        print("\nYou can now run training with option 1 or 2")
+        sys.exit(0)
     else:
-        print(f"  - Observation shape: {obs.shape if hasattr(obs, 'shape') else 'N/A'}")
+        print(f"  ✗ TCP connection failed (error code: {result})")
+        print("\n" + "=" * 60)
+        print("FAILED - Cannot reach UE5")
+        print("=" * 60)
+        print("\nTroubleshooting:")
+        print("1. Make sure UE5 is running")
+        print("2. Check DefaultEngine.ini has:")
+        print("   CommunicatorSettings=(Address=\"0.0.0.0\",Port=50051,Timeout=60)")
+        print("3. Restart UE5 after config changes")
+        print("4. Check UE5 console shows: [Schola] gRPC server started on port 50051")
+        sys.exit(1)
+
 except Exception as e:
-    print(f"  ✗ Reset failed: {e}")
+    print(f"  ✗ Connection error: {e}")
+    print("\n" + "=" * 60)
+    print("ERROR")
+    print("=" * 60)
     import traceback
     traceback.print_exc()
     sys.exit(1)
-
-# Step 5: Take a single step
-print("\n[5/6] Taking single step...")
-try:
-    import numpy as np
-
-    # Create dummy actions for all agents
-    if isinstance(env.action_space, dict):
-        # Multi-agent dict action space
-        actions = {}
-        for agent_id in obs.keys():
-            actions[agent_id] = np.zeros((env.num_envs, 8), dtype=np.float32)
-        print(f"  - Created dict actions for {len(actions)} agents")
-    else:
-        # Single action space
-        actions = np.zeros((env.num_envs, 8), dtype=np.float32)
-        print(f"  - Created array actions with shape {actions.shape}")
-
-    obs_next, reward, terminated, truncated, info = env.step(actions)
-    print("  ✓ Step successful!")
-    print(f"  - Reward: {reward}")
-    print(f"  - Terminated: {terminated}")
-    print(f"  - Truncated: {truncated}")
-except Exception as e:
-    print(f"  ✗ Step failed: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-
-# Step 6: Second reset
-print("\n[6/6] Testing second reset...")
-try:
-    obs, info = env.reset()
-    print("  ✓ Second reset successful!")
-except Exception as e:
-    print(f"  ✗ Second reset failed: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-
-# Close
-print("\n[CLEANUP] Closing environment...")
-try:
-    env.close()
-    print("  ✓ Environment closed")
-except:
-    pass
-
-print("\n" + "=" * 60)
-print("ALL TESTS PASSED - No crash detected")
-print("=" * 60)
-print("\nIf UE5 crashed during this test, check the console output above")
-print("to see which step failed. The crash likely occurs at:")
-print("  - Step 4: Initial reset/agent registration")
-print("  - Step 5: First action execution")

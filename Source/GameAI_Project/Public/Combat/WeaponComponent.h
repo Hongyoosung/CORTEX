@@ -245,6 +245,9 @@ protected:
 	/** Calculate randomized cooldown */
 	float CalculateRandomizedCooldown() const;
 
+	/** Calculate accuracy modifier based on movement and stance */
+	float CalculateAccuracyModifier() const;
+
 	/** Update cooldown */
 	void UpdateCooldown(float DeltaTime);
 
