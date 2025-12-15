@@ -43,8 +43,43 @@ Phase 3: AWS Distributed (8+ UE instances)
 - [x] Python 3.10+ with RLlib installed
 - [x] Level T1_BasicCombat_2v2 created
 - [x] Spawn points added (TeamASpawn, TeamBSpawn)
+- [x] ~~**FPS capped in Config/DefaultEngine.ini**~~ **NO LONGER NEEDED** (action throttling handles this automatically)
 
 ### Step-by-Step Instructions
+
+#### 1.0 FPS-Independent Training (2025-12-16 Update) ✅
+
+**Previous Issue (FIXED):** Actions were frame-rate dependent, causing:
+- **High FPS (30+):** Agents oscillated in place (actions applied too frequently)
+- **Low FPS (5 or lower):** Agents moved normally
+
+**Root Cause:** `AddMovementInput()` was called every UE tick, but Schola actions arrive at ~10-20 Hz. At 60 FPS, the same action was applied 6x more than needed, causing overcorrection.
+
+**Solution (Implemented 2025-12-16):** Action throttling in `STTask_ExecuteObjective`
+
+All actions now execute at a **fixed rate (20 Hz by default)** regardless of rendering FPS. This is controlled by the `ActionApplicationInterval` parameter (default: 0.05s = 20 Hz).
+
+**Key Changes:**
+- `STTask_ExecuteObjective.h:65` - Added `ActionApplicationInterval` parameter
+- `STTask_ExecuteObjective.cpp:86-101` - Action throttling in Tick()
+- `Config/DefaultEngine.ini` - FPS locking disabled (no longer needed)
+
+**Benefits:**
+- ✅ Consistent training at any FPS (30, 60, 144 Hz all behave identically)
+- ✅ No need to lock FPS (can run at maximum performance)
+- ✅ Training behavior matches deployment behavior
+- ✅ Frame-rate independent by design (proper game development practice)
+
+**Tuning (Optional):**
+You can adjust the action rate in the StateTree asset:
+1. Open your StateTree asset in UE Editor
+2. Select the "Execute Objective" task
+3. Modify `ActionApplicationInterval`:
+   - 0.05s = 20 Hz (default, matches typical RL policy rates)
+   - 0.033s = 30 Hz (faster reactions, higher CPU load)
+   - 0.1s = 10 Hz (slower, more stable for early training)
+
+**No Configuration Required** - This fix is automatic and requires no manual setup.
 
 #### 1.1 Launch UE5 in Game Mode
 ```bash
@@ -117,6 +152,8 @@ tensorboard --logdir=training_results
 | `Observation shape mismatch` | Check `sbdapm_env.py:68` - should be (78,) |
 | `Agent IDs mismatch` | Check `sbdapm_env.py:103-136` - CDO filtering logic |
 | `Training too slow` | Reduce `MAX_EPISODE_STEPS` in `train_rllib.py:56` |
+| **Agent runs in place (any FPS)** | **FIXED (2025-12-16)** - Action throttling handles this automatically |
+| **Episodes end too quickly** | **FIXED (2025-12-16)** - Update to latest code |
 | Docker: `DEADLINE_EXCEEDED` | See [Docker Connection Fix](#docker-connection-troubleshooting) below |
 
 ---
@@ -558,6 +595,8 @@ Event Tick
 
 | Symptom | Diagnosis | Fix |
 |---------|-----------|-----|
+| **Agent runs in place** | **FIXED (2025-12-16)** | **Action throttling implemented - update to latest code** |
+| **Episodes end too quickly** | **FIXED (2025-12-16)** | **Same as above** |
 | Reward plateaus | Learning rate too high/low | Adjust `LEARNING_RATE` in `train_rllib.py:62` |
 | Agents always same action | Exploration collapsed | Increase `ENTROPY_COEFF` (default: 0.01 → 0.05) |
 | Training crash after N iters | OOM (out of memory) | Reduce `TRAIN_BATCH_SIZE` (default: 4000 → 2000) |

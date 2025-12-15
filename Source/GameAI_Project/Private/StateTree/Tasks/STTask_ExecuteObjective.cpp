@@ -53,6 +53,9 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::EnterState(FStateTreeExecutionCont
 	SharedContext.TimeInTacticalAction = 0.0f;
 	SharedContext.ActionProgress = 0.0f;
 
+	// Reset action throttle timer
+	InstanceData.TimeSinceLastAction = 0.0f;
+
 	UE_LOG(LogTemp, Warning, TEXT("🎯 [EXEC OBJ] '%s': EnterState returning Running (StateTree should call Tick next)"), *PawnName);
 	return EStateTreeRunStatus::Running;
 }
@@ -83,10 +86,24 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 
 	SharedContext.TimeInTacticalAction += DeltaTime;
 
-	// Execute atomic action from policy
-	ExecuteAtomicAction(Context, DeltaTime);
+	// CRITICAL FIX: Action throttling - decouple execution rate from FPS
+	// Only execute actions at fixed rate (default 20 Hz) to match Schola's action frequency
+	// This ensures consistent training regardless of UE FPS (prevents oscillation at high FPS)
+	InstanceData = Context.GetInstanceData(*this);
+	InstanceData.TimeSinceLastAction += DeltaTime;
 
-	// Calculate and provide reward
+	bool bShouldExecuteAction = (InstanceData.TimeSinceLastAction >= InstanceData.ActionApplicationInterval);
+
+	if (bShouldExecuteAction)
+	{
+		// Reset timer for next interval
+		InstanceData.TimeSinceLastAction = 0.0f;
+
+		// Execute atomic action from policy
+		ExecuteAtomicAction(Context, DeltaTime);
+	}
+
+	// Calculate and provide reward (every frame, not throttled)
 	float Reward = CalculateObjectiveReward(Context, DeltaTime);
 	if (Reward != 0.0f && SharedContext.FollowerComponent)
 	{
@@ -123,11 +140,12 @@ void FSTTask_ExecuteObjective::ExecuteAtomicAction(FStateTreeExecutionContext& C
 	FTacticalAction RawAction;
 
 	// Priority 1: Use action from Schola (real-time training)
+	// FIX: Don't reset flag - persist action until new one arrives (Schola sends at 10-20 Hz, UE ticks at 60+ FPS)
 	if (SharedContext.bScholaActionReceived)
 	{
-		// Action already set by TacticalActuator
+		// Action already set by TacticalActuator, persists until next Python action
 		RawAction = SharedContext.CurrentAtomicAction;
-		SharedContext.bScholaActionReceived = false; // Reset flag
+		// NOTE: Do NOT reset bScholaActionReceived - keeps action active across frames
 
 		APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
 	}
@@ -195,7 +213,7 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 	float MoveSpeed = Action.MoveSpeed;
 
 
-	if (MoveDir.SizeSquared() > 0.01f) // Non-zero movement
+	if (MoveDir.SizeSquared() > 0.01f && MoveSpeed > 0.01f) // Non-zero movement with non-zero speed
 	{
 		// Convert 2D direction to world direction (relative to current rotation)
 		FRotator CurrentRotation = Pawn->GetActorRotation();
@@ -204,41 +222,36 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 
 		FVector WorldMoveDir = (ForwardDir * MoveDir.X + RightDir * MoveDir.Y).GetSafeNormal();
 
-		// Set movement destination
-		FVector CurrentLocation = Pawn->GetActorLocation();
-		FVector TargetLocation = CurrentLocation + WorldMoveDir * 500.0f; // 5m ahead
-
-		// Apply speed to movement component
+		// Set MaxWalkSpeed as constant cap (not per-frame dynamic)
 		if (UCharacterMovementComponent* MovementComp = Pawn->FindComponentByClass<UCharacterMovementComponent>())
 		{
 			float BaseSpeed = 600.0f;
-			MovementComp->MaxWalkSpeed = BaseSpeed * MoveSpeed * InstanceData.MovementSpeedMultiplier;
+			// FIX: MaxWalkSpeed is the cap, set once (not dynamic per frame)
+			MovementComp->MaxWalkSpeed = BaseSpeed * InstanceData.MovementSpeedMultiplier;
 		}
 
 		// Move using AI controller (normal AI) or direct input (Schola)
 		if (InstanceData.AIController)
 		{
-			// Normal AI mode: Use pathfinding
-			InstanceData.AIController->MoveToLocation(TargetLocation, 50.0f);
-			SharedContext.MovementDestination = TargetLocation;
-			SharedContext.bIsMoving = true;
-
-			/*UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC AI] '%s': MoveToLocation(%.1f, %.1f, %.1f), Speed=%.1f"),
-				*Pawn->GetName(),
-				TargetLocation.X, TargetLocation.Y, TargetLocation.Z,
-				Pawn->FindComponentByClass<UCharacterMovementComponent>()->MaxWalkSpeed);*/
-		}
-		else
-		{
 			// Schola mode: Use direct movement input (no pathfinding)
+			FVector CurrentLocation = Pawn->GetActorLocation();
+			FVector TargetLocation = CurrentLocation + WorldMoveDir * 500.0f;
+
+			// FIX: MoveSpeed scales input - UE handles acceleration naturally
+			// MoveSpeed=0.5 → accelerates toward (MaxWalkSpeed * 0.5) smoothly
 			Pawn->AddMovementInput(WorldMoveDir, MoveSpeed);
 			SharedContext.MovementDestination = TargetLocation;
 			SharedContext.bIsMoving = true;
 
-			UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC DIRECT] '%s': AddMovementInput(%.2f, %.2f, %.2f), Speed=%.1f"),
+			UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC DIRECT] '%s': AddMovementInput(%.2f, %.2f, %.2f) Scale=%.2f, MaxSpeed=%.1f"),
 				*Pawn->GetName(),
 				WorldMoveDir.X, WorldMoveDir.Y, WorldMoveDir.Z,
+				MoveSpeed,
 				Pawn->FindComponentByClass<UCharacterMovementComponent>()->MaxWalkSpeed);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC DIRECT] No AI Controller"));
 		}
 	}
 	else
@@ -351,16 +364,27 @@ void FSTTask_ExecuteObjective::ExecuteCrouch(FStateTreeExecutionContext& Context
 	}
 
 	// Toggle crouch via movement component
-	if (UCharacterMovementComponent* MovementComp = Pawn->FindComponentByClass<UCharacterMovementComponent>())
+	UCharacterMovementComponent* MovementComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
+	if (!MovementComp)
 	{
-		if (Action.bCrouch && !MovementComp->IsCrouching())
+		static bool bWarningShown = false;
+		if (!bWarningShown)
 		{
-			MovementComp->bWantsToCrouch = true;
+			UE_LOG(LogTemp, Error, TEXT("[CROUCH FAILED] '%s': No CharacterMovementComponent found!"), *Pawn->GetName());
+			bWarningShown = true;
 		}
-		else if (!Action.bCrouch && MovementComp->IsCrouching())
-		{
-			MovementComp->bWantsToCrouch = false;
-		}
+		return;
+	}
+
+	if (Action.bCrouch && !MovementComp->IsCrouching())
+	{
+		MovementComp->bWantsToCrouch = true;
+		UE_LOG(LogTemp, Display, TEXT("[CROUCH] '%s': Crouching"), *Pawn->GetName());
+	}
+	else if (!Action.bCrouch && MovementComp->IsCrouching())
+	{
+		MovementComp->bWantsToCrouch = false;
+		UE_LOG(LogTemp, Display, TEXT("[CROUCH] '%s': Standing"), *Pawn->GetName());
 	}
 }
 

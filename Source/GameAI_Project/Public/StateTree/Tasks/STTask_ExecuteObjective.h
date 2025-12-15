@@ -59,6 +59,13 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteObjectiveInstanceData
 	/** Fire if aim within this error (degrees) */
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "1.0", ClampMax = "15.0"))
 	float AimTolerance = 5.0f;
+
+	/** Action application rate (seconds) - decouples from FPS. Default 0.05s = 20 Hz to match Schola's action frequency */
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.01", ClampMax = "0.2"))
+	float ActionApplicationInterval = 0.05f;
+
+	/** Time since last action application (internal state) */
+	float TimeSinceLastAction = 0.0f;
 };
 
 USTRUCT(meta = (DisplayName = "Execute Objective"))

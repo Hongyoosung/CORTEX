@@ -132,9 +132,14 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 
 			if (bDebugLogging)
 			{
-				UE_LOG(LogTemp, Verbose, TEXT("[TacticalActuator] %s: Masked Fire action (no targets detected, VisibleEnemyCount=%d)"),
+				UE_LOG(LogTemp, Warning, TEXT("[FIRE MASKED] '%s': No targets detected (VisibleEnemyCount=%d)"),
 					*GetNameSafe(GetOuter()), CurrentObs.VisibleEnemyCount);
 			}
+		}
+		else if (bDebugLogging)
+		{
+			UE_LOG(LogTemp, Display, TEXT("[FIRE ALLOWED] '%s': Targets detected (VisibleEnemyCount=%d)"),
+				*GetNameSafe(GetOuter()), CurrentObs.VisibleEnemyCount);
 		}
 	}
 
@@ -150,7 +155,7 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 
 	// Debug logging
 	AActor* Owner = GetTypedOuter<AActor>();
-	UE_LOG(LogTemp, Verbose, TEXT("🎮 [SCHOLA ACTUATOR] '%s': Received action from Python → Move=(%.2f,%.2f) Speed=%.2f, Look=(%.2f,%.2f), Fire=%d"),
+	UE_LOG(LogTemp, Warning, TEXT("🎮 [SCHOLA ACTUATOR] '%s': Received action from Python → Move=(%.2f,%.2f) Speed=%.2f, Look=(%.2f,%.2f), Fire=%d"),
 		*GetNameSafe(Owner),
 		ParsedAction.MoveDirection.X, ParsedAction.MoveDirection.Y, ParsedAction.MoveSpeed,
 		ParsedAction.LookDirection.X, ParsedAction.LookDirection.Y,

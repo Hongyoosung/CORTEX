@@ -50,6 +50,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoConfigureFollower = true;
 
+	/** Enable time-based decision throttling (FPS-independent training) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	bool bEnableTimeBasedDecisions = true;
+
+	/** Time interval between decisions (seconds). Default: 0.05s = 20 Hz */
+	UPROPERTY(EditAnywhere, Category = "Schola|Config", meta = (EditCondition = "bEnableTimeBasedDecisions", ClampMin = "0.01", ClampMax = "1.0"))
+	float DecisionInterval = 0.05f;
+
 	//--------------------------------------------------------------------------
 	// COMPONENTS
 	//--------------------------------------------------------------------------
@@ -74,6 +82,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	class AScholaCombatEnvironment* ScholaEnvironment = nullptr;
 
+	/** Time accumulated since last decision (for time-based throttling) */
+	float TimeSinceLastDecision = 0.0f;
+
 	//--------------------------------------------------------------------------
 	// UTILITY
 	//--------------------------------------------------------------------------
@@ -93,6 +104,17 @@ public:
 	/** Reset episode for new training round */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	void ResetEpisode();
+
+	//--------------------------------------------------------------------------
+	// FPS-INDEPENDENT DECISION LOGIC
+	//--------------------------------------------------------------------------
+
+	/**
+	 * Override Think() to implement time-based decision throttling
+	 * Schola's default implementation uses frame-based DecisionRequestFrequency
+	 * which causes FPS-dependent behavior (more FPS = more decisions/sec)
+	 */
+	virtual void Think() override;
 
 private:
 	/** Find follower agent component on owner */

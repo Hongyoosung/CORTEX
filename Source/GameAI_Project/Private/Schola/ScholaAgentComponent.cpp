@@ -61,6 +61,17 @@ void UScholaAgentComponent::BeginPlay()
 		InitializeScholaComponents();
 	}
 
+	// CRITICAL: Configure Brain for time-based decisions
+	if (bEnableTimeBasedDecisions && Brain)
+	{
+		// Disable frame-based gating by setting DecisionRequestFrequency=1
+		// Our Think() override handles time-based gating instead
+		Brain->DecisionRequestFrequency = 1;
+
+		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: Time-based decisions enabled (%.3fs interval = %.1f Hz)"),
+			*Owner->GetName(), DecisionInterval, 1.0f / DecisionInterval);
+	}
+
 	// Note: gRPC server is now managed by ScholaCombatEnvironment
 	// This component will be auto-registered by the environment during initialization
 
@@ -79,8 +90,12 @@ void UScholaAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// This component mainly serves as a bridge/configuration helper
-	// The actual Think/Act cycle is handled by Schola's InferenceComponent
+	// Store DeltaTime for time-based decision throttling
+	// This is used by Think() which doesn't receive DeltaTime directly
+	if (bEnableTimeBasedDecisions)
+	{
+		TimeSinceLastDecision += DeltaTime;
+	}
 }
 
 void UScholaAgentComponent::InitializeScholaComponents()
@@ -215,6 +230,40 @@ void UScholaAgentComponent::ResetEpisode()
 		FollowerAgent->ResetEpisode();
 	}
 
+	// Reset decision timer
+	TimeSinceLastDecision = 0.0f;
+
 	UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Episode reset"),
 		*GetOwner()->GetName());
+}
+
+void UScholaAgentComponent::Think()
+{
+	// CRITICAL FIX: Time-based decision throttling for FPS-independent training
+	//
+	// Problem: Schola's default Think() uses frame-based DecisionRequestFrequency:
+	//   - 60 FPS × DecisionRequestFrequency=5 → 12 decisions/sec
+	//   - 10 FPS × DecisionRequestFrequency=5 → 2 decisions/sec
+	//
+	// Solution: Gate decisions by TIME instead of FRAME COUNT
+	//   - Decision every 0.05s = 20 Hz (consistent at any FPS)
+
+	if (bEnableTimeBasedDecisions)
+	{
+		// Check if enough time has passed since last decision
+		bool bShouldDecide = (TimeSinceLastDecision >= DecisionInterval);
+
+		if (!bShouldDecide)
+		{
+			// Skip this Think() call - not time for a new decision yet
+			return;
+		}
+
+		// Reset timer for next decision interval
+		TimeSinceLastDecision = 0.0f;
+	}
+
+	// Call parent's Think() which handles the actual decision request
+	// This will always return true for IsDecisionStep() since we're gating here
+	Super::Think();
 }
