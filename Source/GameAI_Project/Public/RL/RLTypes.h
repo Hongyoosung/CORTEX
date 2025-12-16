@@ -7,52 +7,82 @@
 #include "RLTypes.generated.h"
 
 /**
- * Atomic action space for v3.0 combat system
- * Replaces 16 discrete tactical actions with 7-dimensional continuous space
- * Easier for world model prediction and more expressive
+ * Position selection for macro actions (v4.0)
+ */
+UENUM(BlueprintType)
+enum class ETacticalPosition : uint8
+{
+	Hold          UMETA(DisplayName = "Hold Position"),
+	ForwardCover  UMETA(DisplayName = "Advance to Forward Cover"),
+	Retreat       UMETA(DisplayName = "Retreat to Safe Position"),
+	FlankLeft     UMETA(DisplayName = "Flank Left"),
+	FlankRight    UMETA(DisplayName = "Flank Right"),
+	Advance       UMETA(DisplayName = "Advance (No Cover)")
+};
+
+/**
+ * Fire discipline modes (v4.0)
+ */
+UENUM(BlueprintType)
+enum class EFireMode : uint8
+{
+	HoldFire   UMETA(DisplayName = "Hold Fire"),
+	Fire       UMETA(DisplayName = "Fire at Target"),
+	Suppress   UMETA(DisplayName = "Suppressive Fire")
+};
+
+/**
+ * Stance options (v4.0)
+ */
+UENUM(BlueprintType)
+enum class EStance : uint8
+{
+	Stand  UMETA(DisplayName = "Standing"),
+	Crouch UMETA(DisplayName = "Crouching"),
+	Prone  UMETA(DisplayName = "Prone")
+};
+
+/**
+ * Macro action space for v4.0 squad tactics
+ * High-level decisions: WHERE to go, WHO to shoot, HOW to engage
+ * Engine handles physics: NavMesh pathfinding, auto-aim, stance animation
  */
 USTRUCT(BlueprintType)
-struct FTacticalAction
+struct FMacroAction
 {
 	GENERATED_BODY()
 
-	// Movement (continuous, 2D) - normalized direction in agent's local space
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Movement")
-	FVector2D MoveDirection = FVector2D::ZeroVector;  // [-1,1] x [-1,1]
+	// Position: Which tactical location to move to (EQS candidate index)
+	UPROPERTY(BlueprintReadWrite, Category = "Action|Tactical")
+	ETacticalPosition PositionChoice = ETacticalPosition::Hold;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Movement")
-	float MoveSpeed = 1.0f;  // [0,1] - percentage of max speed
+	// Target: Which enemy to engage (-1 = none, 0+ = enemy index)
+	UPROPERTY(BlueprintReadWrite, Category = "Action|Tactical")
+	int32 TargetIndex = -1;
 
-	// Aiming (continuous, 2D) - normalized direction for look target
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Aiming")
-	FVector2D LookDirection = FVector2D::ZeroVector;  // [-1,1] x [-1,1], normalized
+	// Fire Mode: How to engage target
+	UPROPERTY(BlueprintReadWrite, Category = "Action|Tactical")
+	EFireMode FireMode = EFireMode::HoldFire;
 
-	// Discrete actions (one-hot)
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Combat")
-	bool bFire = false;
+	// Stance: Body posture for visibility vs mobility trade-off
+	UPROPERTY(BlueprintReadWrite, Category = "Action|Tactical")
+	EStance Stance = EStance::Stand;
 
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Stance")
-	bool bCrouch = false;
-
-	// NOTE: Removed from action space (was dimension 7), kept for backwards compatibility
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Ability")
-	bool bUseAbility = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Ability")
-	int32 AbilityID = 0;
-
-	FTacticalAction()
-		: MoveDirection(FVector2D::ZeroVector)
-		, MoveSpeed(1.0f)
-		, LookDirection(FVector2D::ZeroVector)
-		, bFire(false)
-		, bCrouch(false)
-		, bUseAbility(false)
-		, AbilityID(0)
+	FMacroAction()
+		: PositionChoice(ETacticalPosition::Hold)
+		, TargetIndex(-1)
+		, FireMode(EFireMode::HoldFire)
+		, Stance(EStance::Stand)
 	{
 	}
 
-	// Total dimensions: 7 (move_x, move_y, speed, look_x, look_y, fire, crouch)
+	FMacroAction(ETacticalPosition Pos, int32 Target, EFireMode Fire, EStance St)
+		: PositionChoice(Pos)
+		, TargetIndex(Target)
+		, FireMode(Fire)
+		, Stance(St)
+	{
+	}
 };
 
 
@@ -126,86 +156,7 @@ struct FActionSpaceMask
 	}
 };
 
-/**
- * Experience tuple for reinforcement learning (v3.0 - Atomic Actions)
- * Represents a single transition in the MDP
- */
-USTRUCT(BlueprintType)
-struct FRLExperience
-{
-	GENERATED_BODY()
 
-	// Current state (71 features)
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	FObservationElement State;
-
-	// Action taken in this state (atomic action)
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	FTacticalAction Action;
-
-	// Current objective context (7-element one-hot)
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	TArray<float> ObjectiveEmbedding;
-
-	// Immediate reward received
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	float Reward;
-
-	// Next state after taking action (71 features)
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	FObservationElement NextState;
-
-	// Next objective context
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	TArray<float> NextObjectiveEmbedding;
-
-	// Is this a terminal state?
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	bool bTerminal;
-
-	// Timestamp of experience
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	float Timestamp;
-
-	// Additional context data (optional)
-	UPROPERTY(BlueprintReadWrite, Category = "RL")
-	TMap<FString, float> ContextData;
-
-	// MCTS uncertainty metrics (v3.0 Sprint 3 - Curriculum Learning)
-	// Higher values indicate MCTS struggled with this scenario → prioritize for training
-	UPROPERTY(BlueprintReadWrite, Category = "RL|Curriculum")
-	float MCTSValueVariance;
-
-	UPROPERTY(BlueprintReadWrite, Category = "RL|Curriculum")
-	float MCTSPolicyEntropy;
-
-	UPROPERTY(BlueprintReadWrite, Category = "RL|Curriculum")
-	float MCTSVisitCount;
-
-	FRLExperience()
-		: Reward(0.0f)
-		, bTerminal(false)
-		, Timestamp(0.0f)
-		, MCTSValueVariance(0.0f)
-		, MCTSPolicyEntropy(0.0f)
-		, MCTSVisitCount(0.0f)
-	{
-		ObjectiveEmbedding.Init(0.0f, 7);
-		NextObjectiveEmbedding.Init(0.0f, 7);
-	}
-
-	FRLExperience(const FObservationElement& InState, const FTacticalAction& InAction, float InReward, const FObservationElement& InNextState, bool bInTerminal)
-		: State(InState)
-		, Action(InAction)
-		, Reward(InReward)
-		, NextState(InNextState)
-		, bTerminal(bInTerminal)
-		, Timestamp(0.0f)
-	{
-		ObjectiveEmbedding.Init(0.0f, 7);
-		NextObjectiveEmbedding.Init(0.0f, 7);
-	}
-};
 
 /**
  * RL training statistics

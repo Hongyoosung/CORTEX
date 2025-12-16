@@ -1,15 +1,14 @@
 """
-SBDAPM Environment Wrapper for Schola/RLlib Training (v3.1 Multi-Agent)
+SBDAPM Environment Wrapper for Schola/RLlib Training (v4.0 Macro Actions)
 
 Multi-agent environment for 4 follower agents with shared PPO policy.
 
 Observation: 78 features per agent (71 FObservationElement + 7 current objective embedding)
-Action: 7-dimensional Box per agent (continuous, flattened)
-  - [0-1]: MoveDirection (continuous): [-1, 1] x [-1, 1]
-  - [2]:   MoveSpeed (continuous): [0, 1]
-  - [3-4]: LookDirection (continuous): [-1, 1] x [-1, 1]
-  - [5]:   Fire (continuous [0,1], interpreted as binary >= 0.5)
-  - [6]:   Crouch (continuous [0,1], interpreted as binary >= 0.5)
+Action: MultiDiscrete([6, 11, 3, 3]) per agent (discrete tactical decisions)
+  - [0]: Position: [Hold, ForwardCover, Retreat, FlankL, FlankR, Advance] (6 options)
+  - [1]: Target: [None, Enemy_0, ..., Enemy_9] (11 options, 0 = none)
+  - [2]: Fire Mode: [HoldFire, Fire, Suppress] (3 options)
+  - [3]: Stance: [Stand, Crouch, Prone] (3 options)
 """
 
 from gymnasium import spaces
@@ -37,28 +36,30 @@ except ImportError:
 
 class SBDAPMEnv:
     """
-    SBDAPM atomic action environment (v3.0).
+    SBDAPM macro action environment (v4.0).
 
     Connects to Unreal Engine via Schola gRPC and exposes:
     - Observation: 78 float features (71 FObservationElement + 7 objective embedding)
-    - Action: 7-dimensional Box (continuous, flattened)
-      - [0-1]: move_direction [-1, 1]
-      - [2]:   move_speed [0, 1]
-      - [3-4]: look_direction [-1, 1]
-      - [5-6]: fire, crouch [0, 1] (interpreted as binary)
+    - Action: MultiDiscrete([6, 11, 3, 3]) (discrete tactical decisions)
+      - [0]: Position [0-5]
+      - [1]: Target [0-10] (0 = none)
+      - [2]: Fire Mode [0-2]
+      - [3]: Stance [0-2]
     - Reward: Hierarchical (individual + coordination + strategic)
     """
 
-    def __init__(self, host="localhost", port=50051, **kwargs):
+    def __init__(self, host="localhost", port=50051, max_enemies=10, **kwargs):
         """
         Initialize environment.
 
         Args:
             host: gRPC server host (UE Schola plugin)
             port: gRPC server port
+            max_enemies: Maximum number of enemies for dynamic target selection
         """
         self.host = host
         self.port = port
+        self.max_enemies = max_enemies
 
         # Define spaces
         self.observation_space = spaces.Box(
@@ -67,17 +68,12 @@ class SBDAPMEnv:
             shape=(78,),  # 71 observation + 7 objective embedding
             dtype=np.float32
         )
-        # Flattened 7D continuous action space
-        # [0-1]: move_x, move_y in [-1, 1]
-        # [2]:   speed in [0, 1]
-        # [3-4]: look_x, look_y in [-1, 1]
-        # [5-6]: fire, crouch in [0, 1] (binary interpreted)
-        self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-            shape=(7,),
-            dtype=np.float32
-        )
+        # MultiDiscrete action space for macro actions
+        # [0]: Position choice (6 options)
+        # [1]: Target index (max_enemies+1 options, 0 = none)
+        # [2]: Fire mode (3 options)
+        # [3]: Stance (3 options)
+        self.action_space = spaces.MultiDiscrete([6, max_enemies + 1, 3, 3])
 
         # Episode tracking
         self.episode_steps = 0
@@ -175,12 +171,11 @@ class SBDAPMEnv:
         Execute action and return result.
 
         Args:
-            action: (7,) numpy array in Box space:
-                [0-1]: move_direction (x, y)
-                [2]:   move_speed
-                [3-4]: look_direction (x, y)
-                [5]:   fire (0-1, binary interpreted)
-                [6]:   crouch (0-1, binary interpreted)
+            action: (4,) numpy array in MultiDiscrete space:
+                [0]: position index [0-5]
+                [1]: target index [0-max_enemies]
+                [2]: fire mode [0-2]
+                [3]: stance [0-2]
 
         Returns:
             observation, reward, terminated, truncated, info
@@ -195,14 +190,18 @@ class SBDAPMEnv:
 
         self.total_reward += reward
 
+        # Map discrete indices to human-readable names for logging
+        position_names = ["Hold", "ForwardCover", "Retreat", "FlankLeft", "FlankRight", "Advance"]
+        fire_mode_names = ["HoldFire", "Fire", "Suppress"]
+        stance_names = ["Stand", "Crouch", "Prone"]
+
         info = {
             "episode_steps": self.episode_steps,
             "action": {
-                "move": [float(action[0]), float(action[1])],
-                "speed": float(action[2]),
-                "look": [float(action[3]), float(action[4])],
-                "fire": action[5] >= 0.5,
-                "crouch": action[6] >= 0.5
+                "position": position_names[int(action[0])],
+                "target_index": int(action[1]) - 1 if int(action[1]) > 0 else -1,  # 0 = none (-1)
+                "fire_mode": fire_mode_names[int(action[2])],
+                "stance": stance_names[int(action[3])]
             },
             "total_reward": self.total_reward
         }
@@ -480,19 +479,14 @@ if SCHOLA_AVAILABLE:
                 for flat_id, (env_id, agent_id_int) in enumerate(self.schola_env.id_manager.id_list):
                     print(f"[DEBUG]   flat_id {flat_id} → env={env_id}, agent_int={agent_id_int}")
 
-            # Define our single-agent spaces
+            # Define our single-agent spaces (v4.0 macro actions)
             self.observation_space = spaces.Box(
                 low=-np.inf,
                 high=np.inf,
                 shape=(78,),  # 71 observation + 7 objective embedding
                 dtype=np.float32
             )
-            self.action_space = spaces.Box(
-                low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
-                high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-                shape=(7,),
-                dtype=np.float32
-            )
+            self.action_space = spaces.MultiDiscrete([6, 11, 3, 3])  # [Position, Target, FireMode, Stance]
 
             # Agent tracking
             self.agent_ids = None
@@ -500,7 +494,11 @@ if SCHOLA_AVAILABLE:
             self.action_space_structure = None
             self.episode_steps = 0
 
+            # Rate limiting handled by UE-side Think() throttling (10 Hz)
+            # Python no longer blocks - UE5 runs at full FPS with action persistence
+
             print(f"[SBDAPMScholaEnv] Initialized with host={host}, port={port}")
+            print(f"[SBDAPMScholaEnv] Rate limiting: UE-side (Think() throttles to 10 Hz)")
             print(f"[SBDAPMScholaEnv] Type: {type(self).__name__} (Single-agent Schola wrapper)")
 
         def _format_action_for_schola(self, action):
@@ -644,7 +642,12 @@ if SCHOLA_AVAILABLE:
 
         def step(self, action):
             """Execute action for first agent and return result."""
+            import time
+
             try:
+                # Rate limiting removed - handled by UE-side Think() throttling instead
+                # Python-side sleep was blocking game simulation at 10 FPS
+                # UE5 now runs at full FPS (60-70), with Think() limiting decision requests to 10 Hz
                 # Ensure action is numpy array
                 if not isinstance(action, np.ndarray):
                     action = np.array(action, dtype=np.float32)
@@ -802,26 +805,25 @@ if SCHOLA_AVAILABLE:
             connection = UnrealEditorConnection(url=host, port=port)
             self.schola_env = SafeUnrealVectorEnv(unreal_connection=connection, verbosity=1)
 
-            # Define per-agent spaces
+            # Define per-agent spaces (v4.0 macro actions)
             self._obs_space = spaces.Box(
                 low=-np.inf,
                 high=np.inf,
                 shape=(78,),
                 dtype=np.float32
             )
-            self._action_space = spaces.Box(
-                low=np.array([-1.0, -1.0, 0.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
-                high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-                shape=(7,),
-                dtype=np.float32
-            )
+            self._action_space = spaces.MultiDiscrete([6, 11, 3, 3])  # [Position, Target, FireMode, Stance]
 
             # Agent tracking
             self._agent_ids = set()
             self._agent_id_list = []  # Ordered list for consistent action ordering
             self.episode_steps = 0
 
+            # Rate limiting handled by UE-side Think() throttling (10 Hz)
+            # Python no longer blocks - UE5 runs at full FPS with action persistence
+
             print(f"[SBDAPMMultiAgentEnv] Initialized with UnrealEnv (non-vectorized)")
+            print(f"[SBDAPMMultiAgentEnv] Rate limiting: UE-side (Think() throttles to 10 Hz)")
             print(f"[DEBUG] Schola action_space type: {type(self.schola_env.action_space)}")
             print(f"[DEBUG] Schola observation_space type: {type(self.schola_env.observation_space)}")
 
@@ -846,6 +848,9 @@ if SCHOLA_AVAILABLE:
                 info_dict: {agent_id: info} for all agents
             """
             self.episode_steps = 0
+
+            # Reset action rate limiter
+            self.last_action_time = 0.0
 
             try:
                 # Get observations from Schola UnrealEnv (returns dict directly)
@@ -910,7 +915,7 @@ if SCHOLA_AVAILABLE:
 
         def step(self, action_dict):
             """
-            Execute actions for all agents.
+            Execute actions for all agents with rate limiting.
 
             Args:
                 action_dict: {agent_id: action} where action is (7,) numpy array
@@ -918,7 +923,13 @@ if SCHOLA_AVAILABLE:
             Returns:
                 obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
             """
+            import time
+
             try:
+                # Rate limiting removed - handled by UE-side Think() throttling instead
+                # Python-side sleep was blocking game simulation at 10 FPS
+                # UE5 now runs at full FPS (60-70), with Think() limiting decision requests to 10 Hz
+                # StateTree repeats last action between decisions (action persistence)
                 # Validate action_dict
                 if not isinstance(action_dict, dict):
                     print(f"[SBDAPMMultiAgentEnv] ERROR: Expected action dict, got {type(action_dict)}")
@@ -941,30 +952,28 @@ if SCHOLA_AVAILABLE:
                 #print(f"[SBDAPMMultiAgentEnv.step] num_envs={num_envs}, action_dict keys={list(action_dict.keys())}")
                 #print(f"[SBDAPMMultiAgentEnv.step] _agent_id_list (sorted)={self._agent_id_list}")
 
-                # Build batched actions for VectorEnv (num_envs, 7)
+                # Build batched actions for VectorEnv (num_envs, 4) - v4.0 MultiDiscrete
                 # CRITICAL: Only place action at the agent's own env_idx, use zeros elsewhere
                 # VectorEnv will dispatch each row to the corresponding agent index
                 for env_idx, agent_id in enumerate(self._agent_id_list):
                     if agent_id in action_dict:
                         action = action_dict[agent_id]
                         if not isinstance(action, np.ndarray):
-                            action = np.array(action, dtype=np.float32)
-                        if action.shape != (7,):
+                            action = np.array(action, dtype=np.int32)
+                        if action.shape != (4,):
                             print(f"[SBDAPMMultiAgentEnv] Warning: Invalid shape for {agent_id}: {action.shape}")
-                            action = np.zeros(7, dtype=np.float32)
+                            action = np.zeros(4, dtype=np.int32)
 
-                        # Create (num_envs, 7) batch - standard VectorEnv format
-                        batched_action = np.zeros((num_envs, 7), dtype=np.float32)
+                        # Create (num_envs, 4) batch - standard VectorEnv format for MultiDiscrete
+                        batched_action = np.zeros((num_envs, 4), dtype=np.int32)
                         batched_action[env_idx] = action
                         formatted_actions[agent_id] = batched_action
 
                         #print(f"[SBDAPMMultiAgentEnv.step] Agent {agent_id} (env_idx={env_idx}): "
-                        #      f"move=[{action[0]:.3f},{action[1]:.3f}] speed={action[2]:.3f} "
-                        #      f"look=[{action[3]:.3f},{action[4]:.3f}] fire={action[5]:.3f} "
-                        #      f"crouch={action[6]:.3f}")
+                        #      f"position={action[0]} target={action[1]} fire_mode={action[2]} stance={action[3]}")
                     else:
-                        print(f"[SBDAPMMultiAgentEnv] Warning: Missing action for {agent_id}, using zeros")
-                        formatted_actions[agent_id] = np.zeros((num_envs, 7), dtype=np.float32)
+                        print(f"[SBDAPMMultiAgentEnv] Warning: Missing action for {agent_id}, using defaults")
+                        formatted_actions[agent_id] = np.zeros((num_envs, 4), dtype=np.int32)
 
                 # Call UnrealEnv step (dict in, dict out)
                 obs_vec, reward_vec, terminated_vec, truncated_vec, info_vec = self.schola_env.step(formatted_actions)

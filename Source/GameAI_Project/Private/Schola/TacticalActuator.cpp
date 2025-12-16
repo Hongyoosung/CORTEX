@@ -10,21 +10,25 @@
 
 UTacticalActuator::UTacticalActuator()
 {
-	LastAction = FTacticalAction();
+	LastMacroAction = FMacroAction();
+	MaxEnemies = 10; // Default max enemies for dynamic action space
 }
 
-FBoxSpace UTacticalActuator::GetActionSpace()
+FMultiDiscreteSpace UTacticalActuator::GetActionSpace()
 {
-	TArray<float> LowBounds = { -1.0f, -1.0f, 0.0f, -1.0f, -1.0f, 0.0f, 0.0f };
-	TArray<float> HighBounds = { 1.0f,  1.0f, 1.0f,  1.0f,  1.0f, 1.0f, 1.0f };
-	TArray<int> Shape = { 7 };
+	// MultiDiscrete([6, MaxEnemies+1, 3, 3])
+	// [0]: Position (6 options: Hold, ForwardCover, Retreat, FlankL, FlankR, Advance)
+	// [1]: Target (MaxEnemies+1 options: None + Enemy_0...Enemy_N)
+	// [2]: Fire Mode (3 options: HoldFire, Fire, Suppress)
+	// [3]: Stance (3 options: Stand, Crouch, Prone)
 
-	FBoxSpace ActionSpace = FBoxSpace(LowBounds, HighBounds, Shape);
+	TArray<int32> Nvec = { 6, MaxEnemies + 1, 3, 3 };
+	FMultiDiscreteSpace ActionSpace = FMultiDiscreteSpace(Nvec);
 
 	return ActionSpace;
 }
 
-void UTacticalActuator::TakeAction(const FBoxPoint& Action)
+void UTacticalActuator::TakeAction(const FMultiDiscretePoint& Action)
 {
 	if (!FollowerAgent || !FollowerAgent->IsValidLowLevel() || !FollowerAgent->GetOwner())
 	{
@@ -51,118 +55,66 @@ void UTacticalActuator::TakeAction(const FBoxPoint& Action)
 		return;
 	}
 
-	// Validate action dimensions
-	if (Action.Values.Num() < 7)
+	// Validate action dimensions: MultiDiscrete([6, N+1, 3, 3])
+	if (Action.Values.Num() < 4)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 7, got %d)"),
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 4, got %d)"),
 			*GetNameSafe(GetOuter()), Action.Values.Num());
 		return;
 	}
 
-	// CRITICAL FIX: Ignore zero-filled dummy actions from VectorEnv batching
-	// VectorEnv sends (num_envs, 7) batches where only one row is the real action
-	// Schola dispatches ALL rows, so we get multiple TakeAction calls (1 real + N-1 zeros)
-	// Skip if all values are near zero (tolerance for floating point errors)
-	bool bIsZeroAction = true;
-	const float ZeroThreshold = 0.001f;
-	for (int32 i = 0; i < Action.Values.Num(); ++i)
-	{
-		if (FMath::Abs(Action.Values[i]) > ZeroThreshold)
-		{
-			bIsZeroAction = false;
-			break;
-		}
-	}
+	// Parse MultiDiscrete action indices
+	int32 PositionIdx = Action.Values[0];    // [0-5]: Position choice
+	int32 TargetIdx = Action.Values[1];      // [0-N]: Target index (0 = none)
+	int32 FireModeIdx = Action.Values[2];    // [0-2]: Fire mode
+	int32 StanceIdx = Action.Values[3];      // [0-2]: Stance
 
-	if (bIsZeroAction)
+	// Validate indices
+	if (PositionIdx < 0 || PositionIdx > 5)
 	{
-		// Silently ignore zero actions (expected batching artifact)
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid position index %d (expected 0-5)"),
+			*GetNameSafe(GetOuter()), PositionIdx);
 		return;
 	}
 
-	// Parse 7-dimensional action vector
-	FTacticalAction ParsedAction;
+	// Build macro action from indices
+	FMacroAction MacroAction;
 
-	// [0-1]: move_direction
-	ParsedAction.MoveDirection = FVector2D(Action.Values[0], Action.Values[1]);
+	// Map position index to enum
+	MacroAction.PositionChoice = static_cast<ETacticalPosition>(PositionIdx);
 
-	// [2]: move_speed
-	ParsedAction.MoveSpeed = Action.Values[2];
+	// Map target index (0 = none, 1+ = enemy index 0, 1, 2, ...)
+	MacroAction.TargetIndex = (TargetIdx == 0) ? -1 : (TargetIdx - 1);
 
-	// [3-4]: look_direction (with optional smoothing to prevent spinning)
-	FVector2D RawLook = FVector2D(Action.Values[3], Action.Values[4]);
+	// Map fire mode index to enum
+	MacroAction.FireMode = static_cast<EFireMode>(FMath::Clamp(FireModeIdx, 0, 2));
 
-	// Normalize look direction to unit circle (prevent magnitude > 1)
-	float LookMagnitude = RawLook.Size();
-	if (LookMagnitude > 1.0f)
-	{
-		RawLook /= LookMagnitude;
-	}
+	// Map stance index to enum
+	MacroAction.Stance = static_cast<EStance>(FMath::Clamp(StanceIdx, 0, 2));
 
-	// Apply temporal smoothing to prevent sudden spinning (exponential moving average)
-	if (bEnableLookSmoothing && LastAction.LookDirection.Size() > 0.001f)
-	{
-		ParsedAction.LookDirection = RawLook * (1.0f - LookSmoothingFactor) + LastAction.LookDirection * LookSmoothingFactor;
-	}
-	else
-	{
-		ParsedAction.LookDirection = RawLook;
-	}
-
-	// [5]: fire (interpret as binary: >= 0.5 = true)
-	ParsedAction.bFire = (Action.Values[5] >= 0.5f);
-
-	// [6]: crouch
-	ParsedAction.bCrouch = (Action.Values[6] >= 0.5f);
-
-	// Note: bUseAbility removed from action space, defaults to false
-
-	// CRITICAL FIX: Action masking for early training curriculum
-	// Block firing when no enemies detected to prevent "spray and pray" reinforcement
-	if (bEnableFiringMask && ParsedAction.bFire && FollowerAgent)
-	{
-		// Check if agent has detected any enemies via observation system
-		const FObservationElement& CurrentObs = FollowerAgent->GetLocalObservation();
-		bool bHasTargets = (CurrentObs.VisibleEnemyCount > 0);
-
-		if (!bHasTargets)
-		{
-			// Mask fire action - disable firing without targets
-			ParsedAction.bFire = false;
-
-			if (bDebugLogging)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[FIRE MASKED] '%s': No targets detected (VisibleEnemyCount=%d)"),
-					*GetNameSafe(GetOuter()), CurrentObs.VisibleEnemyCount);
-			}
-		}
-		else if (bDebugLogging)
-		{
-			UE_LOG(LogTemp, Display, TEXT("[FIRE ALLOWED] '%s': Targets detected (VisibleEnemyCount=%d)"),
-				*GetNameSafe(GetOuter()), CurrentObs.VisibleEnemyCount);
-		}
-	}
+	// Store in FTacticalAction (v4.0 uses MacroAction field)
+	FTacticalAction ParsedAction(MacroAction);
 
 	// Store action in shared context for StateTree execution
 	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
 	SharedContext.CurrentAtomicAction = ParsedAction;
 	SharedContext.bScholaActionReceived = true; // Flag that action came from Schola
 
-	// NOTE: Dummy objective is now created in FollowerAgentComponent::BeginPlay()
-	// This ensures it exists BEFORE StateTree starts, allowing proper state entry
-
-	LastAction = ParsedAction;
+	LastMacroAction = MacroAction;
 
 	// Debug logging
+	#if !UE_BUILD_SHIPPING
 	AActor* Owner = GetTypedOuter<AActor>();
-	UE_LOG(LogTemp, Warning, TEXT("🎮 [SCHOLA ACTUATOR] '%s': Received action from Python → Move=(%.2f,%.2f) Speed=%.2f, Look=(%.2f,%.2f), Fire=%d"),
-		*GetNameSafe(Owner),
-		ParsedAction.MoveDirection.X, ParsedAction.MoveDirection.Y, ParsedAction.MoveSpeed,
-		ParsedAction.LookDirection.X, ParsedAction.LookDirection.Y,
-		ParsedAction.bFire ? 1 : 0);
-
-	UE_LOG(LogTemp, Verbose, TEXT("    → SharedContext.bScholaActionReceived = %d (should be TRUE)"),
-		SharedContext.bScholaActionReceived ? 1 : 0);
+	if (bDebugLogging)
+	{
+		UE_LOG(LogTemp, Log, TEXT("🎮 [MACRO ACTION] '%s': Position=%s, Target=%d, Fire=%s, Stance=%s"),
+			*GetNameSafe(Owner),
+			*UEnum::GetValueAsString(MacroAction.PositionChoice),
+			MacroAction.TargetIndex,
+			*UEnum::GetValueAsString(MacroAction.FireMode),
+			*UEnum::GetValueAsString(MacroAction.Stance));
+	}
+	#endif
 }
 
 void UTacticalActuator::InitializeActuator()
@@ -180,8 +132,8 @@ void UTacticalActuator::InitializeActuator()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=7D Box)"),
-		*GetNameSafe(GetOuter()), *GetNameSafe(FollowerAgent));
+	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=MultiDiscrete([6,%d,3,3]))"),
+		*GetNameSafe(GetOuter()), *GetNameSafe(FollowerAgent), MaxEnemies + 1);
 }
 
 UFollowerAgentComponent* UTacticalActuator::FindFollowerAgent() const

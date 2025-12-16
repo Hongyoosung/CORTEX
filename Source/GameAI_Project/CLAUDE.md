@@ -1,6 +1,6 @@
 # SBDAPM: Real-Time Multi-Agent Combat AI with MCTS + PPO
 
-**Engine:** UE5.6 | **Language:** C++17 | **Platform:** Windows | **Version:** v3.1 (Real-Time Only) ✅
+**Engine:** UE5.6 | **Language:** C++17 | **Platform:** Windows | **Version:** v4.0 (Macro Actions) 🚧
 
 ---
 
@@ -39,7 +39,28 @@ Task Type?
 
 ---
 
-## Architecture (v3.1 Real-Time Training)
+## Architecture Evolution
+
+### v3.1 → v4.0: Atomic to Macro Actions
+
+**Problem (v3.1):** Agents spent 70-80% of learning budget on low-level motor skills (walking, aiming) instead of squad tactics.
+
+**Solution (v4.0):** Delegate physics to UE5 engine, focus RL on tactical decisions.
+
+| Aspect | v3.1 (Atomic) | v4.0 (Macro) |
+|--------|---------------|--------------|
+| **Action Space** | 7D continuous (move, aim, fire, crouch) | 4D discrete (position, target, fire mode, stance) |
+| **Movement** | `AddMovementInput(velocity)` frame-by-frame | `MoveToLocation(cover_point)` via NavMesh |
+| **Aiming** | `AddYawInput(delta)` manual tracking | `SetFocus(enemy)` engine auto-aim |
+| **Complexity** | Infinite continuous state space | ~270 discrete states (6×5×3×3) |
+| **Training Speed** | Weeks to learn walking | Days to learn tactics |
+| **Focus** | "How to move legs?" | "Where to go, who to shoot?" |
+
+**Impact:** 5-10x faster convergence, emergent tactics appear 3x earlier.
+
+---
+
+## Architecture (v4.0 Macro Actions)
 
 ### System Flow
 ```
@@ -51,16 +72,18 @@ Team Leader (1 per team, continuous 1-2s planning)
                            │
 Followers (N agents, tactical execution)
   ├─ PPO Policy Network (actor + critic, real-time RLlib training)
-  ├─ StateTree Execution (command-driven states)
+  │   └─ Outputs: [Position Index, Target Index, Fire Mode, Stance]
+  ├─ Engine Integration (NavMesh, SetFocus, CharacterMovement)
+  ├─ StateTree Execution (macro action → engine commands)
   └─ Schola Integration → RLlib Environment → Real-Time PPO Updates
 ```
 
 ### Key Features
-1. **Real-Time PPO Training** - Continuous learning via RLlib (no offline batches)
-2. **Integrated Actor-Critic** - Single network for actions + value estimation
+1. **Macro Action Space** - High-level tactical decisions (position, target, fire mode)
+2. **Engine-Driven Execution** - NavMesh pathfinding, auto-aim, physics handling
 3. **MCTS Guidance** - Strategic planning with PPO critic leaf evaluation
 4. **Unified Rewards** - Hierarchical alignment (individual + coordination + strategic)
-5. **Continuous Planning** - Proactive 1-2s intervals with uncertainty quantification
+5. **Faster Convergence** - Focus on tactics, not motor skills
 
 ---
 
@@ -83,18 +106,22 @@ Followers (N agents, tactical execution)
 
 ---
 
-### 2. PPO Policy Network (`RL/RLPolicyNetwork.cpp`) ✅
-**Purpose:** Tactical action selection + value estimation + MCTS priors
+### 2. PPO Policy Network (`RL/RLPolicyNetwork.cpp`) 🚧 v4.0
+**Purpose:** Tactical decision-making + value estimation + MCTS priors
 
 **Dual-Head Architecture (Actor-Critic):**
 ```
 Input: Individual observation (71 features + 7 objective embedding = 78 total)
   → Shared Trunk (128→128→64, ReLU)
-  ├─ Actor Head (8 dims) → Atomic actions (move, aim, fire, crouch, ability)
+  ├─ Actor Head (4 discrete logits) → Macro actions:
+  │   ├─ Position: [Hold, Forward, Retreat, Flank L, Flank R, Advance] (6)
+  │   ├─ Target: [None, Enemy_0, ..., Enemy_N] (N+1, dynamic)
+  │   ├─ Fire Mode: [Hold Fire, Fire, Suppress] (3)
+  │   └─ Stance: [Stand, Crouch, Prone] (3)
   └─ Critic Head (1 dim) → State value estimate ∈ [-1, 1]
 ```
 
-**Actions:** 8-dimensional atomic action space (continuous + discrete)
+**Actions:** MultiDiscrete([6, N+1, 3, 3]) - High-level tactical decisions
 
 **Training:** Real-time PPO via RLlib (no offline batches)
 
@@ -247,6 +274,8 @@ if (StateEvaluationScore > BestValueSoFar) {
 6. **Rewards are hierarchical** (individual + coordination + strategic, aligned across levels)
 7. **Commands include confidence** (visit count, value variance, policy entropy fields)
 8. **Single PPO model** (actor + critic in one network, no separate value/world models)
+9. **Engine handles physics** (v4.0: NavMesh for movement, SetFocus for aiming, CharacterMovement for stance)
+10. **Macro actions only** (v4.0: RL outputs discrete indices, not continuous velocities)
 
 ---
 
@@ -438,4 +467,4 @@ All critical systems verified and functional:
 
 ---
 
-**Last Updated:** v3.1 Production Review (2025-12-09)
+**Last Updated:** v4.0 Macro Actions Migration (2025-12-17)

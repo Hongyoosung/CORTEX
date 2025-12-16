@@ -37,6 +37,16 @@ UScholaAgentComponent::UScholaAgentComponent()
 
 void UScholaAgentComponent::BeginPlay()
 {
+	// CRITICAL FIX: Force-enable tick BEFORE Super::BeginPlay()
+	// Must happen early because parent class might disable it
+	if (bEnableTimeBasedDecisions)
+	{
+		PrimaryComponentTick.bCanEverTick = true;
+		PrimaryComponentTick.bStartWithTickEnabled = true;
+		PrimaryComponentTick.TickInterval = 0.0f;  // Tick every frame
+		SetComponentTickEnabled(true);
+	}
+
 	Super::BeginPlay();
 
 	// CRITICAL: Do not initialize CDOs (Class Default Objects)
@@ -64,12 +74,25 @@ void UScholaAgentComponent::BeginPlay()
 	// CRITICAL: Configure Brain for time-based decisions
 	if (bEnableTimeBasedDecisions && Brain)
 	{
-		// Disable frame-based gating by setting DecisionRequestFrequency=1
-		// Our Think() override handles time-based gating instead
-		Brain->DecisionRequestFrequency = 1;
+		// IMPORTANT: Set DecisionRequestFrequency to a very high value to effectively disable frame-based gating
+		// Our Think() override handles time-based gating instead using TimeSinceLastDecision accumulator
+		// Setting to 1 would cause decisions every frame, which defeats the purpose
+		Brain->DecisionRequestFrequency = 1000000;  // Effectively disable frame-based gating
 
 		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: Time-based decisions enabled (%.3fs interval = %.1f Hz)"),
 			*Owner->GetName(), DecisionInterval, 1.0f / DecisionInterval);
+	}
+
+	// CRITICAL FIX: Re-enable tick AFTER Super::BeginPlay() in case parent disabled it
+	if (bEnableTimeBasedDecisions)
+	{
+		PrimaryComponentTick.bCanEverTick = true;
+		PrimaryComponentTick.bStartWithTickEnabled = true;
+		PrimaryComponentTick.TickInterval = 0.0f;
+		SetComponentTickEnabled(true);
+
+		UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Time-based decisions enabled (tick configured)"),
+			*Owner->GetName());
 	}
 
 	// Note: gRPC server is now managed by ScholaCombatEnvironment
@@ -90,11 +113,45 @@ void UScholaAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	#if !UE_BUILD_SHIPPING
+	// DIAGNOSTIC: Verify TickComponent is actually being called
+	static int32 GlobalTickCounter = 0;
+	GlobalTickCounter++;
+	if (GlobalTickCounter == 1)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ScholaAgent] %s: TickComponent FIRST CALL! DeltaTime=%.4fs"),
+			*GetOwner()->GetName(), DeltaTime);
+	}
+	#endif
+
 	// Store DeltaTime for time-based decision throttling
 	// This is used by Think() which doesn't receive DeltaTime directly
 	if (bEnableTimeBasedDecisions)
 	{
 		TimeSinceLastDecision += DeltaTime;
+
+		#if !UE_BUILD_SHIPPING
+		// Diagnostic: Log tick accumulation every 60 frames
+		static int32 TickCounter = 0;
+		TickCounter++;
+		if (TickCounter % 60 == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] %s: TickComponent frame %d - DeltaTime=%.4fs, TimeSinceLastDecision=%.4fs (accumulated)"),
+				*GetOwner()->GetName(), TickCounter, DeltaTime, TimeSinceLastDecision);
+		}
+		#endif
+	}
+	else
+	{
+		#if !UE_BUILD_SHIPPING
+		static bool bLoggedTickDisabled = false;
+		if (!bLoggedTickDisabled)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[ScholaAgent] %s: TickComponent called but bEnableTimeBasedDecisions=FALSE!"),
+				*GetOwner()->GetName());
+			bLoggedTickDisabled = true;
+		}
+		#endif
 	}
 }
 
@@ -137,7 +194,7 @@ void UScholaAgentComponent::ConfigureObservers()
 		this->Observers.Add(TacticalObserver);
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] %s: TacticalObserver configured (71 features)"),
+	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: TacticalObserver configured (71 features)"),
 		*GetOwner()->GetName());
 }
 
@@ -153,7 +210,7 @@ void UScholaAgentComponent::ConfigureRewardProvider()
 	RewardProvider->bAutoFindFollower = false;
 	RewardProvider->Initialize();
 
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] %s: RewardProvider configured"),
+	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: RewardProvider configured"),
 		*GetOwner()->GetName());
 }
 
@@ -206,12 +263,24 @@ void UScholaAgentComponent::ConfigureActuators()
 		this->Actuators.Add(TacticalActuator);
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] %s: TacticalActuator configured (8D actions)"),
+	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: TacticalActuator configured (7D actions)"),
 		*GetOwner()->GetName());
 }
 
 void UScholaAgentComponent::ResetEpisode()
 {
+	// CRITICAL: Prevent multiple rapid resets (Schola may call this multiple times)
+	// Only reset if at least 0.1s has passed since last reset
+	double CurrentTime = FPlatformTime::Seconds();
+	if (LastResetTime > 0.0 && (CurrentTime - LastResetTime) < 0.1)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Ignoring rapid reset (%.3fs since last)"),
+			*GetOwner()->GetName(), CurrentTime - LastResetTime);
+		return;
+	}
+
+	LastResetTime = CurrentTime;
+
 	// Reset reward provider
 	if (RewardProvider)
 	{
@@ -232,38 +301,47 @@ void UScholaAgentComponent::ResetEpisode()
 
 	// Reset decision timer
 	TimeSinceLastDecision = 0.0f;
+	LastDecisionTime = 0.0;
 
-	UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Episode reset"),
+	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: Episode reset"),
 		*GetOwner()->GetName());
 }
 
 void UScholaAgentComponent::Think()
 {
-	// CRITICAL FIX: Time-based decision throttling for FPS-independent training
+	// SECONDARY SAFETY NET: Time-based decision throttling
 	//
-	// Problem: Schola's default Think() uses frame-based DecisionRequestFrequency:
-	//   - 60 FPS × DecisionRequestFrequency=5 → 12 decisions/sec
-	//   - 10 FPS × DecisionRequestFrequency=5 → 2 decisions/sec
+	// PRIMARY rate limiting is done in Python (sbdapm_env.py step() method)
+	// This UE-side throttling provides defense-in-depth:
+	//   - Prevents excessive gRPC requests if Python rate limiter fails
+	//   - Protects against bugs in training script
 	//
-	// Solution: Gate decisions by TIME instead of FRAME COUNT
-	//   - Decision every 0.05s = 20 Hz (consistent at any FPS)
+	// Note: This only throttles REQUESTS to Python, not received actions
+	// Python step() sleep() enforces the actual action send rate (10 Hz)
 
 	if (bEnableTimeBasedDecisions)
 	{
-		// Check if enough time has passed since last decision
-		bool bShouldDecide = (TimeSinceLastDecision >= DecisionInterval);
+		double CurrentTime = FPlatformTime::Seconds();
 
-		if (!bShouldDecide)
+		// Initialize on first call
+		if (LastDecisionTime == 0.0)
 		{
-			// Skip this Think() call - not time for a new decision yet
-			return;
+			LastDecisionTime = CurrentTime;
 		}
+		else
+		{
+			double ElapsedTime = CurrentTime - LastDecisionTime;
 
-		// Reset timer for next decision interval
-		TimeSinceLastDecision = 0.0f;
+			// Skip if too soon (secondary throttle)
+			if (ElapsedTime < DecisionInterval)
+			{
+				return;
+			}
+
+			LastDecisionTime = CurrentTime;
+		}
 	}
 
 	// Call parent's Think() which handles the actual decision request
-	// This will always return true for IsDecisionStep() since we're gating here
 	Super::Think();
 }

@@ -56,7 +56,7 @@ public:
 
 	/** Time interval between decisions (seconds). Default: 0.05s = 20 Hz */
 	UPROPERTY(EditAnywhere, Category = "Schola|Config", meta = (EditCondition = "bEnableTimeBasedDecisions", ClampMin = "0.01", ClampMax = "1.0"))
-	float DecisionInterval = 0.05f;
+	float DecisionInterval = 0.1f;
 
 	//--------------------------------------------------------------------------
 	// COMPONENTS
@@ -84,6 +84,11 @@ public:
 
 	/** Time accumulated since last decision (for time-based throttling) */
 	float TimeSinceLastDecision = 0.0f;
+
+	double LastDecisionTime = 0.0;
+
+	/** Time of last reset (to prevent multiple rapid resets) */
+	double LastResetTime = 0.0;
 
 	//--------------------------------------------------------------------------
 	// UTILITY

@@ -1,7 +1,6 @@
 // TimeBasedBrain.cpp - Implementation of time-based decision brain
 
 #include "Schola/TimeBasedBrain.h"
-#include "Common/LogSchola.h"
 
 UTimeBasedBrain::UTimeBasedBrain()
 {
@@ -41,7 +40,7 @@ bool UTimeBasedBrain::IsDecisionStep()
 	// This is a limitation of Schola's architecture - IsDecisionStep() doesn't receive DeltaTime
 	// The proper fix requires modifying Schola plugin or overriding Think() in InferenceComponent
 
-	UE_LOG(LogSchola, Warning, TEXT("[TimeBasedBrain] IsDecisionStep() called without DeltaTime - cannot implement time-based logic here. Override Think() instead."));
+	UE_LOG(LogTemp, Warning, TEXT("[TimeBasedBrain] IsDecisionStep() called without DeltaTime - cannot implement time-based logic here. Override Think() instead."));
 
 	// Fallback to parent's frame-based logic
 	return Super::IsDecisionStep();

@@ -86,6 +86,8 @@ def create_env_config():
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,  # Base port, each worker adds worker_index
         "max_episode_steps": SBDAPMConfig.MAX_EPISODE_STEPS,
+        # Note: Action rate limiting (10 Hz) handled by UE-side Think() throttling
+        # No Python-side blocking - UE5 runs at full FPS (60-70)
     }
 
 

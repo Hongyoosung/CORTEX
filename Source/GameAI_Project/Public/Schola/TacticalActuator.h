@@ -13,24 +13,25 @@ class UFollowerStateTreeComponent;
 /**
  * Schola actuator that receives actions from Python and applies them to follower agents.
  *
- * Action space: 7-dimensional Box (continuous)
- * - [0-1]: move_direction (continuous [-1, 1])
- * - [2]:   move_speed (continuous [0, 1])
- * - [3-4]: look_direction (continuous [-1, 1])
- * - [5]:   fire (continuous [0, 1], interpreted as binary: <0.5 = false, >=0.5 = true)
- * - [6]:   crouch (continuous [0, 1], interpreted as binary)
+ * v4.0 Action space: MultiDiscrete([6, N+1, 3, 3])
+ * - [0]: Position choice: [Hold, Forward, Retreat, FlankL, FlankR, Advance] (6 options)
+ * - [1]: Target index: [None=-1, Enemy_0, ..., Enemy_N] (N+1 options, dynamic)
+ * - [2]: Fire mode: [HoldFire, Fire, Suppress] (3 options)
+ * - [3]: Stance: [Stand, Crouch, Prone] (3 options)
+ *
+ * v3.x Legacy (DEPRECATED): 7-dimensional Box (continuous atomic actions)
  */
 UCLASS(BlueprintType, meta = (DisplayName = "Tactical Actuator"))
-class GAMEAI_PROJECT_API UTacticalActuator : public UBoxActuator
+class GAMEAI_PROJECT_API UTacticalActuator : public UMultiDiscreteActuator
 {
 	GENERATED_BODY()
 
 public:
 	UTacticalActuator();
 
-	// UBoxActuator interface
-	virtual FBoxSpace GetActionSpace() override;
-	virtual void TakeAction(const FBoxPoint& Action) override;
+	// UMultiDiscreteActuator interface
+	virtual FMultiDiscreteSpace GetActionSpace() override;
+	virtual void TakeAction(const FMultiDiscretePoint& Action) override;
 	virtual void InitializeActuator() override;
 
 	/** The follower agent component to control */
@@ -45,17 +46,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
 	bool bDebugLogging = true;
 
-	/** Enable firing mask (disable fire when no enemies detected) - for early training curriculum */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator|Training")
-	bool bEnableFiringMask = true;
-
-	/** Enable look direction smoothing (prevent spinning) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator|Training")
-	bool bEnableLookSmoothing = true;
-
-	/** Look smoothing factor [0-1] (0 = no smoothing, 1 = full smoothing) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator|Training", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float LookSmoothingFactor = 0.3f;
+	/** Maximum number of enemies to track (for dynamic MultiDiscrete space sizing) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator|v4")
+	int32 MaxEnemies = 10;
 
 protected:
 	/** Find follower agent component */
@@ -64,6 +57,6 @@ protected:
 	/** Find state tree component */
 	UFollowerStateTreeComponent* FindStateTreeComponent() const;
 
-	/** Last received action (cached for debugging) */
-	FTacticalAction LastAction;
+	/** Last received macro action (cached for debugging) */
+	FMacroAction LastMacroAction;
 };
