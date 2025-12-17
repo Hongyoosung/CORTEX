@@ -41,35 +41,6 @@ All Phase 3 tasks have been completed with production-quality EQS integration an
 3. **`GetEnemyByIndex()`** - Enemy lookup from VisibleEnemies array (line 597+)
    - Validates index bounds and actor validity
 
-#### B. Header Documentation ✅ COMPLETE
-**File:** `Source/GameAI_Project/Public/StateTree/Tasks/STTask_ExecuteObjective.h`
-
-**Updates:**
-- ✅ Updated class documentation with v4.0 macro action flow
-- ✅ Added EQS asset requirements and paths
-- ✅ Documented all helper methods with parameter details
-- ✅ Listed required EQS assets: EQS_ForwardCover, EQS_RetreatCover, EQS_FlankLeft, EQS_FlankRight, EQS_Advance
-
-#### C. Legacy Code Removal ✅ COMPLETE
-
-**Files Updated:**
-- ✅ `TacticalActuator.h` - Removed v3.x legacy reference, updated to v4.0 macro actions
-- ✅ `RLTypes.h` - Updated OutputSize comment from "7 atomic" to "4 macro action heads"
-- ✅ No v3.x atomic action fields found (MoveDirection, LookDirection, bFire, bCrouch, ExecuteAtomicAction, ApplyMask, ExecuteAbility)
-
-#### D. No-Fallback Policy Verification ✅ COMPLETE
-
-**Verified:**
-- ✅ `ExecuteMovement()` (line 145-197): Stops movement and logs error on EQS failure - NO fallbacks
-- ✅ `QueryEQSPositions()` (line 465-512): Returns empty array on EQS failure - NO fallbacks
-- ✅ `RunEQSQuery()` (line 514-595): Returns empty array with error logging - NO fallbacks
-- ✅ Only `ETacticalPosition::Hold` uses current position (intentional, not a fallback)
-
-**Error Handling:**
-- Missing EQS assets → Logs error with asset path, returns empty array
-- Query execution failure → Logs error, returns empty array
-- No valid positions → Logs warning, returns empty array
-- Agent stops movement when positions unavailable → Logs error
 
 ---
 
