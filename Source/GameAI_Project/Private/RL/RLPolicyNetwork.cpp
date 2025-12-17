@@ -308,6 +308,7 @@ FTacticalAction URLPolicyNetwork::GetAction(const FObservationElement& Observati
 
 FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& Observation, UObjective* CurrentObjective, const FActionSpaceMask& Mask)
 {
+	// v4.0: Mask parameter ignored for discrete macro actions
 	if (!bIsInitialized)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Not initialized, returning default action"));
@@ -322,18 +323,19 @@ FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& O
 		TArray<float> ObjectiveEmbed = GetObjectiveEmbedding(CurrentObjective);
 		InputFeatures.Append(ObjectiveEmbed);
 
-		// Forward pass (expects 8-dim output: move_x, move_y, speed, look_x, look_y, fire, crouch, ability)
+		// Forward pass (expects 19-dim output: 6 pos + 6 target + 3 fire + 3 stance + 1 value)
 		TArray<float> NetworkOutput = ForwardPass(InputFeatures);
 
-		// Convert to action
+		// Convert to macro action
 		FTacticalAction Action = NetworkOutputToAction(NetworkOutput);
 
-		UE_LOG(LogTemp, Display, TEXT("✅ [ONNX MODEL] Action: Move=(%.2f,%.2f) Speed=%.2f Look=(%.2f,%.2f) Fire=%d"),
-			Action.MoveDirection.X, Action.MoveDirection.Y, Action.MoveSpeed,
-			Action.LookDirection.X, Action.LookDirection.Y, Action.bFire);
+		UE_LOG(LogTemp, Display, TEXT("✅ [ONNX MODEL] MacroAction: Pos=%d Target=%d Fire=%d Stance=%d"),
+			static_cast<int32>(Action.MacroAction.PositionChoice),
+			Action.MacroAction.TargetIndex,
+			static_cast<int32>(Action.MacroAction.FireMode),
+			static_cast<int32>(Action.MacroAction.Stance));
 
-		// Apply spatial constraints
-		return ApplyMask(Action, Mask);
+		return Action;
 	}
 	else
 	{
@@ -503,78 +505,70 @@ FTacticalAction URLPolicyNetwork::NetworkOutputToAction(const TArray<float>& Net
 {
 	FTacticalAction Action;
 
-	// Network output format: [move_x, move_y, speed, look_x, look_y, fire_logit, crouch_logit, ability_logit]
-	// Model outputs raw logits - apply activations here
-	if (NetworkOutput.Num() >= 8)
+	// v4.0 Network output format: [6 position logits + 6 target logits + 3 fire logits + 3 stance logits + 1 value] = 19
+	// Sample discrete actions from each head
+	if (NetworkOutput.Num() >= 18)
 	{
-		// Continuous actions (apply Tanh for [-1,1], Sigmoid for [0,1])
-		Action.MoveDirection.X = FMath::Tanh(NetworkOutput[0]);
-		Action.MoveDirection.Y = FMath::Tanh(NetworkOutput[1]);
-		Action.MoveSpeed = 1.0f / (1.0f + FMath::Exp(-NetworkOutput[2]));  // Sigmoid
-		Action.LookDirection.X = FMath::Tanh(NetworkOutput[3]);
-		Action.LookDirection.Y = FMath::Tanh(NetworkOutput[4]);
+		// Extract logits for each action dimension
+		TArray<float> PositionLogits;
+		PositionLogits.Append(&NetworkOutput[0], 6);
 
-		// Discrete actions (sigmoid + threshold: > 0.5 = true)
-		Action.bFire = (1.0f / (1.0f + FMath::Exp(-NetworkOutput[5]))) > 0.5f;
-		Action.bCrouch = (1.0f / (1.0f + FMath::Exp(-NetworkOutput[6]))) > 0.5f;
-		Action.bUseAbility = (1.0f / (1.0f + FMath::Exp(-NetworkOutput[7]))) > 0.5f;
+		TArray<float> TargetLogits;
+		TargetLogits.Append(&NetworkOutput[6], 6);
 
-		// AbilityID (if more outputs exist)
-		if (NetworkOutput.Num() > 8)
-		{
-			Action.AbilityID = FMath::RoundToInt(NetworkOutput[8]);
-		}
+		TArray<float> FireModeLogits;
+		FireModeLogits.Append(&NetworkOutput[12], 3);
+
+		TArray<float> StanceLogits;
+		StanceLogits.Append(&NetworkOutput[15], 3);
+
+		// Sample from each discrete distribution
+		int32 PositionIdx = SampleFromLogits(PositionLogits);
+		int32 TargetIdx = SampleFromLogits(TargetLogits);
+		int32 FireModeIdx = SampleFromLogits(FireModeLogits);
+		int32 StanceIdx = SampleFromLogits(StanceLogits);
+
+		// Convert indices to enum values
+		Action.MacroAction.PositionChoice = static_cast<ETacticalPosition>(FMath::Clamp(PositionIdx, 0, 5));
+		Action.MacroAction.TargetIndex = TargetIdx - 1;  // 0 = no target (-1), 1+ = enemy indices (0+)
+		Action.MacroAction.FireMode = static_cast<EFireMode>(FMath::Clamp(FireModeIdx, 0, 2));
+		Action.MacroAction.Stance = static_cast<EStance>(FMath::Clamp(StanceIdx, 0, 2));
+
+		// Note: Value estimate at NetworkOutput[18] handled separately by GetStateValue()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Invalid network output size %d, expected 8+"), NetworkOutput.Num());
+		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Invalid network output size %d, expected 18+"), NetworkOutput.Num());
 	}
 
 	return Action;
 }
 
-FTacticalAction URLPolicyNetwork::ApplyMask(const FTacticalAction& Action, const FActionSpaceMask& Mask)
+int32 URLPolicyNetwork::SampleFromLogits(const TArray<float>& Logits)
 {
-	FTacticalAction ConstrainedAction = Action;
-
-	// Movement constraints
-	if (Mask.bLockMovementX)
+	if (Logits.Num() == 0)
 	{
-		ConstrainedAction.MoveDirection.X = 0.0f;
-	}
-	if (Mask.bLockMovementY)
-	{
-		ConstrainedAction.MoveDirection.Y = 0.0f;
+		return 0;
 	}
 
-	// Speed constraints
-	ConstrainedAction.MoveSpeed = FMath::Min(ConstrainedAction.MoveSpeed, Mask.MaxSpeed);
+	// Convert logits to probabilities via softmax
+	TArray<float> Probs = Softmax(Logits);
 
-	// Sprint constraints
-	if (!Mask.bCanSprint && ConstrainedAction.MoveSpeed > 0.6f)
+	// Sample from categorical distribution
+	float Rand = FMath::FRand();
+	float CumulativeProb = 0.0f;
+
+	for (int32 i = 0; i < Probs.Num(); ++i)
 	{
-		ConstrainedAction.MoveSpeed = 0.6f;  // Limit to walk speed
+		CumulativeProb += Probs[i];
+		if (Rand <= CumulativeProb)
+		{
+			return i;
+		}
 	}
 
-	// Aiming constraints (convert 2D direction to angles)
-	// Note: Full angle constraint implementation would require current agent rotation
-	// For now, we just clamp the look direction vector
-	ConstrainedAction.LookDirection.X = FMath::Clamp(ConstrainedAction.LookDirection.X, -1.0f, 1.0f);
-	ConstrainedAction.LookDirection.Y = FMath::Clamp(ConstrainedAction.LookDirection.Y, -1.0f, 1.0f);
-
-	// Crouch constraints
-	if (Mask.bForceCrouch)
-	{
-		ConstrainedAction.bCrouch = true;
-	}
-
-	// Safety lock (disable firing)
-	if (Mask.bSafetyLock)
-	{
-		ConstrainedAction.bFire = false;
-	}
-
-	return ConstrainedAction;
+	// Fallback to last index (should rarely happen due to floating point errors)
+	return Probs.Num() - 1;
 }
 
 TArray<float> URLPolicyNetwork::GetObjectiveEmbedding(UObjective* CurrentObjective)

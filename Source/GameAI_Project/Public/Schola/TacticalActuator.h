@@ -11,18 +11,21 @@ class UFollowerAgentComponent;
 class UFollowerStateTreeComponent;
 
 /**
- * Schola actuator that receives actions from Python and applies them to follower agents.
+ * Schola actuator that receives macro actions from Python and applies them to follower agents.
  *
  * v4.0 Action space: MultiDiscrete([6, N+1, 3, 3])
- * - [0]: Position choice: [Hold, Forward, Retreat, FlankL, FlankR, Advance] (6 options)
- * - [1]: Target index: [None=-1, Enemy_0, ..., Enemy_N] (N+1 options, dynamic)
+ * - [0]: Position choice: [Hold, ForwardCover, Retreat, FlankLeft, FlankRight, Advance] (6 options)
+ * - [1]: Target index: [None=-1, Enemy_0, ..., Enemy_N] (N+1 options, dynamic based on MaxEnemies)
  * - [2]: Fire mode: [HoldFire, Fire, Suppress] (3 options)
  * - [3]: Stance: [Stand, Crouch, Prone] (3 options)
  *
- * v3.x Legacy (DEPRECATED): 7-dimensional Box (continuous atomic actions)
+ * Integration:
+ * - Python RLlib environment → Schola gRPC → TacticalActuator::TakeAction()
+ * - Parses discrete indices into FMacroAction struct
+ * - Stores in FollowerStateTreeContext for STTask_ExecuteObjective
  */
 UCLASS(BlueprintType, meta = (DisplayName = "Tactical Actuator"))
-class GAMEAI_PROJECT_API UTacticalActuator : public UMultiDiscreteActuator
+class GAMEAI_PROJECT_API UTacticalActuator : public UDiscreteActuator
 {
 	GENERATED_BODY()
 
@@ -30,8 +33,8 @@ public:
 	UTacticalActuator();
 
 	// UMultiDiscreteActuator interface
-	virtual FMultiDiscreteSpace GetActionSpace() override;
-	virtual void TakeAction(const FMultiDiscretePoint& Action) override;
+	virtual FDiscreteSpace GetActionSpace() override;
+	virtual void TakeAction(const FDiscretePoint& Action) override;
 	virtual void InitializeActuator() override;
 
 	/** The follower agent component to control */

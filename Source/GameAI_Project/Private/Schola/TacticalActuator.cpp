@@ -14,7 +14,7 @@ UTacticalActuator::UTacticalActuator()
 	MaxEnemies = 10; // Default max enemies for dynamic action space
 }
 
-FMultiDiscreteSpace UTacticalActuator::GetActionSpace()
+FDiscreteSpace UTacticalActuator::GetActionSpace()
 {
 	// MultiDiscrete([6, MaxEnemies+1, 3, 3])
 	// [0]: Position (6 options: Hold, ForwardCover, Retreat, FlankL, FlankR, Advance)
@@ -23,12 +23,12 @@ FMultiDiscreteSpace UTacticalActuator::GetActionSpace()
 	// [3]: Stance (3 options: Stand, Crouch, Prone)
 
 	TArray<int32> Nvec = { 6, MaxEnemies + 1, 3, 3 };
-	FMultiDiscreteSpace ActionSpace = FMultiDiscreteSpace(Nvec);
+	FDiscreteSpace ActionSpace = FDiscreteSpace(Nvec);
 
 	return ActionSpace;
 }
 
-void UTacticalActuator::TakeAction(const FMultiDiscretePoint& Action)
+void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 {
 	if (!FollowerAgent || !FollowerAgent->IsValidLowLevel() || !FollowerAgent->GetOwner())
 	{

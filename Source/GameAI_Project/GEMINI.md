@@ -260,8 +260,7 @@ Source/GameAI_Project/
 │   └── CommandSynergy.h/cpp              # ✅ Synergy scoring
 ├── RL/
 │   ├── RLPolicyNetwork.h/cpp             # ✅ Actor + Critic + Priors
-│   ├── RewardCalculator.h/cpp            # ✅ Unified rewards
-│   └── RLReplayBuffer.h/cpp              # ✅ RLlib integration
+│   └── RewardCalculator.h/cpp            # ✅ Unified rewards
 ├── Schola/
 │   ├── ScholaAgentComponent.h/cpp        # ✅ RLlib environment bridge
 │   └── TacticalActuator.h/cpp            # ✅ Action execution

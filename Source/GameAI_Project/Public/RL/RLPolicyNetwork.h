@@ -16,14 +16,16 @@ class INNERuntime;
 class INNERuntimeGPU;
 
 /**
- * Neural Network-based RL Policy for Tactical Action Selection
+ * Neural Network-based RL Policy for Tactical Action Selection (v4.0 Macro Actions)
  *
  * Architecture:
- *   Input Layer:  71 features (from FObservationElement)
- *   Hidden Layer 1: 128 neurons (ReLU)
- *   Hidden Layer 2: 128 neurons (ReLU)
- *   Hidden Layer 3: 64 neurons (ReLU)
- *   Output Layer: 16 actions (Softmax)
+ *   Input Layer:  78 features (71 observation + 7 objective embedding)
+ *   Shared Trunk: 128 → 128 → 64 (ReLU)
+ *   ├─ Position Head: 6 logits (Hold, Forward, Retreat, FlankL, FlankR, Advance)
+ *   ├─ Target Head: 6 logits (None, Enemy0-4)
+ *   ├─ Fire Mode Head: 3 logits (HoldFire, Fire, Suppress)
+ *   ├─ Stance Head: 3 logits (Stand, Crouch, Prone)
+ *   └─ Critic Head: 1 value (state value estimate for MCTS)
  *
  * Usage:
  *   1. Load trained policy from ONNX: LoadPolicy("path/to/model.onnx")
@@ -66,47 +68,47 @@ public:
 	void UnloadPolicy();
 
 	// ========================================
-	// Atomic Action Inference (v3.0)
+	// Macro Action Inference (v4.0)
 	// ========================================
 
 	/**
-	 * Get atomic action with objective context (v3.0)
-	 * Replaces discrete action selection with continuous action space
+	 * Get macro action with objective context (v4.0)
+	 * High-level tactical decisions: WHERE to go, WHO to shoot, HOW to engage
 	 * @param Observation - Current 71-feature observation
 	 * @param CurrentObjective - Current objective from team leader (can be nullptr)
-	 * @return 8-dimensional atomic action (move, aim, discrete actions)
+	 * @return Macro action (position, target, fire mode, stance)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v3")
+	UFUNCTION(BlueprintCallable, Category = "RL|v4")
 	FTacticalAction GetAction(const FObservationElement& Observation, class UObjective* CurrentObjective);
 
 	/**
-	 * Get atomic action with objective context and spatial mask (v3.0)
-	 * Applies environmental constraints to prevent invalid actions
+	 * Get macro action with objective context (v4.0)
+	 * Note: Action masking not implemented for v4.0 discrete actions
 	 * @param Observation - Current observation
 	 * @param CurrentObjective - Current objective (can be nullptr)
-	 * @param Mask - Action space constraints from environment
-	 * @return 8-dimensional atomic action (constrained by mask)
+	 * @param Mask - Action space constraints (ignored in v4.0)
+	 * @return Macro action
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v3")
+	UFUNCTION(BlueprintCallable, Category = "RL|v4")
 	FTacticalAction GetActionWithMask(const FObservationElement& Observation, class UObjective* CurrentObjective, const FActionSpaceMask& Mask);
 
 	/**
-	 * Get state value estimate for MCTS (PPO Critic - Real-Time Training)
+	 * Get state value estimate for MCTS (PPO Critic - v4.0)
 	 * Uses the PPO critic network (value function) trained alongside the policy
 	 * @param Observation - Current 71-feature observation
 	 * @param CurrentObjective - Current objective (for embedding)
 	 * @return State value estimate (higher = better expected return)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v3")
+	UFUNCTION(BlueprintCallable, Category = "RL|v4")
 	float GetStateValue(const FObservationElement& Observation, class UObjective* CurrentObjective);
 
 	/**
-	 * Get action priors for MCTS initialization (v3.0)
+	 * Get action priors for MCTS initialization (v4.0)
 	 * Returns prior probabilities for objective types to guide MCTS tree search
 	 * @param TeamObs - Team-level observation
 	 * @return Array of 7 prior probabilities (one per objective type)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v3")
+	UFUNCTION(BlueprintCallable, Category = "RL|v4")
 	TArray<float> GetObjectivePriors(const struct FTeamObservation& TeamObs);
 
 
@@ -166,23 +168,22 @@ private:
 	static TArray<float> Softmax(const TArray<float>& Logits);
 
 	// ========================================
-	// Atomic Action Helpers (v3.0)
+	// Macro Action Helpers (v4.0)
 	// ========================================
 
 	/**
-	 * Generate atomic action from network output
-	 * @param NetworkOutput - 8-element output from neural network
-	 * @return Atomic action struct
+	 * Generate macro action from network output
+	 * @param NetworkOutput - Multi-discrete logits: [6 position + 6 target + 3 fire + 3 stance + 1 value] = 19
+	 * @return Macro action struct
 	 */
 	FTacticalAction NetworkOutputToAction(const TArray<float>& NetworkOutput);
 
 	/**
-	 * Apply spatial mask to constrain action
-	 * @param Action - Raw action from network
-	 * @param Mask - Spatial constraints
-	 * @return Constrained action
+	 * Sample discrete action from logits
+	 * @param Logits - Unnormalized log probabilities
+	 * @return Sampled index
 	 */
-	FTacticalAction ApplyMask(const FTacticalAction& Action, const FActionSpaceMask& Mask);
+	int32 SampleFromLogits(const TArray<float>& Logits);
 
 	/**
 	 * Build objective embedding for network input

@@ -85,7 +85,30 @@ struct FMacroAction
 	}
 };
 
+/**
+ * Tactical action space (v4.0 macro actions only)
+ * High-level tactical decisions: WHERE to go, WHO to shoot, HOW to engage
+ */
+USTRUCT(BlueprintType)
+struct FTacticalAction
+{
+	GENERATED_BODY()
 
+	/** High-level tactical decision */
+	UPROPERTY(BlueprintReadWrite, Category = "Action")
+	FMacroAction MacroAction;
+
+	FTacticalAction()
+		: MacroAction()
+	{
+	}
+
+	/** Create from macro action */
+	explicit FTacticalAction(const FMacroAction& Macro)
+		: MacroAction(Macro)
+	{
+	}
+};
 
 USTRUCT(BlueprintType)
 struct FActionSequence
@@ -211,7 +234,7 @@ struct FRLPolicyConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RL")
 	int32 InputSize;
 
-	// Number of output dimensions (7 atomic action dimensions)
+	// Number of output dimensions (4 macro action heads: position, target, fire, stance)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RL")
 	int32 OutputSize;
 
@@ -245,7 +268,7 @@ struct FRLPolicyConfig
 
 	FRLPolicyConfig()
 		: InputSize(78)  // 71 observation + 7 objective embedding
-		, OutputSize(7)  // 7 atomic action dimensions
+		, OutputSize(4)  // v4.0: 4 macro action heads (position, target, fire, stance)
 		, HiddenLayers({128, 128, 64})
 		, LearningRate(0.0003f)
 		, DiscountFactor(0.99f)

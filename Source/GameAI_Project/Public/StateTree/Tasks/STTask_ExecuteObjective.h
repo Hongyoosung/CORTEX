@@ -14,21 +14,30 @@ class APawn;
 class AAIController;
 
 /**
- * State Tree Task: Execute Objective
+ * State Tree Task: Execute Objective (v4.0 Macro Actions)
  *
- * Universal execution task that handles ALL objective types using atomic actions.
+ * Universal execution task that handles ALL objective types using macro actions.
  * Replaces ExecuteAssault, ExecuteDefend, ExecuteSupport, ExecuteMove, ExecuteRetreat.
  *
- * Execution Flow:
- * 1. Query RL policy for atomic action (8D: movement, aiming, fire, crouch, ability)
- * 2. Apply spatial constraints from ActionSpaceMask
- * 3. Execute movement, aiming, and discrete actions
- * 4. Calculate rewards based on objective progress
+ * Execution Flow (v4.0):
+ * 1. RL policy outputs macro action: [Position, Target, FireMode, Stance]
+ * 2. Execute movement via NavMesh pathfinding (EQS + MoveToLocation)
+ * 3. Execute aiming via engine auto-aim (SetFocus)
+ * 4. Execute fire mode and stance
+ * 5. Calculate rewards based on objective progress
  *
  * Requirements:
  * - CurrentObjective must be assigned and active
- * - ActionMask updated by STEvaluator_SpatialContext
- * - TacticalPolicy network loaded
+ * - EQS query assets created in Content/AI/EQS/ (see RunEQSQuery documentation)
+ * - PPO policy network loaded via RLlib
+ * - NavMesh configured for movement
+ *
+ * EQS Assets Required (create in UE Editor):
+ * - Content/AI/EQS/EQS_ForwardCover.uasset - Cover points toward objective
+ * - Content/AI/EQS/EQS_RetreatCover.uasset - Cover points away from enemies
+ * - Content/AI/EQS/EQS_FlankLeft.uasset - Left flank positions
+ * - Content/AI/EQS/EQS_FlankRight.uasset - Right flank positions
+ * - Content/AI/EQS/EQS_Advance.uasset - Forward positions (no cover required)
  */
 
 USTRUCT()
@@ -84,30 +93,62 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteObjective : public FStateTreeTaskBase
 	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 protected:
-	/** Main execution loop - queries policy and applies actions */
-	void ExecuteAtomicAction(FStateTreeExecutionContext& Context, float DeltaTime) const;
+	//--------------------------------------------------------------------------
+	// v4.0 MACRO ACTION EXECUTION
+	//--------------------------------------------------------------------------
 
-	/** Apply movement from atomic action */
+	/** Execute movement using EQS + NavMesh */
 	void ExecuteMovement(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const;
 
-	/** Apply aiming from atomic action */
+	/** Execute aiming using SetFocus */
 	void ExecuteAiming(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const;
 
-	/** Fire weapon if bFire is true */
+	/** Execute fire mode (HoldFire/Fire/Suppress) */
 	void ExecuteFire(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
 
-	/** Toggle crouch state */
+	/** Execute stance (Stand/Crouch/Prone) */
 	void ExecuteCrouch(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
-
-	/** Use ability if requested */
-	void ExecuteAbility(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
-
-	/** Apply spatial constraints to action */
-	FTacticalAction ApplyMask(const FTacticalAction& RawAction, const FActionSpaceMask& Mask) const;
 
 	/** Calculate reward for current objective progress */
 	float CalculateObjectiveReward(FStateTreeExecutionContext& Context, float DeltaTime) const;
 
 	/** Check if objective is complete or failed */
 	bool CheckObjectiveStatus(FStateTreeExecutionContext& Context) const;
+
+	//--------------------------------------------------------------------------
+	// v4.0 MACRO ACTION HELPERS (EQS + NavMesh + SetFocus)
+	//--------------------------------------------------------------------------
+
+	/** Query EQS for tactical positions based on position type
+	 * Maps tactical position enum to EQS query name and executes query.
+	 * @param Context StateTree execution context
+	 * @param PositionType Tactical position to query (Hold, ForwardCover, Retreat, etc.)
+	 * @return Array of valid positions (sorted by EQS score, best first)
+	 */
+	TArray<FVector> QueryEQSPositions(FStateTreeExecutionContext& Context, ETacticalPosition PositionType) const;
+
+	/** Run EQS query by name and return sorted positions
+	 * Loads EQS asset from /Game/AI/EQS/{QueryName} and executes synchronously.
+	 * Returns empty array and logs ERROR if query asset missing or execution fails.
+	 *
+	 * @param Pawn Querier pawn (used as EQS context)
+	 * @param QueryName Name of EQS asset (e.g., "EQS_ForwardCover")
+	 * @return Array of valid positions (sorted by score), empty if query fails
+	 *
+	 * Required Assets (create these in UE Editor):
+	 * - /Game/AI/EQS/EQS_ForwardCover.uasset
+	 * - /Game/AI/EQS/EQS_RetreatCover.uasset
+	 * - /Game/AI/EQS/EQS_FlankLeft.uasset
+	 * - /Game/AI/EQS/EQS_FlankRight.uasset
+	 * - /Game/AI/EQS/EQS_Advance.uasset
+	 */
+	TArray<FVector> RunEQSQuery(APawn* Pawn, FName QueryName) const;
+
+	/** Get enemy actor by index from observation system
+	 * Retrieves enemy from SharedContext.VisibleEnemies array.
+	 * @param Context StateTree execution context
+	 * @param EnemyIndex Index into VisibleEnemies array
+	 * @return Enemy actor if valid, nullptr if index out of bounds or enemy invalid
+	 */
+	AActor* GetEnemyByIndex(FStateTreeExecutionContext& Context, int32 EnemyIndex) const;
 };

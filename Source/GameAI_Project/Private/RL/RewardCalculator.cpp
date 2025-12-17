@@ -100,12 +100,12 @@ float URewardCalculator::CalculateIndividualReward()
 	Reward += DamageSinceLastUpdate * 0.05f; // +5 per 100 damage
 	Reward -= DamageTakenSinceLastUpdate * 0.05f; // -5 per 100 damage taken
 
-	// Penalty for wasted ammo (firing with no visible targets)
+	// Penalty for wasted ammo (firing with no visible targets) - v4.0 macro actions
 	// INCREASED from -1.0 to -2.0 to discourage spray-and-pray during early training
 	if (FollowerComponent)
 	{
 		FObservationElement Obs = FollowerComponent->GetLocalObservation();
-		bool bFiredThisTick = FollowerComponent->LastTacticalAction.bFire;
+		bool bFiredThisTick = (FollowerComponent->LastTacticalAction.MacroAction.FireMode != EFireMode::HoldFire);
 
 		if (bFiredThisTick && Obs.VisibleEnemyCount == 0)
 		{
@@ -225,27 +225,17 @@ float URewardCalculator::CalculateCoverReward()
 		Reward += ExposedPenalty; // Negative value
 	}
 
-	// Bonus for crouching in cover (defensive behavior)
+	// Bonus for crouching/proning in cover (defensive behavior) - v4.0 macro actions
 	// Note: We check the action from the last tactical action
-	if (bInCover && FollowerComponent->LastTacticalAction.bCrouch)
+	EStance CurrentStance = FollowerComponent->LastTacticalAction.MacroAction.Stance;
+	if (bInCover && (CurrentStance == EStance::Crouch || CurrentStance == EStance::Prone))
 	{
 		Reward += CrouchInCoverReward;
 	}
 
-	// Reward for moving toward cover when under fire (new)
-	if (bUnderFire && !bInCover && Obs.bHasCover && Obs.NearestCoverDistance < 5000.0f)
-	{
-		FVector2D CoverDir = Obs.CoverDirection;
-		FVector2D MoveDir = FollowerComponent->LastTacticalAction.MoveDirection;
-
-		// Calculate alignment between movement and cover direction
-		float Alignment = FVector2D::DotProduct(MoveDir.GetSafeNormal(), CoverDir.GetSafeNormal());
-
-		if (Alignment > 0.5f) // Moving toward cover (dot product > 0.5 = < 60 degrees)
-		{
-			Reward += 3.0f * Alignment; // Up to +3 for direct approach
-		}
-	}
+	// v4.0 NOTE: Removed continuous movement-toward-cover reward
+	// Discrete position choices (Hold, Forward, Retreat, Flank) don't provide directional vectors
+	// Cover-seeking behavior is now implicit in position selection via EQS/NavMesh
 
 	// Update tracking state
 	bWasInCover = bInCover;
@@ -500,11 +490,12 @@ void URewardCalculator::CheckObjectiveCompliance()
 
 		case EObjectiveType::SupportAlly:
 		{
-			// Disobey if NOT moving toward ally or NOT providing cover
+			// Disobey if NOT moving toward ally or NOT providing cover - v4.0 macro actions
 			if (CurrentObjective->TargetActor)
 			{
 				float DistToAlly = FVector::Dist(AgentLocation, CurrentObjective->TargetActor->GetActorLocation());
-				if (DistToAlly > 3000.0f && !FollowerComponent->LastTacticalAction.bFire)
+				bool bProvidingCover = (FollowerComponent->LastTacticalAction.MacroAction.FireMode != EFireMode::HoldFire);
+				if (DistToAlly > 3000.0f && !bProvidingCover)
 				{
 					// Too far from ally (>30m) and not providing covering fire
 					bDisobeyedObjective = true;

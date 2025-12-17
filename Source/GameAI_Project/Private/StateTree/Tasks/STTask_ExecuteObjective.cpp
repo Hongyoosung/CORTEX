@@ -12,6 +12,9 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "RL/RLPolicyNetwork.h"
 #include "DrawDebugHelpers.h"
+#include "EnvironmentQuery/EnvQueryManager.h"
+#include "EnvironmentQuery/EnvQuery.h"
+#include "EnvironmentQuery/EnvQueryInstanceBlueprintWrapper.h"
 
 EStateTreeRunStatus FSTTask_ExecuteObjective::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
@@ -86,9 +89,8 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 
 	SharedContext.TimeInTacticalAction += DeltaTime;
 
-	// CRITICAL FIX: Action throttling - decouple execution rate from FPS
+	// v4.0: Action throttling - decouple execution rate from FPS
 	// Only execute actions at fixed rate (default 20 Hz) to match Schola's action frequency
-	// This ensures consistent training regardless of UE FPS (prevents oscillation at high FPS)
 	InstanceData = Context.GetInstanceData(*this);
 	InstanceData.TimeSinceLastAction += DeltaTime;
 
@@ -99,8 +101,15 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 		// Reset timer for next interval
 		InstanceData.TimeSinceLastAction = 0.0f;
 
-		// Execute atomic action from policy
-		ExecuteAtomicAction(Context, DeltaTime);
+		// v4.0: Execute macro action components directly
+		// Action already set by TacticalActuator (Schola) or local RL policy
+		const FTacticalAction& Action = SharedContext.CurrentAtomicAction;
+
+		ExecuteMovement(Context, Action, DeltaTime);
+		ExecuteAiming(Context, Action, DeltaTime);
+		ExecuteFire(Context, Action);
+		ExecuteCrouch(Context, Action);
+		// Note: ExecuteAbility removed - not needed for v4.0
 	}
 
 	// Calculate and provide reward (every frame, not throttled)
@@ -132,137 +141,58 @@ void FSTTask_ExecuteObjective::ExitState(FStateTreeExecutionContext& Context, co
 		Transition.NextActiveFrames.Num() > 0 ? TEXT("To another state") : TEXT("Tree stopped"));
 }
 
-void FSTTask_ExecuteObjective::ExecuteAtomicAction(FStateTreeExecutionContext& Context, float DeltaTime) const
-{
-	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
-
-	FTacticalAction RawAction;
-
-	// Priority 1: Use action from Schola (real-time training)
-	// FIX: Don't reset flag - persist action until new one arrives (Schola sends at 10-20 Hz, UE ticks at 60+ FPS)
-	if (SharedContext.bScholaActionReceived)
-	{
-		// Action already set by TacticalActuator, persists until next Python action
-		RawAction = SharedContext.CurrentAtomicAction;
-		// NOTE: Do NOT reset bScholaActionReceived - keeps action active across frames
-
-		APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-	}
-	// Priority 2: Query local RL policy (inference mode)
-	else if (SharedContext.TacticalPolicy && SharedContext.CurrentObjective)
-	{
-		// Diagnostic: Log why Schola action wasn't used
-		APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-
-		// Get action with objective context and mask
-		RawAction = SharedContext.TacticalPolicy->GetActionWithMask(
-			SharedContext.CurrentObservation,
-			SharedContext.CurrentObjective,
-			SharedContext.ActionMask);
-	}
-	// Priority 3: Fallback to default (zero) action
-	else
-	{
-		APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-		UE_LOG(LogTemp, Warning, TEXT("❌ [NO ACTION] '%s': Policy=%s, Objective=%s - Using default (ZERO) action"),
-			*GetNameSafe(Pawn),
-			SharedContext.TacticalPolicy ? TEXT("Valid") : TEXT("NULL"),
-			SharedContext.CurrentObjective ? TEXT("Valid") : TEXT("NULL"));
-		RawAction = FTacticalAction(); // Default action
-	}
-
-	// Apply spatial constraints
-	FTacticalAction MaskedAction = ApplyMask(RawAction, SharedContext.ActionMask);
-
-	// LOG: If mask changed action significantly
-	bool bMaskModified = (MaskedAction.MoveDirection - RawAction.MoveDirection).SizeSquared() > 0.01f ||
-	                     MaskedAction.bFire != RawAction.bFire;
-	if (bMaskModified)
-	{
-		APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-		UE_LOG(LogTemp, Display, TEXT("[ACTION MASK] '%s': Constraints modified action"), *GetNameSafe(Pawn));
-	}
-
-	// Store in context for experience collection
-	SharedContext.CurrentAtomicAction = MaskedAction;
-
-	// Execute components of the action
-	ExecuteMovement(Context, MaskedAction, DeltaTime);
-	ExecuteAiming(Context, MaskedAction, DeltaTime);
-	ExecuteFire(Context, MaskedAction);
-	ExecuteCrouch(Context, MaskedAction);
-	ExecuteAbility(Context, MaskedAction);
-}
 
 void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 
-	// Get Pawn from InstanceData (bound to FollowerContext.ControlledPawn)
 	APawn* Pawn = InstanceData.ControlledPawn;
 	if (!Pawn)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ExecuteMovement: No ControlledPawn available"));
+		UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] No ControlledPawn available"));
 		return;
 	}
 
-	// Apply movement direction and speed
-	FVector2D MoveDir = Action.MoveDirection;
-	float MoveSpeed = Action.MoveSpeed;
-
-
-	if (MoveDir.SizeSquared() > 0.01f && MoveSpeed > 0.01f) // Non-zero movement with non-zero speed
+	if (!InstanceData.AIController)
 	{
-		// Convert 2D direction to world direction (relative to current rotation)
-		FRotator CurrentRotation = Pawn->GetActorRotation();
-		FVector ForwardDir = FRotationMatrix(CurrentRotation).GetUnitAxis(EAxis::X);
-		FVector RightDir = FRotationMatrix(CurrentRotation).GetUnitAxis(EAxis::Y);
+		UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] '%s': No AIController - cannot use NavMesh"), *Pawn->GetName());
+		return;
+	}
 
-		FVector WorldMoveDir = (ForwardDir * MoveDir.X + RightDir * MoveDir.Y).GetSafeNormal();
+	// v4.0: Use macro action for high-level tactical movement
+	const FMacroAction& Macro = Action.MacroAction;
 
-		// Set MaxWalkSpeed as constant cap (not per-frame dynamic)
-		if (UCharacterMovementComponent* MovementComp = Pawn->FindComponentByClass<UCharacterMovementComponent>())
-		{
-			float BaseSpeed = 600.0f;
-			// FIX: MaxWalkSpeed is the cap, set once (not dynamic per frame)
-			MovementComp->MaxWalkSpeed = BaseSpeed * InstanceData.MovementSpeedMultiplier;
-		}
+	// Query EQS for tactical positions based on PositionChoice
+	TArray<FVector> CandidatePositions = QueryEQSPositions(Context, Macro.PositionChoice);
 
-		// Move using AI controller (normal AI) or direct input (Schola)
-		if (InstanceData.AIController)
-		{
-			// Schola mode: Use direct movement input (no pathfinding)
-			FVector CurrentLocation = Pawn->GetActorLocation();
-			FVector TargetLocation = CurrentLocation + WorldMoveDir * 500.0f;
+	if (CandidatePositions.Num() > 0)
+	{
+		FVector TargetLocation = CandidatePositions[0]; // Best EQS result
+		float AcceptanceRadius = 100.0f; // 1 meter acceptance radius
 
-			// FIX: MoveSpeed scales input - UE handles acceleration naturally
-			// MoveSpeed=0.5 → accelerates toward (MaxWalkSpeed * 0.5) smoothly
-			Pawn->AddMovementInput(WorldMoveDir, MoveSpeed);
-			SharedContext.MovementDestination = TargetLocation;
-			SharedContext.bIsMoving = true;
+		InstanceData.AIController->MoveToLocation(TargetLocation, AcceptanceRadius);
+		SharedContext.MovementDestination = TargetLocation;
+		SharedContext.bIsMoving = true;
 
-			UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC DIRECT] '%s': AddMovementInput(%.2f, %.2f, %.2f) Scale=%.2f, MaxSpeed=%.1f"),
-				*Pawn->GetName(),
-				WorldMoveDir.X, WorldMoveDir.Y, WorldMoveDir.Z,
-				MoveSpeed,
-				Pawn->FindComponentByClass<UCharacterMovementComponent>()->MaxWalkSpeed);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Display, TEXT("[MOVE EXEC DIRECT] No AI Controller"));
-		}
+		#if !UE_BUILD_SHIPPING
+		UE_LOG(LogTemp, Display, TEXT("[MOVE v4.0] '%s': NavMesh → %s (%.0f cm away)"),
+			*Pawn->GetName(),
+			*UEnum::GetValueAsString(Macro.PositionChoice),
+			FVector::Dist(Pawn->GetActorLocation(), TargetLocation));
+		#endif
 	}
 	else
 	{
-		// Stop movement
-		if (InstanceData.AIController)
-		{
-			InstanceData.AIController->StopMovement();
-		}
-		// For Schola: Movement stops naturally when AddMovementInput isn't called
+		// No valid position found - EQS query failed
+		InstanceData.AIController->StopMovement();
 		SharedContext.bIsMoving = false;
+
+		if (Macro.PositionChoice != ETacticalPosition::Hold)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] ❌ '%s': EQS query failed for %s - agent stuck!"),
+				*Pawn->GetName(), *UEnum::GetValueAsString(Macro.PositionChoice));
+		}
 	}
 }
 
@@ -271,36 +201,56 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 
-	// Get Pawn from InstanceData (bound to FollowerContext.ControlledPawn)
 	APawn* Pawn = InstanceData.ControlledPawn;
 	if (!Pawn)
 	{
 		return;
 	}
 
-	// Convert 2D look direction to rotation
-	FVector2D LookDir = Action.LookDirection;
+	// v4.0: Use macro action for engine-driven aiming
+	const FMacroAction& Macro = Action.MacroAction;
 
-	// RL-ONLY AIMING: No fallback to auto-targeting
-	// Agent must learn to aim via LookDirection output
-	if (LookDir.SizeSquared() > 0.01f)
+	if (Macro.TargetIndex >= 0)
 	{
-		// FIXED: Agent-relative aiming (not world-based)
-		// LookDir.X = Yaw [-1,1], LookDir.Y = Pitch [-1,1]
-		float DeltaYaw = LookDir.X * 180.0f; // Relative yaw change (degrees)
-		float DeltaPitch = LookDir.Y * 45.0f; // Relative pitch change (limit range)
+		// Get enemy actor from observation system
+		AActor* TargetEnemy = GetEnemyByIndex(Context, Macro.TargetIndex);
 
-		FRotator CurrentRotation = Pawn->GetActorRotation();
-		FRotator TargetRotation = CurrentRotation + FRotator(DeltaPitch, DeltaYaw, 0.0f);
+		if (TargetEnemy && InstanceData.AIController)
+		{
+			// Engine handles aiming automatically
+			InstanceData.AIController->SetFocus(TargetEnemy);
 
-		// Interpolate rotation
-		float RotSpeed = InstanceData.RotationSpeed;
-		FRotator NewRotation = FMath::RInterpTo(CurrentRotation, TargetRotation, DeltaTime, RotSpeed / 180.0f);
+			SharedContext.PrimaryTarget = TargetEnemy;
 
-		Pawn->SetActorRotation(NewRotation);
+			#if !UE_BUILD_SHIPPING
+			UE_LOG(LogTemp, Display, TEXT("[AIM v4.0] '%s': SetFocus → Enemy_%d ('%s')"),
+				*Pawn->GetName(), Macro.TargetIndex, *TargetEnemy->GetName());
+			#endif
+		}
+		else
+		{
+			// Target index valid but enemy not found - clear focus
+			if (InstanceData.AIController)
+			{
+				InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
+			}
+			SharedContext.PrimaryTarget = nullptr;
+
+			#if !UE_BUILD_SHIPPING
+			UE_LOG(LogTemp, Warning, TEXT("[AIM v4.0] '%s': Target_%d not found, clearing focus"),
+				*Pawn->GetName(), Macro.TargetIndex);
+			#endif
+		}
 	}
-	// REMOVED: Auto-aiming at PrimaryTarget when LookDir is zero
-	// This was rule-based assistance that prevented true RL learning
+	else
+	{
+		// No target - clear focus
+		if (InstanceData.AIController)
+		{
+			InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
+		}
+		SharedContext.PrimaryTarget = nullptr;
+	}
 }
 
 void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const
@@ -308,12 +258,6 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 
-	if (!Action.bFire)
-	{
-		return;
-	}
-
-	// Get Pawn from InstanceData (bound to FollowerContext.ControlledPawn)
 	APawn* Pawn = InstanceData.ControlledPawn;
 	if (!Pawn)
 	{
@@ -328,27 +272,53 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 		return;
 	}
 
-	if (!WeaponComp->CanFire())
-	{
-		//UE_LOG(LogTemp, Warning, TEXT("[EXEC FIRE] '%s': Weapon cannot fire (cooldown/ammo)"), *Pawn->GetName());
-		return;
-	}
+	// v4.0: Use macro action fire mode
+	const FMacroAction& Macro = Action.MacroAction;
 
-	// RL-ONLY FIRING: Fire in current facing direction
-	// No target validation, no LOS checks, no auto-aiming
-	// Agent must learn to aim before firing for effectiveness
-	FVector FireDirection = Pawn->GetActorForwardVector();
-	bool bFired = WeaponComp->FireInDirection(FireDirection);
-
-	if (!bFired)
+	switch (Macro.FireMode)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[EXEC FIRE] ❌ '%s': Fire failed (weapon state)"),
-			*Pawn->GetName());
+	case EFireMode::HoldFire:
+		// Don't fire
+		break;
+
+	case EFireMode::Fire:
+		// Fire at focused target (if within aim tolerance)
+		if (InstanceData.AIController && InstanceData.AIController->GetFocusActor())
+		{
+			if (!WeaponComp->CanFire())
+			{
+				return; // On cooldown or out of ammo
+			}
+
+			// Fire in current facing direction (SetFocus already aims)
+			FVector FireDirection = Pawn->GetActorForwardVector();
+			bool bFired = WeaponComp->FireInDirection(FireDirection);
+
+			#if !UE_BUILD_SHIPPING
+			if (bFired)
+			{
+				UE_LOG(LogTemp, Display, TEXT("[FIRE v4.0] '%s': Fired at '%s'"),
+					*Pawn->GetName(), *InstanceData.AIController->GetFocusActor()->GetName());
+			}
+			#endif
+		}
+		break;
+
+	case EFireMode::Suppress:
+		// Fire near enemy cover location (even if not visible)
+		// TODO: Implement suppressive fire logic
+		if (WeaponComp->CanFire())
+		{
+			FVector FireDirection = Pawn->GetActorForwardVector();
+			WeaponComp->FireInDirection(FireDirection);
+
+			#if !UE_BUILD_SHIPPING
+			UE_LOG(LogTemp, Display, TEXT("[SUPPRESS v4.0] '%s': Suppressive fire"),
+				*Pawn->GetName());
+			#endif
+		}
+		break;
 	}
-	
-	// REMOVED: PrimaryTarget and bHasLOS validation
-	// REMOVED: FireAtTarget() with predictive aiming
-	// Agent must learn targeting through trial and error
 }
 
 void FSTTask_ExecuteObjective::ExecuteCrouch(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const
@@ -356,90 +326,60 @@ void FSTTask_ExecuteObjective::ExecuteCrouch(FStateTreeExecutionContext& Context
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 
-	// Get Pawn from InstanceData (bound to FollowerContext.ControlledPawn)
 	APawn* Pawn = InstanceData.ControlledPawn;
 	if (!Pawn)
 	{
 		return;
 	}
 
-	// Toggle crouch via movement component
 	UCharacterMovementComponent* MovementComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
 	if (!MovementComp)
 	{
 		static bool bWarningShown = false;
 		if (!bWarningShown)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[CROUCH FAILED] '%s': No CharacterMovementComponent found!"), *Pawn->GetName());
+			UE_LOG(LogTemp, Error, TEXT("[STANCE] '%s': No CharacterMovementComponent found!"), *Pawn->GetName());
 			bWarningShown = true;
 		}
 		return;
 	}
 
-	if (Action.bCrouch && !MovementComp->IsCrouching())
+	// v4.0: Use macro action stance
+	const FMacroAction& Macro = Action.MacroAction;
+
+	switch (Macro.Stance)
 	{
-		MovementComp->bWantsToCrouch = true;
-		UE_LOG(LogTemp, Display, TEXT("[CROUCH] '%s': Crouching"), *Pawn->GetName());
-	}
-	else if (!Action.bCrouch && MovementComp->IsCrouching())
-	{
-		MovementComp->bWantsToCrouch = false;
-		UE_LOG(LogTemp, Display, TEXT("[CROUCH] '%s': Standing"), *Pawn->GetName());
+	case EStance::Stand:
+		if (MovementComp->IsCrouching())
+		{
+			MovementComp->bWantsToCrouch = false;
+			#if !UE_BUILD_SHIPPING
+			UE_LOG(LogTemp, Display, TEXT("[STANCE v4.0] '%s': Standing"), *Pawn->GetName());
+			#endif
+		}
+		// TODO: Exit prone if needed
+		break;
+
+	case EStance::Crouch:
+		if (!MovementComp->IsCrouching())
+		{
+			MovementComp->bWantsToCrouch = true;
+			#if !UE_BUILD_SHIPPING
+			UE_LOG(LogTemp, Display, TEXT("[STANCE v4.0] '%s': Crouching"), *Pawn->GetName());
+			#endif
+		}
+		break;
+
+	case EStance::Prone:
+		// TODO: Implement prone stance (custom movement mode)
+		// UE5 CharacterMovement doesn't support prone natively
+		#if !UE_BUILD_SHIPPING
+		UE_LOG(LogTemp, Warning, TEXT("[STANCE v4.0] '%s': Prone not implemented yet"), *Pawn->GetName());
+		#endif
+		break;
 	}
 }
 
-void FSTTask_ExecuteObjective::ExecuteAbility(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const
-{
-	if (!Action.bUseAbility)
-	{
-		return;
-	}
-
-	// Placeholder for ability system integration
-	//UE_LOG(LogTemp, Log, TEXT("STTask_ExecuteObjective: Ability %d requested (not implemented)"), Action.AbilityID);
-}
-
-FTacticalAction FSTTask_ExecuteObjective::ApplyMask(const FTacticalAction& RawAction, const FActionSpaceMask& Mask) const
-{
-	FTacticalAction MaskedAction = RawAction;
-
-	// Apply movement constraints
-	if (Mask.bLockMovementX)
-	{
-		MaskedAction.MoveDirection.X = 0.0f;
-	}
-	if (Mask.bLockMovementY)
-	{
-		MaskedAction.MoveDirection.Y = 0.0f;
-	}
-
-	// Clamp speed
-	MaskedAction.MoveSpeed = FMath::Clamp(MaskedAction.MoveSpeed, 0.0f, Mask.MaxSpeed);
-
-	// Apply aiming constraints (LookDirection is normalized [-1,1], convert to angles for clamping)
-	float Yaw = MaskedAction.LookDirection.X * 180.0f;
-	float Pitch = MaskedAction.LookDirection.Y * 90.0f;
-
-	Yaw = FMath::Clamp(Yaw, Mask.MinYaw, Mask.MaxYaw);
-	Pitch = FMath::Clamp(Pitch, Mask.MinPitch, Mask.MaxPitch);
-
-	MaskedAction.LookDirection.X = Yaw / 180.0f;
-	MaskedAction.LookDirection.Y = Pitch / 90.0f;
-
-	// Force crouch if required
-	if (Mask.bForceCrouch)
-	{
-		MaskedAction.bCrouch = true;
-	}
-
-	// Safety lock prevents firing
-	if (Mask.bSafetyLock)
-	{
-		MaskedAction.bFire = false;
-	}
-
-	return MaskedAction;
-}
 
 float FSTTask_ExecuteObjective::CalculateObjectiveReward(FStateTreeExecutionContext& Context, float DeltaTime) const
 {
@@ -516,4 +456,164 @@ bool FSTTask_ExecuteObjective::CheckObjectiveStatus(FStateTreeExecutionContext& 
 	}
 
 	return false; // Still active
+}
+
+//------------------------------------------------------------------------------
+// v4.0 MACRO ACTION HELPERS
+//------------------------------------------------------------------------------
+
+TArray<FVector> FSTTask_ExecuteObjective::QueryEQSPositions(FStateTreeExecutionContext& Context, ETacticalPosition PositionType) const
+{
+	TArray<FVector> Results;
+
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	APawn* Pawn = InstanceData.ControlledPawn;
+	if (!Pawn)
+	{
+		return Results;
+	}
+
+	FVector AgentLocation = Pawn->GetActorLocation();
+
+	switch (PositionType)
+	{
+	case ETacticalPosition::Hold:
+		// Stay at current location (no EQS needed)
+		Results.Add(AgentLocation);
+		break;
+
+	case ETacticalPosition::ForwardCover:
+		// Query EQS for cover points closer to objective
+		Results = RunEQSQuery(Pawn, FName("EQS_ForwardCover"));
+		break;
+
+	case ETacticalPosition::Retreat:
+		// Query EQS for cover points away from enemies
+		Results = RunEQSQuery(Pawn, FName("EQS_RetreatCover"));
+		break;
+
+	case ETacticalPosition::FlankLeft:
+		// Query EQS for left flank positions
+		Results = RunEQSQuery(Pawn, FName("EQS_FlankLeft"));
+		break;
+
+	case ETacticalPosition::FlankRight:
+		// Query EQS for right flank positions
+		Results = RunEQSQuery(Pawn, FName("EQS_FlankRight"));
+		break;
+
+	case ETacticalPosition::Advance:
+		// Move toward objective without cover requirement
+		Results = RunEQSQuery(Pawn, FName("EQS_Advance"));
+		break;
+	}
+
+	return Results;
+}
+
+TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, FName QueryName) const
+{
+	TArray<FVector> Results;
+
+	if (!Pawn)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ RunEQSQuery failed: Invalid Pawn"));
+		return Results;
+	}
+
+	// Load EQS query asset from Content/AI/EQS/ directory
+	FString AssetPath = FString::Printf(TEXT("/Game/AI/EQS/%s.%s"), *QueryName.ToString(), *QueryName.ToString());
+	UEnvQuery* Query = LoadObject<UEnvQuery>(nullptr, *AssetPath);
+
+	if (!Query)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': Failed to load EQS query '%s' at path '%s'"),
+			*Pawn->GetName(), *QueryName.ToString(), *AssetPath);
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0]    Create the query asset in UE Editor: Content/AI/EQS/%s.uasset"),
+			*QueryName.ToString());
+		return Results;
+	}
+
+	UWorld* World = Pawn->GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': No valid World for EQS query"), *Pawn->GetName());
+		return Results;
+	}
+
+	UEnvQueryManager* QueryManager = UEnvQueryManager::GetCurrent(World);
+	if (!QueryManager)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EnvQueryManager not available"), *Pawn->GetName());
+		return Results;
+	}
+
+	// Run instant EQS query (synchronous execution)
+	FEnvQueryRequest QueryRequest(Query, Pawn);
+	TSharedPtr<FEnvQueryResult> QueryResult = QueryManager->RunInstantQuery(QueryRequest, EEnvQueryRunMode::AllMatching);
+
+	if (!QueryResult.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EQS query '%s' returned invalid result"),
+			*Pawn->GetName(), *QueryName.ToString());
+		return Results;
+	}
+
+	if (!QueryResult->IsSuccessful())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EQS query '%s' failed to execute"),
+			*Pawn->GetName(), *QueryName.ToString());
+		return Results;
+	}
+
+	// Extract location results
+	const int32 ItemCount = QueryResult->Items.Num();
+	if (ItemCount == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[EQS v4.0] ⚠️ '%s': EQS query '%s' returned no valid positions"),
+			*Pawn->GetName(), *QueryName.ToString());
+		return Results;
+	}
+
+	Results.Reserve(ItemCount);
+
+	for (int i = 0; i < QueryResult->Items.Num(); ++i)
+	{
+		FVector ItemLocation = QueryResult->GetItemAsLocation(i);
+
+		if (!ItemLocation.IsZero())
+		{
+			Results.Add(ItemLocation);
+		}
+	}
+
+	#if !UE_BUILD_SHIPPING
+	UE_LOG(LogTemp, Display, TEXT("[EQS v4.0] ✅ '%s': Query '%s' returned %d positions (best score: %.1f)"),
+		*Pawn->GetName(), *QueryName.ToString(), Results.Num(),
+		QueryResult->Items.Num() > 0 ? QueryResult->Items[0].Score : 0.0f);
+	#endif
+
+	return Results;
+}
+
+AActor* FSTTask_ExecuteObjective::GetEnemyByIndex(FStateTreeExecutionContext& Context, int32 EnemyIndex) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
+
+	// Get visible enemies from context
+	if (EnemyIndex < 0 || EnemyIndex >= SharedContext.VisibleEnemies.Num())
+	{
+		return nullptr;
+	}
+
+	AActor* Enemy = SharedContext.VisibleEnemies[EnemyIndex];
+
+	// Validate enemy is still alive
+	if (Enemy && Enemy->IsValidLowLevel())
+	{
+		return Enemy;
+	}
+
+	return nullptr;
 }
