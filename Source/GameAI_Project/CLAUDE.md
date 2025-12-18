@@ -52,7 +52,7 @@ Task Type?
 | **Action Space** | 7D continuous (move, aim, fire, crouch) | 4D discrete (position, target, fire mode, stance) |
 | **Movement** | `AddMovementInput(velocity)` frame-by-frame | `MoveToLocation(cover_point)` via NavMesh |
 | **Aiming** | `AddYawInput(delta)` manual tracking | `SetFocus(enemy)` engine auto-aim |
-| **Complexity** | Infinite continuous state space | ~270 discrete states (6×5×3×3) |
+| **Complexity** | Infinite continuous state space | ~180 discrete states (4×5×3×3) |
 | **Training Speed** | Weeks to learn walking | Days to learn tactics |
 | **Focus** | "How to move legs?" | "Where to go, who to shoot?" |
 
@@ -114,14 +114,14 @@ Followers (N agents, tactical execution)
 Input: Individual observation (71 features + 7 objective embedding = 78 total)
   → Shared Trunk (128→128→64, ReLU)
   ├─ Actor Head (4 discrete logits) → Macro actions:
-  │   ├─ Position: [Hold, ForwardCover, Retreat, FlankLeft, FlankRight, Advance] (6)
+  │   ├─ Position: [Hold, ForwardCover, Retreat, Advance] (4)
   │   ├─ Target: [None, Enemy_0, ..., Enemy_N] (N+1, dynamic)
   │   ├─ Fire Mode: [HoldFire, Fire, Suppress] (3)
   │   └─ Stance: [Stand, Crouch, Prone] (3)
   └─ Critic Head (1 dim) → State value estimate ∈ [-1, 1]
 ```
 
-**Actions:** MultiDiscrete([6, N+1, 3, 3]) - High-level tactical decisions
+**Actions:** MultiDiscrete([4, N+1, 3, 3]) - High-level tactical decisions (flanking removed for simpler learning)
 
 **Execution Pipeline (v4.0):**
 - Python RLlib → Schola gRPC → TacticalActuator → FMacroAction → STTask_ExecuteObjective
@@ -195,9 +195,9 @@ Root
 **Required EQS Assets:**
 - `/Game/AI/EQS/EQS_ForwardCover.uasset` - Cover toward objective
 - `/Game/AI/EQS/EQS_RetreatCover.uasset` - Cover away from enemies
-- `/Game/AI/EQS/EQS_FlankLeft.uasset` - Left flank positions
-- `/Game/AI/EQS/EQS_FlankRight.uasset` - Right flank positions
 - `/Game/AI/EQS/EQS_Advance.uasset` - Forward positions (no cover)
+
+**Note:** FlankLeft/FlankRight removed to reduce action space (6→4 positions) for faster learning
 
 **Files:**
 - `StateTree/Tasks/STTask_ExecuteObjective.h/cpp` (v4.0 complete)
@@ -495,7 +495,7 @@ All critical systems verified and functional:
 ## v4.0 Implementation Status (2025-12-17)
 
 ### ✅ Phase 1: Data Structures & Python Interface
-- MultiDiscrete action space: [6, N+1, 3, 3]
+- MultiDiscrete action space: [4, N+1, 3, 3] (FlankLeft/Right removed for simpler learning)
 - FMacroAction struct with enums (ETacticalPosition, EFireMode, EStance)
 - Python environment updated (sbdapm_env.py)
 - Schola actuator updated (TacticalActuator)
@@ -515,14 +515,14 @@ All critical systems verified and functional:
 - Legacy v3.x code removed
 
 ### ⏳ Phase 4: Asset Creation & Testing (PENDING)
-- Create 5 EQS query assets in UE Editor
+- Create 3 EQS query assets in UE Editor (ForwardCover, RetreatCover, Advance)
 - Test macro action execution in PIE
 - Validate Python RLlib training integration
 - Performance testing and optimization
 
-**Code Implementation:** 100% Complete (3 hours)
-**Asset Creation & Testing:** Pending (5-8 hours estimated)
+**Code Implementation:** 100% Complete
+**Asset Creation & Testing:** Pending (3-5 hours estimated, reduced from 5-8 after removing flanking)
 
 ---
 
-**Last Updated:** v4.0 Phase 3 Complete - EQS Integration (2025-12-17)
+**Last Updated:** v4.0 Action Space Simplified - FlankLeft/Right Removed (2025-12-19)

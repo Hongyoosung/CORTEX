@@ -35,9 +35,8 @@ class AAIController;
  * EQS Assets Required (create in UE Editor):
  * - Content/AI/EQS/EQS_ForwardCover.uasset - Cover points toward objective
  * - Content/AI/EQS/EQS_RetreatCover.uasset - Cover points away from enemies
- * - Content/AI/EQS/EQS_FlankLeft.uasset - Left flank positions
- * - Content/AI/EQS/EQS_FlankRight.uasset - Right flank positions
  * - Content/AI/EQS/EQS_Advance.uasset - Forward positions (no cover required)
+ * Note: FlankLeft/FlankRight removed to reduce action space (6→4) for faster learning
  */
 
 USTRUCT()
@@ -138,8 +137,6 @@ protected:
 	 * Required Assets (create these in UE Editor):
 	 * - /Game/AI/EQS/EQS_ForwardCover.uasset
 	 * - /Game/AI/EQS/EQS_RetreatCover.uasset
-	 * - /Game/AI/EQS/EQS_FlankLeft.uasset
-	 * - /Game/AI/EQS/EQS_FlankRight.uasset
 	 * - /Game/AI/EQS/EQS_Advance.uasset
 	 */
 	TArray<FVector> RunEQSQuery(APawn* Pawn, FName QueryName) const;

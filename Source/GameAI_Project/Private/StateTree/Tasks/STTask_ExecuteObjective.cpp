@@ -492,16 +492,6 @@ TArray<FVector> FSTTask_ExecuteObjective::QueryEQSPositions(FStateTreeExecutionC
 		Results = RunEQSQuery(Pawn, FName("EQS_RetreatCover"));
 		break;
 
-	case ETacticalPosition::FlankLeft:
-		// Query EQS for left flank positions
-		Results = RunEQSQuery(Pawn, FName("EQS_FlankLeft"));
-		break;
-
-	case ETacticalPosition::FlankRight:
-		// Query EQS for right flank positions
-		Results = RunEQSQuery(Pawn, FName("EQS_FlankRight"));
-		break;
-
 	case ETacticalPosition::Advance:
 		// Move toward objective without cover requirement
 		Results = RunEQSQuery(Pawn, FName("EQS_Advance"));

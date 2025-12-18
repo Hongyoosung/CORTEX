@@ -8,6 +8,7 @@
 
 /**
  * Position selection for macro actions (v4.0)
+ * Simplified to 4 core positions (removed FlankLeft/FlankRight for faster learning)
  */
 UENUM(BlueprintType)
 enum class ETacticalPosition : uint8
@@ -15,8 +16,6 @@ enum class ETacticalPosition : uint8
 	Hold          UMETA(DisplayName = "Hold Position"),
 	ForwardCover  UMETA(DisplayName = "Advance to Forward Cover"),
 	Retreat       UMETA(DisplayName = "Retreat to Safe Position"),
-	FlankLeft     UMETA(DisplayName = "Flank Left"),
-	FlankRight    UMETA(DisplayName = "Flank Right"),
 	Advance       UMETA(DisplayName = "Advance (No Cover)")
 };
 

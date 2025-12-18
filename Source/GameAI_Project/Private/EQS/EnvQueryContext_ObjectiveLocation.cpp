@@ -5,6 +5,7 @@
 #include "StateTree/FollowerStateTreeContext.h"
 #include "Team/Objective.h"
 #include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
 
 void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
@@ -14,28 +15,35 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 		return;
 	}
 
-	// Get FollowerStateTreeComponent to access shared context
+	FVector ObjectiveLocation = FVector::ZeroVector;
+
+	// Production mode: Get FollowerStateTreeComponent to access shared context
 	UFollowerStateTreeComponent* StateTreeComp = QueryOwner->FindComponentByClass<UFollowerStateTreeComponent>();
-	if (!StateTreeComp)
+	if (StateTreeComp)
 	{
-		return;
+		// Access CurrentObjective from shared context
+		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
+		if (SharedContext.CurrentObjective)
+		{
+			// Get objective target location
+			ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
+
+			// Fallback: If TargetLocation is zero, try TargetActor location
+			if (ObjectiveLocation.IsNearlyZero() && SharedContext.CurrentObjective->TargetActor)
+			{
+				ObjectiveLocation = SharedContext.CurrentObjective->TargetActor->GetActorLocation();
+			}
+		}
 	}
-
-	// Access CurrentObjective from shared context
-	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-	if (!SharedContext.CurrentObjective)
+	else
 	{
-		// No objective assigned
-		return;
-	}
-
-	// Get objective target location
-	FVector ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
-
-	// Fallback: If TargetLocation is zero, try TargetActor location
-	if (ObjectiveLocation.IsNearlyZero() && SharedContext.CurrentObjective->TargetActor)
-	{
-		ObjectiveLocation = SharedContext.CurrentObjective->TargetActor->GetActorLocation();
+		// Testing mode: Fallback to finding actor by tag (for EQS Testing Pawn)
+		TArray<AActor*> FoundObjectives;
+		UGameplayStatics::GetAllActorsWithTag(QueryOwner->GetWorld(), FName("Objective"), FoundObjectives);
+		if (FoundObjectives.Num() > 0 && IsValid(FoundObjectives[0]))
+		{
+			ObjectiveLocation = FoundObjectives[0]->GetActorLocation();
+		}
 	}
 
 	// Set objective location as context data

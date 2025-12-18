@@ -4,6 +4,7 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
 
 void UEnvQueryContext_VisibleEnemies::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
@@ -13,28 +14,33 @@ void UEnvQueryContext_VisibleEnemies::ProvideContext(FEnvQueryInstance& QueryIns
 		return;
 	}
 
-	// Get FollowerStateTreeComponent to access shared context
-	UFollowerStateTreeComponent* StateTreeComp = QueryOwner->FindComponentByClass<UFollowerStateTreeComponent>();
-	if (!StateTreeComp)
-	{
-		return;
-	}
-
-	// Access VisibleEnemies from shared context
-	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-	if (SharedContext.VisibleEnemies.Num() == 0)
-	{
-		// No visible enemies
-		return;
-	}
-
-	// Collect enemy locations
 	TArray<FVector> EnemyLocations;
-	for (AActor* Enemy : SharedContext.VisibleEnemies)
+
+	// Production mode: Get FollowerStateTreeComponent to access shared context
+	UFollowerStateTreeComponent* StateTreeComp = QueryOwner->FindComponentByClass<UFollowerStateTreeComponent>();
+	if (StateTreeComp)
 	{
-		if (Enemy && IsValid(Enemy))
+		// Access VisibleEnemies from shared context
+		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
+		for (AActor* Enemy : SharedContext.VisibleEnemies)
 		{
-			EnemyLocations.Add(Enemy->GetActorLocation());
+			if (Enemy && IsValid(Enemy))
+			{
+				EnemyLocations.Add(Enemy->GetActorLocation());
+			}
+		}
+	}
+	else
+	{
+		// Testing mode: Fallback to finding actors by tag (for EQS Testing Pawn)
+		TArray<AActor*> FoundEnemies;
+		UGameplayStatics::GetAllActorsWithTag(QueryOwner->GetWorld(), FName("Enemy"), FoundEnemies);
+		for (AActor* Enemy : FoundEnemies)
+		{
+			if (Enemy && IsValid(Enemy))
+			{
+				EnemyLocations.Add(Enemy->GetActorLocation());
+			}
 		}
 	}
 

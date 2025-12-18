@@ -4,8 +4,8 @@ SBDAPM Environment Wrapper for Schola/RLlib Training (v4.0 Macro Actions)
 Multi-agent environment for 4 follower agents with shared PPO policy.
 
 Observation: 78 features per agent (71 FObservationElement + 7 current objective embedding)
-Action: MultiDiscrete([6, 11, 3, 3]) per agent (discrete tactical decisions)
-  - [0]: Position: [Hold, ForwardCover, Retreat, FlankL, FlankR, Advance] (6 options)
+Action: MultiDiscrete([4, 11, 3, 3]) per agent (discrete tactical decisions)
+  - [0]: Position: [Hold, ForwardCover, Retreat, Advance] (4 options, flanking removed)
   - [1]: Target: [None, Enemy_0, ..., Enemy_9] (11 options, 0 = none)
   - [2]: Fire Mode: [HoldFire, Fire, Suppress] (3 options)
   - [3]: Stance: [Stand, Crouch, Prone] (3 options)
@@ -69,11 +69,11 @@ class SBDAPMEnv:
             dtype=np.float32
         )
         # MultiDiscrete action space for macro actions
-        # [0]: Position choice (6 options)
+        # [0]: Position choice (4 options: Hold, ForwardCover, Retreat, Advance)
         # [1]: Target index (max_enemies+1 options, 0 = none)
         # [2]: Fire mode (3 options)
         # [3]: Stance (3 options)
-        self.action_space = spaces.MultiDiscrete([6, max_enemies + 1, 3, 3])
+        self.action_space = spaces.MultiDiscrete([4, max_enemies + 1, 3, 3])
 
         # Episode tracking
         self.episode_steps = 0

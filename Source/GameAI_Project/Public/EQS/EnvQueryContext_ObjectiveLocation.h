@@ -8,7 +8,8 @@
  * EQS Context that provides the current objective's target location
  * Used by tactical queries (ForwardCover, Advance, etc.) to orient toward strategic goals
  *
- * Integration: Reads CurrentObjective.TargetLocation from FollowerStateTreeContext
+ * Production Mode: Reads CurrentObjective.TargetLocation from FollowerStateTreeContext
+ * Testing Mode: Fallback to searching actors with tag "Objective" (for EQS Testing Pawn)
  */
 UCLASS()
 class GAMEAI_PROJECT_API UEnvQueryContext_ObjectiveLocation : public UEnvQueryContext

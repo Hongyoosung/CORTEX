@@ -8,7 +8,8 @@
  * EQS Context that provides visible enemy locations for tactical positioning
  * Used by tactical queries (RetreatCover, FlankLeft/Right, etc.) to avoid/flank enemies
  *
- * Integration: Reads VisibleEnemies array from FollowerStateTreeContext
+ * Production Mode: Reads VisibleEnemies array from FollowerStateTreeContext
+ * Testing Mode: Fallback to searching actors with tag "Enemy" (for EQS Testing Pawn)
  *
  * Note: This differs from EnvQueryContext_CoverEnemies which uses TeamLeader's known enemies.
  * VisibleEnemies is the individual agent's current perception state, updated each tick.
