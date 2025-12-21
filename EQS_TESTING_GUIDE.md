@@ -76,56 +76,6 @@ For each query type, you need different environmental setups:
 
 ---
 
-#### Test Setup for EQS_FlankLeft
-
-**Environment Requirements:**
-```
-        [Flank Positions]
-              /
-             /
-        [Querier]-------[Objective]
-
-
-        [Enemy Actors]
-```
-
-**Setup Steps:**
-1. Place EQS Testing Pawn at (0, 0, 0)
-2. Rotate pawn to face +X direction (toward objective)
-3. Place objective at (1000, 0, 0) [forward]
-4. Place enemy actors at (700, 0, 0) [between pawn and objective]
-5. Leave LEFT side (+Y direction) open with optional cover at (500, 800, 0)
-
-**Expected Visualization:**
-- **Green spheres:** Should form an arc to the LEFT of pawn (positive Y)
-- **Arc angle:** ~90 degrees on left quadrant
-- **Red spheres:** Positions behind pawn or too far
-- **Best position:** Forward-left at tactical distance from enemies
-
----
-
-#### Test Setup for EQS_FlankRight
-
-**Environment Requirements:**
-```
-        [Querier]-------[Objective]
-             \
-              \
-               [Flank Positions]
-
-        [Enemy Actors]
-```
-
-**Setup Steps:**
-1. Same as FlankLeft, but positions should appear on RIGHT side (negative Y)
-2. Place optional cover at (500, -800, 0)
-
-**Expected Visualization:**
-- **Green spheres:** Arc to the RIGHT of pawn (negative Y)
-- **Mirror of FlankLeft visualization**
-
----
-
 #### Test Setup for EQS_Advance
 
 **Environment Requirements:**
@@ -194,8 +144,6 @@ For each query type, you need different environmental setups:
    ```
    ExecuteMacroAction 1 0 0 0 0  // TacticalPos=ForwardCover
    ExecuteMacroAction 2 0 0 0 0  // TacticalPos=Retreat
-   ExecuteMacroAction 3 0 0 0 0  // TacticalPos=FlankLeft
-   ExecuteMacroAction 4 0 0 0 0  // TacticalPos=FlankRight
    ExecuteMacroAction 5 0 0 0 0  // TacticalPos=Advance
    ```
 
@@ -247,16 +195,6 @@ For each EQS query, verify:
 - [ ] Positions have cover (not in open)
 - [ ] Best position is farthest from enemies
 - [ ] Dot product test ensures backward movement
-
-### EQS_FlankLeft
-- [ ] Positions form arc on LEFT side only (90-degree quadrant)
-- [ ] Arc radius matches Circle generator setting (~1000 units)
-- [ ] Positions maintain tactical distance from enemies (400-1200 units)
-- [ ] Best position is most left while staying in range
-
-### EQS_FlankRight
-- [ ] Mirror of FlankLeft (RIGHT side arc)
-- [ ] Same distance and angle constraints
 
 ### EQS_Advance
 - [ ] Positions form forward arc (120 degrees)

@@ -193,6 +193,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Perception|Debug")
 	bool bDrawDebugInfo = false;
 
+	//--------------------------------------------------------------------------
+	// EVENTS (v4.0 Event-Driven Decisions)
+	//--------------------------------------------------------------------------
+
+	/** Event fired when new enemy is detected for the first time */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemySpottedSignature, AActor*, Enemy);
+
+	UPROPERTY(BlueprintAssignable, Category = "Perception|Events")
+	FOnEnemySpottedSignature OnEnemySpotted;
+
+	/** Event fired when all enemies are lost from sight */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllEnemiesLostSignature);
+
+	UPROPERTY(BlueprintAssignable, Category = "Perception|Events")
+	FOnAllEnemiesLostSignature OnAllEnemiesLost;
+
 
 private:
 	/** Perception update callback */

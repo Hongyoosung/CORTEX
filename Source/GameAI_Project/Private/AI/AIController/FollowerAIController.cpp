@@ -23,6 +23,12 @@ void AFollowerAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
+	// DIAGNOSTIC: Verify PathFollowingComponent exists (required for MoveToLocation)
+	UPathFollowingComponent* PathFollowing = GetPathFollowingComponent();
+	UE_LOG(LogTemp, Warning, TEXT("FollowerAIController::OnPossess: Pawn='%s', PathFollowingComponent=%s"),
+		*GetNameSafe(InPawn),
+		PathFollowing ? TEXT("✅ Valid") : TEXT("❌ NULL - MOVEMENT WILL FAIL!"));
+
 	// Cache components
 	InitializeComponents();
 

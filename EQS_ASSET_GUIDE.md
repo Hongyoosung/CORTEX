@@ -14,8 +14,6 @@ Phase 4: EQS Asset Creation Guide
   3. Create 5 assets with these exact names:
     - EQS_ForwardCover
     - EQS_RetreatCover
-    - EQS_FlankLeft
-    - EQS_FlankRight
     - EQS_Advance
 
   Step 3: Configure Each EQS Query
@@ -100,52 +98,7 @@ Phase 4: EQS Asset Creation Guide
     - Filter: Remove unreachable positions
 
   ---
-  3. EQS_FlankLeft (Left flank positions)
-
-  Purpose: Find positions to the left of current position relative to objective/enemies.    
-
-  Configuration:
-
-  1. Generator: Points: Circle
-    - Circle Radius: 1000 units
-    - Space Between: 150 units
-    - Arc Direction: Querier Rotation (or use custom context)
-    - Arc Angle: 90 degrees (left quadrant only)
-    - Angle Offset: 90 (rotate to left side)
-    - Generate Around: Querier
-  2. Tests:
-
-  2. a. Trace Test (Optional - only if flanking with cover)
-    - Same as above, or disable for aggressive flanking
-
-  b. Distance Test (Maintain tactical distance)
-    - Distance To: EQS_EnemiesContext
-    - Clamp Min: 400, Clamp Max: 1200
-    - Scoring: Constant (filter only)
-
-  c. Dot Product Test (Verify left-side positioning)
-    - Line A: Querier to Position
-    - Line B: Querier Right Vector (perpendicular left)
-    - Scoring: Higher dot = more left
-
-  d. Path Finding Test
-    - Filter unreachable positions
-
-  ---
-  4. EQS_FlankRight (Right flank positions)
-
-  Purpose: Mirror of FlankLeft for right-side flanking.
-
-  Configuration:
-
-  1. Generator: Points: Circle
-    - Same as FlankLeft
-    - Angle Offset: -90 (rotate to right side)
-  2. Tests:
-    - Same as FlankLeft, but reverse the dot product or use Right Vector with negative scoring
-
-  ---
-  5. EQS_Advance (Forward positions, no cover required)
+  3. EQS_Advance (Forward positions, no cover required)
 
   Purpose: Aggressive forward movement toward objective without cover requirement.
 

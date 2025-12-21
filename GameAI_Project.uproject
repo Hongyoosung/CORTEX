@@ -49,7 +49,12 @@
 		},
 		{
 			"Name": "NNEDenoiser",
-			"Enabled": true
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Win64",
+				"Linux",
+				"Mac"
+			]
 		},
 		{
 			"Name": "GameplayAbilities",

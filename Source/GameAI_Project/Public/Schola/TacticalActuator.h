@@ -13,11 +13,13 @@ class UFollowerStateTreeComponent;
 /**
  * Schola actuator that receives macro actions from Python and applies them to follower agents.
  *
- * v4.0 Action space: MultiDiscrete([6, N+1, 3, 3])
- * - [0]: Position choice: [Hold, ForwardCover, Retreat, FlankLeft, FlankRight, Advance] (6 options)
+ * v4.0 Action space: MultiDiscrete([4, N+1, 3, 3])
+ * - [0]: Position choice: [Hold, ForwardCover, Retreat, Advance] (4 options, flanking removed)
  * - [1]: Target index: [None=-1, Enemy_0, ..., Enemy_N] (N+1 options, dynamic based on MaxEnemies)
  * - [2]: Fire mode: [HoldFire, Fire, Suppress] (3 options)
  * - [3]: Stance: [Stand, Crouch, Prone] (3 options)
+ *
+ * Note: FlankLeft/FlankRight removed in v4.0 to simplify action space for faster learning
  *
  * Integration:
  * - Python RLlib environment → Schola gRPC → TacticalActuator::TakeAction()

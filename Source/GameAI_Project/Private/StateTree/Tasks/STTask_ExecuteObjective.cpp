@@ -8,6 +8,7 @@
 #include "Combat/WeaponComponent.h"
 #include "Combat/HealthComponent.h"
 #include "AIController.h"
+#include "AITypes.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "RL/RLPolicyNetwork.h"
@@ -15,6 +16,13 @@
 #include "EnvironmentQuery/EnvQueryManager.h"
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryInstanceBlueprintWrapper.h"
+#include "Navigation/PathFollowingComponent.h"
+#include "NavigationSystem.h"
+#include "NavigationPath.h"
+#include "DrawDebugHelpers.h"
+#include "AI/Navigation/NavigationTypes.h"
+#include "TimerManager.h"
+#include "NavMesh/NavMeshPath.h"
 
 EStateTreeRunStatus FSTTask_ExecuteObjective::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
@@ -45,21 +53,13 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::EnterState(FStateTreeExecutionCont
 		return EStateTreeRunStatus::Failed;
 	}
 
-	FString PawnName = Pawn->GetName();
-	FString ObjectiveName = SharedContext.CurrentObjective
-		? UEnum::GetValueAsString(SharedContext.CurrentObjective->Type)
-		: TEXT("None");
-
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [EXEC OBJ] '%s': ENTER - Objective: %s, Health: %.1f%%, Returning RUNNING"),
-		*PawnName, *ObjectiveName, SharedContext.CurrentObservation.AgentHealth);
-
 	SharedContext.TimeInTacticalAction = 0.0f;
 	SharedContext.ActionProgress = 0.0f;
 
-	// Reset action throttle timer
+	// Reset action throttle timer and previous action (to trigger initial execution)
 	InstanceData.TimeSinceLastAction = 0.0f;
+	InstanceData.PreviousMacroAction = FMacroAction();  // Default-initialized (will differ from any real action)
 
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [EXEC OBJ] '%s': EnterState returning Running (StateTree should call Tick next)"), *PawnName);
 	return EStateTreeRunStatus::Running;
 }
 
@@ -67,10 +67,6 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
-
-	// DIAGNOSTIC: Log EVERY tick (not throttled) to diagnose issue
-	static int32 TickCounter = 0;
-	TickCounter++;
 
 	APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
 
@@ -90,7 +86,7 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 	SharedContext.TimeInTacticalAction += DeltaTime;
 
 	// v4.0: Action throttling - decouple execution rate from FPS
-	// Only execute actions at fixed rate (default 20 Hz) to match Schola's action frequency
+	// Only execute actions at fixed rate (default 20 Hz) for continuous updates (aiming, firing)
 	InstanceData = Context.GetInstanceData(*this);
 	InstanceData.TimeSinceLastAction += DeltaTime;
 
@@ -101,15 +97,35 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 		// Reset timer for next interval
 		InstanceData.TimeSinceLastAction = 0.0f;
 
-		// v4.0: Execute macro action components directly
-		// Action already set by TacticalActuator (Schola) or local RL policy
+		// v4.0: Execute macro action components
 		const FTacticalAction& Action = SharedContext.CurrentAtomicAction;
+		const FMacroAction& CurrentMacro = Action.MacroAction;
+		const FMacroAction& PreviousMacro = InstanceData.PreviousMacroAction;
 
-		ExecuteMovement(Context, Action, DeltaTime);
-		ExecuteAiming(Context, Action, DeltaTime);
-		ExecuteFire(Context, Action);
-		ExecuteCrouch(Context, Action);
-		// Note: ExecuteAbility removed - not needed for v4.0
+		// CRITICAL: Detect action changes to avoid redundant EQS queries
+		// Movement/Target/Stance only change when action changes (one-shot setup)
+		// Aiming/Firing update continuously (20 Hz smooth tracking)
+		bool bActionChanged = (
+			CurrentMacro.PositionChoice != PreviousMacro.PositionChoice ||
+			CurrentMacro.TargetIndex != PreviousMacro.TargetIndex ||
+			CurrentMacro.Stance != PreviousMacro.Stance
+		);
+
+		// One-shot setup (only when action changes)
+		if (bActionChanged)
+		{
+			ExecuteMovement(Context, Action, DeltaTime);  // EQS + NavMesh
+			ExecuteAiming(Context, Action, DeltaTime);     // SetFocus on new target
+			ExecuteCrouch(Context, Action);                // Change stance
+			InstanceData.PreviousMacroAction = CurrentMacro;
+		}
+		else
+		{
+			// Continuous updates (every 0.05s while action persists)
+			// Aiming: Track moving target (SetFocus handles this automatically)
+			// Firing: Pull trigger if conditions met
+			ExecuteFire(Context, Action);
+		}
 	}
 
 	// Calculate and provide reward (every frame, not throttled)
@@ -124,21 +140,7 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 
 void FSTTask_ExecuteObjective::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
-	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
-
-	APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
-
-	// Log detailed exit information
-	UE_LOG(LogTemp, Error, TEXT("❌ [EXEC OBJ EXIT] '%s': Exiting after %.1fs, Reason: %s"),
-		*GetNameSafe(Pawn),
-		SharedContext.TimeInTacticalAction,
-		*UEnum::GetValueAsString(Transition.ChangeType));
-
-	UE_LOG(LogTemp, Error, TEXT("   → Objective=%s, Alive=%d, Transition=%s"),
-		SharedContext.CurrentObjective ? *UEnum::GetValueAsString(SharedContext.CurrentObjective->Type) : TEXT("NULL"),
-		SharedContext.bIsAlive ? 1 : 0,
-		Transition.NextActiveFrames.Num() > 0 ? TEXT("To another state") : TEXT("Tree stopped"));
+	// v7.3: Removed verbose exit logging to reduce log spam during training
 }
 
 
@@ -156,31 +158,184 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 
 	if (!InstanceData.AIController)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] '%s': No AIController - cannot use NavMesh"), *Pawn->GetName());
+		UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] '%s': No AIController"), *Pawn->GetName());
 		return;
+	}
+
+	// CRITICAL: Verify AIController actually controls this pawn
+	if (InstanceData.AIController->GetPawn() != Pawn)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] ❌ AIController '%s' does NOT control pawn '%s'! GetPawn()=%s"),
+			*InstanceData.AIController->GetName(),
+			*Pawn->GetName(),
+			*GetNameSafe(InstanceData.AIController->GetPawn()));
+
+		// FIX: Re-possess the pawn
+		UE_LOG(LogTemp, Error, TEXT("[MOVE FIX] Re-possessing pawn '%s' with AIController '%s'"),
+			*Pawn->GetName(), *InstanceData.AIController->GetName());
+
+		InstanceData.AIController->Possess(Pawn);
+
+		// Verify re-possession succeeded
+		if (InstanceData.AIController->GetPawn() != Pawn)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[MOVE FIX] ❌ Re-possession FAILED! Cannot move."));
+			return;
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[MOVE FIX] ✅ Re-possession successful"));
 	}
 
 	// v4.0: Use macro action for high-level tactical movement
 	const FMacroAction& Macro = Action.MacroAction;
 
-	// Query EQS for tactical positions based on PositionChoice
 	TArray<FVector> CandidatePositions = QueryEQSPositions(Context, Macro.PositionChoice);
 
 	if (CandidatePositions.Num() > 0)
 	{
-		FVector TargetLocation = CandidatePositions[0]; // Best EQS result
-		float AcceptanceRadius = 100.0f; // 1 meter acceptance radius
+		float AcceptanceRadius = 100.0f;
+		FVector TargetPos = CandidatePositions[0];
+		FVector CurrentPos = Pawn->GetActorLocation();
+		float Distance = FVector::Dist(CurrentPos, TargetPos);
 
-		InstanceData.AIController->MoveToLocation(TargetLocation, AcceptanceRadius);
-		SharedContext.MovementDestination = TargetLocation;
-		SharedContext.bIsMoving = true;
+		// DIAGNOSTIC: Check all prerequisites for movement
+		UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
+		UPathFollowingComponent* PathComp = InstanceData.AIController->GetPathFollowingComponent();
+		UWorld* World = Pawn->GetWorld();
+		UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
 
-		#if !UE_BUILD_SHIPPING
-		UE_LOG(LogTemp, Display, TEXT("[MOVE v4.0] '%s': NavMesh → %s (%.0f cm away)"),
-			*Pawn->GetName(),
-			*UEnum::GetValueAsString(Macro.PositionChoice),
-			FVector::Dist(Pawn->GetActorLocation(), TargetLocation));
-		#endif
+		// Check if NavMesh has valid path to destination
+		bool bPathExists = false;
+		FPathFindingQuery Query;
+		if (NavSys)
+		{
+			Query = FPathFindingQuery(*InstanceData.AIController, *NavSys->GetDefaultNavDataInstance(), CurrentPos, TargetPos);
+			FPathFindingResult Result = NavSys->FindPathSync(Query);
+			bPathExists = Result.IsSuccessful() && Result.Path.IsValid();
+
+			if (!bPathExists)
+			{
+				// Check if target location is even ON the NavMesh
+				FNavLocation NavLoc;
+				bool bOnNavMesh = NavSys->ProjectPointToNavigation(TargetPos, NavLoc, FVector(500, 500, 500));
+
+				UE_LOG(LogTemp, Error, TEXT("[MOVE DIAG] ❌ '%s': NO VALID PATH to destination! Target on NavMesh=%s"),
+					*Pawn->GetName(), bOnNavMesh ? TEXT("Yes, but unreachable") : TEXT("NO - outside NavMesh!"));
+
+				// Draw debug to show the problem
+				DrawDebugSphere(World, TargetPos, 100.0f, 12, FColor::Red, false, 5.0f);
+				DrawDebugLine(World, CurrentPos, TargetPos, FColor::Red, false, 5.0f, 0, 3.0f);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Log, TEXT("[MOVE DIAG] ✅ Path exists: %.1f units, %d points"),
+					Result.Path->GetLength(), Result.Path->GetPathPoints().Num());
+			}
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[MOVE DIAG] '%s': Distance=%.1f, CharMovement=%s, PathFollowing=%s, NavSys=%s, PathExists=%s"),
+			*Pawn->GetName(), Distance,
+			MoveComp ? TEXT("✅") : TEXT("❌"),
+			PathComp ? TEXT("✅") : TEXT("❌"),
+			NavSys ? TEXT("✅") : TEXT("❌"),
+			bPathExists ? TEXT("✅") : TEXT("❌ NO PATH!"));
+
+		if (MoveComp)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[MOVE DIAG] CharMovement: Mode=%d (Walking=1), MaxSpeed=%.1f, bOrientToMovement=%d"),
+				(int32)MoveComp->MovementMode, MoveComp->MaxWalkSpeed, MoveComp->bOrientRotationToMovement ? 1 : 0);
+		}
+
+		// CRITICAL DIAGNOSTIC: Check PathFollowingComponent status
+		if (PathComp)
+		{
+			EPathFollowingStatus::Type PathStatus = PathComp->GetStatus();
+			bool bHasValidPath = PathComp->HasValidPath();
+			bool bIsPathFollowing = PathComp->HasReached(TargetPos, EPathFollowingReachMode::OverlapAgent) == false;
+
+			UE_LOG(LogTemp, Error, TEXT("[PATHFOLLOW DIAG] Status=%s, HasValidPath=%d, CurrentRequestID=%d"),
+				PathStatus == EPathFollowingStatus::Idle ? TEXT("Idle") :
+				PathStatus == EPathFollowingStatus::Waiting ? TEXT("Waiting") :
+				PathStatus == EPathFollowingStatus::Paused ? TEXT("Paused") :
+				PathStatus == EPathFollowingStatus::Moving ? TEXT("Moving - BLOCKING NEW REQUESTS!") : TEXT("Unknown"),
+				bHasValidPath ? 1 : 0,
+				(int32)PathComp->GetCurrentRequestId().GetID()); 
+
+			// If already moving, STOP first
+			if (PathStatus == EPathFollowingStatus::Moving)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[PATHFOLLOW FIX] Stopping existing movement before new request"));
+				InstanceData.AIController->StopMovement();
+			}
+		}
+
+		// FIX: Project target position onto NavMesh before MoveToLocation
+		FVector NavTargetPos = TargetPos;
+		if (NavSys && !bPathExists)
+		{
+			FNavLocation NavLoc;
+			if (NavSys->ProjectPointToNavigation(TargetPos, NavLoc, FVector(500, 500, 500)))
+			{
+				NavTargetPos = NavLoc.Location;
+				UE_LOG(LogTemp, Warning, TEXT("[MOVE FIX] Projected EQS position onto NavMesh (offset: %.1f units)"),
+					FVector::Dist(TargetPos, NavTargetPos));
+
+				// Re-check path with projected position
+				Query = FPathFindingQuery(*InstanceData.AIController, *NavSys->GetDefaultNavDataInstance(), CurrentPos, NavTargetPos);
+				FPathFindingResult Result = NavSys->FindPathSync(Query);
+				bPathExists = Result.IsSuccessful() && Result.Path.IsValid();
+			}
+		}
+
+		// Try movement - with detailed result checking
+		FAIMoveRequest MoveReq(NavTargetPos);
+		MoveReq.SetAcceptanceRadius(AcceptanceRadius);
+		MoveReq.SetUsePathfinding(true);
+
+		FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
+
+		UE_LOG(LogTemp, Error, TEXT("[MOVE DIAG] MoveTo result: Code=%s, RequestID=%s"),
+			MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful ? TEXT("✅ RequestSuccessful") :
+			MoveResult.Code == EPathFollowingRequestResult::AlreadyAtGoal ? TEXT("📍 AlreadyAtGoal") :
+			MoveResult.Code == EPathFollowingRequestResult::Failed ? TEXT("❌ Failed") : TEXT("Unknown"),
+			*MoveResult.MoveId.ToString()); // %s에 맞춰 .ToString() 사용
+
+		// If path is invalid despite FindPathSync succeeding, something is wrong
+		if (MoveResult.Code == EPathFollowingRequestResult::Failed && bPathExists)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] ❌❌ CRITICAL: FindPathSync succeeded but MoveTo failed! Investigating..."));
+
+			// Check if AIController can generate path internally
+			if (PathComp)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] PathFollowingComponent details: Status=%d, HasPath=%d"),
+					(int32)PathComp->GetStatus(), PathComp->HasValidPath() ? 1 : 0);
+			}
+
+			// Check if NavData is valid
+			if (NavSys)
+			{
+				const ANavigationData* NavData = NavSys->GetDefaultNavDataInstance();
+				UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] NavData: %s, CanBeMainNavData=%d"),
+					NavData ? *NavData->GetName() : TEXT("NULL"),
+					NavData ? (int32)NavData->CanBeMainNavData() : 0);
+			}
+		}
+
+		// Check movement status after 0.1s
+		FTimerHandle CheckHandle;
+		World->GetTimerManager().SetTimer(CheckHandle, [Pawn, NavTargetPos, CurrentPos]()
+		{
+			if (Pawn)
+			{
+				FVector NewPos = Pawn->GetActorLocation();
+				float MovedDistance = FVector::Dist(CurrentPos, NewPos);
+				UE_LOG(LogTemp, Warning, TEXT("[MOVE DIAG] After 0.1s: '%s' moved %.1f units (expected >0 if moving)"),
+					*Pawn->GetName(), MovedDistance);
+			}
+		}, 0.1f, false);
+
+		SharedContext.MovementDestination = NavTargetPos;  // Use projected position
+		SharedContext.bIsMoving = (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful);
 	}
 	else
 	{
@@ -193,6 +348,8 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 			UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] ❌ '%s': EQS query failed for %s - agent stuck!"),
 				*Pawn->GetName(), *UEnum::GetValueAsString(Macro.PositionChoice));
 		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[MOVE v4.0] '%s': Holding position (no valid EQS result)"), *Pawn->GetName());
 	}
 }
 
@@ -219,13 +376,7 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 		{
 			// Engine handles aiming automatically
 			InstanceData.AIController->SetFocus(TargetEnemy);
-
 			SharedContext.PrimaryTarget = TargetEnemy;
-
-			#if !UE_BUILD_SHIPPING
-			UE_LOG(LogTemp, Display, TEXT("[AIM v4.0] '%s': SetFocus → Enemy_%d ('%s')"),
-				*Pawn->GetName(), Macro.TargetIndex, *TargetEnemy->GetName());
-			#endif
 		}
 		else
 		{
@@ -235,11 +386,6 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 				InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
 			}
 			SharedContext.PrimaryTarget = nullptr;
-
-			#if !UE_BUILD_SHIPPING
-			UE_LOG(LogTemp, Warning, TEXT("[AIM v4.0] '%s': Target_%d not found, clearing focus"),
-				*Pawn->GetName(), Macro.TargetIndex);
-			#endif
 		}
 	}
 	else
@@ -292,30 +438,16 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 
 			// Fire in current facing direction (SetFocus already aims)
 			FVector FireDirection = Pawn->GetActorForwardVector();
-			bool bFired = WeaponComp->FireInDirection(FireDirection);
-
-			#if !UE_BUILD_SHIPPING
-			if (bFired)
-			{
-				UE_LOG(LogTemp, Display, TEXT("[FIRE v4.0] '%s': Fired at '%s'"),
-					*Pawn->GetName(), *InstanceData.AIController->GetFocusActor()->GetName());
-			}
-			#endif
+			WeaponComp->FireInDirection(FireDirection);
 		}
 		break;
 
 	case EFireMode::Suppress:
 		// Fire near enemy cover location (even if not visible)
-		// TODO: Implement suppressive fire logic
 		if (WeaponComp->CanFire())
 		{
 			FVector FireDirection = Pawn->GetActorForwardVector();
 			WeaponComp->FireInDirection(FireDirection);
-
-			#if !UE_BUILD_SHIPPING
-			UE_LOG(LogTemp, Display, TEXT("[SUPPRESS v4.0] '%s': Suppressive fire"),
-				*Pawn->GetName());
-			#endif
 		}
 		break;
 	}
@@ -353,29 +485,18 @@ void FSTTask_ExecuteObjective::ExecuteCrouch(FStateTreeExecutionContext& Context
 		if (MovementComp->IsCrouching())
 		{
 			MovementComp->bWantsToCrouch = false;
-			#if !UE_BUILD_SHIPPING
-			UE_LOG(LogTemp, Display, TEXT("[STANCE v4.0] '%s': Standing"), *Pawn->GetName());
-			#endif
 		}
-		// TODO: Exit prone if needed
 		break;
 
 	case EStance::Crouch:
 		if (!MovementComp->IsCrouching())
 		{
 			MovementComp->bWantsToCrouch = true;
-			#if !UE_BUILD_SHIPPING
-			UE_LOG(LogTemp, Display, TEXT("[STANCE v4.0] '%s': Crouching"), *Pawn->GetName());
-			#endif
 		}
 		break;
 
 	case EStance::Prone:
-		// TODO: Implement prone stance (custom movement mode)
-		// UE5 CharacterMovement doesn't support prone natively
-		#if !UE_BUILD_SHIPPING
-		UE_LOG(LogTemp, Warning, TEXT("[STANCE v4.0] '%s': Prone not implemented yet"), *Pawn->GetName());
-		#endif
+		// Prone not implemented - UE5 CharacterMovement doesn't support it natively
 		break;
 	}
 }
@@ -484,24 +605,24 @@ TArray<FVector> FSTTask_ExecuteObjective::QueryEQSPositions(FStateTreeExecutionC
 
 	case ETacticalPosition::ForwardCover:
 		// Query EQS for cover points closer to objective
-		Results = RunEQSQuery(Pawn, FName("EQS_ForwardCover"));
+		Results = RunEQSQuery(Pawn, InstanceData.ForwardCoverQuery, TEXT("ForwardCover"));
 		break;
 
 	case ETacticalPosition::Retreat:
 		// Query EQS for cover points away from enemies
-		Results = RunEQSQuery(Pawn, FName("EQS_RetreatCover"));
+		Results = RunEQSQuery(Pawn, InstanceData.RetreatQuery, TEXT("Retreat"));
 		break;
 
 	case ETacticalPosition::Advance:
 		// Move toward objective without cover requirement
-		Results = RunEQSQuery(Pawn, FName("EQS_Advance"));
+		Results = RunEQSQuery(Pawn, InstanceData.AdvanceQuery, TEXT("Advance"));
 		break;
 	}
 
 	return Results;
 }
 
-TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, FName QueryName) const
+TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, UEnvQuery* Query, const FString& QueryName) const
 {
 	TArray<FVector> Results;
 
@@ -511,16 +632,11 @@ TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, FName QueryNa
 		return Results;
 	}
 
-	// Load EQS query asset from Content/AI/EQS/ directory
-	FString AssetPath = FString::Printf(TEXT("/Game/AI/EQS/%s.%s"), *QueryName.ToString(), *QueryName.ToString());
-	UEnvQuery* Query = LoadObject<UEnvQuery>(nullptr, *AssetPath);
-
 	if (!Query)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': Failed to load EQS query '%s' at path '%s'"),
-			*Pawn->GetName(), *QueryName.ToString(), *AssetPath);
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0]    Create the query asset in UE Editor: Content/AI/EQS/%s.uasset"),
-			*QueryName.ToString());
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': No EQS query assigned for '%s'"),
+			*Pawn->GetName(), *QueryName);
+		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0]    Assign the query asset in StateTree editor: STTask_ExecuteObjective > EQS Queries section"));
 		return Results;
 	}
 
@@ -545,14 +661,14 @@ TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, FName QueryNa
 	if (!QueryResult.IsValid())
 	{
 		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EQS query '%s' returned invalid result"),
-			*Pawn->GetName(), *QueryName.ToString());
+			*Pawn->GetName(), *QueryName);
 		return Results;
 	}
 
 	if (!QueryResult->IsSuccessful())
 	{
 		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EQS query '%s' failed to execute"),
-			*Pawn->GetName(), *QueryName.ToString());
+			*Pawn->GetName(), *QueryName);
 		return Results;
 	}
 
@@ -561,7 +677,7 @@ TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, FName QueryNa
 	if (ItemCount == 0)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[EQS v4.0] ⚠️ '%s': EQS query '%s' returned no valid positions"),
-			*Pawn->GetName(), *QueryName.ToString());
+			*Pawn->GetName(), *QueryName);
 		return Results;
 	}
 
@@ -577,12 +693,7 @@ TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, FName QueryNa
 		}
 	}
 
-	#if !UE_BUILD_SHIPPING
-	UE_LOG(LogTemp, Display, TEXT("[EQS v4.0] ✅ '%s': Query '%s' returned %d positions (best score: %.1f)"),
-		*Pawn->GetName(), *QueryName.ToString(), Results.Num(),
-		QueryResult->Items.Num() > 0 ? QueryResult->Items[0].Score : 0.0f);
-	#endif
-
+	// v7.3: EQS success logging reduced to Verbose
 	return Results;
 }
 

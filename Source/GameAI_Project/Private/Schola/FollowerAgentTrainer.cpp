@@ -49,6 +49,12 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 	// Possess the pawn BEFORE calling parent Initialize (required!)
 	Possess(ControlledPawn);
 
+	// DIAGNOSTIC: Verify PathFollowingComponent exists after possession
+	UPathFollowingComponent* PathComp = GetPathFollowingComponent();
+	UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] After Possess('%s'): PathFollowingComponent=%s"),
+		*ControlledPawn->GetName(),
+		PathComp ? TEXT("✅ Valid") : TEXT("❌ NULL - MOVEMENT WILL FAIL!"));
+
 	// Copy observers and actuators from ScholaAgentComponent to this trainer
 	// This is required by Schola's architecture - MUST be done before parent Initialize
 	Observers = ScholaAgent->Observers;
@@ -199,6 +205,22 @@ void AFollowerAgentTrainer::OnCompletion()
 	// Called when episode ends
 	UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s - Episode completed (Total reward: %.2f, Steps: %d)"),
 		*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
+}
+
+void AFollowerAgentTrainer::OnPossess(APawn* InPawn)
+{
+	Super::OnPossess(InPawn);
+
+	UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ✅ OnPossess called: Now controlling '%s'"),
+		*GetNameSafe(InPawn));
+}
+
+void AFollowerAgentTrainer::OnUnPossess()
+{
+	UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ❌ OnUnPossess called: Losing control of '%s' - CALLSTACK NEEDED!"),
+		*GetNameSafe(GetPawn()));
+
+	Super::OnUnPossess();
 }
 
 //------------------------------------------------------------------------------

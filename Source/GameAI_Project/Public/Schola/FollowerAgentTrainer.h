@@ -52,6 +52,16 @@ public:
 	virtual void OnCompletion() override;
 
 	//--------------------------------------------------------------------------
+	// AI CONTROLLER OVERRIDES (DIAGNOSTIC)
+	//--------------------------------------------------------------------------
+
+	/** Track when possession happens */
+	virtual void OnPossess(APawn* InPawn) override;
+
+	/** Track when unpossession happens (THIS IS THE BUG!) */
+	virtual void OnUnPossess() override;
+
+	//--------------------------------------------------------------------------
 	// STATE
 	//--------------------------------------------------------------------------
 

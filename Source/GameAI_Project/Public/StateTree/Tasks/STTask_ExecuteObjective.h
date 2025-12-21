@@ -7,6 +7,7 @@
 #include "RL/RLTypes.h"
 #include "StateTree/FollowerStateTreeSchema.h"
 #include "StateTreeExecutionTypes.h"
+#include "EnvironmentQuery/EnvQuery.h"
 #include "STTask_ExecuteObjective.generated.h"
 
 class UFollowerStateTreeComponent;
@@ -68,12 +69,37 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteObjectiveInstanceData
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "1.0", ClampMax = "15.0"))
 	float AimTolerance = 5.0f;
 
-	/** Action application rate (seconds) - decouples from FPS. Default 0.05s = 20 Hz to match Schola's action frequency */
+	/** Action application rate (seconds) - controls StateTree update frequency for aiming/firing.
+	 * NOTE: This is NOT the action REQUEST rate (controlled by ScholaAgentComponent.DecisionInterval).
+	 * Default 0.05s = 20 Hz for smooth aiming and continuous firing updates. */
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.01", ClampMax = "0.2"))
 	float ActionApplicationInterval = 0.05f;
 
+	//--------------------------------------------------------------------------
+	// EQS Query Assets (assign in StateTree editor)
+	//--------------------------------------------------------------------------
+
+	/** EQS Query for ForwardCover tactical position */
+	UPROPERTY(EditAnywhere, Category = "EQS Queries")
+	TObjectPtr<UEnvQuery> ForwardCoverQuery;
+
+	/** EQS Query for Retreat tactical position */
+	UPROPERTY(EditAnywhere, Category = "EQS Queries")
+	TObjectPtr<UEnvQuery> RetreatQuery;
+
+	/** EQS Query for Advance tactical position */
+	UPROPERTY(EditAnywhere, Category = "EQS Queries")
+	TObjectPtr<UEnvQuery> AdvanceQuery;
+
+	//--------------------------------------------------------------------------
+	// Internal State
+	//--------------------------------------------------------------------------
+
 	/** Time since last action application (internal state) */
 	float TimeSinceLastAction = 0.0f;
+
+	/** Previous macro action (to detect changes) */
+	FMacroAction PreviousMacroAction;
 };
 
 USTRUCT(meta = (DisplayName = "Execute Objective"))
@@ -119,27 +145,26 @@ protected:
 	//--------------------------------------------------------------------------
 
 	/** Query EQS for tactical positions based on position type
-	 * Maps tactical position enum to EQS query name and executes query.
+	 * Maps tactical position enum to EQS query asset and executes query.
 	 * @param Context StateTree execution context
 	 * @param PositionType Tactical position to query (Hold, ForwardCover, Retreat, etc.)
 	 * @return Array of valid positions (sorted by EQS score, best first)
 	 */
 	TArray<FVector> QueryEQSPositions(FStateTreeExecutionContext& Context, ETacticalPosition PositionType) const;
 
-	/** Run EQS query by name and return sorted positions
-	 * Loads EQS asset from /Game/AI/EQS/{QueryName} and executes synchronously.
-	 * Returns empty array and logs ERROR if query asset missing or execution fails.
+	/** Run EQS query and return sorted positions
+	 * Executes provided EQS query synchronously using UEnvQueryManager.
+	 * Returns empty array and logs ERROR if query is null or execution fails.
 	 *
 	 * @param Pawn Querier pawn (used as EQS context)
-	 * @param QueryName Name of EQS asset (e.g., "EQS_ForwardCover")
+	 * @param Query EQS query asset to execute (assigned via UPROPERTY in StateTree editor)
+	 * @param QueryName Name for logging purposes (e.g., "ForwardCover")
 	 * @return Array of valid positions (sorted by score), empty if query fails
 	 *
-	 * Required Assets (create these in UE Editor):
-	 * - /Game/AI/EQS/EQS_ForwardCover.uasset
-	 * - /Game/AI/EQS/EQS_RetreatCover.uasset
-	 * - /Game/AI/EQS/EQS_Advance.uasset
+	 * Note: Query assets are assigned in StateTree editor, not loaded by path.
+	 * Use ForwardCoverQuery, RetreatQuery, or AdvanceQuery properties.
 	 */
-	TArray<FVector> RunEQSQuery(APawn* Pawn, FName QueryName) const;
+	TArray<FVector> RunEQSQuery(APawn* Pawn, UEnvQuery* Query, const FString& QueryName) const;
 
 	/** Get enemy actor by index from observation system
 	 * Retrieves enemy from SharedContext.VisibleEnemies array.

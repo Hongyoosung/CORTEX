@@ -7,6 +7,7 @@
 #include "Combat/HealthComponent.h"
 #include "Combat/WeaponComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "AIController.h"
 
 AFollowerCharacter::AFollowerCharacter()
 {
@@ -40,16 +41,41 @@ void AFollowerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	UE_LOG(LogTemp, Warning, TEXT("AFollowerCharacter::BeginPlay: '%s' - StateTreeComponent=%s, FollowerAgentComponent=%s, ScholaAgentComponent=%s"),
+	AAIController* AICtrl = Cast<AAIController>(GetController());
+	UPathFollowingComponent* PathComp = AICtrl ? AICtrl->GetPathFollowingComponent() : nullptr;
+
+	UE_LOG(LogTemp, Warning, TEXT("[FollowerChar] BeginPlay: '%s' - Controller=%s (AIController=%s, PathFollowing=%s), Components: StateTree=%s, FollowerAgent=%s, Schola=%s"),
 		*GetName(),
-		StateTreeComponent ? TEXT("✅ Valid") : TEXT("❌ NULL"),
-		FollowerAgentComponent ? TEXT("✅ Valid") : TEXT("❌ NULL"),
-		ScholaAgentComponent ? TEXT("✅ Valid") : TEXT("❌ NULL"));
+		*GetNameSafe(GetController()),
+		AICtrl ? TEXT("✅") : TEXT("❌ MOVEMENT WILL FAIL"),
+		PathComp ? TEXT("✅") : TEXT("❌ MOVEMENT WILL FAIL"),
+		StateTreeComponent ? TEXT("✅") : TEXT("❌"),
+		FollowerAgentComponent ? TEXT("✅") : TEXT("❌"),
+		ScholaAgentComponent ? TEXT("✅") : TEXT("❌"));
 }
 
 void AFollowerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// DIAGNOSTIC: Track if controller gets lost during gameplay (only check every 60 frames to reduce spam)
+	static int32 TickCounter = 0;
+	if (++TickCounter % 60 == 0)
+	{
+		static TMap<AFollowerCharacter*, AController*> LastKnownController;
+		AController* CurrentController = GetController();
+		AController* InPreviousController = LastKnownController.FindRef(this);
+
+		if (InPreviousController != CurrentController)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[FollowerChar] ❌ CONTROLLER CHANGED on '%s'! Was='%s', Now='%s'"),
+				*GetName(),
+				*GetNameSafe(InPreviousController),
+				*GetNameSafe(CurrentController));
+
+			LastKnownController.Add(this, CurrentController);
+		}
+	}
 }
 
 //------------------------------------------------------------------------------

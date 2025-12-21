@@ -153,6 +153,10 @@ void UAgentPerceptionComponent::OnTargetPerceivedCallback(AActor* Actor, FAIStim
 
 void UAgentPerceptionComponent::UpdateTrackedEnemies()
 {
+	// Track previous enemy count for event detection
+	int32 PreviousEnemyCount = TrackedEnemies.Num();
+	TSet<AActor*> PreviousEnemies(TrackedEnemies);
+
 	TrackedEnemies.Empty();
 
 	// Get all currently perceived actors
@@ -192,7 +196,7 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 		}
 
 		bool bIsEnemy = IsActorEnemy(Actor);
-		
+
 		if (bShouldLog)
 		{
 			UE_LOG(LogTemp, Display, TEXT("  → Actor '%s': TeamID=%d, IsEnemy=%d (OwnerTeam=%d)"),
@@ -215,13 +219,29 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 			}
 
 			TrackedEnemies.Add(Actor);
-			
+
+			// EVENT: Fire OnEnemySpotted for newly detected enemies (v4.0 event-driven decisions)
+			if (!PreviousEnemies.Contains(Actor))
+			{
+				OnEnemySpotted.Broadcast(Actor);
+				UE_LOG(LogTemp, Warning, TEXT("🚨 [EVENT] '%s': Enemy spotted '%s' → Triggering immediate decision"),
+					*GetOwner()->GetName(), *Actor->GetName());
+			}
+
 			if (bShouldLog)
 			{
 				float Distance = FVector::Dist(GetOwner()->GetActorLocation(), Actor->GetActorLocation());
 				UE_LOG(LogTemp, Display, TEXT("    → Added to TrackedEnemies (Distance: %.1f cm)"), Distance);
 			}
 		}
+	}
+
+	// EVENT: Fire OnAllEnemiesLost when transitioning from enemies → no enemies
+	if (PreviousEnemyCount > 0 && TrackedEnemies.Num() == 0)
+	{
+		OnAllEnemiesLost.Broadcast();
+		UE_LOG(LogTemp, Warning, TEXT("🔵 [EVENT] '%s': All enemies lost → Triggering strategic decision"),
+			*GetOwner()->GetName());
 	}
 
 	if (bShouldLog)

@@ -425,6 +425,12 @@ gymnasium
 
 | Issue | Likely Cause | Fix Location |
 |-------|--------------|--------------|
+| **v4.0 EQS Errors** | | |
+| "Failed to get context" | EQS context blueprints missing | Create `EQS_ObjectiveContext` and `EQS_EnemiesContext` blueprints |
+| "Failed to load EQS asset" | Wrong asset path or name | Verify assets at `/Game/AI/EQS/EQS_{QueryName}.uasset` |
+| EQS returns no positions | Filter tests too strict | Disable PathFinding test temporarily, check generator radius |
+| Agent doesn't move | EQS query failed | Check Output Log for EQS errors, verify contexts return valid data |
+| **v3.1 Issues** | | |
 | MCTS timeout | PPO critic too slow | `RLPolicyNetwork.cpp:601` - Check ONNX model size |
 | RL always same action | Exploration too low | RLlib config - Increase epsilon/entropy |
 | Followers ignore commands | Confidence too low | `FollowerAgentComponent.cpp:94` - Lower threshold |
@@ -492,15 +498,15 @@ All critical systems verified and functional:
 
 ---
 
-## v4.0 Implementation Status (2025-12-17)
+## v4.0 Implementation Status (2025-12-20)
 
-### ✅ Phase 1: Data Structures & Python Interface
+### ✅ Phase 1: Data Structures & Python Interface (COMPLETE)
 - MultiDiscrete action space: [4, N+1, 3, 3] (FlankLeft/Right removed for simpler learning)
 - FMacroAction struct with enums (ETacticalPosition, EFireMode, EStance)
 - Python environment updated (sbdapm_env.py)
 - Schola actuator updated (TacticalActuator)
 
-### ✅ Phase 2: C++ Execution Logic
+### ✅ Phase 2: C++ Execution Logic (COMPLETE)
 - ExecuteMovement/Aiming/Fire/Crouch methods implemented
 - NavMesh pathfinding integration
 - SetFocus auto-aim integration
@@ -514,15 +520,116 @@ All critical systems verified and functional:
 - Header documentation updated with required EQS assets
 - Legacy v3.x code removed
 
-### ⏳ Phase 4: Asset Creation & Testing (PENDING)
-- Create 3 EQS query assets in UE Editor (ForwardCover, RetreatCover, Advance)
-- Test macro action execution in PIE
-- Validate Python RLlib training integration
-- Performance testing and optimization
+### ✅ Phase 4A: EQS Assets Created (COMPLETE)
+- ✅ EQS_ForwardCover.uasset - Cover points toward objective
+- ✅ EQS_RetreatCover.uasset - Cover points away from enemies
+- ✅ EQS_Advance.uasset - Forward positions (no cover required)
 
-**Code Implementation:** 100% Complete
-**Asset Creation & Testing:** Pending (3-5 hours estimated, reduced from 5-8 after removing flanking)
+### ✅ Phase 4B: Code Refactor - UPROPERTY-Based Queries (COMPLETE)
+**Status:** Code updated to use editor-assignable properties instead of hardcoded paths
+
+**Changes Made (`STTask_ExecuteObjective.h/cpp`):**
+1. **Added UPROPERTY fields** for EQS queries:
+   - `ForwardCoverQuery` (TObjectPtr<UEnvQuery>)
+   - `RetreatQuery` (TObjectPtr<UEnvQuery>)
+   - `AdvanceQuery` (TObjectPtr<UEnvQuery>)
+
+2. **Updated `RunEQSQuery()` signature:**
+   - Before: `RunEQSQuery(APawn*, FName QueryName)` - loaded by hardcoded path
+   - After: `RunEQSQuery(APawn*, UEnvQuery* Query, FString QueryName)` - uses assigned property
+
+3. **Benefits:**
+   - ✅ Assign queries in StateTree editor (no code changes to swap assets)
+   - ✅ No path dependencies (works regardless of folder structure)
+   - ✅ Type-safe (can't assign wrong asset type)
+   - ✅ Standard UE practice (follows Epic's patterns)
+
+**C++ Contexts (Already Exist - No Blueprint Needed!):**
+1. **UEnvQueryContext_ObjectiveLocation** (`EQS/EnvQueryContext_ObjectiveLocation.h/cpp`)
+   - Returns: `CurrentObjective.TargetLocation` from `FollowerStateTreeContext`
+   - Used by: ForwardCover, Advance queries
+   - Fallback: Searches for actors with tag "Objective" (for EQS Testing Pawn)
+
+2. **UEnvQueryContext_VisibleEnemies** (`EQS/EnvQueryContext_VisibleEnemies.h/cpp`)
+   - Returns: `VisibleEnemies` array from `FollowerStateTreeContext`
+   - Used by: ForwardCover, Retreat queries
+   - Fallback: Searches for actors with tag "Enemy" (for EQS Testing Pawn)
+
+**Note:** These C++ contexts are used INSIDE EQS query assets (Distance/Dot tests), NOT as Blueprint parent classes.
+
+### ✅ Phase 4C: Editor Configuration (COMPLETE)
+**Status:** All configuration steps completed
+
+**COMPLETED:**
+- ✅ All C++ code implemented and refactored (UPROPERTY-based queries)
+- ✅ All EQS assets created (ForwardCover, Retreat, Advance)
+- ✅ C++ contexts exist (`UEnvQueryContext_ObjectiveLocation`, `UEnvQueryContext_VisibleEnemies`)
+- ✅ C++ project compiled (UPROPERTY changes registered)
+- ✅ EQS query tests configured to use C++ contexts
+- ✅ Queries assigned in StateTree `STTask_ExecuteObjective` properties
+- ✅ Individual EQS query testing completed
 
 ---
 
-**Last Updated:** v4.0 Action Space Simplified - FlankLeft/Right Removed (2025-12-19)
+### 🎯 Phase 4D: Integration Testing (CURRENT - 1-2 hours)
+**Goal:** Verify the complete pipeline works with follower agents in gameplay
+
+**Test 1: Agent Movement with EQS**
+1. Open training level (`Training_BasicCombat_2v2_v01.umap`)
+2. Verify NavMesh coverage (press `P` - should see green overlay)
+3. Start PIE (Alt+P)
+4. Enable EQS debug: `` ` `` → `eqs debug [AgentName]`
+5. Watch for green spheres at cover positions when agent moves
+
+**Expected Success:**
+- ✅ Green spheres appear at cover positions
+- ✅ Agent navigates via NavMesh (no clipping)
+- ✅ Output Log: `[EQS v4.0] ✅ Query 'EQS_ForwardCover' returned N positions`
+
+**Expected Failure (if issues):**
+- ❌ Red spheres or no spheres
+- ❌ Agent stuck or not moving
+- ❌ Output Log: `[EQS v4.0] ❌ Failed to load EQS asset`
+
+**Test 2: Full Macro Action Pipeline**
+- Verify each tactical position triggers correct EQS query
+- Verify target selection (SetFocus on enemies)
+- Verify fire modes (HoldFire/Fire/Suppress)
+- Verify stance switching (Stand/Crouch)
+
+**Test 3: Level Configuration**
+- NavMesh configured (press `P` to verify)
+- Objective markers with tag "Objective" exist
+- Enemies have tag "Enemy"
+- `VisibleEnemies` array populated by perception
+
+---
+
+### ⏳ Phase 4E: Python RLlib Training Integration (NEXT - 30 mins)
+**Prerequisites:** Phase 4D integration testing passed
+
+**Steps:**
+1. Start UE5 in PIE (Schola plugin enabled)
+2. Run: `cd CORTEX_Training && python train_rllib.py`
+3. Monitor logs:
+   - ✅ `[Schola] Connected to UE5 at localhost:50051`
+   - ✅ `[RLlib] Action space: MultiDiscrete([4, 11, 3, 3])`
+   - ✅ `[EQS v4.0] Query returned N positions`
+4. Watch agent behavior (should move to cover, not random wander)
+5. Let training run 10-15 minutes, monitor TensorBoard
+
+---
+
+**Code Implementation:** 100% Complete ✅
+**EQS Assets:** 100% Complete ✅
+**Code Refactor (UPROPERTY):** 100% Complete ✅
+**Editor Configuration:** 100% Complete ✅
+**Integration Testing:** 0% Complete 🎯 **CURRENT**
+**Training Ready:** Pending Phase 4D completion
+
+**Time to Training-Ready:** 1-2 hours (integration testing + validation)
+**Reference:** See `next_step.md` for detailed test procedures
+
+---
+
+**Last Updated:** v4.0 Phase 4C Complete - Editor Configuration (2025-12-20)

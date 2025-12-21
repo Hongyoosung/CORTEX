@@ -10,6 +10,7 @@
 class UFollowerAgentComponent;
 class UTacticalObserver;
 class UTacticalRewardProvider;
+struct FDamageEventData;
 
 /**
  * Schola Agent Component - Integrates RL training via Schola/RLlib
@@ -54,9 +55,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bEnableTimeBasedDecisions = true;
 
-	/** Time interval between decisions (seconds). Default: 0.05s = 20 Hz */
-	UPROPERTY(EditAnywhere, Category = "Schola|Config", meta = (EditCondition = "bEnableTimeBasedDecisions", ClampMin = "0.01", ClampMax = "1.0"))
-	float DecisionInterval = 0.1f;
+	/** Time interval between decisions (seconds). Default: 1.0s = 1 Hz for macro actions */
+	UPROPERTY(EditAnywhere, Category = "Schola|Config", meta = (EditCondition = "bEnableTimeBasedDecisions", ClampMin = "0.01", ClampMax = "5.0"))
+	float DecisionInterval = 1.0f;
 
 	//--------------------------------------------------------------------------
 	// COMPONENTS
@@ -133,4 +134,20 @@ private:
 
 	/** Configure actuators (TacticalActuator) */
 	void ConfigureActuators();
+
+	//--------------------------------------------------------------------------
+	// EVENT HANDLERS (v4.0 Event-Driven Decisions)
+	//--------------------------------------------------------------------------
+
+	/** Enemy spotted event - triggers immediate action request */
+	UFUNCTION()
+	void OnEnemySpottedEvent(AActor* Enemy);
+
+	/** All enemies lost event - triggers strategic decision */
+	UFUNCTION()
+	void OnAllEnemiesLostEvent();
+
+	/** Damage taken event - triggers immediate tactical response */
+	UFUNCTION()
+	void OnDamageTakenEventHandler(const FDamageEventData& DamageEvent, float CurrentHealth);
 };

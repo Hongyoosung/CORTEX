@@ -101,7 +101,8 @@ float URewardCalculator::CalculateIndividualReward()
 	Reward -= DamageTakenSinceLastUpdate * 0.05f; // -5 per 100 damage taken
 
 	// Penalty for wasted ammo (firing with no visible targets) - v4.0 macro actions
-	// INCREASED from -1.0 to -2.0 to discourage spray-and-pray during early training
+	// REDUCED from -2.0 to -0.5 to allow exploration during early training
+	// Too high penalty causes agents to never explore firing actions
 	if (FollowerComponent)
 	{
 		FObservationElement Obs = FollowerComponent->GetLocalObservation();
@@ -109,7 +110,19 @@ float URewardCalculator::CalculateIndividualReward()
 
 		if (bFiredThisTick && Obs.VisibleEnemyCount == 0)
 		{
-			Reward -= 2.0f; // -2 per wasted shot (increased penalty for curriculum learning)
+			Reward -= 0.5f; // -0.5 per wasted shot (reduced to allow exploration)
+		}
+
+		// Exploration bonus: small reward for taking ANY action other than default Hold
+		// Encourages agents to explore movement and tactical positions during early training
+		FMacroAction CurrentAction = FollowerComponent->LastTacticalAction.MacroAction;
+		bool bTookAction = (CurrentAction.PositionChoice != ETacticalPosition::Hold) ||
+		                   (CurrentAction.FireMode != EFireMode::HoldFire) ||
+		                   (CurrentAction.Stance != EStance::Stand);
+
+		if (bTookAction)
+		{
+			Reward += 0.1f; // +0.1 for any action (encourages exploration)
 		}
 	}
 

@@ -66,7 +66,7 @@ class SBDAPMConfig:
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.1
+    ENTROPY_COEFF = 0.5  # Increased from 0.1 to encourage exploration (large action space)
     VF_LOSS_COEFF = 0.5
 
     # Training
@@ -86,8 +86,8 @@ def create_env_config():
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,  # Base port, each worker adds worker_index
         "max_episode_steps": SBDAPMConfig.MAX_EPISODE_STEPS,
-        # Note: Action rate limiting (10 Hz) handled by UE-side Think() throttling
-        # No Python-side blocking - UE5 runs at full FPS (60-70)
+        # v4.0: Rate limiting handled UE-side (ScholaAgentComponent::DecisionInterval = 1.0s)
+        # Python responds immediately to avoid blocking gRPC - UE5 controls decision frequency
     }
 
 

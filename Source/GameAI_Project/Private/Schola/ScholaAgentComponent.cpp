@@ -6,6 +6,8 @@
 #include "Schola/TacticalActuator.h"
 #include "Team/FollowerAgentComponent.h"
 #include "Inference/InferenceComponent.h"
+#include "Combat/HealthComponent.h"
+#include "Perception/AgentPerceptionComponent.h"
 #include "GameFramework/Pawn.h"
 
 UScholaAgentComponent::UScholaAgentComponent()
@@ -95,6 +97,26 @@ void UScholaAgentComponent::BeginPlay()
 			*Owner->GetName());
 	}
 
+	// EVENT-DRIVEN DECISION BINDINGS (v4.0)
+	// Bind to perception events for immediate response to critical game state changes
+	UAgentPerceptionComponent* PerceptionComp = Owner->FindComponentByClass<UAgentPerceptionComponent>();
+	if (PerceptionComp)
+	{
+		PerceptionComp->OnEnemySpotted.AddDynamic(this, &UScholaAgentComponent::OnEnemySpottedEvent);
+		PerceptionComp->OnAllEnemiesLost.AddDynamic(this, &UScholaAgentComponent::OnAllEnemiesLostEvent);
+		UE_LOG(LogTemp, Log, TEXT("[SCHOLA EVENT] '%s': Bound to perception events for event-driven decisions"),
+			*Owner->GetName());
+	}
+
+	// Bind to health events for critical triggers (damaged, health low)
+	UHealthComponent* HealthComp = Owner->FindComponentByClass<UHealthComponent>();
+	if (HealthComp)
+	{
+		HealthComp->OnDamageTaken.AddDynamic(this, &UScholaAgentComponent::OnDamageTakenEventHandler);
+		UE_LOG(LogTemp, Log, TEXT("[SCHOLA EVENT] '%s': Bound to health events for event-driven decisions"),
+			*Owner->GetName());
+	}
+
 	// Note: gRPC server is now managed by ScholaCombatEnvironment
 	// This component will be auto-registered by the environment during initialization
 
@@ -113,45 +135,11 @@ void UScholaAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	#if !UE_BUILD_SHIPPING
-	// DIAGNOSTIC: Verify TickComponent is actually being called
-	static int32 GlobalTickCounter = 0;
-	GlobalTickCounter++;
-	if (GlobalTickCounter == 1)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaAgent] %s: TickComponent FIRST CALL! DeltaTime=%.4fs"),
-			*GetOwner()->GetName(), DeltaTime);
-	}
-	#endif
-
 	// Store DeltaTime for time-based decision throttling
 	// This is used by Think() which doesn't receive DeltaTime directly
 	if (bEnableTimeBasedDecisions)
 	{
 		TimeSinceLastDecision += DeltaTime;
-
-		#if !UE_BUILD_SHIPPING
-		// Diagnostic: Log tick accumulation every 60 frames
-		static int32 TickCounter = 0;
-		TickCounter++;
-		if (TickCounter % 60 == 0)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] %s: TickComponent frame %d - DeltaTime=%.4fs, TimeSinceLastDecision=%.4fs (accumulated)"),
-				*GetOwner()->GetName(), TickCounter, DeltaTime, TimeSinceLastDecision);
-		}
-		#endif
-	}
-	else
-	{
-		#if !UE_BUILD_SHIPPING
-		static bool bLoggedTickDisabled = false;
-		if (!bLoggedTickDisabled)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[ScholaAgent] %s: TickComponent called but bEnableTimeBasedDecisions=FALSE!"),
-				*GetOwner()->GetName());
-			bLoggedTickDisabled = true;
-		}
-		#endif
 	}
 }
 
@@ -327,6 +315,8 @@ void UScholaAgentComponent::Think()
 		if (LastDecisionTime == 0.0)
 		{
 			LastDecisionTime = CurrentTime;
+			UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Think() throttling initialized (Interval=%.2fs)"),
+				*GetOwner()->GetName(), DecisionInterval);
 		}
 		else
 		{
@@ -335,8 +325,23 @@ void UScholaAgentComponent::Think()
 			// Skip if too soon (secondary throttle)
 			if (ElapsedTime < DecisionInterval)
 			{
+				#if !UE_BUILD_SHIPPING
+				// Diagnostic: Log throttle rejections periodically
+				static int32 ThrottleCounter = 0;
+				ThrottleCounter++;
+				if (ThrottleCounter % 600 == 0)  // Log every ~10 seconds at 60 FPS
+				{
+					UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Think() throttled (%.3fs < %.3fs), rejections=%d"),
+						*GetOwner()->GetName(), ElapsedTime, DecisionInterval, ThrottleCounter);
+				}
+				#endif
 				return;
 			}
+
+			#if !UE_BUILD_SHIPPING
+			UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Think() REQUESTING new action (ElapsedTime=%.3fs)"),
+				*GetOwner()->GetName(), ElapsedTime);
+			#endif
 
 			LastDecisionTime = CurrentTime;
 		}
@@ -344,4 +349,46 @@ void UScholaAgentComponent::Think()
 
 	// Call parent's Think() which handles the actual decision request
 	Super::Think();
+}
+
+//--------------------------------------------------------------------------
+// EVENT HANDLERS (v4.0 Event-Driven Decisions)
+//--------------------------------------------------------------------------
+
+void UScholaAgentComponent::OnEnemySpottedEvent(AActor* Enemy)
+{
+	// Immediate action request when enemy spotted
+	// Bypasses periodic timer for urgent tactical response
+	UE_LOG(LogTemp, Warning, TEXT("🚨 [EVENT TRIGGER] '%s': Enemy '%s' spotted → Requesting immediate action from RLlib"),
+		*GetOwner()->GetName(), *GetNameSafe(Enemy));
+
+	// Reset decision timer so we don't double-request immediately after
+	LastDecisionTime = FPlatformTime::Seconds();
+
+	// Call Think() directly to request new action NOW
+	Super::Think();
+}
+
+void UScholaAgentComponent::OnAllEnemiesLostEvent()
+{
+	// Strategic decision when transitioning to non-combat
+	UE_LOG(LogTemp, Log, TEXT("🔵 [EVENT TRIGGER] '%s': All enemies lost → Requesting strategic decision"),
+		*GetOwner()->GetName());
+
+	LastDecisionTime = FPlatformTime::Seconds();
+	Super::Think();
+}
+
+void UScholaAgentComponent::OnDamageTakenEventHandler(const FDamageEventData& DamageEvent, float CurrentHealth)
+{
+	// Immediate response when taking damage
+	// Only trigger if significant damage (>10 HP) to avoid spam
+	if (DamageEvent.DamageAmount >= 10.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("💥 [EVENT TRIGGER] '%s': Took %.1f damage from '%s' (HP: %.1f) → Requesting immediate evasive action"),
+			*GetOwner()->GetName(), DamageEvent.DamageAmount, *GetNameSafe(DamageEvent.DamageCauser), CurrentHealth);
+
+		LastDecisionTime = FPlatformTime::Seconds();
+		Super::Think();
+	}
 }

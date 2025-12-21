@@ -16,13 +16,13 @@ UTacticalActuator::UTacticalActuator()
 
 FDiscreteSpace UTacticalActuator::GetActionSpace()
 {
-	// MultiDiscrete([6, MaxEnemies+1, 3, 3])
-	// [0]: Position (6 options: Hold, ForwardCover, Retreat, FlankL, FlankR, Advance)
+	// MultiDiscrete([4, MaxEnemies+1, 3, 3])
+	// [0]: Position (4 options: Hold, ForwardCover, Retreat, Advance) - FlankLeft/FlankRight removed in v4.0
 	// [1]: Target (MaxEnemies+1 options: None + Enemy_0...Enemy_N)
 	// [2]: Fire Mode (3 options: HoldFire, Fire, Suppress)
 	// [3]: Stance (3 options: Stand, Crouch, Prone)
 
-	TArray<int32> Nvec = { 6, MaxEnemies + 1, 3, 3 };
+	TArray<int32> Nvec = { 4, MaxEnemies + 1, 3, 3 };
 	FDiscreteSpace ActionSpace = FDiscreteSpace(Nvec);
 
 	return ActionSpace;
@@ -64,15 +64,15 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 	}
 
 	// Parse MultiDiscrete action indices
-	int32 PositionIdx = Action.Values[0];    // [0-5]: Position choice
+	int32 PositionIdx = Action.Values[0];    // [0-3]: Position choice (v4.0: 4 options)
 	int32 TargetIdx = Action.Values[1];      // [0-N]: Target index (0 = none)
 	int32 FireModeIdx = Action.Values[2];    // [0-2]: Fire mode
 	int32 StanceIdx = Action.Values[3];      // [0-2]: Stance
 
-	// Validate indices
-	if (PositionIdx < 0 || PositionIdx > 5)
+	// Validate indices (v4.0: Position is 0-3, not 0-5)
+	if (PositionIdx < 0 || PositionIdx > 3)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid position index %d (expected 0-5)"),
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid position index %d (expected 0-3)"),
 			*GetNameSafe(GetOuter()), PositionIdx);
 		return;
 	}
@@ -84,7 +84,12 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 	MacroAction.PositionChoice = static_cast<ETacticalPosition>(PositionIdx);
 
 	// Map target index (0 = none, 1+ = enemy index 0, 1, 2, ...)
-	MacroAction.TargetIndex = (TargetIdx == 0) ? -1 : (TargetIdx - 1);
+	// v7.3: Clamp to prevent "Target_X not found" spam when RLlib explores invalid indices
+	// Action space allows Target 0-10, but actual visible enemies may be 0-4
+	// Indices > 4 (enemy 3) are almost always invalid in 4v4 scenarios
+	const int32 MaxValidTarget = 5;  // Support up to 4 visible enemies (action values 1-4)
+	int32 ClampedTargetIdx = FMath::Clamp(TargetIdx, 0, MaxValidTarget);
+	MacroAction.TargetIndex = (ClampedTargetIdx == 0) ? -1 : (ClampedTargetIdx - 1);
 
 	// Map fire mode index to enum
 	MacroAction.FireMode = static_cast<EFireMode>(FMath::Clamp(FireModeIdx, 0, 2));
@@ -102,17 +107,38 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 
 	LastMacroAction = MacroAction;
 
-	// Debug logging
+	// v7.3: Debug logging reduced to Verbose to prevent log spam during training
+	// Enable via console: Log LogTemp Verbose
 	#if !UE_BUILD_SHIPPING
 	AActor* Owner = GetTypedOuter<AActor>();
 	if (bDebugLogging)
 	{
-		UE_LOG(LogTemp, Log, TEXT("🎮 [MACRO ACTION] '%s': Position=%s, Target=%d, Fire=%s, Stance=%s"),
-			*GetNameSafe(Owner),
-			*UEnum::GetValueAsString(MacroAction.PositionChoice),
-			MacroAction.TargetIndex,
-			*UEnum::GetValueAsString(MacroAction.FireMode),
-			*UEnum::GetValueAsString(MacroAction.Stance));
+		// Only log when action actually CHANGES (to reduce spam during action persistence)
+		static TMap<FString, FMacroAction> LastLoggedActions;
+		FString OwnerName = GetNameSafe(Owner);
+		bool bActionChanged = true;
+
+		if (LastLoggedActions.Contains(OwnerName))
+		{
+			FMacroAction& LastAction = LastLoggedActions[OwnerName];
+			bActionChanged = (LastAction.PositionChoice != MacroAction.PositionChoice ||
+			                  LastAction.TargetIndex != MacroAction.TargetIndex ||
+			                  LastAction.FireMode != MacroAction.FireMode ||
+			                  LastAction.Stance != MacroAction.Stance);
+		}
+
+		if (bActionChanged)
+		{
+			// Log only significant action changes at Verbose level
+			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION] '%s': Position=%s, Target=%d, Fire=%s, Stance=%s"),
+				*OwnerName,
+				*UEnum::GetValueAsString(MacroAction.PositionChoice),
+				MacroAction.TargetIndex,
+				*UEnum::GetValueAsString(MacroAction.FireMode),
+				*UEnum::GetValueAsString(MacroAction.Stance));
+
+			LastLoggedActions.Add(OwnerName, MacroAction);
+		}
 	}
 	#endif
 }
@@ -132,7 +158,7 @@ void UTacticalActuator::InitializeActuator()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=MultiDiscrete([6,%d,3,3]))"),
+	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=MultiDiscrete([4,%d,3,3]))"),
 		*GetNameSafe(GetOuter()), *GetNameSafe(FollowerAgent), MaxEnemies + 1);
 }
 
