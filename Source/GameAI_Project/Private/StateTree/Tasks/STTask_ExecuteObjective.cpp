@@ -232,7 +232,8 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 			}
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("[MOVE DIAG] '%s': Distance=%.1f, CharMovement=%s, PathFollowing=%s, NavSys=%s, PathExists=%s"),
+		// v7.4: Reduced diagnostic logging to Verbose level
+		UE_LOG(LogTemp, Verbose, TEXT("[MOVE DIAG] '%s': Distance=%.1f, CharMovement=%s, PathFollowing=%s, NavSys=%s, PathExists=%s"),
 			*Pawn->GetName(), Distance,
 			MoveComp ? TEXT("✅") : TEXT("❌"),
 			PathComp ? TEXT("✅") : TEXT("❌"),
@@ -241,7 +242,7 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 
 		if (MoveComp)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[MOVE DIAG] CharMovement: Mode=%d (Walking=1), MaxSpeed=%.1f, bOrientToMovement=%d"),
+			UE_LOG(LogTemp, Verbose, TEXT("[MOVE DIAG] CharMovement: Mode=%d (Walking=1), MaxSpeed=%.1f, bOrientToMovement=%d"),
 				(int32)MoveComp->MovementMode, MoveComp->MaxWalkSpeed, MoveComp->bOrientRotationToMovement ? 1 : 0);
 		}
 
@@ -250,20 +251,41 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 		{
 			EPathFollowingStatus::Type PathStatus = PathComp->GetStatus();
 			bool bHasValidPath = PathComp->HasValidPath();
-			bool bIsPathFollowing = PathComp->HasReached(TargetPos, EPathFollowingReachMode::OverlapAgent) == false;
 
-			UE_LOG(LogTemp, Error, TEXT("[PATHFOLLOW DIAG] Status=%s, HasValidPath=%d, CurrentRequestID=%d"),
+			// v7.4: Check if already moving to same destination (within tolerance)
+			// If so, DON'T interrupt - let current movement complete
+			const float SameDestinationTolerance = 200.0f;  // 2 meters tolerance
+			bool bAlreadyMovingToSameDestination = false;
+
+			if (PathStatus == EPathFollowingStatus::Moving && bHasValidPath)
+			{
+				// Get current movement destination
+				FVector CurrentDestination = SharedContext.MovementDestination;
+				float DistanceToNewTarget = FVector::Dist(CurrentDestination, TargetPos);
+
+				if (DistanceToNewTarget < SameDestinationTolerance)
+				{
+					bAlreadyMovingToSameDestination = true;
+					// Already moving to same destination - don't interrupt!
+					UE_LOG(LogTemp, Verbose, TEXT("[PATHFOLLOW v7.4] '%s': Already moving to same destination (dist=%.1f), continuing..."),
+						*Pawn->GetName(), DistanceToNewTarget);
+					return;  // Early exit - keep current movement
+				}
+			}
+
+			UE_LOG(LogTemp, Verbose, TEXT("[PATHFOLLOW DIAG] Status=%s, HasValidPath=%d, RequestID=%d"),
 				PathStatus == EPathFollowingStatus::Idle ? TEXT("Idle") :
 				PathStatus == EPathFollowingStatus::Waiting ? TEXT("Waiting") :
 				PathStatus == EPathFollowingStatus::Paused ? TEXT("Paused") :
-				PathStatus == EPathFollowingStatus::Moving ? TEXT("Moving - BLOCKING NEW REQUESTS!") : TEXT("Unknown"),
+				PathStatus == EPathFollowingStatus::Moving ? TEXT("Moving") : TEXT("Unknown"),
 				bHasValidPath ? 1 : 0,
-				(int32)PathComp->GetCurrentRequestId().GetID()); 
+				(int32)PathComp->GetCurrentRequestId().GetID());
 
-			// If already moving, STOP first
-			if (PathStatus == EPathFollowingStatus::Moving)
+			// v7.4: Only stop if moving to DIFFERENT destination
+			if (PathStatus == EPathFollowingStatus::Moving && !bAlreadyMovingToSameDestination)
 			{
-				UE_LOG(LogTemp, Error, TEXT("[PATHFOLLOW FIX] Stopping existing movement before new request"));
+				UE_LOG(LogTemp, Log, TEXT("[PATHFOLLOW v7.4] '%s': New destination requested, stopping current movement"),
+					*Pawn->GetName());
 				InstanceData.AIController->StopMovement();
 			}
 		}
@@ -293,46 +315,25 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 
 		FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
 
-		UE_LOG(LogTemp, Error, TEXT("[MOVE DIAG] MoveTo result: Code=%s, RequestID=%s"),
-			MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful ? TEXT("✅ RequestSuccessful") :
-			MoveResult.Code == EPathFollowingRequestResult::AlreadyAtGoal ? TEXT("📍 AlreadyAtGoal") :
-			MoveResult.Code == EPathFollowingRequestResult::Failed ? TEXT("❌ Failed") : TEXT("Unknown"),
-			*MoveResult.MoveId.ToString()); // %s에 맞춰 .ToString() 사용
-
-		// If path is invalid despite FindPathSync succeeding, something is wrong
-		if (MoveResult.Code == EPathFollowingRequestResult::Failed && bPathExists)
+		// v7.4: Only log failures at Error level, success at Verbose
+		if (MoveResult.Code == EPathFollowingRequestResult::Failed)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] ❌❌ CRITICAL: FindPathSync succeeded but MoveTo failed! Investigating..."));
+			UE_LOG(LogTemp, Error, TEXT("[MOVE v7.4] '%s': MoveTo FAILED! RequestID=%s"),
+				*Pawn->GetName(), *MoveResult.MoveId.ToString());
 
-			// Check if AIController can generate path internally
-			if (PathComp)
+			// Log details only on failure
+			if (bPathExists)
 			{
-				UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] PathFollowingComponent details: Status=%d, HasPath=%d"),
-					(int32)PathComp->GetStatus(), PathComp->HasValidPath() ? 1 : 0);
-			}
-
-			// Check if NavData is valid
-			if (NavSys)
-			{
-				const ANavigationData* NavData = NavSys->GetDefaultNavDataInstance();
-				UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] NavData: %s, CanBeMainNavData=%d"),
-					NavData ? *NavData->GetName() : TEXT("NULL"),
-					NavData ? (int32)NavData->CanBeMainNavData() : 0);
+				UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] FindPathSync succeeded but MoveTo failed!"));
 			}
 		}
-
-		// Check movement status after 0.1s
-		FTimerHandle CheckHandle;
-		World->GetTimerManager().SetTimer(CheckHandle, [Pawn, NavTargetPos, CurrentPos]()
+		else
 		{
-			if (Pawn)
-			{
-				FVector NewPos = Pawn->GetActorLocation();
-				float MovedDistance = FVector::Dist(CurrentPos, NewPos);
-				UE_LOG(LogTemp, Warning, TEXT("[MOVE DIAG] After 0.1s: '%s' moved %.1f units (expected >0 if moving)"),
-					*Pawn->GetName(), MovedDistance);
-			}
-		}, 0.1f, false);
+			UE_LOG(LogTemp, Verbose, TEXT("[MOVE v7.4] '%s': MoveTo %s, RequestID=%s"),
+				*Pawn->GetName(),
+				MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful ? TEXT("started") : TEXT("already at goal"),
+				*MoveResult.MoveId.ToString());
+		}
 
 		SharedContext.MovementDestination = NavTargetPos;  // Use projected position
 		SharedContext.bIsMoving = (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful);

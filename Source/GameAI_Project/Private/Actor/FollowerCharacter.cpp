@@ -3,7 +3,6 @@
 #include "Actor/FollowerCharacter.h"
 #include "Team/FollowerAgentComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Schola/ScholaAgentComponent.h"
 #include "Combat/HealthComponent.h"
 #include "Combat/WeaponComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -18,9 +17,6 @@ AFollowerCharacter::AFollowerCharacter()
 
 	// Create state tree component
 	StateTreeComponent = CreateDefaultSubobject<UFollowerStateTreeComponent>(TEXT("StateTreeComponent"));
-
-	// Create Schola agent component (RLlib training bridge)
-	ScholaAgentComponent = CreateDefaultSubobject<UScholaAgentComponent>(TEXT("ScholaAgentComponent"));
 
 	// Configure character movement for AI pathfinding
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
@@ -43,15 +39,6 @@ void AFollowerCharacter::BeginPlay()
 
 	AAIController* AICtrl = Cast<AAIController>(GetController());
 	UPathFollowingComponent* PathComp = AICtrl ? AICtrl->GetPathFollowingComponent() : nullptr;
-
-	UE_LOG(LogTemp, Warning, TEXT("[FollowerChar] BeginPlay: '%s' - Controller=%s (AIController=%s, PathFollowing=%s), Components: StateTree=%s, FollowerAgent=%s, Schola=%s"),
-		*GetName(),
-		*GetNameSafe(GetController()),
-		AICtrl ? TEXT("✅") : TEXT("❌ MOVEMENT WILL FAIL"),
-		PathComp ? TEXT("✅") : TEXT("❌ MOVEMENT WILL FAIL"),
-		StateTreeComponent ? TEXT("✅") : TEXT("❌"),
-		FollowerAgentComponent ? TEXT("✅") : TEXT("❌"),
-		ScholaAgentComponent ? TEXT("✅") : TEXT("❌"));
 }
 
 void AFollowerCharacter::Tick(float DeltaTime)

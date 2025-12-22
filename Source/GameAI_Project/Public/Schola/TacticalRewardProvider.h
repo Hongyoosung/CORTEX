@@ -17,7 +17,7 @@ class UFollowerAgentComponent;
  * -5.0  = Take damage
  * -10.0 = Death
  */
-UCLASS(BlueprintType, meta = (DisplayName = "Tactical Reward Provider"))
+UCLASS(BlueprintType, Blueprintable, EditInlineNew, meta = (DisplayName = "Tactical Reward Provider"))
 class GAMEAI_PROJECT_API UTacticalRewardProvider : public UObject
 {
 	GENERATED_BODY()

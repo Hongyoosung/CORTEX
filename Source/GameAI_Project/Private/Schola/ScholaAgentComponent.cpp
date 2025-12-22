@@ -30,11 +30,6 @@ UScholaAgentComponent::UScholaAgentComponent()
 		// DO NOT create subobjects for CDO (reduces memory footprint)
 		return;
 	}
-
-	// Create default subobjects for Schola components (only for real instances)
-	TacticalObserver = CreateDefaultSubobject<UTacticalObserver>(TEXT("TacticalObserver"));
-	RewardProvider = CreateDefaultSubobject<UTacticalRewardProvider>(TEXT("RewardProvider"));
-	TacticalActuator = CreateDefaultSubobject<UTacticalActuator>(TEXT("TacticalActuator"));
 }
 
 void UScholaAgentComponent::BeginPlay()
@@ -67,23 +62,6 @@ void UScholaAgentComponent::BeginPlay()
 		return;
 	}
 
-	// Auto-configure follower agent if enabled
-	if (bAutoConfigureFollower)
-	{
-		InitializeScholaComponents();
-	}
-
-	// CRITICAL: Configure Brain for time-based decisions
-	if (bEnableTimeBasedDecisions && Brain)
-	{
-		// IMPORTANT: Set DecisionRequestFrequency to a very high value to effectively disable frame-based gating
-		// Our Think() override handles time-based gating instead using TimeSinceLastDecision accumulator
-		// Setting to 1 would cause decisions every frame, which defeats the purpose
-		Brain->DecisionRequestFrequency = 1000000;  // Effectively disable frame-based gating
-
-		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: Time-based decisions enabled (%.3fs interval = %.1f Hz)"),
-			*Owner->GetName(), DecisionInterval, 1.0f / DecisionInterval);
-	}
 
 	// CRITICAL FIX: Re-enable tick AFTER Super::BeginPlay() in case parent disabled it
 	if (bEnableTimeBasedDecisions)
@@ -116,6 +94,8 @@ void UScholaAgentComponent::BeginPlay()
 		UE_LOG(LogTemp, Log, TEXT("[SCHOLA EVENT] '%s': Bound to health events for event-driven decisions"),
 			*Owner->GetName());
 	}
+
+	
 
 	// Note: gRPC server is now managed by ScholaCombatEnvironment
 	// This component will be auto-registered by the environment during initialization
@@ -297,15 +277,9 @@ void UScholaAgentComponent::ResetEpisode()
 
 void UScholaAgentComponent::Think()
 {
-	// SECONDARY SAFETY NET: Time-based decision throttling
-	//
-	// PRIMARY rate limiting is done in Python (sbdapm_env.py step() method)
-	// This UE-side throttling provides defense-in-depth:
-	//   - Prevents excessive gRPC requests if Python rate limiter fails
-	//   - Protects against bugs in training script
-	//
-	// Note: This only throttles REQUESTS to Python, not received actions
-	// Python step() sleep() enforces the actual action send rate (10 Hz)
+	// v7.4: Time-based decision throttling
+	// This is the PRIMARY rate limiter - controls when UE5 sends observations to Python
+	// Python's poll() should block until we call Super::Think()
 
 	if (bEnableTimeBasedDecisions)
 	{
@@ -315,39 +289,44 @@ void UScholaAgentComponent::Think()
 		if (LastDecisionTime == 0.0)
 		{
 			LastDecisionTime = CurrentTime;
-			UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Think() throttling initialized (Interval=%.2fs)"),
-				*GetOwner()->GetName(), DecisionInterval);
+			UE_LOG(LogTemp, Warning, TEXT("[THINK v7.4] %s: Initialized (Interval=%.2fs = %.1f Hz)"),
+				*GetOwner()->GetName(), DecisionInterval, 1.0f / DecisionInterval);
 		}
 		else
 		{
 			double ElapsedTime = CurrentTime - LastDecisionTime;
 
-			// Skip if too soon (secondary throttle)
+			// Skip if too soon - THIS IS THE KEY THROTTLE
 			if (ElapsedTime < DecisionInterval)
 			{
-				#if !UE_BUILD_SHIPPING
-				// Diagnostic: Log throttle rejections periodically
-				static int32 ThrottleCounter = 0;
-				ThrottleCounter++;
-				if (ThrottleCounter % 600 == 0)  // Log every ~10 seconds at 60 FPS
+				// v7.4: Track rejection rate for diagnostics
+				static TMap<FString, int32> ThrottleCounters;
+				FString OwnerName = GetOwner()->GetName();
+				int32& Counter = ThrottleCounters.FindOrAdd(OwnerName, 0);
+				Counter++;
+
+				// Log every 5 seconds worth of rejections (at 60 FPS = 300 rejections)
+				if (Counter % 300 == 0)
 				{
-					UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Think() throttled (%.3fs < %.3fs), rejections=%d"),
-						*GetOwner()->GetName(), ElapsedTime, DecisionInterval, ThrottleCounter);
+					UE_LOG(LogTemp, Warning, TEXT("[THINK v7.4] %s: Throttled %d times (interval=%.2fs)"),
+						*OwnerName, Counter, DecisionInterval);
 				}
-				#endif
-				return;
+				return;  // DO NOT send observations to Python
 			}
 
-			#if !UE_BUILD_SHIPPING
-			UE_LOG(LogTemp, Verbose, TEXT("[ScholaAgent] %s: Think() REQUESTING new action (ElapsedTime=%.3fs)"),
-				*GetOwner()->GetName(), ElapsedTime);
-			#endif
+			// v7.4: Log when we actually send a new decision request
+			static TMap<FString, int32> DecisionCounters;
+			FString OwnerName = GetOwner()->GetName();
+			int32& Counter = DecisionCounters.FindOrAdd(OwnerName, 0);
+			Counter++;
+			UE_LOG(LogTemp, Warning, TEXT("[THINK v7.4] ✅ %s: SENDING decision request #%d (elapsed=%.3fs)"),
+				*OwnerName, Counter, ElapsedTime);
 
 			LastDecisionTime = CurrentTime;
 		}
 	}
 
-	// Call parent's Think() which handles the actual decision request
+	// Call parent's Think() which sends observations to Python and waits for actions
 	Super::Think();
 }
 
@@ -364,9 +343,6 @@ void UScholaAgentComponent::OnEnemySpottedEvent(AActor* Enemy)
 
 	// Reset decision timer so we don't double-request immediately after
 	LastDecisionTime = FPlatformTime::Seconds();
-
-	// Call Think() directly to request new action NOW
-	Super::Think();
 }
 
 void UScholaAgentComponent::OnAllEnemiesLostEvent()
@@ -376,7 +352,6 @@ void UScholaAgentComponent::OnAllEnemiesLostEvent()
 		*GetOwner()->GetName());
 
 	LastDecisionTime = FPlatformTime::Seconds();
-	Super::Think();
 }
 
 void UScholaAgentComponent::OnDamageTakenEventHandler(const FDamageEventData& DamageEvent, float CurrentHealth)
@@ -389,6 +364,5 @@ void UScholaAgentComponent::OnDamageTakenEventHandler(const FDamageEventData& Da
 			*GetOwner()->GetName(), DamageEvent.DamageAmount, *GetNameSafe(DamageEvent.DamageCauser), CurrentHealth);
 
 		LastDecisionTime = FPlatformTime::Seconds();
-		Super::Think();
 	}
 }

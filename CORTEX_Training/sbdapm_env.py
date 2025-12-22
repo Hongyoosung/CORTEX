@@ -1,14 +1,28 @@
 """
-SBDAPM Environment for Schola/RLlib Training (v7.3 Action Rate Limiting)
+SBDAPM Environment for Schola/RLlib Training (v7.5 UE5-Controlled Rate)
 
 Solution: Provides actions for ALL keys in the DictSpace because Schola's
 fill_proto() iterates through ALL sub-spaces and expects action data for each key.
 Each agent's action is duplicated across all its component keys.
 
-v7.3 Changes:
-- Added action rate limiting (1 Hz default) to prevent action flooding
-- Actions are cached and re-sent until decision interval passes
-- Prevents movement/aiming interruption from rapid action spam
+v7.5 Changes:
+- REMOVED Python-side rate limiting (was conflicting with UE5's throttle)
+- UE5's ScholaAgentComponent::Think() is now the ONLY rate limiter
+- Python's poll() should block until UE5 sends new observations
+- Added step-rate diagnostics to verify rate limiting is working
+- If step rate is too high, the issue is in UE5's Think() throttle, not Python
+
+Architecture:
+1. UE5's Think() has time-based throttle (DecisionInterval = 1.0s default)
+2. Think() only calls Super::Think() once per interval
+3. Super::Think() sends observations to Python via gRPC
+4. poll() in Python BLOCKS until UE5 sends data
+5. This naturally limits step rate to match UE5's decision rate
+
+Debug: If step rate is still too high (>> 1 Hz), check:
+- UE5 Output Log for "[THINK v7.4]" messages
+- Verify ScholaAgentComponent.DecisionInterval is set correctly (default 1.0s)
+- Verify bEnableTimeBasedDecisions is True
 """
 
 from gymnasium import spaces
@@ -156,10 +170,23 @@ if SCHOLA_AVAILABLE:
             return self._action_space
 
         def reset(self, *, seed=None, options=None):
+            # v7.4: Step rate diagnostics
+            if hasattr(self, '_episode_start_time') and self.episode_steps > 0:
+                episode_duration = time.time() - self._episode_start_time
+                step_rate = self.episode_steps / max(episode_duration, 0.001)
+                print(f"[EPISODE END] Steps={self.episode_steps}, Duration={episode_duration:.1f}s, Rate={step_rate:.1f} steps/sec")
+
             self.episode_steps = 0
+            self._episode_start_time = time.time()
+
             # v7.3: Clear rate limiting state on reset
             self.last_action_time.clear()
             self.cached_actions.clear()
+
+            # v7.4: Clear first-step logging flag
+            if hasattr(self, '_first_step_logged'):
+                delattr(self, '_first_step_logged')
+
             print("[SBDAPMMultiAgentEnv] Resetting environment via hard_reset()...")
 
             try:
@@ -189,23 +216,44 @@ if SCHOLA_AVAILABLE:
                     return {}, {}
 
         def step(self, action_dict):
-            # v7.3: Python-side rate limiting to prevent action flooding
-            # RLlib calls step() 100s of times/second during training
-            # Without throttling, each agent receives new action before previous completes
-            # Result: MoveToLocation() constantly interrupted, agents never move
+            # v7.5: Let UE5 control the step rate via poll() blocking
+            #
+            # Architecture:
+            # 1. UE5's Think() is throttled to DecisionInterval (default 1 Hz)
+            # 2. Think() only calls Super::Think() once per interval
+            # 3. Super::Think() sends observations to Python via gRPC
+            # 4. poll() BLOCKS until UE5 sends new observations
+            # 5. This naturally limits step rate to UE5's decision rate
+            #
+            # DO NOT add Python-side rate limiting here - it conflicts with UE5's throttle
+            # and causes gRPC synchronization issues
             try:
                 current_time = time.time()
+
+                # v7.5: Track step timing for diagnostics
+                if not hasattr(self, '_last_step_time'):
+                    self._last_step_time = current_time
+                    self._step_count_since_log = 0
+
+                step_delta = current_time - self._last_step_time
+                self._last_step_time = current_time
+                self._step_count_since_log += 1
+
+                # Log step rate every 10 steps (should be ~10 seconds at 1 Hz)
+                if self._step_count_since_log >= 10:
+                    avg_rate = self._step_count_since_log / max(step_delta * self._step_count_since_log, 0.001)
+                    print(f"[STEP RATE] {self._step_count_since_log} steps, avg rate = {avg_rate:.2f} Hz (expected ~{1.0/self.decision_interval:.1f} Hz)")
+                    self._step_count_since_log = 0
 
                 # CRITICAL: Get ALL action keys because fill_proto iterates through all
                 all_action_keys = self._get_all_action_keys()
 
-                # Debug: Show key info
-                if self.episode_steps == 0:
+                # Debug: Show key info (only on first step of first episode)
+                if self.episode_steps == 0 and not hasattr(self, '_first_step_logged'):
                     print(f"[DEBUG] All action keys at first step: {all_action_keys}")
+                    self._first_step_logged = True
 
                 formatted_actions = {}
-                actions_throttled = 0
-                actions_sent = 0
 
                 for flat_id, action in action_dict.items():
                     if flat_id not in self.agent_map:
@@ -215,30 +263,14 @@ if SCHOLA_AVAILABLE:
                     if env_idx not in formatted_actions:
                         formatted_actions[env_idx] = {}
 
-                    # v7.3: Rate limiting per agent
-                    last_time = self.last_action_time.get(flat_id, 0)
-                    time_since_last = current_time - last_time
+                    # v7.5: No Python-side rate limiting - UE5's Think() controls the rate
+                    # Just format and send the action directly
 
-                    if time_since_last >= self.decision_interval:
-                        # New action allowed - update cache and timestamp
-                        self.cached_actions[flat_id] = action
-                        self.last_action_time[flat_id] = current_time
-                        actions_sent += 1
-                    else:
-                        # Throttled - use cached action (keep executing previous command)
-                        action = self.cached_actions.get(flat_id, action)
-                        actions_throttled += 1
-
-                    # v7.3: Clamp target index to valid range
-                    # Action space [4, 11, 3, 3] allows Target 0-10, but actual enemies may be 0-4
-                    # Invalid indices cause "Target_X not found" and clear focus
+                    # Clamp target index to valid range
                     action = np.array(action, dtype=np.int32)
-                    # Target index (action[1]) should be 0 (no target) or 1-N (enemy index)
-                    # Max valid is based on visible enemies, but we don't know count here
-                    # Clamp to reasonable max (4 enemies = indices 0-4, action values 0-5)
-                    max_target = 5  # Supports up to 4 visible enemies (values 1-4 = enemies 0-3)
+                    max_target = 5  # Supports up to 4 visible enemies
                     if action[1] > max_target:
-                        action[1] = 0  # Clear target if invalid (safer than wrapping)
+                        action[1] = 0  # Clear target if invalid
 
                     # Get ALL component keys for this agent
                     agent_keys = all_action_keys.get((env_idx, agent_idx), [])
@@ -253,14 +285,12 @@ if SCHOLA_AVAILABLE:
                         key: action_array for key in agent_keys
                     }
 
-                # Debug: Show throttling stats (first step and every 100 steps)
+                # Debug: Show structure on first step only
                 if self.episode_steps == 0:
                     print(f"[DEBUG] First step - sending actions with structure:")
                     for env_idx, agents in formatted_actions.items():
                         for agent_idx, action_data in agents.items():
                             print(f"  [{env_idx}][{agent_idx}] = {list(action_data.keys())} ({len(action_data)} keys)")
-                elif self.episode_steps % 100 == 0:
-                    print(f"[RATE LIMIT] Step {self.episode_steps}: {actions_sent} new, {actions_throttled} throttled")
 
                 # Action 전송
                 self.schola_env.send_actions(formatted_actions)

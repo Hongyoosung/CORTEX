@@ -14,6 +14,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/DefaultPawn.h"
 #include "UObject/UObjectIterator.h"
+#include "Actor/FollowerCharacter.h"
 
 // Static singleton reference
 AScholaCombatEnvironment* AScholaCombatEnvironment::PrimaryEnvironmentInstance = nullptr;
@@ -98,6 +99,12 @@ void AScholaCombatEnvironment::BeginPlay()
 	// Auto-discover agents if enabled
 	if (bAutoDiscoverAgents)
 	{
+		/*FTimerHandle TimerHandle;
+		GetWorldTimerManager().SetTimer(TimerHandle, [this]()
+			{
+				DiscoverAgents();
+			}, 0.2f, false);*/
+
 		DiscoverAgents();
 	}
 
@@ -391,60 +398,35 @@ void AScholaCombatEnvironment::DiscoverAgents()
 {
 	RegisteredAgents.Empty();
 	int32 ValidatedCount = 0;
-	int32 SkippedCDO = 0;  // 추가
-	int32 SkippedOther = 0; // 추가
+	int32 SkippedCDO = 0;
 
-	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	// AFollowerCharacter 클래스로 이터레이터를 제한하여 성능과 정확도를 높입니다.
+	for (TActorIterator<AFollowerCharacter> It(GetWorld()); It; ++It)
 	{
-		AActor* Actor = *It;
-		UScholaAgentComponent* ScholaComp = Actor->FindComponentByClass<UScholaAgentComponent>();
+		AFollowerCharacter* Follower = *It;
+
+		// 1. 유효성 및 CDO 필터링
+		if (!IsValid(Follower) || Follower->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
+		{
+			SkippedCDO++;
+			continue;
+		}
+
+		// 2. 컴포넌트 추출
+		UScholaAgentComponent* ScholaComp = Follower->FindComponentByClass<UScholaAgentComponent>();
 
 		if (ScholaComp)
 		{
-			// CDO 필터링
-			if (ScholaComp->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
-			{
-				SkippedCDO++;
-				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Skipping CDO: %s"),
-					*ScholaComp->GetName());
-				continue;
-			}
-
-			// Owner가 CDO인 경우 필터링
-			if (!Actor || Actor->HasAnyFlags(RF_ClassDefaultObject))
-			{
-				SkippedCDO++;
-				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Skipping CDO owner: %s"),
-					*ScholaComp->GetName());
-				continue;
-			}
-
-			// 팀 리더 필터링
-			UTeamLeaderComponent* LeaderComp = Actor->FindComponentByClass<UTeamLeaderComponent>();
-			if (LeaderComp)
-			{
-				SkippedOther++;
-				UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Skipping LEADER with ScholaComp: %s"),
-					*Actor->GetName());
-				continue;
-			}
-
-			// 유효한 에이전트 등록
+			// 3. 에이전트 등록
 			if (RegisterAgent(ScholaComp))
 			{
 				ValidatedCount++;
 			}
-			else
-			{
-				SkippedOther++;
-			}
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] === DISCOVERY COMPLETE ==="));
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Registered: %d | Skipped CDO: %d | Skipped Other: %d"),
-		ValidatedCount, SkippedCDO, SkippedOther);
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Final count: %d agents"), RegisteredAgents.Num());
+	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] Discovery Finished. Registered: %d | Skipped CDO: %d"),
+		ValidatedCount, SkippedCDO);
 }
 
 bool AScholaCombatEnvironment::RegisterAgent(UScholaAgentComponent* Agent)
@@ -585,6 +567,8 @@ bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✗ %s: Validation FAILED"), *ActorName);
 	}
+
+	Agent->InitializeScholaComponents();
 
 	return bIsValid;
 }
