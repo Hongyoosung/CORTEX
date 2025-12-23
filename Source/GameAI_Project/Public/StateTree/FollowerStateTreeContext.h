@@ -84,9 +84,6 @@ struct GAMEAI_PROJECT_API FFollowerStateTreeContext
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Objective")
 	bool bHasActiveObjective = false;
 
-	/** Action space mask for spatial constraints */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spatial")
-	FActionSpaceMask ActionMask;
 
 	//--------------------------------------------------------------------------
 	// OBSERVATION DATA (Updated every tick by evaluator)

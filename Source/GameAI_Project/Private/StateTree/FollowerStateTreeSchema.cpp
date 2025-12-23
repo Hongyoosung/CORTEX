@@ -16,7 +16,6 @@
 #include "StateTree/Tasks/STTask_Idle.h"
 #include "StateTree/Evaluators/STEvaluator_SyncObjective.h"
 #include "StateTree/Evaluators/STEvaluator_UpdateObservation.h"
-#include "StateTree/Evaluators/STEvaluator_SpatialContext.h"
 
 
 UFollowerStateTreeSchema::UFollowerStateTreeSchema()
@@ -186,7 +185,6 @@ bool UFollowerStateTreeSchema::IsStructAllowed(const UScriptStruct* InScriptStru
 		// Allow all StateTree node types (v3.0)
 		if (InScriptStruct->IsChildOf(FSTEvaluator_SyncObjective::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTEvaluator_UpdateObservation::StaticStruct()) ||
-			InScriptStruct->IsChildOf(FSTEvaluator_SpatialContext::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTCondition_IsAlive::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTCondition_CheckObjectiveType::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_ExecuteObjective::StaticStruct()) ||

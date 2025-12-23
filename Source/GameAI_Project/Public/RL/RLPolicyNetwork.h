@@ -21,8 +21,8 @@ class INNERuntimeGPU;
  * Architecture:
  *   Input Layer:  78 features (71 observation + 7 objective embedding)
  *   Shared Trunk: 128 → 128 → 64 (ReLU)
- *   ├─ Position Head: 6 logits (Hold, Forward, Retreat, FlankL, FlankR, Advance)
- *   ├─ Target Head: 6 logits (None, Enemy0-4)
+ *   ├─ Position Head: 4 logits (Hold, Forward, Retreat, Advance)
+ *   ├─ Target Head: (N+1) logits (None, Enemy_0...Enemy_N) [dynamic]
  *   ├─ Fire Mode Head: 3 logits (HoldFire, Fire, Suppress)
  *   ├─ Stance Head: 3 logits (Stand, Crouch, Prone)
  *   └─ Critic Head: 1 value (state value estimate for MCTS)
@@ -90,7 +90,7 @@ public:
 	 * @return Macro action
 	 */
 	UFUNCTION(BlueprintCallable, Category = "RL|v4")
-	FTacticalAction GetActionWithMask(const FObservationElement& Observation, class UObjective* CurrentObjective, const FActionSpaceMask& Mask);
+	FTacticalAction GetActionWithMask(const FObservationElement& Observation, class UObjective* CurrentObjective);
 
 	/**
 	 * Get state value estimate for MCTS (PPO Critic - v4.0)

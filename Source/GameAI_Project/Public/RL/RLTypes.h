@@ -119,67 +119,6 @@ struct FActionSequence
 };
 
 
-
-/**
- * Action space mask for spatial awareness
- * Constrains action space based on environment (indoor, cover, edges)
- * Prevents invalid actions (sprinting into walls, falling off cliffs)
- */
-USTRUCT(BlueprintType)
-struct FActionSpaceMask
-{
-	GENERATED_BODY()
-
-	// Movement constraints
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Movement")
-	bool bLockMovementX = false;  // Block lateral movement (narrow corridor)
-
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Movement")
-	bool bLockMovementY = false;  // Block forward/back movement (cliff edge)
-
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Movement")
-	float MaxSpeed = 1.0f;  // Speed limit (0.3 = walk only, 1.0 = sprint allowed)
-
-	// Aiming constraints (degrees)
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Aiming")
-	float MinYaw = -180.0f;  // Minimum horizontal aim angle
-
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Aiming")
-	float MaxYaw = 180.0f;  // Maximum horizontal aim angle
-
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Aiming")
-	float MinPitch = -90.0f;  // Minimum vertical aim angle
-
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Aiming")
-	float MaxPitch = 90.0f;  // Maximum vertical aim angle
-
-	// Action availability
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Actions")
-	bool bCanSprint = true;  // Allow sprinting (open area)
-
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Actions")
-	bool bForceCrouch = false;  // Force crouch (low ceiling)
-
-	UPROPERTY(BlueprintReadWrite, Category = "Mask|Actions")
-	bool bSafetyLock = false;  // Disable firing (friendly fire risk)
-
-	FActionSpaceMask()
-		: bLockMovementX(false)
-		, bLockMovementY(false)
-		, MaxSpeed(1.0f)
-		, MinYaw(-180.0f)
-		, MaxYaw(180.0f)
-		, MinPitch(-90.0f)
-		, MaxPitch(90.0f)
-		, bCanSprint(true)
-		, bForceCrouch(false)
-		, bSafetyLock(false)
-	{
-	}
-};
-
-
-
 /**
  * RL training statistics
  */

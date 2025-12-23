@@ -302,11 +302,10 @@ TArray<float> URLPolicyNetwork::Softmax(const TArray<float>& Logits)
 
 FTacticalAction URLPolicyNetwork::GetAction(const FObservationElement& Observation, UObjective* CurrentObjective)
 {
-	FActionSpaceMask DefaultMask;  // No constraints
-	return GetActionWithMask(Observation, CurrentObjective, DefaultMask);
+	return GetActionWithMask(Observation, CurrentObjective);
 }
 
-FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& Observation, UObjective* CurrentObjective, const FActionSpaceMask& Mask)
+FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& Observation, UObjective* CurrentObjective)
 {
 	// v4.0: Mask parameter ignored for discrete macro actions
 	if (!bIsInitialized)

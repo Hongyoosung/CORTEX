@@ -6,7 +6,7 @@
 
 /**
  * EQS Context that provides visible enemy locations for tactical positioning
- * Used by tactical queries (RetreatCover, FlankLeft/Right, etc.) to avoid/flank enemies
+ * Used by tactical queries (RetreatCover etc.) to avoid/flank enemies
  *
  * Production Mode: Reads VisibleEnemies array from FollowerStateTreeContext
  * Testing Mode: Fallback to searching actors with tag "Enemy" (for EQS Testing Pawn)
