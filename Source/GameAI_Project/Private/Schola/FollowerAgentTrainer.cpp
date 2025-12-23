@@ -130,11 +130,11 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 
 		if (FollowerAgent)
 		{
-			UE_LOG(LogTemp, Error, TEXT("  → FollowerAgent->bIsAlive=%d"), FollowerAgent->bIsAlive);
+			UE_LOG(LogTemp, Warning, TEXT("  → FollowerAgent->bIsAlive=%d"), FollowerAgent->bIsAlive);
 		}
 		if (RewardProvider)
 		{
-			UE_LOG(LogTemp, Error, TEXT("  → RewardProvider->bTerminated=%d"), RewardProvider->IsTerminated());
+			UE_LOG(LogTemp, Warning, TEXT("  → RewardProvider->bTerminated=%d"), RewardProvider->IsTerminated());
 		}
 	}
 
