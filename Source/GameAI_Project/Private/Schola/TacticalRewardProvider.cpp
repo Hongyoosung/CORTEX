@@ -16,10 +16,13 @@ void UTacticalRewardProvider::Initialize()
 
 	if (FollowerAgent)
 	{
+		// CRITICAL FIX: Do NOT set bTerminated based on current bIsAlive
+		// bTerminated should only be set in Reset() (false) and GetReward() (based on death during episode)
+		// Setting it here creates race condition with Schola's ComputeStatus() query timing
 		LastRewardValue = FollowerAgent->GetAccumulatedReward();
-		bTerminated = !FollowerAgent->bIsAlive;
 
-		UE_LOG(LogTemp, Log, TEXT("[TacticalRewardProvider] Initialized with FollowerAgent"));
+		UE_LOG(LogTemp, Log, TEXT("[TacticalRewardProvider] Initialized with FollowerAgent %s"),
+			*FollowerAgent->GetOwner()->GetName());
 	}
 	else
 	{
@@ -29,33 +32,17 @@ void UTacticalRewardProvider::Initialize()
 
 float UTacticalRewardProvider::GetReward()
 {
-	static int32 CallCount = 0;
-	CallCount++;
-
 	if (!FollowerAgent)
 	{
-		if (CallCount % 100 == 1)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[TacticalRewardProvider] GetReward called but FollowerAgent is NULL! (Call #%d)"), CallCount);
-		}
 		return 0.0f;
 	}
 
-	// Get current accumulated reward
 	float CurrentReward = FollowerAgent->GetAccumulatedReward();
-
-	// Calculate delta since last query
 	float DeltaReward = CurrentReward - LastRewardValue;
 	LastRewardValue = CurrentReward;
 
-	// Check for termination
+	// Update termination state based on current alive status
 	bTerminated = !FollowerAgent->bIsAlive;
-
-	if (CallCount % 100 == 1)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalRewardProvider] GetReward #%d: Delta=%.3f, Total=%.3f, Alive=%d"),
-			CallCount, DeltaReward, CurrentReward, FollowerAgent->bIsAlive ? 1 : 0);
-	}
 
 	return DeltaReward;
 }

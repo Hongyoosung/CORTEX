@@ -99,41 +99,9 @@ void AScholaCombatEnvironment::BeginPlay()
 	// Auto-discover agents if enabled
 	if (bAutoDiscoverAgents)
 	{
-		/*FTimerHandle TimerHandle;
-		GetWorldTimerManager().SetTimer(TimerHandle, [this]()
-			{
-				DiscoverAgents();
-			}, 0.2f, false);*/
-
 		DiscoverAgents();
 	}
 
-	// ===== CRITICAL FIX: Ensure NO CDO in RegisteredAgents before Schola scans =====
-	// Schola's base class (AAbstractScholaEnvironment) will scan for components during
-	// Super::BeginPlay() → Initialize(). We MUST ensure RegisteredAgents only contains
-	// valid non-CDO components BEFORE that scan happens.
-	
-	TArray<UScholaAgentComponent*> FilteredAgents;
-	for (UScholaAgentComponent* Agent : RegisteredAgents)
-	{
-		// Triple-check: No CDO, no Archetype, must have valid owner
-		if (Agent && 
-			!Agent->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) &&
-			Agent->GetOwner() &&
-			!Agent->GetOwner()->HasAnyFlags(RF_ClassDefaultObject))
-		{
-			FilteredAgents.Add(Agent);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Pre-Super filtering CDO/invalid: %s"),
-				Agent ? *Agent->GetName() : TEXT("nullptr"));
-		}
-	}
-	
-	RegisteredAgents = FilteredAgents;
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Pre-Super::BeginPlay() agent count: %d (CDOs filtered)"),
-		RegisteredAgents.Num());
 	
 	// NOW call Super::BeginPlay() to initialize Schola base class
 	// (moved here to ensure our agents are discovered first)
@@ -199,64 +167,27 @@ void AScholaCombatEnvironment::InitializeEnvironment()
 
 void AScholaCombatEnvironment::ResetEnvironment()
 {
-	// Called by Schola when Python calls env.reset()
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv] ResetEnvironment called                            ║"));
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════╝"));
-
 	if (!SimulationManager)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] ✗ FATAL: SimulationManager not found!"));
+		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] SimulationManager not found!"));
 		return;
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✓ SimulationManager found"));
 
-	// CRITICAL: Verify teams are registered before calling StartNewEpisode
-	// This prevents crashes when reset is called before agents are fully initialized
+	// Verify teams are registered
 	TArray<int32> AllTeamIDs = SimulationManager->GetAllTeamIDs();
 	if (AllTeamIDs.Num() == 0)
 	{
-		UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════╗"));
-		UE_LOG(LogTemp, Error, TEXT("║ RESET BLOCKED - No teams registered!                          ║"));
-		UE_LOG(LogTemp, Error, TEXT("╠════════════════════════════════════════════════════════════════╣"));
-		UE_LOG(LogTemp, Error, TEXT("║ This happens when env.reset() is called before agents spawn.  ║"));
-		UE_LOG(LogTemp, Error, TEXT("║ Solution: Wait for level to finish loading before calling     ║"));
-		UE_LOG(LogTemp, Error, TEXT("║ reset(), or add a delay in your Python script.                ║"));
-		UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════╝"));
+		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Reset blocked - no teams registered"));
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✓ Validation passed - %d teams registered"), AllTeamIDs.Num());
-
-	// Log team details for debugging
-	for (int32 TeamID : AllTeamIDs)
-	{
-		TArray<AActor*> Members = SimulationManager->GetTeamMembers(TeamID);
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv]   - Team %d: %d members"), TeamID, Members.Num());
-	}
-
-	// Ensure simulation is running (starts it on first connection/reset)
+	// Start or restart simulation
 	if (!SimulationManager->IsSimulationRunning())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] First reset - Starting Simulation"));
 		SimulationManager->StartSimulation();
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✓ Simulation started"));
-
-		// On first start, also trigger initial episode
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Calling StartNewEpisode..."));
-		SimulationManager->StartNewEpisode();
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✓ Episode started successfully"));
-	}
-	else
-	{
-		// Subsequent resets: Directly trigger new episode
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Subsequent reset - Restarting episode"));
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Calling StartNewEpisode..."));
-		SimulationManager->StartNewEpisode();
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✓ Episode restarted successfully"));
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ═══ ResetEnvironment completed successfully ═══"));
+	SimulationManager->StartNewEpisode();
 }
 
 void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAgentTrainerPairs)
@@ -303,23 +234,14 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 	int32 TrainersCreated = 0;
 	int32 TrainersFailed = 0;
 
-	// 유효한 에이전트만 처리
+	// Process valid agents
 	for (int32 i = 0; i < ValidComponents.Num(); i++)
 	{
 		UScholaAgentComponent* Agent = ValidComponents[i];
 
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Processing agent %d/%d: %s"),
-			i + 1, ValidComponents.Num(), *Agent->GetOwner()->GetName());
-
-		// Initialize if needed
 		if (!Agent->FollowerAgent)
 		{
-			Agent->InitializeScholaComponents();
-		}
-
-		if (!Agent->FollowerAgent)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] - ✗ No FollowerAgent after init!"));
+			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Agent %s missing FollowerAgent"), *Agent->GetOwner()->GetName());
 			TrainersFailed++;
 			continue;
 		}
@@ -507,70 +429,21 @@ bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 {
 	if (!Agent || !Agent->GetOwner())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Validation failed: Agent or Owner is null"));
 		return false;
 	}
 
-	FString ActorName = Agent->GetOwner()->GetName();
-	bool bIsValid = true;
-
-	// Check for required FollowerAgentComponent
+	// Check required components
 	UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
-	if (!FollowerComp)
+	if (!FollowerComp || !Agent->TacticalObserver || !Agent->RewardProvider || !Agent->TacticalActuator)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✗ %s: Missing FollowerAgentComponent"), *ActorName);
-		bIsValid = false;
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] ✓ %s: Has FollowerAgentComponent"), *ActorName);
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Agent %s missing required components"), *Agent->GetOwner()->GetName());
+		return false;
 	}
 
-	// Check for TacticalObserver
-	if (!Agent->TacticalObserver)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✗ %s: Missing TacticalObserver"), *ActorName);
-		bIsValid = false;
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] ✓ %s: Has TacticalObserver"), *ActorName);
-	}
-
-	// Check for RewardProvider
-	if (!Agent->RewardProvider)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✗ %s: Missing RewardProvider"), *ActorName);
-		bIsValid = false;
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] ✓ %s: Has RewardProvider"), *ActorName);
-	}
-
-	// Check for TacticalActuator
-	if (!Agent->TacticalActuator)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✗ %s: Missing TacticalActuator"), *ActorName);
-		bIsValid = false;
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] ✓ %s: Has TacticalActuator"), *ActorName);
-	}
-
-	if (bIsValid)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] ✓ %s: Validation PASSED"), *ActorName);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ✗ %s: Validation FAILED"), *ActorName);
-	}
-
+	// Initialize components (only done once per agent)
 	Agent->InitializeScholaComponents();
 
-	return bIsValid;
+	return true;
 }
 
 //------------------------------------------------------------------------------
@@ -608,19 +481,7 @@ void AScholaCombatEnvironment::BindEpisodeEvents()
 
 void AScholaCombatEnvironment::OnEpisodeStarted(int32 EpisodeNumber)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Episode %d started - Resetting agents"), EpisodeNumber);
-
-	// Reset all registered agents
-	for (UScholaAgentComponent* Agent : RegisteredAgents)
-	{
-		if (Agent)
-		{
-			Agent->ResetEpisode();
-		}
-	}
-
-	// NOTE: Do NOT call Reset() here - it creates circular dependency
-	// ResetEnvironment() already triggers StartNewEpisode() which broadcasts this event
+	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] Episode %d started"), EpisodeNumber);
 }
 
 void AScholaCombatEnvironment::OnEpisodeEnded(const FEpisodeResult& Result)

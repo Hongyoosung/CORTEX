@@ -46,7 +46,15 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 		return;
 	}
 
-	// Possess the pawn BEFORE calling parent Initialize (required!)
+	// CRITICAL: Unpossess existing controller (FollowerAIController) before training
+	AController* ExistingController = ControlledPawn->GetController();
+	if (ExistingController && ExistingController != this)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] Training takeover: unpossessing %s"), *ExistingController->GetName());
+		ExistingController->UnPossess();
+	}
+
+	// Possess the pawn for training
 	Possess(ControlledPawn);
 
 	// DIAGNOSTIC: Verify PathFollowingComponent exists after possession
@@ -94,76 +102,52 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 
 float AFollowerAgentTrainer::ComputeReward()
 {
-	static int32 ComputeRewardCallCount = 0;
-	ComputeRewardCallCount++;
-
-	if (ComputeRewardCallCount % 100 == 1)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] ComputeReward #%d called for %s"),
-			ComputeRewardCallCount, *TrainerConfiguration.Name);
-	}
-
 	if (!RewardProvider)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeReward: RewardProvider is NULL!"));
 		return 0.0f;
 	}
 
-	// Get reward from TacticalRewardProvider
 	float StepReward = RewardProvider->GetReward();
 	EpisodeReward += StepReward;
-	EpisodeSteps++; // Increment step counter
+	EpisodeSteps++;
 
 	return StepReward;
 }
 
 EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 {
-	static int32 ComputeStatusCallCount = 0;
-	ComputeStatusCallCount++;
-
-	// Check if agent is dead
 	bool bDead = IsAgentDead();
 	bool bRewardTerminated = (RewardProvider && RewardProvider->IsTerminated());
 	bool bTimeout = IsEpisodeTimeout();
 
-	if (ComputeStatusCallCount % 100 == 1 || bDead || bRewardTerminated)
+	// DIAGNOSTIC: Log first call after reset (when EpisodeSteps == 0)
+	if (EpisodeSteps == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] ComputeStatus #%d: Dead=%d, RewardTerminated=%d, Timeout=%d, Steps=%d"),
-			ComputeStatusCallCount, bDead ? 1 : 0, bRewardTerminated ? 1 : 0, bTimeout ? 1 : 0, EpisodeSteps);
+		UE_LOG(LogTemp, Warning, TEXT("[DIAGNOSTIC ComputeStatus] %s: Steps=%d, Dead=%d, RewardTerm=%d, Timeout=%d, FollowerAgent=%s, RewardProvider=%s"),
+			*TrainerConfiguration.Name, EpisodeSteps, bDead, bRewardTerminated, bTimeout,
+			FollowerAgent ? TEXT("Valid") : TEXT("NULL"),
+			RewardProvider ? TEXT("Valid") : TEXT("NULL"));
 
-		if (!FollowerAgent)
+		if (FollowerAgent)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] FollowerAgent is NULL!"));
+			UE_LOG(LogTemp, Error, TEXT("  → FollowerAgent->bIsAlive=%d"), FollowerAgent->bIsAlive);
 		}
-		else
+		if (RewardProvider)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] FollowerAgent->bIsAlive=%d"), FollowerAgent->bIsAlive ? 1 : 0);
+			UE_LOG(LogTemp, Error, TEXT("  → RewardProvider->bTerminated=%d"), RewardProvider->IsTerminated());
 		}
 	}
 
-	if (bDead)
+	if (bDead || bRewardTerminated)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Agent died (Episode reward: %.2f, Steps: %d) → COMPLETED"),
-			*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
-		return EAgentTrainingStatus::Completed;
-	}
-
-	if (bRewardTerminated)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Episode terminated by RewardProvider (Episode reward: %.2f, Steps: %d) → COMPLETED"),
-			*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
 		return EAgentTrainingStatus::Completed;
 	}
 
 	if (bTimeout)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s - Episode timeout (Episode reward: %.2f, Steps: %d) → TRUNCATED"),
-			*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
 		return EAgentTrainingStatus::Truncated;
 	}
 
-	// Still running
 	return EAgentTrainingStatus::Running;
 }
 
@@ -191,13 +175,30 @@ void AFollowerAgentTrainer::ResetTrainer()
 	EpisodeReward = 0.0f;
 	EpisodeSteps = 0;
 
+	// CRITICAL FIX: Ensure trainer is possessing its pawn
+	// State.bExists is set to false in OnUnPossess() and true in OnPossess()
+	// If the pawn was unpossessed for any reason, re-possess it here
+	APawn* CurrentPawn = GetPawn();
+	if (CurrentPawn && !CurrentPawn->GetController())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s: Pawn not possessed during reset - re-possessing"), *TrainerConfiguration.Name);
+		Possess(CurrentPawn);
+	}
+	else if (!CurrentPawn && ScholaAgent)
+	{
+		APawn* TargetPawn = ScholaAgent->GetControlledPawn();
+		if (TargetPawn)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] %s: No pawn during reset - possessing from ScholaAgent"), *TrainerConfiguration.Name);
+			Possess(TargetPawn);
+		}
+	}
+
 	// Reset ScholaAgent episode state
 	if (ScholaAgent)
 	{
 		ScholaAgent->ResetEpisode();
 	}
-
-	UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s - Reset for new episode"), *TrainerConfiguration.Name);
 }
 
 void AFollowerAgentTrainer::OnCompletion()
@@ -211,8 +212,6 @@ void AFollowerAgentTrainer::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
-	UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ✅ OnPossess called: Now controlling '%s'"),
-		*GetNameSafe(InPawn));
 }
 
 void AFollowerAgentTrainer::OnUnPossess()

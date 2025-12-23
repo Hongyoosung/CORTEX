@@ -42,17 +42,11 @@ UFollowerStateTreeComponent::UFollowerStateTreeComponent()
 
 void UFollowerStateTreeComponent::BeginPlay()
 {
-	// [변경] 부모 클래스 초기화를 가장 먼저 실행하여 안전성 확보
-	Super::BeginPlay();
-
 	UE_LOG(LogTemp, Warning, TEXT("🔵 UFollowerStateTreeComponent::BeginPlay CALLED for '%s'"),
 		GetOwner() ? *GetOwner()->GetName() : TEXT("NULL_OWNER"));
 
-	// [중요] 상태 변경 델리게이트 바인딩 (종료 원인 파악용)
-	// UStateTreeComponent에 정의된 OnStateTreeRunStatusChanged 델리게이트 사용
-	OnStateTreeRunStatusChanged.AddDynamic(this, &UFollowerStateTreeComponent::HandleOnStateTreeRunStatusChanged);
-
-	// ... (FollowerComponent 찾기) ...
+	// CRITICAL: Find FollowerComponent and initialize context BEFORE Super::BeginPlay()
+	// Super::BeginPlay() may start the StateTree, and evaluators need valid context
 	if (!FollowerComponent && bAutoFindFollowerComponent)
 	{
 		FollowerComponent = FindFollowerComponent();
@@ -64,11 +58,23 @@ void UFollowerStateTreeComponent::BeginPlay()
 		return;
 	}
 
-	// Initialize context 
+	// Initialize context BEFORE Super::BeginPlay() starts the tree
 	InitializeContext();
 
 	// Bind to follower events
 	BindToFollowerEvents();
+
+	// Bind status change delegate
+	OnStateTreeRunStatusChanged.AddDynamic(this, &UFollowerStateTreeComponent::HandleOnStateTreeRunStatusChanged);
+
+	// Bind to pawn controller change (to handle Schola Trainer possession)
+	if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
+	{
+		OwnerPawn->ReceiveControllerChangedDelegate.AddDynamic(this, &UFollowerStateTreeComponent::OnControllerChanged);
+	}
+
+	// NOW call parent class (may start StateTree with valid context)
+	Super::BeginPlay();
 
 	// [핵심] 초기화가 끝난 후 마지막에 시작 시도
 	if (CheckRequirementsAndStart())
@@ -391,7 +397,17 @@ bool UFollowerStateTreeComponent::CollectExternalData(const FStateTreeExecutionC
             }
             else
             {
-                UE_LOG(LogTemp, Error, TEXT("  ❌ [%d] AIController REQUIRED but NULL"), Index);
+                // AIController is now optional (Schola training mode)
+                OutDataViews[Index] = FStateTreeDataView();
+                if (Desc.Requirement == EStateTreeExternalDataRequirement::Required)
+                {
+                    UE_LOG(LogTemp, Error, TEXT("  ❌ [%d] AIController REQUIRED but NULL"), Index);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Log, TEXT("  ⚠️ [%d] AIController optional and NULL (Schola mode)"), Index);
+                    bProvided = true; // Count as provided for optional items
+                }
             }
         }
         else if (Desc.Struct && Desc.Struct->IsChildOf(APawn::StaticClass()))
@@ -644,30 +660,30 @@ bool UFollowerStateTreeComponent::CheckRequirementsAndStart()
 		return false;
 	}
 
-	// 2. AIController 확인 (AAbstractTrainer now inherits from AAIController)
+	// 2. AIController 확인 (OPTIONAL - may be null during Schola training)
+	// Update context but don't require it to be present
 	if (!Context.AIController)
 	{
 		APawn* OwnerPawn = Cast<APawn>(Owner);
 		if (OwnerPawn)
 		{
 			Context.AIController = Cast<AAIController>(OwnerPawn->GetController());
-			if (!Context.AIController)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:⏳ No AIController yet"));
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:❌ Owner is NOT a Pawn (it's %s)"),
-				Owner ? *Owner->GetClass()->GetName() : TEXT("NULL"));
 		}
 	}
 
+	// 3. If StateTree was previously stopped, ensure it's fully reset before restarting
+	EStateTreeRunStatus CurrentStatus = GetStateTreeRunStatus();
+	if (CurrentStatus == EStateTreeRunStatus::Stopped || CurrentStatus == EStateTreeRunStatus::Failed)
+	{
+		UE_LOG(LogTemp, Log, TEXT("  UFollowerStateTreeComponent: StateTree in %s state, stopping before restart"),
+			*UEnum::GetValueAsString(CurrentStatus));
+		StopLogic("Restart");
+	}
 
-	// 3. 모든 조건 만족 시 시작
-	UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:🚀 All requirements met! Calling StartLogic()..."));
+	// 4. 시작 (AIController is optional, so proceed even if null)
+	UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:🚀 Starting StateTree (AIController=%s)..."),
+		Context.AIController ? TEXT("Valid") : TEXT("NULL (Schola mode)"));
 	StartLogic();
-
 
 	return IsStateTreeRunning();
 }
@@ -703,4 +719,59 @@ void UFollowerStateTreeComponent::SendStateTreeEvent(const FGameplayTag& EventTa
 	Super::SendStateTreeEvent(Event);
 
 	UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Event sent - '%s'"), *EventTag.ToString());
+}
+
+void UFollowerStateTreeComponent::OnControllerChanged(APawn* InPawn, AController* OldController, AController* NewController)
+{
+	AActor* Owner = GetOwner();
+	UE_LOG(LogTemp, Warning, TEXT("🔄 [StateTree] Controller changed on '%s': %s → %s"),
+		*GetNameSafe(Owner),
+		*GetNameSafe(OldController),
+		*GetNameSafe(NewController));
+
+	// Update AIController reference in context
+	Context.AIController = Cast<AAIController>(NewController);
+
+	// If StateTree is running, it might stop due to controller change
+	// Schedule a restart on next frame to ensure smooth transition
+	if (NewController)
+	{
+		UWorld* World = GetWorld();
+		if (World && World->IsValidLowLevel())
+		{
+			// Stop current StateTree if running (clears stale state)
+			if (IsStateTreeRunning())
+			{
+				StopLogic("Controller Changed");
+				UE_LOG(LogTemp, Log, TEXT("  → StateTree stopped to clear stale controller state"));
+			}
+
+			// Restart StateTree on next tick (allows new controller to settle)
+			World->GetTimerManager().SetTimerForNextTick([WeakThis = TWeakObjectPtr<UFollowerStateTreeComponent>(this)]()
+			{
+				UFollowerStateTreeComponent* Comp = WeakThis.Get();
+				if (!Comp) return;
+
+				// Update context with new controller
+				if (APawn* OwnerPawn = Cast<APawn>(Comp->GetOwner()))
+				{
+					Comp->Context.AIController = Cast<AAIController>(OwnerPawn->GetController());
+				}
+
+				// Restart StateTree
+				Comp->CheckRequirementsAndStart();
+
+				if (Comp->IsStateTreeRunning())
+				{
+					UE_LOG(LogTemp, Warning, TEXT("  ✅ StateTree restarted after controller change for '%s'"),
+						*GetNameSafe(Comp->GetOwner()));
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("  ❌ StateTree failed to restart after controller change for '%s'"),
+						*GetNameSafe(Comp->GetOwner()));
+				}
+			});
+		}
+	}
 }

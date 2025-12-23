@@ -162,27 +162,12 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 		return;
 	}
 
-	// CRITICAL: Verify AIController actually controls this pawn
+	// Verify AIController controls this pawn (should always be true now)
 	if (InstanceData.AIController->GetPawn() != Pawn)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] ❌ AIController '%s' does NOT control pawn '%s'! GetPawn()=%s"),
-			*InstanceData.AIController->GetName(),
-			*Pawn->GetName(),
-			*GetNameSafe(InstanceData.AIController->GetPawn()));
-
-		// FIX: Re-possess the pawn
-		UE_LOG(LogTemp, Error, TEXT("[MOVE FIX] Re-possessing pawn '%s' with AIController '%s'"),
-			*Pawn->GetName(), *InstanceData.AIController->GetName());
-
-		InstanceData.AIController->Possess(Pawn);
-
-		// Verify re-possession succeeded
-		if (InstanceData.AIController->GetPawn() != Pawn)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[MOVE FIX] ❌ Re-possession FAILED! Cannot move."));
-			return;
-		}
-		UE_LOG(LogTemp, Warning, TEXT("[MOVE FIX] ✅ Re-possession successful"));
+		UE_LOG(LogTemp, Error, TEXT("[STTask_ExecuteObjective] AIController '%s' doesn't control pawn '%s' - skipping movement"),
+			*InstanceData.AIController->GetName(), *Pawn->GetName());
+		return;
 	}
 
 	// v4.0: Use macro action for high-level tactical movement
@@ -218,32 +203,10 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 				FNavLocation NavLoc;
 				bool bOnNavMesh = NavSys->ProjectPointToNavigation(TargetPos, NavLoc, FVector(500, 500, 500));
 
-				UE_LOG(LogTemp, Error, TEXT("[MOVE DIAG] ❌ '%s': NO VALID PATH to destination! Target on NavMesh=%s"),
-					*Pawn->GetName(), bOnNavMesh ? TEXT("Yes, but unreachable") : TEXT("NO - outside NavMesh!"));
-
 				// Draw debug to show the problem
 				DrawDebugSphere(World, TargetPos, 100.0f, 12, FColor::Red, false, 5.0f);
 				DrawDebugLine(World, CurrentPos, TargetPos, FColor::Red, false, 5.0f, 0, 3.0f);
 			}
-			else
-			{
-				UE_LOG(LogTemp, Log, TEXT("[MOVE DIAG] ✅ Path exists: %.1f units, %d points"),
-					Result.Path->GetLength(), Result.Path->GetPathPoints().Num());
-			}
-		}
-
-		// v7.4: Reduced diagnostic logging to Verbose level
-		UE_LOG(LogTemp, Verbose, TEXT("[MOVE DIAG] '%s': Distance=%.1f, CharMovement=%s, PathFollowing=%s, NavSys=%s, PathExists=%s"),
-			*Pawn->GetName(), Distance,
-			MoveComp ? TEXT("✅") : TEXT("❌"),
-			PathComp ? TEXT("✅") : TEXT("❌"),
-			NavSys ? TEXT("✅") : TEXT("❌"),
-			bPathExists ? TEXT("✅") : TEXT("❌ NO PATH!"));
-
-		if (MoveComp)
-		{
-			UE_LOG(LogTemp, Verbose, TEXT("[MOVE DIAG] CharMovement: Mode=%d (Walking=1), MaxSpeed=%.1f, bOrientToMovement=%d"),
-				(int32)MoveComp->MovementMode, MoveComp->MaxWalkSpeed, MoveComp->bOrientRotationToMovement ? 1 : 0);
 		}
 
 		// CRITICAL DIAGNOSTIC: Check PathFollowingComponent status
@@ -266,9 +229,7 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 				if (DistanceToNewTarget < SameDestinationTolerance)
 				{
 					bAlreadyMovingToSameDestination = true;
-					// Already moving to same destination - don't interrupt!
-					UE_LOG(LogTemp, Verbose, TEXT("[PATHFOLLOW v7.4] '%s': Already moving to same destination (dist=%.1f), continuing..."),
-						*Pawn->GetName(), DistanceToNewTarget);
+
 					return;  // Early exit - keep current movement
 				}
 			}
@@ -326,13 +287,6 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 			{
 				UE_LOG(LogTemp, Error, TEXT("[MOVE BUG] FindPathSync succeeded but MoveTo failed!"));
 			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Verbose, TEXT("[MOVE v7.4] '%s': MoveTo %s, RequestID=%s"),
-				*Pawn->GetName(),
-				MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful ? TEXT("started") : TEXT("already at goal"),
-				*MoveResult.MoveId.ToString());
 		}
 
 		SharedContext.MovementDestination = NavTargetPos;  // Use projected position

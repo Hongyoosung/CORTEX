@@ -39,14 +39,14 @@ UFollowerStateTreeSchema::UFollowerStateTreeSchema()
 		ContextDataDescs.Add(PawnDesc);
 	}
 
-	// AIController (REQUIRED - includes AAbstractTrainer which now inherits from AAIController)
+	// AIController (OPTIONAL - Schola training uses FollowerAgentTrainer which may replace AIController)
 	{
 		FStateTreeExternalDataDesc AIDesc(
 			FName("AIController"),
 			AAIController::StaticClass(),
 			FGuid(0x1D291B00, 0x29994FDE, 0xC6546702, 0x47895FD6)
 		);
-		AIDesc.Requirement = EStateTreeExternalDataRequirement::Required;
+		AIDesc.Requirement = EStateTreeExternalDataRequirement::Optional;
 		ContextDataDescs.Add(AIDesc);
 	}
 
@@ -143,24 +143,20 @@ bool UFollowerStateTreeSchema::SetContextRequirements(UStateTreeComponent& InCom
 		return false;
 	}
 
-	// REQUIRED: AIController (includes AAbstractTrainer which now inherits from AAIController)
+	// OPTIONAL: AIController (may be null during Schola training when FollowerAgentTrainer takes over)
 	AAIController* AIController = Cast<AAIController>(OwnerPawn->GetController());
-	if (!AIController)
+	if (AIController)
 	{
-		if (bLogErrors)
-		{
-			UE_LOG(LogTemp, Error, TEXT("FollowerStateTreeSchema: No AIController for '%s'"), *Owner->GetName());
-		}
-		return false;
+		Context.SetContextDataByName(TEXT("AIController"), FStateTreeDataView(AIController));
 	}
-
-	if (!Context.SetContextDataByName(TEXT("AIController"), FStateTreeDataView(AIController)))
+	else
 	{
+		// Set null context - StateTree will handle optional data gracefully
+		Context.SetContextDataByName(TEXT("AIController"), FStateTreeDataView());
 		if (bLogErrors)
 		{
-			UE_LOG(LogTemp, Error, TEXT("FollowerStateTreeSchema: Failed to set AIController context for '%s'"), *Owner->GetName());
+			UE_LOG(LogTemp, Log, TEXT("FollowerStateTreeSchema: No AIController for '%s' (Schola training mode)"), *Owner->GetName());
 		}
-		return false;
 	}
 
 	// REQUIRED: Actor

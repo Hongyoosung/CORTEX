@@ -210,7 +210,9 @@ bool UScholaAgentComponent::IsEpisodeTerminated() const
 		return false;
 	}
 
-	return RewardProvider->IsTerminated();
+	bool bResult = RewardProvider->IsTerminated();
+
+	return bResult;
 }
 
 void UScholaAgentComponent::ConfigureActuators()

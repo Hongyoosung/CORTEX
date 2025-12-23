@@ -432,9 +432,9 @@ public:
 	// EPISODE CONFIG
 	//--------------------------------------------------------------------------
 
-	/** Auto-restart episode when a team is eliminated */
+	/** Auto-restart episode when a team is eliminated (DISABLE for RLlib training!) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	bool bAutoRestartEpisode = true;
+	bool bAutoRestartEpisode = false;
 
 	/** Delay before starting new episode (for visualization) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")

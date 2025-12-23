@@ -114,6 +114,10 @@ protected:
 	UFUNCTION()
 	void OnObjectiveReceived(UObjective* Objective);
 
+	/** Handle controller changed (for Schola Trainer possession) */
+	UFUNCTION()
+	void OnControllerChanged(APawn* InPawn, AController* OldController, AController* NewController);
+
 	bool CheckRequirementsAndStart();
 
 

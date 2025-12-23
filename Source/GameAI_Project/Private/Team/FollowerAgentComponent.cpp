@@ -377,8 +377,6 @@ void UFollowerAgentComponent::MarkAsAlive()
 
 	bIsAlive = true;
 
-	UE_LOG(LogTemp, Warning, TEXT("FollowerAgent '%s': Respawning - resetting health and systems"), *GetOwner()->GetName());
-
 	// Reset health to full
 	UHealthComponent* HealthComp = GetOwner()->FindComponentByClass<UHealthComponent>();
 	if (HealthComp)

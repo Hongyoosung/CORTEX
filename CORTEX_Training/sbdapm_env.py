@@ -230,6 +230,10 @@ if SCHOLA_AVAILABLE:
             try:
                 current_time = time.time()
 
+                # Track episode start time for 30s timeout
+                if not hasattr(self, '_episode_start_time'):
+                    self._episode_start_time = current_time
+
                 # v7.5: Track step timing for diagnostics
                 if not hasattr(self, '_last_step_time'):
                     self._last_step_time = current_time
@@ -339,15 +343,41 @@ if SCHOLA_AVAILABLE:
                     # Info
                     info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
 
-                # Episode Check
+                # Episode Termination Logic (v4.0)
                 self.episode_steps += 1
-                if self.episode_steps >= self.max_episode_steps:
+                episode_duration = current_time - self._episode_start_time
+
+                # DIAGNOSTIC: Log terminated flags from UE5
+                if self.episode_steps <= 3:  # Only log first 3 steps to avoid spam
+                    print(f"[DIAGNOSTIC] Step {self.episode_steps}: terminated_dict = {terminated_dict}")
+
+                # Condition 1: Team Elimination (all agents on one team dead)
+                # Check if all agents are terminated (real terminal state from UE5)
+                all_agents_dead = all(terminated_dict.values())
+
+                # Condition 2: 30-second timeout
+                timeout_reached = episode_duration >= 30.0
+
+                # Condition 3: Max step safeguard (fallback)
+                max_steps_reached = self.episode_steps >= self.max_episode_steps
+
+                # Set episode-level flags
+                if all_agents_dead:
+                    # Real termination: team eliminated
+                    terminated_dict["__all__"] = True
+                    truncated_dict["__all__"] = False
+                    print(f"[EPISODE END] Team eliminated at step {self.episode_steps}")
+                elif timeout_reached or max_steps_reached:
+                    # Truncation: time limit reached
                     for aid in self._agent_ids:
                         truncated_dict[aid] = True
                     truncated_dict["__all__"] = True
-                    terminated_dict["__all__"] = True 
+                    terminated_dict["__all__"] = False  # ✅ FIX: Don't set terminated on timeout
+                    reason = "30s timeout" if timeout_reached else f"max steps ({self.max_episode_steps})"
+                    print(f"[EPISODE END] {reason} at step {self.episode_steps}, duration {episode_duration:.1f}s")
                 else:
-                    terminated_dict["__all__"] = all(terminated_dict.values())
+                    # Episode continues
+                    terminated_dict["__all__"] = False
                     truncated_dict["__all__"] = False
 
                 return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
