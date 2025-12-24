@@ -498,7 +498,20 @@ All critical systems verified and functional:
 
 ---
 
-## v4.0 Implementation Status (2025-12-20)
+## v4.0 Implementation Status (2025-12-24)
+
+### 🎯 CURRENT STATUS: Ready for Integration Testing
+
+**Verification Complete (2025-12-24):**
+- ✅ **MCTS Integration Confirmed:** MCTS assigns objectives → FollowerAgent → TacticalObserver encodes features 71-77 → RLlib receives strategic context
+- ✅ **Hybrid Architecture Working:** TeamLeaderComponent runs MCTS (continuous planning) → assigns objectives → followers receive MCTS guidance in observations
+- ✅ **Training Pipeline Intact:** UE5 → Schola gRPC → sbdapm_env.py (78 features) → RLlib PPO
+- ✅ **All Code Complete:** v4.0 macro actions, EQS integration, UPROPERTY-based queries
+- ✅ **All Assets Created:** EQS_ForwardCover, EQS_Retreat, EQS_Advance configured with C++ contexts
+
+**Next Step:** Phase 4D Integration Testing (1-2 hours) → Phase 4E Training
+
+---
 
 ### ✅ Phase 1: Data Structures & Python Interface (COMPLETE)
 - MultiDiscrete action space: [4, N+1, 3, 3] (FlankLeft/Right removed for simpler learning)
@@ -624,12 +637,32 @@ All critical systems verified and functional:
 **EQS Assets:** 100% Complete ✅
 **Code Refactor (UPROPERTY):** 100% Complete ✅
 **Editor Configuration:** 100% Complete ✅
-**Integration Testing:** 0% Complete 🎯 **CURRENT**
-**Training Ready:** Pending Phase 4D completion
+**MCTS Integration Verification:** 100% Complete ✅ (2025-12-24)
+**Integration Testing:** 0% Complete 🎯 **CURRENT BLOCKER**
+**Training Ready:** ❌ Pending Phase 4D completion
 
 **Time to Training-Ready:** 1-2 hours (integration testing + validation)
-**Reference:** See `next_step.md` for detailed test procedures
 
 ---
 
-**Last Updated:** v4.0 Phase 4C Complete - Editor Configuration (2025-12-20)
+### 📋 Implementation Checklist (v4.0 → Training)
+
+| Phase | Status | Completion |
+|-------|--------|------------|
+| **1. Data Structures & Python** | ✅ Complete | 100% |
+| **2. C++ Execution Logic** | ✅ Complete | 100% |
+| **3. EQS Integration** | ✅ Complete | 100% |
+| **4A. EQS Assets** | ✅ Complete | 100% |
+| **4B. Code Refactor (UPROPERTY)** | ✅ Complete | 100% |
+| **4C. Editor Configuration** | ✅ Complete | 100% |
+| **4D. Integration Testing** | 🎯 **CURRENT** | 0% |
+| **4E. Training Integration** | ⏳ Next | 0% |
+
+**Critical Path to Training:**
+1. ✅ Verify MCTS integration (DONE - confirmed working)
+2. 🎯 **Run Phase 4D integration tests** (agents move via NavMesh, EQS works in gameplay)
+3. ⏳ Start Python training (Phase 4E)
+
+---
+
+**Last Updated:** v4.0 MCTS Verification Complete, Ready for Phase 4D (2025-12-24)

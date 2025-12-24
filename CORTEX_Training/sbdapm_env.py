@@ -48,6 +48,11 @@ except ImportError:
     print("Warning: schola not installed. Install with: pip install schola[rllib]")
 
 
+# The maximum duration of an episode. After this time, the environment will reset.
+MAX_EPISODE_DURATION = 180.0
+
+
+
 if SCHOLA_AVAILABLE:
 
     class SBDAPMMultiAgentEnv(MultiAgentEnv):
@@ -356,7 +361,7 @@ if SCHOLA_AVAILABLE:
                 all_agents_dead = all(terminated_dict.values())
 
                 # Condition 2: 30-second timeout
-                timeout_reached = episode_duration >= 30.0
+                timeout_reached = episode_duration >= MAX_EPISODE_DURATION
 
                 # Condition 3: Max step safeguard (fallback)
                 max_steps_reached = self.episode_steps >= self.max_episode_steps

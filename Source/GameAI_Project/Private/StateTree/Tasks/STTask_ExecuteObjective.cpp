@@ -295,16 +295,47 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 	else
 	{
 		// No valid position found - EQS query failed
+		// ELEGANT FALLBACK: For Advance, use direct NavMesh pathfinding to objective
+		if (Macro.PositionChoice == ETacticalPosition::Advance)
+		{
+			// Get objective location from context
+			FVector ObjectiveLocation = SharedContext.CurrentObjective.Get()->TargetLocation;
+
+			if (!ObjectiveLocation.IsNearlyZero())
+			{
+				// Use direct NavMesh pathfinding (bypasses EQS)
+				FAIMoveRequest MoveReq(ObjectiveLocation);
+				MoveReq.SetAcceptanceRadius(200.0f); // Larger radius for objective
+				MoveReq.SetUsePathfinding(true);
+
+				FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
+
+				if (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful)
+				{
+					SharedContext.MovementDestination = ObjectiveLocation;
+					SharedContext.bIsMoving = true;
+
+					UE_LOG(LogTemp, Log, TEXT("[MOVE v4.0] ✅ '%s': EQS failed but using direct pathfinding to objective (fallback)"),
+						*Pawn->GetName());
+					return; // Fallback succeeded
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] ❌ '%s': EQS failed AND direct pathfinding failed - truly stuck!"),
+						*Pawn->GetName());
+				}
+			}
+		}
+
+		// Fallback failed or not applicable - stop movement
 		InstanceData.AIController->StopMovement();
 		SharedContext.bIsMoving = false;
 
 		if (Macro.PositionChoice != ETacticalPosition::Hold)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] ❌ '%s': EQS query failed for %s - agent stuck!"),
+			UE_LOG(LogTemp, Warning, TEXT("[MOVE v4.0] ⚠️ '%s': EQS query failed for %s - holding position"),
 				*Pawn->GetName(), *UEnum::GetValueAsString(Macro.PositionChoice));
 		}
-
-		UE_LOG(LogTemp, Warning, TEXT("[MOVE v4.0] '%s': Holding position (no valid EQS result)"), *Pawn->GetName());
 	}
 }
 
