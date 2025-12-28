@@ -14,6 +14,9 @@ ALeaderCharacter::ALeaderCharacter()
 void ALeaderCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Add Team.Ally tag for gameplay tag identification system
+	Tags.AddUnique("Team.Ally");
 }
 
 void ALeaderCharacter::Tick(float DeltaTime)

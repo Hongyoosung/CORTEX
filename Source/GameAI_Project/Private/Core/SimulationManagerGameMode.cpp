@@ -154,6 +154,14 @@ bool ASimulationManagerGameMode::RegisterTeamMember(int32 TeamID, AActor* Agent)
 	TeamInfo->TeamMembers.AddUnique(Agent);
 	ActorToTeamMap.Add(Agent, TeamID);
 
+	// Add gameplay tag for team identification (e.g., "Team.0", "Team.1")
+	FName TeamTag = FName(*FString::Printf(TEXT("Team.%d"), TeamID));
+	if (!Agent->Tags.Contains(TeamTag))
+	{
+		Agent->Tags.Add(TeamTag);
+		UE_LOG(LogTemp, Log, TEXT("SimulationManager: Added tag '%s' to %s"), *TeamTag.ToString(), *Agent->GetName());
+	}
+
 	// Store initial spawn transform for episode reset
 	if (!SpawnTransforms.Contains(Agent))
 	{
@@ -283,15 +291,74 @@ bool ASimulationManagerGameMode::AreTeamsEnemies(int32 TeamID1, int32 TeamID2) c
 
 bool ASimulationManagerGameMode::AreActorsEnemies(AActor* Actor1, AActor* Actor2) const
 {
-	int32 Team1 = GetTeamIDForActor(Actor1);
-	int32 Team2 = GetTeamIDForActor(Actor2);
-
-	if (Team1 == -1 || Team2 == -1)
+	if (!Actor1 || !Actor2)
 	{
 		return false;
 	}
 
-	return AreTeamsEnemies(Team1, Team2);
+	// Primary method: Use team ID system
+	int32 Team1 = GetTeamIDForActor(Actor1);
+	int32 Team2 = GetTeamIDForActor(Actor2);
+
+	if (Team1 != -1 && Team2 != -1)
+	{
+		return AreTeamsEnemies(Team1, Team2);
+	}
+
+	// Fallback method: Use gameplay tags
+	// Check for Team.Ally vs Team.Enemy tags
+	bool bActor1IsAlly = Actor1->ActorHasTag("Team.Ally");
+	bool bActor1IsEnemy = Actor1->ActorHasTag("Team.Enemy");
+	bool bActor2IsAlly = Actor2->ActorHasTag("Team.Ally");
+	bool bActor2IsEnemy = Actor2->ActorHasTag("Team.Enemy");
+
+	// Enemies if one is tagged Ally and the other is tagged Enemy
+	if ((bActor1IsAlly && bActor2IsEnemy) || (bActor1IsEnemy && bActor2IsAlly))
+	{
+		return true;
+	}
+
+	// Also support team number tags (Team.0, Team.1, etc.)
+	// Extract team number from tags
+	int32 Tag1TeamNum = -1;
+	int32 Tag2TeamNum = -1;
+
+	for (const FName& Tag : Actor1->Tags)
+	{
+		FString TagStr = Tag.ToString();
+		if (TagStr.StartsWith("Team.") && TagStr.Len() > 5)
+		{
+			FString NumStr = TagStr.RightChop(5); // Remove "Team."
+			if (NumStr.IsNumeric())
+			{
+				Tag1TeamNum = FCString::Atoi(*NumStr);
+				break;
+			}
+		}
+	}
+
+	for (const FName& Tag : Actor2->Tags)
+	{
+		FString TagStr = Tag.ToString();
+		if (TagStr.StartsWith("Team.") && TagStr.Len() > 5)
+		{
+			FString NumStr = TagStr.RightChop(5); // Remove "Team."
+			if (NumStr.IsNumeric())
+			{
+				Tag2TeamNum = FCString::Atoi(*NumStr);
+				break;
+			}
+		}
+	}
+
+	// If both have team number tags and they're in registered enemy teams
+	if (Tag1TeamNum != -1 && Tag2TeamNum != -1)
+	{
+		return AreTeamsEnemies(Tag1TeamNum, Tag2TeamNum);
+	}
+
+	// Default: not enemies
+	return false;
 }
 
 TArray<int32> ASimulationManagerGameMode::GetEnemyTeamIDs(int32 TeamID) const

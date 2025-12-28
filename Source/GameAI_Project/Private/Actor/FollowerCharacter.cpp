@@ -37,6 +37,9 @@ void AFollowerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Add Team.Ally tag for gameplay tag identification system
+	Tags.AddUnique("Team.Ally");
+
 	AAIController* AICtrl = Cast<AAIController>(GetController());
 	UPathFollowingComponent* PathComp = AICtrl ? AICtrl->GetPathFollowingComponent() : nullptr;
 }
