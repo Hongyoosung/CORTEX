@@ -72,9 +72,17 @@ void UThrottledScholaSubsystem::Tick(float DeltaTime)
 			this->GymConnector->CollectEnvironmentStates();
 
 			// 4. Submit to Python (calls Respond(), sends observation, clears CurrExchange)
-			// CRITICAL: Only submit if we received a request (StateUpdate != nullptr)
-			// Otherwise CurrExchange is null and SubmitEnvironmentStates() will crash
-			this->GymConnector->SubmitEnvironmentStates();
+			// CRITICAL: Check connector is still running before submit
+			// The OnConnectorClosed callback may have already consumed CurrExchange
+			// if Python disconnected during UpdateEnvironments/CollectEnvironmentStates
+			if (this->GymConnector->IsRunning())
+			{
+				this->GymConnector->SubmitEnvironmentStates();
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v7.5] Connector closed before SubmitEnvironmentStates - skipping"));
+			}
 		}
 	}
 

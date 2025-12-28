@@ -4,6 +4,7 @@
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "Team/FollowerAgentComponent.h"
+#include "Team/TeamLeaderComponent.h"
 #include "Perception/AgentPerceptionComponent.h"
 #include "Combat/WeaponComponent.h"
 #include "Combat/HealthComponent.h"
@@ -168,18 +169,70 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 		return;
 	}
 
-	// Get detected enemies from perception system (team-based filtering)
-	TArray<AActor*> DetectedEnemies = PerceptionComp->GetDetectedEnemies();
+	// Get detected enemies from perception system (individual sight)
+	TArray<AActor*> IndividuallyDetected = PerceptionComp->GetDetectedEnemies();
 
-	// Update visible enemies list in context
+	// FIX (Issue #4): Team-based enemy sharing - merge individual sight with team knowledge
+	// This allows all team members to be aware of enemies spotted by any teammate
+	TSet<AActor*> AllKnownEnemies;
+
+	// Add individually detected enemies
+	for (AActor* Enemy : IndividuallyDetected)
+	{
+		if (Enemy && Enemy->IsValidLowLevel())
+		{
+			AllKnownEnemies.Add(Enemy);
+		}
+	}
+
+	// Get team leader and merge team knowledge
+	UFollowerAgentComponent* FollowerComp = ControlledPawn->FindComponentByClass<UFollowerAgentComponent>();
+	if (FollowerComp && FollowerComp->GetTeamLeader())
+	{
+		UTeamLeaderComponent* TeamLeader = FollowerComp->GetTeamLeader();
+		TArray<AActor*> TeamKnownEnemies = TeamLeader->GetKnownEnemies();
+
+		// Merge team knowledge with individual perception
+		for (AActor* Enemy : TeamKnownEnemies)
+		{
+			if (Enemy && Enemy->IsValidLowLevel())
+			{
+				AllKnownEnemies.Add(Enemy);
+			}
+		}
+
+		// Report newly detected enemies to team leader
+		for (AActor* Enemy : IndividuallyDetected)
+		{
+			if (Enemy)
+			{
+				TeamLeader->RegisterEnemy(Enemy);
+			}
+		}
+	}
+
+	// Update visible enemies list in context (sorted by distance)
 	SharedContext.VisibleEnemies.Empty();
-	for (AActor* Enemy : DetectedEnemies)
+	TArray<TPair<AActor*, float>> EnemyDistances;
+
+	for (AActor* Enemy : AllKnownEnemies)
 	{
 		if (Enemy)
 		{
-			SharedContext.VisibleEnemies.Add(Enemy);
 			float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), Enemy->GetActorLocation());
+			EnemyDistances.Add(TPair<AActor*, float>(Enemy, Distance));
 		}
+	}
+
+	// Sort by distance (nearest first)
+	EnemyDistances.Sort([](const TPair<AActor*, float>& A, const TPair<AActor*, float>& B) {
+		return A.Value < B.Value;
+	});
+
+	// Add sorted enemies to context
+	for (const auto& Pair : EnemyDistances)
+	{
+		SharedContext.VisibleEnemies.Add(Pair.Key);
 	}
 
 
@@ -200,11 +253,11 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 			DrawDebugSphere(World, TargetLocation, 50.0f, 12, FColor::Orange, false, 0.2f);
 		}
 	}
-	else if (DetectedEnemies.Num() > 0)
+	else if (SharedContext.VisibleEnemies.Num() > 0)
 	{
-		// Fall back to nearest detected enemy if no command target
-		SharedContext.PrimaryTarget = DetectedEnemies[0]; // Already sorted by distance
-		float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), DetectedEnemies[0]->GetActorLocation());
+		// Fall back to nearest known enemy (team-shared or individually detected)
+		SharedContext.PrimaryTarget = SharedContext.VisibleEnemies[0]; // Already sorted by distance
+		float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), SharedContext.VisibleEnemies[0]->GetActorLocation());
 
 		if (InstanceData.bDrawDebugInfo)
 		{

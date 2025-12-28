@@ -690,6 +690,43 @@ void UFollowerAgentComponent::ResetEpisode()
 	TotalCoverQueryTime = 0.0f;
 	CoverQueriesThisEpisode = 0;
 
+	// CRITICAL FIX (Issue #2): Clear visible enemies from StateTree context
+	// When episode resets, agents must forget previously detected enemies
+	UFollowerStateTreeComponent* StateTreeComp = GetOwner()->FindComponentByClass<UFollowerStateTreeComponent>();
+	if (StateTreeComp)
+	{
+		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
+		SharedContext.VisibleEnemies.Empty();
+		SharedContext.PrimaryTarget = nullptr;
+		SharedContext.DistanceToPrimaryTarget = 99999.0f;
+
+		UE_LOG(LogTemp, Warning, TEXT("[EPISODE RESET] '%s': Cleared VisibleEnemies (%d enemies forgotten)"),
+			*GetOwner()->GetName(), SharedContext.VisibleEnemies.Num());
+	}
+
+	// Also clear perception component's tracked enemies
+	UAgentPerceptionComponent* PerceptionComp = GetOwner()->FindComponentByClass<UAgentPerceptionComponent>();
+	if (PerceptionComp)
+	{
+		// Perception component will rebuild enemy list on next tick via ScanForEnemies
+		UE_LOG(LogTemp, Warning, TEXT("[EPISODE RESET] '%s': Perception will rebuild enemy list on next scan"),
+			*GetOwner()->GetName());
+	}
+
+	// FIX (Issue #4): Clear team leader's known enemies (team-based enemy sharing)
+	// Only one follower needs to do this (avoid duplicate clears), so check if we're the first follower
+	if (TeamLeader)
+	{
+		TArray<AActor*> AllFollowers = TeamLeader->GetFollowers();
+		if (AllFollowers.Num() > 0 && AllFollowers[0] == GetOwner())
+		{
+			// First follower clears team knowledge
+			TeamLeader->ClearKnownEnemies();
+			UE_LOG(LogTemp, Warning, TEXT("[EPISODE RESET] '%s': Cleared team knowledge (first follower)"),
+				*GetOwner()->GetName());
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("FollowerAgent '%s': Episode reset"), *GetOwner()->GetName());
 }
 

@@ -16,13 +16,12 @@ UTacticalActuator::UTacticalActuator()
 
 FDiscreteSpace UTacticalActuator::GetActionSpace()
 {
-	// MultiDiscrete([4, MaxEnemies+1, 3, 3])
-	// [0]: Position (4 options: Hold, ForwardCover, Retreat, Advance) - FlankLeft/FlankRight removed in v4.0
+	// v4.0: MultiDiscrete([4, MaxEnemies+1, 3]) - Stance removed for simpler learning
+	// [0]: Position (4 options: Hold, ForwardCover, Retreat, Advance)
 	// [1]: Target (MaxEnemies+1 options: None + Enemy_0...Enemy_N)
 	// [2]: Fire Mode (3 options: HoldFire, Fire, Suppress)
-	// [3]: Stance (3 options: Stand, Crouch, Prone)
 
-	TArray<int32> Nvec = { 4, MaxEnemies + 1, 3, 3 };
+	TArray<int32> Nvec = { 4, MaxEnemies + 1, 3 };
 	FDiscreteSpace ActionSpace = FDiscreteSpace(Nvec);
 
 	return ActionSpace;
@@ -55,19 +54,18 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 		return;
 	}
 
-	// Validate action dimensions: MultiDiscrete([6, N+1, 3, 3])
-	if (Action.Values.Num() < 4)
+	// v4.0: Validate action dimensions: MultiDiscrete([4, N+1, 3]) - Stance removed
+	if (Action.Values.Num() < 3)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 4, got %d)"),
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 3, got %d)"),
 			*GetNameSafe(GetOuter()), Action.Values.Num());
 		return;
 	}
 
 	// Parse MultiDiscrete action indices
-	int32 PositionIdx = Action.Values[0];    // [0-3]: Position choice (v4.0: 4 options)
+	int32 PositionIdx = Action.Values[0];    // [0-3]: Position choice (4 options)
 	int32 TargetIdx = Action.Values[1];      // [0-N]: Target index (0 = none)
 	int32 FireModeIdx = Action.Values[2];    // [0-2]: Fire mode
-	int32 StanceIdx = Action.Values[3];      // [0-2]: Stance
 
 	// Validate indices (v4.0: Position is 0-3, not 0-5)
 	if (PositionIdx < 0 || PositionIdx > 3)
@@ -153,7 +151,7 @@ void UTacticalActuator::InitializeActuator()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=MultiDiscrete([4,%d,3,3]))"),
+	UE_LOG(LogTemp, Log, TEXT("[TacticalActuator] %s: Initialized (Follower=%s, ActionSpace=MultiDiscrete([4,%d,3]))"),
 		*GetNameSafe(GetOuter()), *GetNameSafe(FollowerAgent), MaxEnemies + 1);
 }
 

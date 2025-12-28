@@ -730,10 +730,21 @@ void UTeamLeaderComponent::RunObjectiveDecisionMaking()
 	float StartTime = FPlatformTime::Seconds();
 	LastMCTSTime = StartTime;
 
+	TArray<AActor*> AliveFollowers = GetAliveFollowers();
+
 	UE_LOG(LogTemp, Warning, TEXT("🎯 [OBJECTIVE MCTS] '%s': MCTS STARTED (SYNC) - %d followers, %d enemies"),
 		*TeamName,
-		GetAliveFollowers().Num(),
+		AliveFollowers.Num(),
 		KnownEnemies.Num());
+
+	// DEBUG: Log all follower names
+	for (AActor* F : AliveFollowers)
+	{
+		if (F)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  - Follower in MCTS: '%s'"), *F->GetName());
+		}
+	}
 
 	// Build observation
 	CurrentTeamObservation = BuildTeamObservation();
@@ -749,7 +760,7 @@ void UTeamLeaderComponent::RunObjectiveDecisionMaking()
 
 	TMap<AActor*, UObjective*> NewObjectives = StrategicMCTS->RunTeamMCTSWithObjectives(
 		CurrentTeamObservation,
-		GetAliveFollowers(),
+		AliveFollowers,  // Use cached array to ensure consistency
 		ObjectiveManager
 	);
 
@@ -842,8 +853,8 @@ void UTeamLeaderComponent::RunObjectiveDecisionMakingAsync()
 
 void UTeamLeaderComponent::OnObjectiveMCTSComplete(TMap<AActor*, UObjective*> NewObjectives)
 {
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [OBJECTIVE MCTS COMPLETE] '%s': MCTS complete, assigning %d objectives"),
-		*TeamName, NewObjectives.Num());
+	UE_LOG(LogTemp, Warning, TEXT("🎯 [OBJECTIVE MCTS COMPLETE] '%s': MCTS complete, assigning %d objectives to %d followers"),
+		*TeamName, NewObjectives.Num(), GetAliveFollowers().Num());
 
 	if (!ObjectiveManager)
 	{
@@ -872,12 +883,20 @@ void UTeamLeaderComponent::OnObjectiveMCTSComplete(TMap<AActor*, UObjective*> Ne
 	}
 
 	// Assign objectives to followers using ObjectiveManager
+	UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT DEBUG] '%s': Iterating through %d objective assignments..."), *TeamName, NewObjectives.Num());
+
 	for (const auto& Pair : NewObjectives)
 	{
 		AActor* Follower = Pair.Key;
 		UObjective* Objective = Pair.Value;
 
-		if (!Follower || !Objective) continue;
+		if (!Follower || !Objective)
+		{
+			UE_LOG(LogTemp, Error, TEXT("🎯 [ASSIGNMENT DEBUG] Skipping invalid pair: Follower=%s, Objective=%s"),
+				Follower ? *Follower->GetName() : TEXT("NULL"),
+				Objective ? TEXT("Valid") : TEXT("NULL"));
+			continue;
+		}
 
 		// Activate objective
 		ObjectiveManager->ActivateObjective(Objective);
@@ -982,6 +1001,15 @@ void UTeamLeaderComponent::UnregisterEnemy(AActor* Enemy)
 TArray<AActor*> UTeamLeaderComponent::GetKnownEnemies() const
 {
 	return KnownEnemies.Array();
+}
+
+void UTeamLeaderComponent::ClearKnownEnemies()
+{
+	int32 ClearedCount = KnownEnemies.Num();
+	KnownEnemies.Empty();
+
+	UE_LOG(LogTemp, Warning, TEXT("[TEAM LEADER] '%s': Cleared %d known enemies (episode reset)"),
+		*TeamName, ClearedCount);
 }
 
 //------------------------------------------------------------------------------

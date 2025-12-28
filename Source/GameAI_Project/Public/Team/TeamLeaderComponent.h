@@ -201,6 +201,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Enemies")
 	TArray<AActor*> GetKnownEnemies() const;
 
+	/** Clear all known enemies (e.g., on episode reset) */
+	UFUNCTION(BlueprintCallable, Category = "Team Leader|Enemies")
+	void ClearKnownEnemies();
+
 	//--------------------------------------------------------------------------
 	// OBJECTIVE MANAGEMENT (v3.0 Combat Refactoring)
 	//--------------------------------------------------------------------------

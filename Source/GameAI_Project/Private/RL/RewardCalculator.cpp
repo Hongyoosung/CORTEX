@@ -175,6 +175,20 @@ float URewardCalculator::CalculateObjectiveReward()
 		}
 
 		LastObjectiveProgress = CurrentProgress;
+
+		// Continuous proximity reward - encourages both teams to fight near objectives
+		AActor* Owner = GetOwner();
+		if (Owner)
+		{
+			float CurrentDistance = FVector::Dist(Owner->GetActorLocation(), CurrentObjective->TargetLocation);
+
+			// Reward for being close to objective (scales with proximity)
+			if (CurrentDistance < ObjectiveRadiusThreshold) // Within 10m (default 1000cm)
+			{
+				float ProximityRatio = 1.0f - (CurrentDistance / ObjectiveRadiusThreshold);
+				Reward += ProximityRatio * 2.0f; // +2.0 at objective center, 0 at threshold
+			}
+		}
 	}
 
 	return Reward;

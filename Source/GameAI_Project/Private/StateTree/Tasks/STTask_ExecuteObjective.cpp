@@ -165,9 +165,11 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 		return;
 	}
 
+	// FIX (Issue #2): AIController may not be assigned yet (brief period after StateTree starts)
+	// Skip movement until AIController is available - this is normal during initialization
 	if (!InstanceData.AIController)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] '%s': No AIController"), *Pawn->GetName());
+		UE_LOG(LogTemp, Verbose, TEXT("[MOVE v4.0] '%s': AIController not yet assigned, skipping movement this tick"), *Pawn->GetName());
 		return;
 	}
 
@@ -359,8 +361,38 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 		return;
 	}
 
+	// v4.0: Ensure CharacterMovementComponent rotates pawn to match controller rotation
+	UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
+	if (MoveComp)
+	{
+		MoveComp->bOrientRotationToMovement = false;  // Don't override aim with movement direction
+		MoveComp->bUseControllerDesiredRotation = true;  // FIX: Rotate pawn to match AIController rotation
+		MoveComp->RotationRate = FRotator(0.0f, InstanceData.RotationSpeed, 0.0f);  // Use configured rotation speed
+	}
+
 	// v4.0: Use macro action for engine-driven aiming
 	const FMacroAction& Macro = Action.MacroAction;
+
+	// FIX (Issue #3): If no enemies visible, face objective direction instead of Y+ default
+	// This prevents agents from firing at walls when episode starts
+	if (SharedContext.VisibleEnemies.Num() == 0)
+	{
+		// Face toward objective if one is assigned
+		if (InstanceData.AIController && SharedContext.CurrentObjective && !SharedContext.CurrentObjective->TargetLocation.IsNearlyZero())
+		{
+			FVector ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
+			FVector PawnLocation = Pawn->GetActorLocation();
+			FVector DirectionToObjective = (ObjectiveLocation - PawnLocation).GetSafeNormal();
+			FRotator DesiredRotation = DirectionToObjective.Rotation();
+
+			// Set controller rotation to face objective
+			InstanceData.AIController->SetControlRotation(DesiredRotation);
+
+			UE_LOG(LogTemp, Verbose, TEXT("[AIM v4.1] '%s': No enemies visible, facing objective at (%.1f, %.1f)"),
+				*Pawn->GetName(), ObjectiveLocation.X, ObjectiveLocation.Y);
+		}
+		return;  // No enemies to aim at
+	}
 
 	if (Macro.TargetIndex >= 0 && SharedContext.VisibleEnemies.Num() > 0)
 	{
@@ -372,9 +404,31 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 		// Validate enemy is alive and valid
 		if (TargetEnemy && TargetEnemy->IsValidLowLevel() && InstanceData.AIController)
 		{
-			// Engine handles aiming automatically
+			// FIX v4.1: Manually set controller rotation instead of relying on SetFocus
+			FVector EnemyLocation = TargetEnemy->GetActorLocation();
+			FVector PawnLocation = Pawn->GetActorLocation();
+			FVector AimDirection = (EnemyLocation - PawnLocation).GetSafeNormal();
+			FRotator DesiredRotation = AimDirection.Rotation();
+
+			// Set controller rotation directly (immediate, no delay)
+			InstanceData.AIController->SetControlRotation(DesiredRotation);
+
+			// Also set focus for engine systems that use it
 			InstanceData.AIController->SetFocus(TargetEnemy);
 			SharedContext.PrimaryTarget = TargetEnemy;
+
+			// DIAGNOSTIC: Verify rotation is set correctly (reduced to Verbose)
+			FVector ActualControlDir = InstanceData.AIController->GetControlRotation().Vector();
+			float DotProduct = FVector::DotProduct(AimDirection, ActualControlDir);
+
+			UE_LOG(LogTemp, Verbose, TEXT("[AIM v4.1] '%s' → '%s': Rotation set (match: %.2f)"),
+				*Pawn->GetName(), *TargetEnemy->GetName(), DotProduct);
+
+			if (DotProduct < 0.95f)  // Log warning if aim is off by more than ~18 degrees
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[AIM WARNING] '%s': Control rotation mismatch (%.2f) - target '%s'"),
+					*Pawn->GetName(), DotProduct, *TargetEnemy->GetName());
+			}
 
 			if (ClampedIndex != Macro.TargetIndex)
 			{
@@ -420,16 +474,54 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 		return;
 	}
 
-	if (!InstanceData.AIController)
-	{
-		return;
-	}
-
 	// v4.0: Use macro action fire mode
 	const FMacroAction& Macro = Action.MacroAction;
 
-	// FIX: Use AIController's control rotation (where AI is looking) instead of pawn forward vector
-	FVector FireDirection = InstanceData.AIController->GetControlRotation().Vector();
+	// FIX (Issue #2): Support both AIController and non-AIController modes
+	// Get focus target from AIController if available, otherwise use SharedContext.PrimaryTarget
+	AActor* FocusTarget = nullptr;
+	if (InstanceData.AIController)
+	{
+		FocusTarget = InstanceData.AIController->GetFocusActor();
+	}
+	else
+	{
+		// No AIController (Schola mode) - use SharedContext.PrimaryTarget instead
+		FocusTarget = SharedContext.PrimaryTarget;
+	}
+
+	// Calculate fire direction
+	FVector FireDirection = FVector::ForwardVector;  // Default fallback
+
+	if (FocusTarget)
+	{
+		// Calculate direction from pawn to target (always accurate)
+		FVector TargetLocation = FocusTarget->GetActorLocation();
+		FVector PawnLocation = Pawn->GetActorLocation();
+		FireDirection = (TargetLocation - PawnLocation).GetSafeNormal();
+
+		UE_LOG(LogTemp, Verbose, TEXT("[FIRE v4.1] '%s' → '%s': Direct fire direction calculated"),
+			*Pawn->GetName(), *FocusTarget->GetName());
+		UE_LOG(LogTemp, Verbose, TEXT("  Fire dir: %s (Target: %s, Pawn: %s)"),
+			*FireDirection.ToString(), *TargetLocation.ToString(), *PawnLocation.ToString());
+	}
+	else
+	{
+		// No focus target - use controller rotation as fallback (if available)
+		if (InstanceData.AIController)
+		{
+			FireDirection = InstanceData.AIController->GetControlRotation().Vector();
+			UE_LOG(LogTemp, Warning, TEXT("[FIRE FALLBACK] '%s': No focus target, using controller rotation"),
+				*Pawn->GetName());
+		}
+		else
+		{
+			// No AIController - use pawn's forward vector
+			FireDirection = Pawn->GetActorForwardVector();
+			UE_LOG(LogTemp, Warning, TEXT("[FIRE FALLBACK] '%s': No AIController, using pawn forward vector"),
+				*Pawn->GetName());
+		}
+	}
 
 	switch (Macro.FireMode)
 	{
@@ -439,15 +531,50 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 
 	case EFireMode::Fire:
 		// Fire at focused target
-		if (InstanceData.AIController->GetFocusActor())
+		if (FocusTarget)
 		{
 			if (!WeaponComp->CanFire())
 			{
 				return; // On cooldown or out of ammo
 			}
 
-			// Fire in control rotation direction (where AI is aiming via SetFocus)
-			WeaponComp->FireInDirection(FireDirection);
+			// FIX (Issue #1): Check line-of-sight before firing to prevent shooting walls
+			FVector StartLocation = Pawn->GetActorLocation() + FVector(0, 0, 150); // Eye level
+			FVector EndLocation = FocusTarget->GetActorLocation() + FVector(0, 0, 150);
+
+			FHitResult HitResult;
+			FCollisionQueryParams Params;
+			Params.AddIgnoredActor(Pawn);
+			Params.bTraceComplex = false;
+
+			UWorld* World = Pawn->GetWorld();
+			if (!World)
+			{
+				return; // No world, can't trace
+			}
+
+			bool bHitSomething = World->LineTraceSingleByChannel(
+				HitResult,
+				StartLocation,
+				EndLocation,
+				ECC_Visibility,
+				Params
+			);
+
+			// Only fire if we have clear LOS to target (not blocked by walls/obstacles)
+			if (!bHitSomething || HitResult.GetActor() == FocusTarget)
+			{
+				// Clear LOS - fire at target
+				WeaponComp->FireInDirection(FireDirection);
+			}
+			else
+			{
+				// LOS blocked - hold fire to avoid wasting ammo on walls
+				UE_LOG(LogTemp, Verbose, TEXT("[FIRE LOS] '%s': Target '%s' blocked by '%s', holding fire"),
+					*Pawn->GetName(),
+					*FocusTarget->GetName(),
+					*GetNameSafe(HitResult.GetActor()));
+			}
 		}
 		break;
 

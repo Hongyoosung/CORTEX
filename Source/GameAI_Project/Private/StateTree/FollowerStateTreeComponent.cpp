@@ -646,22 +646,22 @@ bool UFollowerStateTreeComponent::CheckRequirementsAndStart()
 	AActor* Owner = GetOwner();
 	FString OwnerName = Owner ? Owner->GetName() : TEXT("NULL_OWNER");
 
-	// 이미 실행 중이면 패스
+	// Already running - no need to start again
 	if (IsStateTreeRunning())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:✅ StateTree already running for '%s'"), *OwnerName);
 		return true;
 	}
 
-	// 1. 필수 컴포넌트 확인
+	// FIX (Issue #2): Only require FollowerComponent, make AIController truly optional
+	// StateTree should start immediately without waiting for AIController assignment
 	if (!FollowerComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:⏳ FollowerComponent = NULL for '%s'"), *OwnerName);
 		return false;
 	}
 
-	// 2. AIController 확인 (OPTIONAL - may be null during Schola training)
-	// Update context but don't require it to be present
+	// Update AIController reference if available (but don't block on it)
 	if (!Context.AIController)
 	{
 		APawn* OwnerPawn = Cast<APawn>(Owner);
@@ -671,7 +671,7 @@ bool UFollowerStateTreeComponent::CheckRequirementsAndStart()
 		}
 	}
 
-	// 3. If StateTree was previously stopped, ensure it's fully reset before restarting
+	// If StateTree was previously stopped, ensure it's fully reset before restarting
 	EStateTreeRunStatus CurrentStatus = GetStateTreeRunStatus();
 	if (CurrentStatus == EStateTreeRunStatus::Stopped || CurrentStatus == EStateTreeRunStatus::Failed)
 	{
@@ -680,9 +680,10 @@ bool UFollowerStateTreeComponent::CheckRequirementsAndStart()
 		StopLogic("Restart");
 	}
 
-	// 4. 시작 (AIController is optional, so proceed even if null)
-	UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:🚀 Starting StateTree (AIController=%s)..."),
-		Context.AIController ? TEXT("Valid") : TEXT("NULL (Schola mode)"));
+	// FIX (Issue #2): Start immediately - AIController will be updated later when available
+	// This ensures all agents start simultaneously instead of one-by-one
+	UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:🚀 Starting StateTree immediately (AIController=%s)"),
+		Context.AIController ? TEXT("Valid") : TEXT("NULL - will update when assigned"));
 	StartLogic();
 
 	return IsStateTreeRunning();
