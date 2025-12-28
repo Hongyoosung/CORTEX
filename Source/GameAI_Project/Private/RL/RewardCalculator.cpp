@@ -117,8 +117,7 @@ float URewardCalculator::CalculateIndividualReward()
 		// Encourages agents to explore movement and tactical positions during early training
 		FMacroAction CurrentAction = FollowerComponent->LastTacticalAction.MacroAction;
 		bool bTookAction = (CurrentAction.PositionChoice != ETacticalPosition::Hold) ||
-		                   (CurrentAction.FireMode != EFireMode::HoldFire) ||
-		                   (CurrentAction.Stance != EStance::Stand);
+		                   (CurrentAction.FireMode != EFireMode::HoldFire);
 
 		if (bTookAction)
 		{
@@ -238,13 +237,6 @@ float URewardCalculator::CalculateCoverReward()
 		Reward += ExposedPenalty; // Negative value
 	}
 
-	// Bonus for crouching/proning in cover (defensive behavior) - v4.0 macro actions
-	// Note: We check the action from the last tactical action
-	EStance CurrentStance = FollowerComponent->LastTacticalAction.MacroAction.Stance;
-	if (bInCover && (CurrentStance == EStance::Crouch || CurrentStance == EStance::Prone))
-	{
-		Reward += CrouchInCoverReward;
-	}
 
 	// v4.0 NOTE: Removed continuous movement-toward-cover reward
 	// Discrete position choices (Hold, Forward, Retreat, Flank) don't provide directional vectors
@@ -443,30 +435,31 @@ void URewardCalculator::CheckObjectiveCompliance()
 	FVector AgentLocation = Owner->GetActorLocation();
 	FObservationElement Obs = FollowerComponent->GetLocalObservation();
 
+	// v4.0: Simplified objective types (Assault, Defend, Support, Retreat)
 	switch (CurrentObjective->Type)
 	{
-		case EObjectiveType::Eliminate:
+		case EObjectiveType::Assault:
 		{
-			// Disobey if moving AWAY from target enemy
-			if (CurrentObjective->TargetActor)
-			{
-				FVector ToTarget = CurrentObjective->TargetActor->GetActorLocation() - AgentLocation;
-				FVector Velocity = Owner->GetVelocity();
+			// Disobey if moving AWAY from target (enemy or objective)
+			FVector TargetLocation = CurrentObjective->TargetActor ?
+				CurrentObjective->TargetActor->GetActorLocation() :
+				CurrentObjective->TargetLocation;
 
-				if (Velocity.SizeSquared() > 100.0f) // Agent is moving (threshold: 10 cm/s)
+			FVector ToTarget = TargetLocation - AgentLocation;
+			FVector Velocity = Owner->GetVelocity();
+
+			if (Velocity.SizeSquared() > 100.0f) // Agent is moving (threshold: 10 cm/s)
+			{
+				float Alignment = FVector::DotProduct(Velocity.GetSafeNormal(), ToTarget.GetSafeNormal());
+				if (Alignment < -0.5f) // Moving away (dot product < -0.5 = > 120 degrees)
 				{
-					float Alignment = FVector::DotProduct(Velocity.GetSafeNormal(), ToTarget.GetSafeNormal());
-					if (Alignment < -0.5f) // Moving away (dot product < -0.5 = > 120 degrees)
-					{
-						bDisobeyedObjective = true;
-					}
+					bDisobeyedObjective = true;
 				}
 			}
 			break;
 		}
 
-		case EObjectiveType::DefendObjective:
-		case EObjectiveType::CaptureObjective:
+		case EObjectiveType::Defend:
 		{
 			// Disobey if leaving objective zone
 			float DistToObjective = FVector::Dist(AgentLocation, CurrentObjective->TargetLocation);
@@ -501,7 +494,7 @@ void URewardCalculator::CheckObjectiveCompliance()
 			break;
 		}
 
-		case EObjectiveType::SupportAlly:
+		case EObjectiveType::Support:
 		{
 			// Disobey if NOT moving toward ally or NOT providing cover - v4.0 macro actions
 			if (CurrentObjective->TargetActor)
@@ -517,13 +510,9 @@ void URewardCalculator::CheckObjectiveCompliance()
 			break;
 		}
 
-		case EObjectiveType::FormationMove:
+		case EObjectiveType::None:
 		{
-			// Disobey if breaking formation
-			if (!IsInFormation())
-			{
-				bDisobeyedObjective = true;
-			}
+			// No objective, can't disobey
 			break;
 		}
 

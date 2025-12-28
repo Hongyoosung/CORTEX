@@ -3,10 +3,10 @@
 TArray<float> FObservationElement::ToFeatureVector() const
 {
     TArray<float> Features;
-    Features.Reserve(71);
+    Features.Reserve(70);
 
     // ========================================
-    // AGENT STATE (12 features)
+    // AGENT STATE (11 features)
     // ========================================
 
     // Position (3)
@@ -24,9 +24,8 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(Rotation.Yaw / 180.0f);
     Features.Add(Rotation.Roll / 180.0f);
 
-    // Health, Stamina, Shield (3)
+    // Health, Shield (2)
     Features.Add(AgentHealth / 100.0f);  // [0, 1]
-    Features.Add(Stamina / 100.0f);
     Features.Add(Shield / 100.0f);
 
     // ========================================
@@ -103,7 +102,7 @@ TArray<float> FObservationElement::ToFeatureVector() const
 
     Features.Add(FMath::Clamp(DistanceToNearestEnemy / 10000.0f, 0.0f, 1.0f));  // Max 100m
 
-    check(Features.Num() == 71);
+    check(Features.Num() == 70);
     return Features;
 }
 
@@ -114,7 +113,6 @@ void FObservationElement::Reset()
     Velocity = FVector::ZeroVector;
     Rotation = FRotator::ZeroRotator;
     AgentHealth = 100.0f;
-    Stamina = 100.0f;
     Shield = 0.0f;
 
     // Combat State

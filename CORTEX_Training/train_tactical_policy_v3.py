@@ -5,7 +5,7 @@ Trains a PPO-based RL policy for atomic action selection using experiences
 collected from Unreal Engine gameplay.
 
 Architecture (v3.0):
-    Input: 78 features (71 observation + 7 objective embedding)
+    Input: 74 features (70 observation + 4 objective embedding, v4.0 simplified)
     Hidden: 128 -> 128 -> 64 neurons (ReLU)
     Output: 8-dimensional atomic action
         - Continuous: move_x, move_y, speed, look_x, look_y (tanh/sigmoid)
@@ -46,7 +46,7 @@ from datetime import datetime
 
 class Config:
     # Network architecture
-    INPUT_SIZE = 78  # 71 observation + 7 objective embedding
+    INPUT_SIZE = 74  # 70 observation + 4 objective embedding (v4.0 simplified)
     HIDDEN_LAYERS = [128, 128, 64]
     OUTPUT_SIZE = 8  # Atomic action dimensions
 
@@ -201,9 +201,9 @@ class ExperienceDataset(Dataset):
     def __getitem__(self, idx):
         exp = self.experiences[idx]
 
-        # State (71 features) + objective embedding (7 features) = 78 total
+        # State (70 features) + objective embedding (4 features) = 74 total (v4.0 simplified)
         state = np.array(exp['state'], dtype=np.float32)
-        objective_embed = np.array(exp.get('objective_embedding', [0]*7), dtype=np.float32)
+        objective_embed = np.array(exp.get('objective_embedding', [0]*4), dtype=np.float32)
         full_state = np.concatenate([state, objective_embed])
 
         # Action (8 dimensions: atomic action)
@@ -214,7 +214,7 @@ class ExperienceDataset(Dataset):
 
         # Next state
         next_state = np.array(exp['next_state'], dtype=np.float32)
-        next_objective_embed = np.array(exp.get('next_objective_embedding', [0]*7), dtype=np.float32)
+        next_objective_embed = np.array(exp.get('next_objective_embedding', [0]*4), dtype=np.float32)
         full_next_state = np.concatenate([next_state, next_objective_embed])
 
         # Terminal flag

@@ -103,9 +103,7 @@ private:
     UPROPERTY()
     TMap<TObjectPtr<AActor>, TObjectPtr<UObjective>> AgentObjectiveMap;
 
-    // Helper to get or create objective subclass
-    template<typename T>
-    T* CreateObjectiveOfType(EObjectiveType Type);
+    // v4.0: Removed CreateObjectiveOfType<T> template (no subclasses)
 
     // Update all active objectives
     void TickObjectives(float DeltaTime);

@@ -5,7 +5,7 @@
 
 UObjective::UObjective()
 {
-    Type = EObjectiveType::Eliminate;
+    Type = EObjectiveType::Assault;
     Priority = 5;
     TimeLimit = 0.0f;
     Status = EObjectiveStatus::Inactive;

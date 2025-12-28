@@ -61,19 +61,21 @@ void UThrottledScholaSubsystem::Tick(float DeltaTime)
 		{
 			this->GymConnector->UpdateConnectorStatus(*StateUpdate);
 			this->GymConnector->UpdateEnvironments(*StateUpdate);
+
+			// 2. Reset completed environments (skip on first step)
+			if (!bFirstStep)
+			{
+				this->GymConnector->ResetCompletedEnvironments();
+			}
+
+			// 3. Collect new observations
+			this->GymConnector->CollectEnvironmentStates();
+
+			// 4. Submit to Python (calls Respond(), sends observation, clears CurrExchange)
+			// CRITICAL: Only submit if we received a request (StateUpdate != nullptr)
+			// Otherwise CurrExchange is null and SubmitEnvironmentStates() will crash
+			this->GymConnector->SubmitEnvironmentStates();
 		}
-
-		// 2. Reset completed environments (skip on first step)
-		if (!bFirstStep)
-		{
-			this->GymConnector->ResetCompletedEnvironments();
-		}
-
-		// 3. Collect new observations
-		this->GymConnector->CollectEnvironmentStates();
-
-		// 4. Submit to Python (calls Respond(), sends observation, clears CurrExchange)
-		this->GymConnector->SubmitEnvironmentStates();
 	}
 
 	// Auto-reset phase

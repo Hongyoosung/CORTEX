@@ -131,9 +131,6 @@ protected:
 	/** Execute fire mode (HoldFire/Fire/Suppress) */
 	void ExecuteFire(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
 
-	/** Execute stance (Stand/Crouch/Prone) */
-	void ExecuteCrouch(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
-
 	/** Calculate reward for current objective progress */
 	float CalculateObjectiveReward(FStateTreeExecutionContext& Context, float DeltaTime) const;
 

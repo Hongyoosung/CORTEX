@@ -87,9 +87,9 @@ float FTeamMCTSNode::CalculateUCTValue(float ExplorationParam) const
 
 float FTeamMCTSNode::CalculateUCTValueWithPrior(float ExplorationParam, float Prior) const
 {
-	// AlphaZero-style PUCT (Predictor + UCT)
+	// PUCT formula (Predictor + UCT)
 	// U(s,a) = Q(s,a) + c * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
-	// where P(s,a) is the prior probability from policy network
+	// where P(s,a) is the prior probability from RL policy network
 
 	TSharedPtr<FTeamMCTSNode> ParentPinned = Parent.Pin();
 	if (!ParentPinned)

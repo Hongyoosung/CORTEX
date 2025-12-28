@@ -60,6 +60,17 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::EnterState(FStateTreeExecutionCont
 	InstanceData.TimeSinceLastAction = 0.0f;
 	InstanceData.PreviousMacroAction = FMacroAction();  // Default-initialized (will differ from any real action)
 
+	// v4.0: Validate EQS queries are assigned (prevent runtime failures)
+	if (!InstanceData.ForwardCoverQuery || !InstanceData.RetreatQuery || !InstanceData.AdvanceQuery)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ STTask_ExecuteObjective: EQS queries not assigned!"));
+		UE_LOG(LogTemp, Error, TEXT("   ForwardCoverQuery: %s"), InstanceData.ForwardCoverQuery ? TEXT("OK") : TEXT("MISSING"));
+		UE_LOG(LogTemp, Error, TEXT("   RetreatQuery: %s"), InstanceData.RetreatQuery ? TEXT("OK") : TEXT("MISSING"));
+		UE_LOG(LogTemp, Error, TEXT("   AdvanceQuery: %s"), InstanceData.AdvanceQuery ? TEXT("OK") : TEXT("MISSING"));
+		UE_LOG(LogTemp, Error, TEXT("   → Assign EQS queries in StateTree editor: STTask_ExecuteObjective properties"));
+		return EStateTreeRunStatus::Failed;
+	}
+
 	return EStateTreeRunStatus::Running;
 }
 
@@ -103,12 +114,11 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 		const FMacroAction& PreviousMacro = InstanceData.PreviousMacroAction;
 
 		// CRITICAL: Detect action changes to avoid redundant EQS queries
-		// Movement/Target/Stance only change when action changes (one-shot setup)
+		// Movement/Target only change when action changes (one-shot setup)
 		// Aiming/Firing update continuously (20 Hz smooth tracking)
 		bool bActionChanged = (
 			CurrentMacro.PositionChoice != PreviousMacro.PositionChoice ||
-			CurrentMacro.TargetIndex != PreviousMacro.TargetIndex ||
-			CurrentMacro.Stance != PreviousMacro.Stance
+			CurrentMacro.TargetIndex != PreviousMacro.TargetIndex
 		);
 
 		// One-shot setup (only when action changes)
@@ -116,7 +126,6 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 		{
 			ExecuteMovement(Context, Action, DeltaTime);  // EQS + NavMesh
 			ExecuteAiming(Context, Action, DeltaTime);     // SetFocus on new target
-			ExecuteCrouch(Context, Action);                // Change stance
 			InstanceData.PreviousMacroAction = CurrentMacro;
 		}
 		else
@@ -353,36 +362,43 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 	// v4.0: Use macro action for engine-driven aiming
 	const FMacroAction& Macro = Action.MacroAction;
 
-	if (Macro.TargetIndex >= 0)
+	if (Macro.TargetIndex >= 0 && SharedContext.VisibleEnemies.Num() > 0)
 	{
-		// Get enemy actor from observation system
-		AActor* TargetEnemy = GetEnemyByIndex(Context, Macro.TargetIndex);
+		// FIX: Clamp target index to valid range (prevents out-of-bounds during training)
+		int32 ClampedIndex = FMath::Clamp(Macro.TargetIndex, 0, SharedContext.VisibleEnemies.Num() - 1);
 
-		if (TargetEnemy && InstanceData.AIController)
+		AActor* TargetEnemy = SharedContext.VisibleEnemies[ClampedIndex];
+
+		// Validate enemy is alive and valid
+		if (TargetEnemy && TargetEnemy->IsValidLowLevel() && InstanceData.AIController)
 		{
 			// Engine handles aiming automatically
 			InstanceData.AIController->SetFocus(TargetEnemy);
 			SharedContext.PrimaryTarget = TargetEnemy;
+
+			if (ClampedIndex != Macro.TargetIndex)
+			{
+				UE_LOG(LogTemp, Verbose, TEXT("[AIM FIX] '%s': Clamped invalid target index %d → %d (VisibleEnemies=%d)"),
+					*Pawn->GetName(), Macro.TargetIndex, ClampedIndex, SharedContext.VisibleEnemies.Num());
+			}
 		}
 		else
 		{
-			// Target index valid but enemy not found - clear focus
-			if (InstanceData.AIController)
-			{
-				InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
-			}
-			SharedContext.PrimaryTarget = nullptr;
+			// Enemy dead/invalid - keep previous focus (don't clear immediately)
+			UE_LOG(LogTemp, Verbose, TEXT("[AIM] '%s': Target index %d invalid, keeping previous focus"),
+				*Pawn->GetName(), ClampedIndex);
 		}
 	}
-	else
+	else if (Macro.TargetIndex < 0)
 	{
-		// No target - clear focus
+		// RL policy explicitly chose "no target" - clear focus
 		if (InstanceData.AIController)
 		{
 			InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
 		}
 		SharedContext.PrimaryTarget = nullptr;
 	}
+	// else: No enemies visible - keep previous focus (don't spam ClearFocus)
 }
 
 void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const
@@ -404,8 +420,16 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 		return;
 	}
 
+	if (!InstanceData.AIController)
+	{
+		return;
+	}
+
 	// v4.0: Use macro action fire mode
 	const FMacroAction& Macro = Action.MacroAction;
+
+	// FIX: Use AIController's control rotation (where AI is looking) instead of pawn forward vector
+	FVector FireDirection = InstanceData.AIController->GetControlRotation().Vector();
 
 	switch (Macro.FireMode)
 	{
@@ -414,79 +438,28 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 		break;
 
 	case EFireMode::Fire:
-		// Fire at focused target (if within aim tolerance)
-		if (InstanceData.AIController && InstanceData.AIController->GetFocusActor())
+		// Fire at focused target
+		if (InstanceData.AIController->GetFocusActor())
 		{
 			if (!WeaponComp->CanFire())
 			{
 				return; // On cooldown or out of ammo
 			}
 
-			// Fire in current facing direction (SetFocus already aims)
-			FVector FireDirection = Pawn->GetActorForwardVector();
+			// Fire in control rotation direction (where AI is aiming via SetFocus)
 			WeaponComp->FireInDirection(FireDirection);
 		}
 		break;
 
 	case EFireMode::Suppress:
-		// Fire near enemy cover location (even if not visible)
+		// Suppression fire in current aim direction (even if no visible target)
 		if (WeaponComp->CanFire())
 		{
-			FVector FireDirection = Pawn->GetActorForwardVector();
 			WeaponComp->FireInDirection(FireDirection);
 		}
 		break;
 	}
 }
-
-void FSTTask_ExecuteObjective::ExecuteCrouch(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const
-{
-	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
-	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
-
-	APawn* Pawn = InstanceData.ControlledPawn;
-	if (!Pawn)
-	{
-		return;
-	}
-
-	UCharacterMovementComponent* MovementComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
-	if (!MovementComp)
-	{
-		static bool bWarningShown = false;
-		if (!bWarningShown)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[STANCE] '%s': No CharacterMovementComponent found!"), *Pawn->GetName());
-			bWarningShown = true;
-		}
-		return;
-	}
-
-	// v4.0: Use macro action stance
-	const FMacroAction& Macro = Action.MacroAction;
-
-	switch (Macro.Stance)
-	{
-	case EStance::Stand:
-		if (MovementComp->IsCrouching())
-		{
-			MovementComp->bWantsToCrouch = false;
-		}
-		break;
-
-	case EStance::Crouch:
-		if (!MovementComp->IsCrouching())
-		{
-			MovementComp->bWantsToCrouch = true;
-		}
-		break;
-
-	case EStance::Prone:
-		// Prone not implemented - UE5 CharacterMovement doesn't support it natively
-		break;
-	}
-}
-
 
 float FSTTask_ExecuteObjective::CalculateObjectiveReward(FStateTreeExecutionContext& Context, float DeltaTime) const
 {

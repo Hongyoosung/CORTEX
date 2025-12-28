@@ -11,7 +11,6 @@
 #include "Kismet/GameplayStatics.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "Team/Objective.h"
-#include "Team/Objectives/FormationMoveObjective.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Simulation/StateTransition.h"
 #include "Misc/FileHelper.h"
@@ -127,16 +126,17 @@ void UFollowerAgentComponent::BeginPlay()
 	bool bIsScholaAgent = GetOwner()->FindComponentByClass<UScholaAgentComponent>() != nullptr;
 	if (bIsScholaAgent && !CurrentObjective)
 	{
-		UFormationMoveObjective* DummyObj = NewObject<UFormationMoveObjective>(this);
+		// v4.0: Use base UObjective class (no subclasses)
+		UObjective* DummyObj = NewObject<UObjective>(this);
 		if (DummyObj)
 		{
-			DummyObj->Type = EObjectiveType::FormationMove;
+			DummyObj->Type = EObjectiveType::Support; // v4.0: FormationMove → Support
 			DummyObj->Status = EObjectiveStatus::Active;
 			DummyObj->Priority = 10;
 			DummyObj->TimeLimit = 0.0f; // Infinite
 
 			// CRITICAL: Set unreachable target to prevent completion
-			// FormationMoveObjective completes when all agents reach destination
+			// Dummy objective remains active until replaced by MCTS
 			// Setting target 100km away ensures it NEVER completes during training
 			DummyObj->TargetLocation = GetOwner()->GetActorLocation() + FVector(10000000.0f, 10000000.0f, 0.0f);
 

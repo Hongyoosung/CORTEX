@@ -31,20 +31,9 @@ enum class EFireMode : uint8
 };
 
 /**
- * Stance options (v4.0)
- */
-UENUM(BlueprintType)
-enum class EStance : uint8
-{
-	Stand  UMETA(DisplayName = "Standing"),
-	Crouch UMETA(DisplayName = "Crouching"),
-	Prone  UMETA(DisplayName = "Prone")
-};
-
-/**
- * Macro action space for v4.0 squad tactics
- * High-level decisions: WHERE to go, WHO to shoot, HOW to engage
- * Engine handles physics: NavMesh pathfinding, auto-aim, stance animation
+ * Macro action space for v4.0 squad tactics (Simplified - Stance removed)
+ * High-level decisions: WHERE to go, WHO to shoot, WHEN to fire
+ * Engine handles physics: NavMesh pathfinding, auto-aim
  */
 USTRUCT(BlueprintType)
 struct FMacroAction
@@ -63,23 +52,17 @@ struct FMacroAction
 	UPROPERTY(BlueprintReadWrite, Category = "Action|Tactical")
 	EFireMode FireMode = EFireMode::HoldFire;
 
-	// Stance: Body posture for visibility vs mobility trade-off
-	UPROPERTY(BlueprintReadWrite, Category = "Action|Tactical")
-	EStance Stance = EStance::Stand;
-
 	FMacroAction()
 		: PositionChoice(ETacticalPosition::Hold)
 		, TargetIndex(-1)
 		, FireMode(EFireMode::HoldFire)
-		, Stance(EStance::Stand)
 	{
 	}
 
-	FMacroAction(ETacticalPosition Pos, int32 Target, EFireMode Fire, EStance St)
+	FMacroAction(ETacticalPosition Pos, int32 Target, EFireMode Fire)
 		: PositionChoice(Pos)
 		, TargetIndex(Target)
 		, FireMode(Fire)
-		, Stance(St)
 	{
 	}
 };
@@ -205,8 +188,8 @@ struct FRLPolicyConfig
 	FString ModelPath;
 
 	FRLPolicyConfig()
-		: InputSize(78)  // 71 observation + 7 objective embedding
-		, OutputSize(4)  // v4.0: 4 macro action heads (position, target, fire, stance)
+		: InputSize(74)  // 70 observation + 4 objective embedding
+		, OutputSize(3)  // v4.0: 3 macro action heads (position, target, fire)
 		, HiddenLayers({128, 128, 64})
 		, LearningRate(0.0003f)
 		, DiscountFactor(0.99f)

@@ -8,19 +8,17 @@
 #include "Objective.generated.h"
 
 /**
- * Objective types for strategic planning
+ * Objective types for strategic planning (v4.0 - Simplified to 4 core strategies)
+ * Strategic layer assigns high-level intent, tactical layer (RL) determines execution
  */
 UENUM(BlueprintType)
 enum class EObjectiveType : uint8
 {
-	None			 UMETA(DisplayName = "None"),                 // No objective
-    Eliminate        UMETA(DisplayName = "Eliminate Target"),      // Kill specific enemy
-    CaptureObjective UMETA(DisplayName = "Capture Objective"),     // Capture zone/flag
-    DefendObjective  UMETA(DisplayName = "Defend Objective"),      // Hold zone/flag
-    SupportAlly      UMETA(DisplayName = "Support Ally"),          // Provide covering fire
-    FormationMove    UMETA(DisplayName = "Formation Move"),        // Coordinated movement
-    Retreat          UMETA(DisplayName = "Retreat"),               // Fall back
-    RescueAlly       UMETA(DisplayName = "Rescue Ally")            // Rescue wounded teammate
+	None    UMETA(DisplayName = "None"),      // No objective assigned
+    Assault UMETA(DisplayName = "Assault"),   // Offensive: Push toward enemy/objective
+    Defend  UMETA(DisplayName = "Defend"),    // Defensive: Hold position/objective
+    Support UMETA(DisplayName = "Support"),   // Auxiliary: Provide cover/assistance
+    Retreat UMETA(DisplayName = "Retreat")    // Fallback: Disengage and reposition
 };
 
 /**

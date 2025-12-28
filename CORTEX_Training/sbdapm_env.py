@@ -85,9 +85,9 @@ if SCHOLA_AVAILABLE:
             if hasattr(self.schola_env, 'ids'):
                 self._update_agent_map()
 
-            # Space 정의
-            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(78,), dtype=np.float32)
-            self._action_space = spaces.MultiDiscrete([4, 11, 3, 3])
+            # Space 정의 (v4.0: 70 observation + 4 objective embedding = 74 features)
+            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(74,), dtype=np.float32)
+            self._action_space = spaces.MultiDiscrete([4, 6, 3])  # v4.0: Position(4) × Target(6) × Fire(3), stance removed
 
             self.episode_steps = 0
 
@@ -334,7 +334,7 @@ if SCHOLA_AVAILABLE:
                             obs_val = agent_obs_data
                         obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                     else:
-                        obs_dict[flat_id] = np.zeros(78, dtype=np.float32)
+                        obs_dict[flat_id] = np.zeros(74, dtype=np.float32)  # v4.0: 70 obs + 4 objective
 
                     # Reward
                     reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
@@ -393,7 +393,7 @@ if SCHOLA_AVAILABLE:
                 traceback.print_exc()
 
                 return (
-                    {aid: np.zeros(78, dtype=np.float32) for aid in self._agent_ids},
+                    {aid: np.zeros(74, dtype=np.float32) for aid in self._agent_ids},  # v4.0: 70 obs + 4 objective
                     {aid: 0.0 for aid in self._agent_ids},
                     {aid: True for aid in self._agent_ids} | {"__all__": True},
                     {aid: False for aid in self._agent_ids} | {"__all__": True},
@@ -417,8 +417,8 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    obs_dict[flat_id] = np.zeros(78, dtype=np.float32)
-            
+                    obs_dict[flat_id] = np.zeros(74, dtype=np.float32)  # v4.0: 70 obs + 4 objective
+
             return obs_dict, {aid: {} for aid in self._agent_ids}
 
         def render(self):

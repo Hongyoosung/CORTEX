@@ -50,7 +50,7 @@ struct GAMEAI_PROJECT_API FSTEvaluator_SyncObjectiveInstanceData
 
 	/** Last objective type (for change detection) */
 	UPROPERTY()
-	EObjectiveType LastObjectiveType = EObjectiveType::Eliminate;
+	EObjectiveType LastObjectiveType;
 
 	/** Last objective pointer (for change detection) */
 	UPROPERTY()

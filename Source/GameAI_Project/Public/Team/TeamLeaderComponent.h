@@ -48,7 +48,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 );
 
 /**
- * Strategic experience for MCTS training (AlphaZero-style)
+ * Strategic experience data (for future offline analysis)
  */
 USTRUCT(BlueprintType)
 struct FStrategicExperience

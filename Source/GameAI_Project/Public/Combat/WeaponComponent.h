@@ -176,6 +176,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
 	int32 GetCurrentAmmo() const { return CurrentAmmo; }
 
+	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
+	float GetAmmoPercentage() const { return MaxAmmo > 0 ? static_cast<float>(CurrentAmmo) / static_cast<float>(MaxAmmo) : 1.0f; }
+
 	/** Get max ammo */
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
 	int32 GetMaxAmmo() const { return MaxAmmo; }

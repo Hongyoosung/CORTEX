@@ -307,7 +307,7 @@ FTacticalAction URLPolicyNetwork::GetAction(const FObservationElement& Observati
 
 FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& Observation, UObjective* CurrentObjective)
 {
-	// v4.0: Mask parameter ignored for discrete macro actions
+	// v4.0: Implements action masking for dynamic target count
 	if (!bIsInitialized)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Not initialized, returning default action"));
@@ -317,22 +317,23 @@ FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& O
 
 	if (bUseONNXModel && ModelInstance.IsValid())
 	{
-		// Build enhanced input: 71 observation + 7 objective embedding = 78 features
+		// Build enhanced input: 70 observation + 4 objective embedding = 74 features
 		TArray<float> InputFeatures = Observation.ToFeatureVector();
 		TArray<float> ObjectiveEmbed = GetObjectiveEmbedding(CurrentObjective);
 		InputFeatures.Append(ObjectiveEmbed);
 
-		// Forward pass (expects 19-dim output: 6 pos + 6 target + 3 fire + 3 stance + 1 value)
+		// Forward pass (expects 14-dim output: 4 pos + 6 target + 3 fire + 1 value)
 		TArray<float> NetworkOutput = ForwardPass(InputFeatures);
 
-		// Convert to macro action
-		FTacticalAction Action = NetworkOutputToAction(NetworkOutput);
+		// Convert to macro action with action masking based on visible enemies
+		int32 VisibleEnemies = FMath::Min(Observation.VisibleEnemyCount, 5);  // Max 5 enemies tracked
+		FTacticalAction Action = NetworkOutputToAction(NetworkOutput, VisibleEnemies);
 
-		UE_LOG(LogTemp, Display, TEXT("✅ [ONNX MODEL] MacroAction: Pos=%d Target=%d Fire=%d Stance=%d"),
+		UE_LOG(LogTemp, Display, TEXT("✅ [ONNX MODEL] MacroAction: Pos=%d Target=%d Fire=%d (VisibleEnemies=%d)"),
 			static_cast<int32>(Action.MacroAction.PositionChoice),
 			Action.MacroAction.TargetIndex,
 			static_cast<int32>(Action.MacroAction.FireMode),
-			static_cast<int32>(Action.MacroAction.Stance));
+			VisibleEnemies);
 
 		return Action;
 	}
@@ -393,21 +394,17 @@ float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, UO
 
 TArray<float> URLPolicyNetwork::GetObjectivePriors(const FTeamObservation& TeamObs)
 {
-	// v3.0 Sprint 4: Heuristic-based priors to guide MCTS
-	// These priors are calculated based on team state to provide intelligent initial guidance
-	// Future: Replace with learned priors from dual-head policy network
+	// v4.0: Heuristic-based priors for 4 simplified objective types
+	// Provides intelligent initial guidance for MCTS action selection
 
 	TArray<float> Priors;
-	Priors.Init(0.1f, 7);  // Start with small baseline probability
+	Priors.Init(0.1f, 4);  // v4.0: Only 4 objective types
 
-	// Objective type indices (matching EObjectiveType enum)
-	const int32 ELIMINATE = 0;
-	const int32 CAPTURE_OBJ = 1;
-	const int32 DEFEND_OBJ = 2;
-	const int32 SUPPORT_ALLY = 3;
-	const int32 FORMATION_MOVE = 4;
-	const int32 RETREAT = 5;
-	const int32 RESCUE_ALLY = 6;
+	// Objective type indices (matching v4.0 EObjectiveType enum)
+	const int32 ASSAULT = 0;   // Attack enemies/objectives
+	const int32 DEFEND = 1;    // Hold position/defend area
+	const int32 SUPPORT = 2;   // Support allies
+	const int32 RETREAT = 3;   // Fall back to safety
 
 	// Context-aware prior assignment
 	if (TeamObs.TotalVisibleEnemies > 0)
@@ -416,34 +413,34 @@ TArray<float> URLPolicyNetwork::GetObjectivePriors(const FTeamObservation& TeamO
 		if (TeamObs.bOutnumbered && TeamObs.AverageTeamHealth < 50.0f)
 		{
 			// Outnumbered and weak → retreat highly preferred
-			Priors[RETREAT] = 0.4f;
-			Priors[DEFEND_OBJ] = 0.2f;
-			Priors[SUPPORT_ALLY] = 0.15f;
-			Priors[ELIMINATE] = 0.05f;
+			Priors[RETREAT] = 0.5f;
+			Priors[DEFEND] = 0.25f;
+			Priors[SUPPORT] = 0.15f;
+			Priors[ASSAULT] = 0.1f;
 		}
 		else if (TeamObs.bFlanked)
 		{
 			// Being flanked → defensive posture + support
-			Priors[DEFEND_OBJ] = 0.3f;
-			Priors[SUPPORT_ALLY] = 0.25f;
-			Priors[FORMATION_MOVE] = 0.2f;  // Regroup
-			Priors[ELIMINATE] = 0.1f;
+			Priors[DEFEND] = 0.4f;
+			Priors[SUPPORT] = 0.3f;
+			Priors[RETREAT] = 0.2f;
+			Priors[ASSAULT] = 0.1f;
 		}
 		else if (TeamObs.AverageTeamHealth > 70.0f && !TeamObs.bOutnumbered)
 		{
 			// Strong position → aggressive
-			Priors[ELIMINATE] = 0.35f;
-			Priors[CAPTURE_OBJ] = 0.25f;
-			Priors[SUPPORT_ALLY] = 0.15f;
-			Priors[DEFEND_OBJ] = 0.1f;
+			Priors[ASSAULT] = 0.5f;
+			Priors[SUPPORT] = 0.25f;
+			Priors[DEFEND] = 0.15f;
+			Priors[RETREAT] = 0.1f;
 		}
 		else
 		{
 			// Balanced combat → mixed tactics
-			Priors[ELIMINATE] = 0.25f;
-			Priors[DEFEND_OBJ] = 0.2f;
-			Priors[SUPPORT_ALLY] = 0.2f;
-			Priors[CAPTURE_OBJ] = 0.15f;
+			Priors[ASSAULT] = 0.35f;
+			Priors[DEFEND] = 0.25f;
+			Priors[SUPPORT] = 0.25f;
+			Priors[RETREAT] = 0.15f;
 		}
 	}
 	else
@@ -452,30 +449,26 @@ TArray<float> URLPolicyNetwork::GetObjectivePriors(const FTeamObservation& TeamO
 		if (TeamObs.AverageTeamHealth < 40.0f)
 		{
 			// Low health, no enemies → recover and defend
-			Priors[DEFEND_OBJ] = 0.35f;
-			Priors[RESCUE_ALLY] = 0.25f;
-			Priors[FORMATION_MOVE] = 0.2f;
+			Priors[DEFEND] = 0.5f;
+			Priors[SUPPORT] = 0.3f;
+			Priors[RETREAT] = 0.15f;
+			Priors[ASSAULT] = 0.05f;
 		}
 		else if (TeamObs.DistanceToObjective > 1000.0f)
 		{
-			// Far from objective → advance and capture
-			Priors[FORMATION_MOVE] = 0.35f;
-			Priors[CAPTURE_OBJ] = 0.3f;
-			Priors[DEFEND_OBJ] = 0.15f;
-		}
-		else if (TeamObs.FormationCoherence < 0.5f)
-		{
-			// Formation broken → regroup
-			Priors[FORMATION_MOVE] = 0.4f;
-			Priors[DEFEND_OBJ] = 0.2f;
-			Priors[CAPTURE_OBJ] = 0.2f;
+			// Far from objective → advance
+			Priors[ASSAULT] = 0.5f;
+			Priors[DEFEND] = 0.25f;
+			Priors[SUPPORT] = 0.15f;
+			Priors[RETREAT] = 0.1f;
 		}
 		else
 		{
 			// Stable situation → objective-focused
-			Priors[CAPTURE_OBJ] = 0.35f;
-			Priors[DEFEND_OBJ] = 0.25f;
-			Priors[FORMATION_MOVE] = 0.2f;
+			Priors[ASSAULT] = 0.4f;
+			Priors[DEFEND] = 0.35f;
+			Priors[SUPPORT] = 0.15f;
+			Priors[RETREAT] = 0.1f;
 		}
 	}
 
@@ -493,51 +486,55 @@ TArray<float> URLPolicyNetwork::GetObjectivePriors(const FTeamObservation& TeamO
 		}
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("RL Policy Priors: Eliminate=%.2f, Capture=%.2f, Defend=%.2f, Support=%.2f, Move=%.2f, Retreat=%.2f, Rescue=%.2f"),
-		Priors[ELIMINATE], Priors[CAPTURE_OBJ], Priors[DEFEND_OBJ], Priors[SUPPORT_ALLY],
-		Priors[FORMATION_MOVE], Priors[RETREAT], Priors[RESCUE_ALLY]);
+	UE_LOG(LogTemp, Verbose, TEXT("RL Policy Priors (v4.0): Assault=%.2f, Defend=%.2f, Support=%.2f, Retreat=%.2f"),
+		Priors[ASSAULT], Priors[DEFEND], Priors[SUPPORT], Priors[RETREAT]);
 
 	return Priors;
 }
 
-FTacticalAction URLPolicyNetwork::NetworkOutputToAction(const TArray<float>& NetworkOutput)
+FTacticalAction URLPolicyNetwork::NetworkOutputToAction(const TArray<float>& NetworkOutput, int32 VisibleEnemies)
 {
 	FTacticalAction Action;
 
-	// v4.0 Network output format: [6 position logits + 6 target logits + 3 fire logits + 3 stance logits + 1 value] = 19
-	// Sample discrete actions from each head
-	if (NetworkOutput.Num() >= 18)
+	// v4.0 Simplified: [4 position + 6 target + 3 fire + 1 value] = 14 outputs
+	// Position: Hold, ForwardCover, Retreat, Advance (4)
+	// Target: None + Enemy_0...Enemy_N (dynamic, max 6 for now)
+	// Fire: HoldFire, Fire, Suppress (3)
+	if (NetworkOutput.Num() >= 13)
 	{
 		// Extract logits for each action dimension
 		TArray<float> PositionLogits;
-		PositionLogits.Append(&NetworkOutput[0], 6);
+		PositionLogits.Append(&NetworkOutput[0], 4);
 
 		TArray<float> TargetLogits;
-		TargetLogits.Append(&NetworkOutput[6], 6);
+		TargetLogits.Append(&NetworkOutput[4], 6);
+
+		// ACTION MASKING: Mask invalid target indices based on visible enemy count
+		// Target indices: [0=None, 1=Enemy_0, 2=Enemy_1, ..., 5=Enemy_4]
+		// If only 2 enemies visible, mask indices 3+ (Enemy_2, Enemy_3, Enemy_4)
+		for (int32 i = VisibleEnemies + 1; i < TargetLogits.Num(); ++i)
+		{
+			TargetLogits[i] = -1e9f;  // Effectively zero probability after softmax
+		}
 
 		TArray<float> FireModeLogits;
-		FireModeLogits.Append(&NetworkOutput[12], 3);
-
-		TArray<float> StanceLogits;
-		StanceLogits.Append(&NetworkOutput[15], 3);
+		FireModeLogits.Append(&NetworkOutput[10], 3);
 
 		// Sample from each discrete distribution
 		int32 PositionIdx = SampleFromLogits(PositionLogits);
 		int32 TargetIdx = SampleFromLogits(TargetLogits);
 		int32 FireModeIdx = SampleFromLogits(FireModeLogits);
-		int32 StanceIdx = SampleFromLogits(StanceLogits);
 
 		// Convert indices to enum values
-		Action.MacroAction.PositionChoice = static_cast<ETacticalPosition>(FMath::Clamp(PositionIdx, 0, 5));
+		Action.MacroAction.PositionChoice = static_cast<ETacticalPosition>(FMath::Clamp(PositionIdx, 0, 3));
 		Action.MacroAction.TargetIndex = TargetIdx - 1;  // 0 = no target (-1), 1+ = enemy indices (0+)
 		Action.MacroAction.FireMode = static_cast<EFireMode>(FMath::Clamp(FireModeIdx, 0, 2));
-		Action.MacroAction.Stance = static_cast<EStance>(FMath::Clamp(StanceIdx, 0, 2));
 
-		// Note: Value estimate at NetworkOutput[18] handled separately by GetStateValue()
+		// Note: Value estimate at NetworkOutput[13] handled separately by GetStateValue()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Invalid network output size %d, expected 18+"), NetworkOutput.Num());
+		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Invalid network output size %d, expected 13+"), NetworkOutput.Num());
 	}
 
 	return Action;
@@ -572,9 +569,9 @@ int32 URLPolicyNetwork::SampleFromLogits(const TArray<float>& Logits)
 
 TArray<float> URLPolicyNetwork::GetObjectiveEmbedding(UObjective* CurrentObjective)
 {
-	// 7-element one-hot encoding for objective type
+	// 4-element one-hot encoding for objective type (v4.0 simplified)
 	TArray<float> Embedding;
-	Embedding.Init(0.0f, 7);
+	Embedding.Init(0.0f, 4);
 
 	if (CurrentObjective)
 	{
@@ -583,26 +580,17 @@ TArray<float> URLPolicyNetwork::GetObjectiveEmbedding(UObjective* CurrentObjecti
 
 		switch (ObjType)
 		{
-			case EObjectiveType::Eliminate:
+			case EObjectiveType::Assault:
 				Embedding[0] = 1.0f;
 				break;
-			case EObjectiveType::CaptureObjective:
+			case EObjectiveType::Defend:
 				Embedding[1] = 1.0f;
 				break;
-			case EObjectiveType::DefendObjective:
+			case EObjectiveType::Support:
 				Embedding[2] = 1.0f;
 				break;
-			case EObjectiveType::SupportAlly:
-				Embedding[3] = 1.0f;
-				break;
-			case EObjectiveType::FormationMove:
-				Embedding[4] = 1.0f;
-				break;
 			case EObjectiveType::Retreat:
-				Embedding[5] = 1.0f;
-				break;
-			case EObjectiveType::RescueAlly:
-				Embedding[6] = 1.0f;
+				Embedding[3] = 1.0f;
 				break;
 			default:
 				// None or unknown - leave as zeros

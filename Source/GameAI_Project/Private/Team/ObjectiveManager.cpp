@@ -1,13 +1,7 @@
 // ObjectiveManager.cpp - Manages strategic objectives for team
+// v4.0: Simplified to use base UObjective class only (no subclasses)
 
 #include "Team/ObjectiveManager.h"
-#include "Team/Objectives/EliminateObjective.h"
-#include "Team/Objectives/CaptureObjective.h"
-#include "Team/Objectives/DefendObjective.h"
-#include "Team/Objectives/SupportAllyObjective.h"
-#include "Team/Objectives/FormationMoveObjective.h"
-#include "Team/Objectives/RetreatObjective.h"
-#include "Team/Objectives/RescueAllyObjective.h"
 
 UObjectiveManager::UObjectiveManager()
 {
@@ -29,73 +23,71 @@ void UObjectiveManager::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 
 UObjective* UObjectiveManager::CreateObjective(EObjectiveType Type, AActor* Target, const FVector& Location, int32 Priority)
 {
-    UObjective* NewObjective = nullptr;
-
-    switch (Type)
+    // v4.0: Use base UObjective class for all types (no subclasses)
+    if (Type == EObjectiveType::None)
     {
-        case EObjectiveType::Eliminate:
-            NewObjective = CreateObjectiveOfType<UEliminateObjective>(Type);
-            break;
-        case EObjectiveType::CaptureObjective:
-            NewObjective = CreateObjectiveOfType<UCaptureObjective>(Type);
-            break;
-        case EObjectiveType::DefendObjective:
-            NewObjective = CreateObjectiveOfType<UDefendObjective>(Type);
-            break;
-        case EObjectiveType::SupportAlly:
-            NewObjective = CreateObjectiveOfType<USupportAllyObjective>(Type);
-            break;
-        case EObjectiveType::FormationMove:
-            NewObjective = CreateObjectiveOfType<UFormationMoveObjective>(Type);
-            break;
-        case EObjectiveType::Retreat:
-            NewObjective = CreateObjectiveOfType<URetreatObjective>(Type);
-            break;
-        case EObjectiveType::RescueAlly:
-            NewObjective = CreateObjectiveOfType<URescueAllyObjective>(Type);
-            break;
-        case EObjectiveType::None:
-            // None type is valid but creates no objective
-            return nullptr;
-        default:
-            UE_LOG(LogTemp, Warning, TEXT("ObjectiveManager: Unsupported objective type"));
-            return nullptr;
+        return nullptr; // None type creates no objective
     }
 
+    // Create base objective
+    UObjective* NewObjective = NewObject<UObjective>(this);
     if (NewObjective)
     {
+        NewObjective->Type = Type;
         NewObjective->TargetActor = Target;
         NewObjective->TargetLocation = Location;
         NewObjective->Priority = Priority;
+
+        // Set default priorities by type (v4.0 simplified)
+        switch (Type)
+        {
+            case EObjectiveType::Assault:
+                NewObjective->Priority = (Priority > 0) ? Priority : 8;
+                break;
+            case EObjectiveType::Defend:
+                NewObjective->Priority = (Priority > 0) ? Priority : 7;
+                break;
+            case EObjectiveType::Support:
+                NewObjective->Priority = (Priority > 0) ? Priority : 6;
+                break;
+            case EObjectiveType::Retreat:
+                NewObjective->Priority = (Priority > 0) ? Priority : 6;
+                break;
+            default:
+                NewObjective->Priority = 5;
+                break;
+        }
+
         Objectives.Add(NewObjective);
     }
 
     return NewObjective;
 }
 
+// v4.0: Updated helper methods for simplified objective types
 UObjective* UObjectiveManager::CreateEliminateObjective(AActor* Target, int32 Priority)
 {
-    return CreateObjective(EObjectiveType::Eliminate, Target, FVector::ZeroVector, Priority);
+    return CreateObjective(EObjectiveType::Assault, Target, FVector::ZeroVector, Priority);
 }
 
 UObjective* UObjectiveManager::CreateCaptureObjective(const FVector& Location, int32 Priority)
 {
-    return CreateObjective(EObjectiveType::CaptureObjective, nullptr, Location, Priority);
+    return CreateObjective(EObjectiveType::Assault, nullptr, Location, Priority);
 }
 
 UObjective* UObjectiveManager::CreateDefendObjective(const FVector& Location, int32 Priority)
 {
-    return CreateObjective(EObjectiveType::DefendObjective, nullptr, Location, Priority);
+    return CreateObjective(EObjectiveType::Defend, nullptr, Location, Priority);
 }
 
 UObjective* UObjectiveManager::CreateSupportObjective(AActor* AllyTarget, int32 Priority)
 {
-    return CreateObjective(EObjectiveType::SupportAlly, AllyTarget, FVector::ZeroVector, Priority);
+    return CreateObjective(EObjectiveType::Support, AllyTarget, FVector::ZeroVector, Priority);
 }
 
 UObjective* UObjectiveManager::CreateRescueObjective(AActor* WoundedAlly, int32 Priority)
 {
-    return CreateObjective(EObjectiveType::RescueAlly, WoundedAlly, FVector::ZeroVector, Priority);
+    return CreateObjective(EObjectiveType::Support, WoundedAlly, FVector::ZeroVector, Priority);
 }
 
 void UObjectiveManager::AssignAgentsToObjective(UObjective* Objective, const TArray<AActor*>& Agents)
@@ -299,16 +291,7 @@ float UObjectiveManager::CalculateTotalTeamReward() const
     return TotalReward;
 }
 
-template<typename T>
-T* UObjectiveManager::CreateObjectiveOfType(EObjectiveType Type)
-{
-    T* NewObjective = NewObject<T>(this);
-    if (NewObjective)
-    {
-        NewObjective->Type = Type;
-    }
-    return NewObjective;
-}
+// v4.0: Removed CreateObjectiveOfType<T> template method (no longer needed without subclasses)
 
 void UObjectiveManager::TickObjectives(float DeltaTime)
 {

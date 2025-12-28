@@ -94,9 +94,6 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 	// Map fire mode index to enum
 	MacroAction.FireMode = static_cast<EFireMode>(FMath::Clamp(FireModeIdx, 0, 2));
 
-	// Map stance index to enum
-	MacroAction.Stance = static_cast<EStance>(FMath::Clamp(StanceIdx, 0, 2));
-
 	// Store in FTacticalAction (v4.0 uses MacroAction field)
 	FTacticalAction ParsedAction(MacroAction);
 
@@ -123,19 +120,17 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 			FMacroAction& LastAction = LastLoggedActions[OwnerName];
 			bActionChanged = (LastAction.PositionChoice != MacroAction.PositionChoice ||
 			                  LastAction.TargetIndex != MacroAction.TargetIndex ||
-			                  LastAction.FireMode != MacroAction.FireMode ||
-			                  LastAction.Stance != MacroAction.Stance);
+			                  LastAction.FireMode != MacroAction.FireMode);
 		}
 
 		if (bActionChanged)
 		{
 			// Log only significant action changes at Verbose level
-			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION] '%s': Position=%s, Target=%d, Fire=%s, Stance=%s"),
+			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION] '%s': Position=%s, Target=%d, Fire=%s"),
 				*OwnerName,
 				*UEnum::GetValueAsString(MacroAction.PositionChoice),
 				MacroAction.TargetIndex,
-				*UEnum::GetValueAsString(MacroAction.FireMode),
-				*UEnum::GetValueAsString(MacroAction.Stance));
+				*UEnum::GetValueAsString(MacroAction.FireMode));
 
 			LastLoggedActions.Add(OwnerName, MacroAction);
 		}

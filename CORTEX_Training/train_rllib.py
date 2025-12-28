@@ -60,8 +60,8 @@ class SBDAPMConfig:
 
     # PPO hyperparameters
     LEARNING_RATE = 3e-4
-    TRAIN_BATCH_SIZE = 4000
-    SGD_MINIBATCH_SIZE = 128
+    TRAIN_BATCH_SIZE = 8000  # Increased from 4000 for multi-agent stability (4+ agents)
+    SGD_MINIBATCH_SIZE = 256  # Doubled to match batch size increase
     NUM_SGD_ITER = 10
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
@@ -204,8 +204,8 @@ def export_onnx(algo, output_dir):
         dual_head_wrapper = DualHeadWrapper(model)
         dual_head_wrapper.eval()
 
-        # Dummy input: 78 features (71 observation + 7 objective embedding)
-        dummy_input = torch.randn(1, 78)
+        # Dummy input: 74 features (70 observation + 4 objective embedding, v4.0)
+        dummy_input = torch.randn(1, 74)
 
         # Export unified model with 2 outputs
         model_path = output_dir / "rl_policy_network.onnx"

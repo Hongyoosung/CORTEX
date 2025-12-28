@@ -6,7 +6,7 @@
 
 /**
  * Enhanced observation structure for individual agents
- * 71 total features, fully normalized for neural network input
+ * 70 total features, fully normalized for neural network input
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FObservationElement
@@ -14,7 +14,7 @@ struct GAMEAI_PROJECT_API FObservationElement
     GENERATED_BODY()
 
     //--------------------------------------------------------------------------
-    // AGENT STATE (12 features)
+    // AGENT STATE (11 features)
     //--------------------------------------------------------------------------
 
     /** Agent position in world space */
@@ -32,10 +32,6 @@ struct GAMEAI_PROJECT_API FObservationElement
     /** Health percentage (0-100) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
     float AgentHealth = 100.0f;  // 1 feature
-
-    /** Stamina percentage (0-100) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
-    float Stamina = 100.0f;  // 1 feature
 
     /** Shield/Armor percentage (0-100) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
@@ -134,11 +130,11 @@ struct GAMEAI_PROJECT_API FObservationElement
         NearbyEnemies.Init(FEnemyObservation(), 5);  // Track top 5 closest enemies
     }
 
-    /** Convert observation to normalized feature vector (71 elements) */
+    /** Convert observation to normalized feature vector (70 elements) */
     TArray<float> ToFeatureVector() const;
 
     /** Get feature count */
-    static int32 GetFeatureCount() { return 71; }
+    static int32 GetFeatureCount() { return 70; }
 
     /** Reset to default values */
     void Reset();

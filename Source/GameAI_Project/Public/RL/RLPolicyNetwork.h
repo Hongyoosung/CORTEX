@@ -16,16 +16,20 @@ class INNERuntime;
 class INNERuntimeGPU;
 
 /**
- * Neural Network-based RL Policy for Tactical Action Selection (v4.0 Macro Actions)
+ * Neural Network-based RL Policy for Tactical Action Selection (v4.0 Simplified)
  *
  * Architecture:
- *   Input Layer:  78 features (71 observation + 7 objective embedding)
+ *   Input Layer:  74 features (70 observation + 4 objective embedding)
  *   Shared Trunk: 128 → 128 → 64 (ReLU)
- *   ├─ Position Head: 4 logits (Hold, Forward, Retreat, Advance)
- *   ├─ Target Head: (N+1) logits (None, Enemy_0...Enemy_N) [dynamic]
+ *   ├─ Position Head: 4 logits (Hold, ForwardCover, Retreat, Advance)
+ *   ├─ Target Head: (N+1) logits (None, Enemy_0...Enemy_N) [dynamic, max 6]
  *   ├─ Fire Mode Head: 3 logits (HoldFire, Fire, Suppress)
- *   ├─ Stance Head: 3 logits (Stand, Crouch, Prone)
- *   └─ Critic Head: 1 value (state value estimate for MCTS)
+ *   └─ Critic Head: 1 value (for PPO advantage estimation only)
+ *
+ * Simplified Changes (v4.0):
+ *   - Removed Stance action (no crouch/prone) - agents always standing
+ *   - Reduced objective types: 7→4 (Assault/Defend/Support/Retreat)
+ *   - Focus on core tactical loop: WHERE to go, WHO to shoot, WHEN to fire
  *
  * Usage:
  *   1. Load trained policy from ONNX: LoadPolicy("path/to/model.onnx")
@@ -82,12 +86,11 @@ public:
 	FTacticalAction GetAction(const FObservationElement& Observation, class UObjective* CurrentObjective);
 
 	/**
-	 * Get macro action with objective context (v4.0)
-	 * Note: Action masking not implemented for v4.0 discrete actions
-	 * @param Observation - Current observation
+	 * Get macro action with objective context and action masking (v4.0)
+	 * Masks invalid target indices based on visible enemy count
+	 * @param Observation - Current observation (includes VisibleEnemyCount)
 	 * @param CurrentObjective - Current objective (can be nullptr)
-	 * @param Mask - Action space constraints (ignored in v4.0)
-	 * @return Macro action
+	 * @return Macro action with masked target selection
 	 */
 	UFUNCTION(BlueprintCallable, Category = "RL|v4")
 	FTacticalAction GetActionWithMask(const FObservationElement& Observation, class UObjective* CurrentObjective);
@@ -106,7 +109,7 @@ public:
 	 * Get action priors for MCTS initialization (v4.0)
 	 * Returns prior probabilities for objective types to guide MCTS tree search
 	 * @param TeamObs - Team-level observation
-	 * @return Array of 7 prior probabilities (one per objective type)
+	 * @return Array of 4 prior probabilities (Assault, Defend, Support, Retreat)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "RL|v4")
 	TArray<float> GetObjectivePriors(const struct FTeamObservation& TeamObs);
@@ -172,11 +175,12 @@ private:
 	// ========================================
 
 	/**
-	 * Generate macro action from network output
-	 * @param NetworkOutput - Multi-discrete logits: [6 position + 6 target + 3 fire + 3 stance + 1 value] = 19
+	 * Generate macro action from network output (v4.0)
+	 * @param NetworkOutput - Multi-discrete logits: [4 position + 6 target + 3 fire + 1 value] = 14
+	 * @param VisibleEnemies - Number of visible enemies for action masking (default 5)
 	 * @return Macro action struct
 	 */
-	FTacticalAction NetworkOutputToAction(const TArray<float>& NetworkOutput);
+	FTacticalAction NetworkOutputToAction(const TArray<float>& NetworkOutput, int32 VisibleEnemies = 5);
 
 	/**
 	 * Sample discrete action from logits
@@ -186,9 +190,9 @@ private:
 	int32 SampleFromLogits(const TArray<float>& Logits);
 
 	/**
-	 * Build objective embedding for network input
+	 * Build objective embedding for network input (v4.0 simplified)
 	 * @param CurrentObjective - Current objective (can be nullptr)
-	 * @return 7-element objective embedding
+	 * @return 4-element objective embedding (Assault/Defend/Support/Retreat)
 	 */
 	TArray<float> GetObjectiveEmbedding(class UObjective* CurrentObjective);
 

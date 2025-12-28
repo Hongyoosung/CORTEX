@@ -5,6 +5,8 @@
 #include "Team/Objective.h"
 #include "Team/FollowerAgentComponent.h"
 #include "RL/RLPolicyNetwork.h"
+#include "Combat/HealthComponent.h"
+#include "Combat/WeaponComponent.h"
 
 UMCTS::UMCTS()
     : MaxSimulations(500)
@@ -26,34 +28,13 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
     MaxSimulations = InMaxSimulations;
     ExplorationParameter = InExplorationParam;
 
-    // Initialize RL Policy Network (used for both actions AND value estimation via PPO critic)
+    // Initialize RL Policy Network for action priors (GetObjectivePriors - heuristic only)
     RLPolicyNetwork = NewObject<URLPolicyNetwork>(this);
-    if (RLPolicyNetwork)
-    {
-        FRLPolicyConfig PolicyConfig;
-        PolicyConfig.InputSize = 78;  // 71 observation + 7 objective
-        PolicyConfig.OutputSize = 8;  // 8 atomic action dimensions
-        RLPolicyNetwork->Initialize(PolicyConfig);
-
-        // Try to load trained policy (fallback to heuristic if not found)
-        FString PolicyModelPath = TEXT("Models/rl_policy_network.onnx");
-        if (!RLPolicyNetwork->LoadPolicy(PolicyModelPath))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("MCTS: RL Policy model not loaded, using heuristic fallback"));
-        }
-        else
-        {
-            UE_LOG(LogTemp, Log, TEXT("MCTS: RL Policy loaded successfully (actor + critic from PPO training)"));
-        }
-    }
-
-    // NOTE: Value estimation now uses RLPolicyNetwork->GetStateValue() (PPO critic)
-    // This aggregates individual follower values instead of requiring team-level observations
-    // Trained via real-time RLlib PPO (no offline self-play needed)
 
     UE_LOG(LogTemp, Log, TEXT("MCTS: Initialized for team-level decisions (Simulations: %d, Exploration: %.2f)"),
         MaxSimulations, ExplorationParameter);
-    UE_LOG(LogTemp, Log, TEXT("MCTS: Using real-time PPO critic for value estimation (no offline training)"));
+    UE_LOG(LogTemp, Log, TEXT("MCTS: Using strategic heuristic evaluation for leaf nodes"));
+    UE_LOG(LogTemp, Log, TEXT("MCTS: Using heuristic action priors for tree guidance"));
 }
 
 
@@ -155,46 +136,32 @@ TSharedPtr<FTeamMCTSNode> UMCTS::ExpandNode(TSharedPtr<FTeamMCTSNode> Node, cons
 
 float UMCTS::SimulateNode(TSharedPtr<FTeamMCTSNode> Node, const FTeamObservation& TeamObs)
 {
-    if (!Node.IsValid() || !RLPolicyNetwork)
+    if (!Node.IsValid())
     {
         return 0.0f;
     }
 
-    // AlphaZero-style: Use PPO critic to estimate leaf value (no rollout simulation)
-    // Aggregate individual follower values for team-level estimate
+    // Strategic heuristic evaluation: Analyze game state for team-level value
+    // Evaluates objective progress, team strength, and positional advantage
+    // Range: [-1.0, +1.0] = (±0.6 objective + ±0.3 strength + ±0.1 positioning)
 
     TMap<AActor*, UObjective*> NodeObjectives = Node->GetObjectives();
-    float TotalValue = 0.0f;
-    int32 ValidCount = 0;
+    TArray<AActor*> Followers;
+    NodeObjectives.GetKeys(Followers);
 
-    // For each follower with an objective, estimate their value
-    for (const auto& Pair : NodeObjectives)
-    {
-        AActor* Follower = Pair.Key;
-        UObjective* Objective = Pair.Value;
+    float Value = 0.0f;
 
-        if (!Follower || !Objective)
-        {
-            continue;
-        }
+    // 1. Objective Progress (±0.6) - PRIMARY strategic metric
+    Value += EvaluateObjectiveProgress(Node, TeamObs);
 
-        // Extract individual follower observation from follower component
-        UFollowerAgentComponent* FollowerComponent = Follower->FindComponentByClass<UFollowerAgentComponent>();
-        if (!FollowerComponent)
-        {
-            continue;
-        }
+    // 2. Team Strength (±0.3) - Force composition
+    Value += EvaluateTeamStrength(Followers, TeamObs);
 
-        FObservationElement FollowerObs = FollowerComponent->GetLocalObservation();
+    // 3. Positional Advantage (±0.1) - Tactical positioning
+    Value += EvaluatePositionalAdvantage(Followers, TeamObs);
 
-        // Get PPO critic's value estimate for this follower-objective pair
-        float FollowerValue = RLPolicyNetwork->GetStateValue(FollowerObs, Objective);
-        TotalValue += FollowerValue;
-        ValidCount++;
-    }
-
-    // Return averaged team value (normalized to [-1, 1])
-    return ValidCount > 0 ? (TotalValue / ValidCount) : 0.0f;
+    // Value already clamped by individual functions, double-check
+    return FMath::Clamp(Value, -1.0f, 1.0f);
 }
 
 void UMCTS::RunSingleSimulation(
@@ -264,15 +231,12 @@ TArray<TMap<AActor*, UObjective*>> UMCTS::GenerateObjectiveAssignments(
         return Assignments;
     }
 
-    // Available objective types (7 strategic objectives)
+    // Available objective types (4 strategic objectives - v4.0 simplified)
     TArray<EObjectiveType> PossibleObjectives = {
-        EObjectiveType::Eliminate,
-        EObjectiveType::CaptureObjective,
-        EObjectiveType::DefendObjective,
-        EObjectiveType::SupportAlly,
-        EObjectiveType::FormationMove,
-        EObjectiveType::Retreat,
-        EObjectiveType::RescueAlly
+        EObjectiveType::Assault,    // Offensive: Push toward enemy/objective
+        EObjectiveType::Defend,     // Defensive: Hold position/objective
+        EObjectiveType::Support,    // Auxiliary: Provide cover/assistance
+        EObjectiveType::Retreat     // Fallback: Disengage and reposition
     };
 
     UE_LOG(LogTemp, Display, TEXT("🎯 [UCB] Generating %d objective assignments for %d followers"),
@@ -388,19 +352,28 @@ TArray<TMap<AActor*, UObjective*>> UMCTS::GenerateObjectiveAssignments(
             FVector TargetLocation = FVector::ZeroVector;
             int32 Priority = 5;
 
-            // Select target based on objective type (same logic as before)
+            // Select target based on objective type (v4.0 simplified)
             switch (ObjType)
             {
-                case EObjectiveType::Eliminate:
+                case EObjectiveType::Assault:
+                    // Offensive: Target enemies or objective location
                     if (TeamObs.TrackedEnemies.Num() > 0)
                     {
                         TArray<AActor*> EnemyArray = TeamObs.TrackedEnemies.Array();
                         TargetActor = EnemyArray[FMath::RandRange(0, EnemyArray.Num() - 1)];
-                        Priority = 7;
                     }
+                    TargetLocation = TeamObs.TeamCentroid; // Fallback: push forward
+                    Priority = 8;
                     break;
 
-                case EObjectiveType::SupportAlly:
+                case EObjectiveType::Defend:
+                    // Defensive: Hold current position/objective
+                    TargetLocation = TeamObs.TeamCentroid;
+                    Priority = 7;
+                    break;
+
+                case EObjectiveType::Support:
+                    // Auxiliary: Support allies
                     if (Followers.Num() > 1)
                     {
                         TArray<AActor*> OtherFollowers = Followers;
@@ -408,47 +381,25 @@ TArray<TMap<AActor*, UObjective*>> UMCTS::GenerateObjectiveAssignments(
                         if (OtherFollowers.Num() > 0)
                         {
                             TargetActor = OtherFollowers[FMath::RandRange(0, OtherFollowers.Num() - 1)];
-                            Priority = 6;
                         }
-                    }
-                    break;
-
-                case EObjectiveType::CaptureObjective:
-                    TargetLocation = TeamObs.TeamCentroid;
-                    Priority = 8;
-                    break;
-
-                case EObjectiveType::DefendObjective:
-                    TargetLocation = TeamObs.TeamCentroid;
-                    Priority = 7;
-                    break;
-
-                case EObjectiveType::FormationMove:
-                    TargetLocation = TeamObs.TeamCentroid;
-                    Priority = 5;
-                    break;
-
-                case EObjectiveType::Retreat:
-                    if (TeamObs.TrackedEnemies.Num() > 0)
-                    {
-                        TArray<AActor*> EnemyArray = TeamObs.TrackedEnemies.Array();
-                        TargetActor = EnemyArray[FMath::RandRange(0, EnemyArray.Num() - 1)];
                     }
                     TargetLocation = TeamObs.TeamCentroid;
                     Priority = 6;
                     break;
 
-                case EObjectiveType::RescueAlly:
-                    if (Followers.Num() > 1)
+                case EObjectiveType::Retreat:
+                    // Fallback: Disengage from enemies
+                    if (TeamObs.TrackedEnemies.Num() > 0)
                     {
-                        TArray<AActor*> OtherFollowers = Followers;
-                        OtherFollowers.Remove(Follower);
-                        if (OtherFollowers.Num() > 0)
-                        {
-                            TargetActor = OtherFollowers[FMath::RandRange(0, OtherFollowers.Num() - 1)];
-                            Priority = 7;
-                        }
+                        TArray<AActor*> EnemyArray = TeamObs.TrackedEnemies.Array();
+                        TargetActor = EnemyArray[FMath::RandRange(0, EnemyArray.Num() - 1)]; // Track enemies to retreat FROM
                     }
+                    TargetLocation = TeamObs.TeamCentroid;
+                    Priority = 6;
+                    break;
+
+                case EObjectiveType::None:
+                    // No objective
                     break;
             }
 
@@ -477,55 +428,42 @@ float UMCTS::CalculateObjectiveScore(AActor* Follower, EObjectiveType ObjType, c
 
     float Score = 0.0f;
 
-    // Get follower observation (if available via index)
-    // For simplicity, use team-level heuristics
-
+    // v4.0: Simplified strategic scoring for 4 objective types
     switch (ObjType)
     {
-        case EObjectiveType::Eliminate:
-            // Prefer when enemies are present and team health is good
+        case EObjectiveType::Assault:
+            // Offensive: Prefer when enemies present, team healthy, and coordinated
             Score = TeamObs.TrackedEnemies.Num() * 10.0f;
             Score += TeamObs.AverageTeamHealth * 0.5f;
+            Score += TeamObs.FormationCoherence * 15.0f;
             Score -= TeamObs.ThreatLevel * 5.0f; // Avoid if under heavy fire
+            Score += 50.0f - (TeamObs.DistanceToObjective / 100.0f); // Prefer when near objective
             break;
 
-        case EObjectiveType::CaptureObjective:
-            // Prefer when near objective and team is coordinated
-            Score = 50.0f - (TeamObs.DistanceToObjective / 100.0f);
-            Score += TeamObs.FormationCoherence * 20.0f;
-            Score -= TeamObs.ThreatLevel * 3.0f;
-            break;
-
-        case EObjectiveType::DefendObjective:
-            // Prefer when on objective and threat is moderate
+        case EObjectiveType::Defend:
+            // Defensive: Prefer when on objective, threat is moderate, formation good
             Score = 30.0f - (TeamObs.DistanceToObjective / 50.0f);
             Score += TeamObs.ThreatLevel * 5.0f; // Higher threat = more defense needed
             Score += TeamObs.FormationCoherence * 15.0f;
+            Score += TeamObs.AverageTeamHealth * 0.3f;
             break;
 
-        case EObjectiveType::SupportAlly:
-            // Prefer when team health is low or formation broken
-            Score = (100.0f - TeamObs.AverageTeamHealth) * 0.3f;
-            Score += (1.0f - TeamObs.FormationCoherence) * 20.0f;
-            break;
-
-        case EObjectiveType::FormationMove:
-            // Prefer when formation is broken
-            Score = (1.0f - TeamObs.FormationCoherence) * 30.0f;
-            Score += 10.0f; // Base utility
+        case EObjectiveType::Support:
+            // Auxiliary: Prefer when team health low, formation broken, or high threat
+            Score = (100.0f - TeamObs.AverageTeamHealth) * 0.4f;
+            Score += (1.0f - TeamObs.FormationCoherence) * 25.0f;
+            Score += TeamObs.ThreatLevel * 4.0f;
             break;
 
         case EObjectiveType::Retreat:
-            // Prefer when health is low or threat is high
-            Score = (100.0f - TeamObs.AverageTeamHealth) * 0.5f;
+            // Fallback: Prefer when health low, threat high, or K/D poor
+            Score = (100.0f - TeamObs.AverageTeamHealth) * 0.6f;
             Score += TeamObs.ThreatLevel * 10.0f;
-            Score += (TeamObs.KillDeathRatio < 0.5f) ? 20.0f : 0.0f;
+            Score += (TeamObs.KillDeathRatio < 0.5f) ? 25.0f : 0.0f;
             break;
 
-        case EObjectiveType::RescueAlly:
-            // Prefer when allies are low health
-            Score = (100.0f - TeamObs.AverageTeamHealth) * 0.4f;
-            Score += TeamObs.ThreatLevel * 3.0f;
+        case EObjectiveType::None:
+            Score = 0.0f;
             break;
     }
 
@@ -545,115 +483,89 @@ float UMCTS::CalculateObjectiveSynergy(EObjectiveType ObjType, const TMap<AActor
         ObjectiveCounts.FindOrAdd(Pair.Value, 0)++;
     }
 
-    // Synergy bonuses for tactical diversity
+    // Synergy bonuses for tactical diversity (v4.0 simplified)
     int32 UniqueTypes = ObjectiveCounts.Num();
     if (UniqueTypes >= 2)
     {
         Synergy += 5.0f; // Bonus for diverse tactics
     }
 
-    // Specific synergies
+    // v4.0: Simplified synergy rules for 4 objective types
     switch (ObjType)
     {
-        case EObjectiveType::Eliminate:
+        case EObjectiveType::Assault:
             // Good synergy with Support (covering fire)
-            if (ObjectiveCounts.Contains(EObjectiveType::SupportAlly))
+            if (ObjectiveCounts.Contains(EObjectiveType::Support))
             {
                 Synergy += 8.0f;
             }
-            // Good synergy with Defend (hold and eliminate)
-            if (ObjectiveCounts.Contains(EObjectiveType::DefendObjective))
+            // Good synergy with Defend (hold ground while assaulting)
+            if (ObjectiveCounts.Contains(EObjectiveType::Defend))
             {
                 Synergy += 6.0f;
             }
-            // Bad synergy with Retreat (conflicting objectives)
-            if (ObjectiveCounts.Contains(EObjectiveType::Retreat))
-            {
-                Synergy -= 10.0f;
-            }
-            break;
-
-        case EObjectiveType::CaptureObjective:
-            // Good synergy with FormationMove (coordinated advance)
-            if (ObjectiveCounts.Contains(EObjectiveType::FormationMove))
-            {
-                Synergy += 7.0f;
-            }
-            // Good synergy with Support (covering fire while advancing)
-            if (ObjectiveCounts.Contains(EObjectiveType::SupportAlly))
-            {
-                Synergy += 5.0f;
-            }
-            // Bad synergy with Retreat
+            // Bad synergy with Retreat (conflicting)
             if (ObjectiveCounts.Contains(EObjectiveType::Retreat))
             {
                 Synergy -= 12.0f;
             }
             break;
 
-        case EObjectiveType::DefendObjective:
-            // Good synergy with Eliminate (defensive posture)
-            if (ObjectiveCounts.Contains(EObjectiveType::Eliminate))
+        case EObjectiveType::Defend:
+            // Good synergy with Assault (defensive cover for offense)
+            if (ObjectiveCounts.Contains(EObjectiveType::Assault))
             {
                 Synergy += 6.0f;
             }
-            // Bad synergy with FormationMove (conflicting - static vs dynamic)
-            if (ObjectiveCounts.Contains(EObjectiveType::FormationMove))
-            {
-                Synergy -= 5.0f;
-            }
-            break;
-
-        case EObjectiveType::SupportAlly:
-            // Good synergy with most offensive objectives
-            if (ObjectiveCounts.Contains(EObjectiveType::Eliminate))
-            {
-                Synergy += 8.0f;
-            }
-            if (ObjectiveCounts.Contains(EObjectiveType::CaptureObjective))
+            // Good synergy with Support (defensive support)
+            if (ObjectiveCounts.Contains(EObjectiveType::Support))
             {
                 Synergy += 5.0f;
             }
-            break;
-
-        case EObjectiveType::FormationMove:
-            // Good synergy with CaptureObjective (coordinated advance)
-            if (ObjectiveCounts.Contains(EObjectiveType::CaptureObjective))
-            {
-                Synergy += 7.0f;
-            }
-            // Neutral with Retreat (both movement-based)
+            // Neutral/Slight negative with Retreat (both defensive but different intent)
             if (ObjectiveCounts.Contains(EObjectiveType::Retreat))
             {
-                Synergy += 2.0f;
+                Synergy -= 3.0f;
+            }
+            break;
+
+        case EObjectiveType::Support:
+            // Good synergy with all offensive/defensive objectives
+            if (ObjectiveCounts.Contains(EObjectiveType::Assault))
+            {
+                Synergy += 8.0f;
+            }
+            if (ObjectiveCounts.Contains(EObjectiveType::Defend))
+            {
+                Synergy += 5.0f;
+            }
+            // Good synergy with Retreat (cover withdrawal)
+            if (ObjectiveCounts.Contains(EObjectiveType::Retreat))
+            {
+                Synergy += 4.0f;
             }
             break;
 
         case EObjectiveType::Retreat:
-            // Good synergy with RescueAlly (both defensive)
-            if (ObjectiveCounts.Contains(EObjectiveType::RescueAlly))
-            {
-                Synergy += 5.0f;
-            }
-            // Bad synergy with offensive objectives
-            if (ObjectiveCounts.Contains(EObjectiveType::Eliminate) ||
-                ObjectiveCounts.Contains(EObjectiveType::CaptureObjective))
-            {
-                Synergy -= 10.0f;
-            }
-            break;
-
-        case EObjectiveType::RescueAlly:
-            // Good synergy with Support
-            if (ObjectiveCounts.Contains(EObjectiveType::SupportAlly))
+            // Good synergy with Support (cover withdrawal)
+            if (ObjectiveCounts.Contains(EObjectiveType::Support))
             {
                 Synergy += 6.0f;
             }
-            // Good synergy with Retreat (defensive)
-            if (ObjectiveCounts.Contains(EObjectiveType::Retreat))
+            // Bad synergy with Assault (conflicting)
+            if (ObjectiveCounts.Contains(EObjectiveType::Assault))
             {
-                Synergy += 5.0f;
+                Synergy -= 12.0f;
             }
+            // Slight negative with Defend (different defensive intent)
+            if (ObjectiveCounts.Contains(EObjectiveType::Defend))
+            {
+                Synergy -= 3.0f;
+            }
+            break;
+
+        case EObjectiveType::None:
+            // No synergy
             break;
     }
 
@@ -714,11 +626,11 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
     UE_LOG(LogTemp, Display, TEXT("🎯 MCTS: Root initialized with %d objective combinations"),
         ObjectiveAssignments.Num());
 
-    // v3.0 Sprint 4: Compute priors for objective assignments using RL policy
+    // Compute priors for objective assignments using heuristic evaluation
     TArray<float> ObjectivePriors;
-    if (RLPolicyNetwork && RLPolicyNetwork->IsReady())
+    if (RLPolicyNetwork)
     {
-        // Get base priors from RL policy for each objective type
+        // Get base priors from heuristic analysis for each objective type
         TArray<float> BasePriors = RLPolicyNetwork->GetObjectivePriors(TeamObs);
 
         // Compute prior for each objective assignment combination
@@ -784,9 +696,9 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
     }
     else
     {
-        // Fallback to uniform priors if no RL policy available
+        // Fallback to uniform priors if RLPolicyNetwork initialization failed
         ObjectivePriors.Init(1.0f / FMath::Max(1, ObjectiveAssignments.Num()), ObjectiveAssignments.Num());
-        UE_LOG(LogTemp, Verbose, TEXT("🎯 MCTS: Using uniform priors (no RL policy available)"));
+        UE_LOG(LogTemp, Warning, TEXT("🎯 MCTS: Using uniform priors (RLPolicyNetwork not initialized)"));
     }
 
     // Store objective assignments as untried actions (convert to command format for compatibility)
@@ -905,21 +817,21 @@ float UMCTS::CalculateTeamReward(const FTeamObservation& TeamObs, const TMap<AAc
         ObjectiveBonus += 25.0f; // Higher bonus for diversity
     }
 
-    // Context-aware objective rewards
+    // Context-aware objective rewards (v4.0 simplified)
     if (TeamObs.TotalVisibleEnemies > 0)
     {
-        int32 EliminateCount = ObjectiveCounts.FindRef(EObjectiveType::Eliminate);
-        int32 SupportCount = ObjectiveCounts.FindRef(EObjectiveType::SupportAlly);
-        int32 DefendCount = ObjectiveCounts.FindRef(EObjectiveType::DefendObjective);
+        int32 AssaultCount = ObjectiveCounts.FindRef(EObjectiveType::Assault);
+        int32 SupportCount = ObjectiveCounts.FindRef(EObjectiveType::Support);
+        int32 DefendCount = ObjectiveCounts.FindRef(EObjectiveType::Defend);
 
-        // Reward combined arms (attack + support/defense)
-        if (EliminateCount > 0 && (SupportCount > 0 || DefendCount > 0))
+        // Reward combined arms (assault + support/defense)
+        if (AssaultCount > 0 && (SupportCount > 0 || DefendCount > 0))
         {
             ObjectiveBonus += 35.0f; // Combined tactics bonus
         }
 
         // Penalty for poor tactical choices
-        if (TeamObs.bOutnumbered && EliminateCount == TotalFollowers)
+        if (TeamObs.bOutnumbered && AssaultCount == TotalFollowers)
         {
             ObjectiveBonus -= 60.0f; // Heavy penalty for all-assault when outnumbered
         }
@@ -1037,4 +949,199 @@ int32 UMCTS::GetRootVisitCount() const
         return TeamRootNode->VisitCount;
     }
     return 0;
+}
+
+//==============================================================================
+// STRATEGIC HEURISTIC EVALUATION
+//==============================================================================
+
+float UMCTS::EvaluateObjectiveProgress(TSharedPtr<FTeamMCTSNode> Node, const FTeamObservation& TeamObs) const
+{
+    if (!Node.IsValid())
+    {
+        return 0.0f;
+    }
+
+    float Score = 0.0f;
+    TMap<AActor*, UObjective*> NodeObjectives = Node->GetObjectives();
+
+    for (const auto& Pair : NodeObjectives)
+    {
+        UObjective* Objective = Pair.Value;
+        if (!Objective)
+        {
+            continue;
+        }
+
+        // Evaluate based on objective type and distance
+        FVector ObjectiveLocation = Objective->TargetLocation;
+        AActor* Follower = Pair.Key;
+
+        if (!Follower || !Follower->IsValidLowLevel())
+        {
+            continue;
+        }
+
+        float Distance = FVector::Dist(Follower->GetActorLocation(), ObjectiveLocation);
+        float NormalizedDistance = FMath::Clamp(Distance / 5000.0f, 0.0f, 1.0f); // 5000cm = 50m max
+
+        // Strategic value based on objective type
+        switch (Objective->Type)
+        {
+        case EObjectiveType::Assault:
+            // Value proximity to objective (aggressive positioning)
+            Score += (1.0f - NormalizedDistance) * 0.2f; // Max +0.2 per agent
+            break;
+
+        case EObjectiveType::Defend:
+            // Value being AT objective location
+            if (Distance < 500.0f) // Within 5m
+            {
+                Score += 0.15f;
+            }
+            break;
+
+        case EObjectiveType::Support:
+        {
+            // Value moderate distance (not too far, not too close)
+            float IdealDistance = FMath::Abs(NormalizedDistance - 0.5f);
+            Score += (1.0f - IdealDistance * 2.0f) * 0.1f;
+            break;
+        }
+        case EObjectiveType::Retreat:
+            // Value distance FROM enemies (inverse)
+            if (TeamObs.TotalVisibleEnemies > 0)
+            {
+                Score += NormalizedDistance * 0.15f; // Reward moving away
+            }
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    // Clamp to range [-0.6, +0.6]
+    return FMath::Clamp(Score, -0.6f, 0.6f);
+}
+
+float UMCTS::EvaluateTeamStrength(const TArray<AActor*>& Followers, const FTeamObservation& TeamObs) const
+{
+    if (Followers.Num() == 0)
+    {
+        return -0.3f; // No team = worst case
+    }
+
+    float Score = 0.0f;
+    int32 AliveCount = 0;
+    float TotalHealth = 0.0f;
+    float TotalAmmo = 0.0f;
+
+    for (AActor* Follower : Followers)
+    {
+        if (!Follower || !Follower->IsValidLowLevel())
+        {
+            continue;
+        }
+
+        // Health contribution
+        UHealthComponent* HealthComp = Follower->FindComponentByClass<UHealthComponent>();
+        if (HealthComp && HealthComp->IsAlive())
+        {
+            AliveCount++;
+            TotalHealth += HealthComp->GetHealthPercentage();
+        }
+
+        // Ammo contribution
+        UWeaponComponent* WeaponComp = Follower->FindComponentByClass<UWeaponComponent>();
+        if (WeaponComp)
+        {
+            TotalAmmo += WeaponComp->GetAmmoPercentage();
+        }
+    }
+
+    if (AliveCount == 0)
+    {
+        return -0.3f; // All dead
+    }
+
+    // Normalize by team size
+    float AvgHealth = TotalHealth / Followers.Num();
+    float AvgAmmo = TotalAmmo / Followers.Num();
+    float SurvivalRate = static_cast<float>(AliveCount) / Followers.Num();
+
+    // Weighted score (survival > health > ammo)
+    Score = (SurvivalRate * 0.15f) + (AvgHealth * 0.1f) + (AvgAmmo * 0.05f);
+
+    // Clamp to range [-0.3, +0.3]
+    return FMath::Clamp(Score - 0.15f, -0.3f, 0.3f); // Offset to center around 0
+}
+
+float UMCTS::EvaluatePositionalAdvantage(const TArray<AActor*>& Followers, const FTeamObservation& TeamObs) const
+{
+    if (Followers.Num() == 0)
+    {
+        return 0.0f;
+    }
+
+    float Score = 0.0f;
+    int32 InCoverCount = 0;
+    float AvgSpread = 0.0f;
+
+    // Calculate team center
+    FVector TeamCenter = FVector::ZeroVector;
+    for (AActor* Follower : Followers)
+    {
+        if (Follower && Follower->IsValidLowLevel())
+        {
+            TeamCenter += Follower->GetActorLocation();
+        }
+    }
+    TeamCenter /= Followers.Num();
+
+    // Evaluate cover usage and formation
+    for (AActor* Follower : Followers)
+    {
+        if (!Follower || !Follower->IsValidLowLevel())
+        {
+            continue;
+        }
+
+        // Cover bonus
+        UFollowerAgentComponent* FollowerComp = Follower->FindComponentByClass<UFollowerAgentComponent>();
+        if (FollowerComp)
+        {
+            FObservationElement Obs = FollowerComp->GetLocalObservation();
+            if (Obs.bHasCover && Obs.NearestCoverDistance < 200.0f) // Within 2m of cover
+            {
+                InCoverCount++;
+            }
+        }
+
+        // Formation spread (penalize clumping)
+        float DistanceFromCenter = FVector::Dist(Follower->GetActorLocation(), TeamCenter);
+        AvgSpread += DistanceFromCenter;
+    }
+
+    AvgSpread /= Followers.Num();
+
+    // Cover score: +0.05 if >50% in cover
+    float CoverRatio = static_cast<float>(InCoverCount) / Followers.Num();
+    if (CoverRatio > 0.5f)
+    {
+        Score += 0.05f;
+    }
+
+    // Formation score: +0.05 if well-spread (500-2000cm apart)
+    if (AvgSpread > 500.0f && AvgSpread < 2000.0f)
+    {
+        Score += 0.05f;
+    }
+    else if (AvgSpread < 200.0f)
+    {
+        Score -= 0.05f; // Penalty for clumping (AoE vulnerability)
+    }
+
+    // Clamp to range [-0.1, +0.1]
+    return FMath::Clamp(Score, -0.1f, 0.1f);
 }
