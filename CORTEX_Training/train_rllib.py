@@ -273,11 +273,21 @@ def train(args):
     # Create config and algorithm with TensorBoard logging
     config = create_ppo_config()
 
-    # Enable TensorBoard by setting local_dir for checkpoints
-    # RLlib automatically writes TensorBoard event files to the trial directory
-    algo = config.build(logger_creator=lambda config: ray.tune.logger.UnifiedLogger(
-        config, output_dir, loggers=None
-    ))
+    # Enable TensorBoard - Use Ray's default UnifiedLogger which includes:
+    # - CSVLogger (progress.csv)
+    # - JsonLogger (result.json)
+    # - TBXLogger (TensorBoard events)
+    from ray.tune.logger import UnifiedLogger, TBXLogger, JsonLogger, CSVLogger
+
+    def logger_creator(config_dict):
+        """Create logger with TensorBoard support."""
+        return UnifiedLogger(
+            config_dict,
+            output_dir,
+            loggers=[JsonLogger, CSVLogger, TBXLogger]  # Explicitly include TensorBoard
+        )
+
+    algo = config.build(logger_creator=logger_creator)
 
 
 
@@ -289,9 +299,11 @@ def train(args):
         result = algo.train()
 
         # Extract metrics (multi-agent aware)
-        episode_reward_mean = result.get("episode_reward_mean", 0)
-        episode_len_mean = result.get("episode_len_mean", 0)
-        episodes_this_iter = result.get("episodes_this_iter", 0)
+        # In RLlib's new API, episode metrics are nested under "env_runners"
+        env_runner_results = result.get("env_runners", {})
+        episode_reward_mean = env_runner_results.get("episode_reward_mean", 0)
+        episode_len_mean = env_runner_results.get("episode_len_mean", 0)
+        episodes_this_iter = env_runner_results.get("episodes_this_iter", 0)
         
         # Track UE episodes
         total_ue_episodes += episodes_this_iter

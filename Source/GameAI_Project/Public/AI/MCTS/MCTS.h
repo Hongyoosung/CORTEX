@@ -173,19 +173,6 @@ private:
      */
     float CalculateObjectiveSynergy(EObjectiveType ObjType, const TMap<AActor*, EObjectiveType>& ExistingObjectives, const FTeamObservation& TeamObs) const;
 
-    /**
-     * Calculate base team-level reward (no command-specific bonuses)
-     * Considers team health, formation, objectives, combat effectiveness
-     */
-    float CalculateTeamReward(const FTeamObservation& TeamObs) const;
-
-
-    /**
-     * Calculate team-level reward for objective assignments (v3.0 Combat Refactoring)
-     * Evaluates strategic value of assigning followers to specific objectives
-     */
-    float CalculateTeamReward(const FTeamObservation& TeamObs, const TMap<AActor*, class UObjective*>& Objectives) const;
-
 
 
 public:

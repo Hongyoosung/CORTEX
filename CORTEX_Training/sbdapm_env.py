@@ -1,28 +1,29 @@
 """
-SBDAPM Environment for Schola/RLlib Training (v7.5 UE5-Controlled Rate)
+SBDAPM Environment for Schola/RLlib Training (v7.6 Trajectory Fix)
 
 Solution: Provides actions for ALL keys in the DictSpace because Schola's
 fill_proto() iterates through ALL sub-spaces and expects action data for each key.
 Each agent's action is duplicated across all its component keys.
 
+v7.6 Changes:
+- FIXED: "Batches sent to postprocessing must only contain steps from a single trajectory"
+- Root cause: Individual agents dying mid-episode were marked terminated=True, but
+  episode continued for other agents. RLlib saw mixed trajectories in same batch.
+- Solution: Track alive/dead agents separately. Dead agents get zero obs/rewards but
+  terminated=False until the ENTIRE episode ends. All agents terminate/truncate together.
+- Added _alive_agents and _dead_agents sets to track agent lifecycle
+
 v7.5 Changes:
-- REMOVED Python-side rate limiting (was conflicting with UE5's throttle)
-- UE5's ScholaAgentComponent::Think() is now the ONLY rate limiter
-- Python's poll() should block until UE5 sends new observations
-- Added step-rate diagnostics to verify rate limiting is working
-- If step rate is too high, the issue is in UE5's Think() throttle, not Python
+- UE5's ScholaAgentComponent::Think() is the rate limiter (not Python)
+- Python's poll() blocks until UE5 sends new observations
 
 Architecture:
 1. UE5's Think() has time-based throttle (DecisionInterval = 1.0s default)
 2. Think() only calls Super::Think() once per interval
 3. Super::Think() sends observations to Python via gRPC
 4. poll() in Python BLOCKS until UE5 sends data
-5. This naturally limits step rate to match UE5's decision rate
-
-Debug: If step rate is still too high (>> 1 Hz), check:
-- UE5 Output Log for "[THINK v7.4]" messages
-- Verify ScholaAgentComponent.DecisionInterval is set correctly (default 1.0s)
-- Verify bEnableTimeBasedDecisions is True
+5. When an agent dies, it's moved to _dead_agents but NOT marked terminated
+6. Only when episode ends (all dead OR timeout) do ALL agents terminate/truncate together
 """
 
 from gymnasium import spaces
@@ -57,12 +58,13 @@ if SCHOLA_AVAILABLE:
 
     class SBDAPMMultiAgentEnv(MultiAgentEnv):
         """
-        Multi-Agent RLlib Environment for SBDAPM (v7.2)
+        Multi-Agent RLlib Environment for SBDAPM (v7.6)
 
-        Solution:
+        Key features:
         - Provides actions for ALL keys in each agent's DictSpace
-        - Schola's fill_proto() iterates through all sub-spaces and expects all keys
-        - Duplicates the same action array across all component keys per agent
+        - Tracks alive/dead agents to ensure proper trajectory handling
+        - All agents terminate/truncate TOGETHER at episode end (RLlib requirement)
+        - Dead agents receive zero obs/rewards but stay in episode until end
         """
 
         def __init__(self, **kwargs):
@@ -99,6 +101,12 @@ if SCHOLA_AVAILABLE:
             self.decision_interval = kwargs.get("decision_interval", 1.0)  # 1 Hz default
             self.last_action_time = {}  # Per-agent last action timestamps
             self.cached_actions = {}     # Per-agent cached actions (re-sent until interval passes)
+
+            # v7.6: Track alive agents for proper trajectory handling
+            # CRITICAL: RLlib requires all agents in an episode to terminate/truncate together
+            # Individual agent deaths should NOT be reported as terminated mid-episode
+            self._alive_agents = set()  # Agents still alive in current episode
+            self._dead_agents = set()   # Agents that died mid-episode (masked until episode ends)
 
             print(f"[SBDAPMMultiAgentEnv] Initialized (host={host}, port={port})")
             print(f"  Python-side rate limiting: {self.decision_interval}s ({1.0/self.decision_interval:.1f} Hz)")
@@ -201,6 +209,11 @@ if SCHOLA_AVAILABLE:
                 # 2. Update agent mapping
                 self._update_agent_map()
 
+                # v7.6: Reset alive/dead agent tracking AFTER agent map is updated
+                self._alive_agents = set(self._agent_ids)  # All agents start alive
+                self._dead_agents = set()
+                print(f"[v7.6] Episode start: {len(self._alive_agents)} agents alive")
+
                 # 3. Log all action keys
                 all_keys = self._get_all_action_keys()
                 print(f"[DEBUG] All action keys at reset:")
@@ -214,6 +227,9 @@ if SCHOLA_AVAILABLE:
                 try:
                     raw_obs = self.schola_env.poll()
                     self._update_agent_map()
+                    # v7.6: Also reset alive/dead on fallback path
+                    self._alive_agents = set(self._agent_ids)
+                    self._dead_agents = set()
                     return self._process_obs(raw_obs)
                 except:
                     import traceback
@@ -322,66 +338,88 @@ if SCHOLA_AVAILABLE:
                 truncated_dict = {}
                 info_dict = {}
 
+                # v7.6: First pass - check for newly dead agents from UE5
                 for flat_id in self._agent_ids:
                     env_idx, agent_idx = self.agent_map[flat_id]
-                    
-                    # Obs
-                    agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
-                    if agent_obs_data is not None:
-                        if isinstance(agent_obs_data, dict):
-                            obs_val = list(agent_obs_data.values())[0]
-                        else:
-                            obs_val = agent_obs_data
-                        obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
+                    is_term_ue5 = term_nested.get(env_idx, {}).get(agent_idx, False)
+
+                    # If UE5 reports this agent as terminated, move to dead set
+                    if is_term_ue5 and flat_id in self._alive_agents:
+                        self._alive_agents.discard(flat_id)
+                        self._dead_agents.add(flat_id)
+                        print(f"[v7.6] Agent {flat_id} died. Alive: {len(self._alive_agents)}, Dead: {len(self._dead_agents)}")
+
+                # v7.6: Second pass - build RLlib outputs
+                for flat_id in self._agent_ids:
+                    env_idx, agent_idx = self.agent_map[flat_id]
+
+                    if flat_id in self._dead_agents:
+                        # Dead agents get zero obs/rewards but NOT terminated (yet)
+                        # They'll be terminated when the whole episode ends
+                        obs_dict[flat_id] = np.zeros(74, dtype=np.float32)
+                        reward_dict[flat_id] = 0.0
+                        terminated_dict[flat_id] = False  # Will be set True when episode ends
+                        truncated_dict[flat_id] = False
+                        info_dict[flat_id] = {"dead": True}
                     else:
-                        obs_dict[flat_id] = np.zeros(74, dtype=np.float32)  # v4.0: 70 obs + 4 objective
+                        # Live agents get normal obs/rewards
+                        agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
+                        if agent_obs_data is not None:
+                            if isinstance(agent_obs_data, dict):
+                                obs_val = list(agent_obs_data.values())[0]
+                            else:
+                                obs_val = agent_obs_data
+                            obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
+                        else:
+                            obs_dict[flat_id] = np.zeros(74, dtype=np.float32)
 
-                    # Reward
-                    reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
+                        reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
 
-                    # Done
-                    is_term = term_nested.get(env_idx, {}).get(agent_idx, False)
-                    is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False)
-                    terminated_dict[flat_id] = bool(is_term)
-                    truncated_dict[flat_id] = bool(is_trunc)
-                    
-                    # Info
-                    info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
+                        # Mid-episode: never set terminated/truncated for live agents
+                        terminated_dict[flat_id] = False
+                        truncated_dict[flat_id] = False
+                        info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
 
-                # Episode Termination Logic (v4.0)
+                # Episode Termination Logic (v7.6)
                 self.episode_steps += 1
                 episode_duration = current_time - self._episode_start_time
 
-                # DIAGNOSTIC: Log terminated flags from UE5
-                if self.episode_steps <= 3:  # Only log first 3 steps to avoid spam
-                    print(f"[DIAGNOSTIC] Step {self.episode_steps}: terminated_dict = {terminated_dict}")
+                # DIAGNOSTIC: Log alive/dead agents on first few steps
+                if self.episode_steps <= 3:
+                    print(f"[DIAGNOSTIC] Step {self.episode_steps}: Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)}")
 
-                # Condition 1: Team Elimination (all agents on one team dead)
-                # Check if all agents are terminated (real terminal state from UE5)
-                all_agents_dead = all(terminated_dict.values())
+                # v7.6: Check episode end conditions using tracked alive agents
+                # Condition 1: All agents dead (team eliminated)
+                all_agents_dead = len(self._alive_agents) == 0
 
-                # Condition 2: 30-second timeout
+                # Condition 2: Timeout
                 timeout_reached = episode_duration >= MAX_EPISODE_DURATION
 
                 # Condition 3: Max step safeguard (fallback)
                 max_steps_reached = self.episode_steps >= self.max_episode_steps
 
-                # Set episode-level flags
+                # v7.6: When episode ends, ALL agents terminate/truncate TOGETHER
                 if all_agents_dead:
-                    # Real termination: team eliminated
+                    # Real termination: all agents eliminated
+                    # ALL agents (including those who died earlier) get terminated=True
+                    for aid in self._agent_ids:
+                        terminated_dict[aid] = True
+                        truncated_dict[aid] = False
                     terminated_dict["__all__"] = True
                     truncated_dict["__all__"] = False
-                    print(f"[EPISODE END] Team eliminated at step {self.episode_steps}")
+                    print(f"[EPISODE END] All agents eliminated at step {self.episode_steps}")
                 elif timeout_reached or max_steps_reached:
                     # Truncation: time limit reached
+                    # ALL agents (including those who died earlier) get truncated=True
                     for aid in self._agent_ids:
                         truncated_dict[aid] = True
+                        terminated_dict[aid] = False
                     truncated_dict["__all__"] = True
-                    terminated_dict["__all__"] = False  # ✅ FIX: Don't set terminated on timeout
-                    reason = "30s timeout" if timeout_reached else f"max steps ({self.max_episode_steps})"
-                    print(f"[EPISODE END] {reason} at step {self.episode_steps}, duration {episode_duration:.1f}s")
+                    terminated_dict["__all__"] = False
+                    reason = "timeout" if timeout_reached else f"max steps ({self.max_episode_steps})"
+                    print(f"[EPISODE END] {reason} at step {self.episode_steps}, duration {episode_duration:.1f}s (Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)})")
                 else:
-                    # Episode continues
+                    # Episode continues - all agents stay non-terminal
                     terminated_dict["__all__"] = False
                     truncated_dict["__all__"] = False
 

@@ -37,62 +37,6 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
     UE_LOG(LogTemp, Log, TEXT("MCTS: Using heuristic action priors for tree guidance"));
 }
 
-
-
-
-float UMCTS::CalculateTeamReward(const FTeamObservation& TeamObs) const
-{
-    // Team health component (0-200 points)
-    float HealthReward = TeamObs.AverageTeamHealth * 2.0f;
-
-    // Formation coherence (0-50 points)
-    float FormationReward = TeamObs.FormationCoherence * 50.0f;
-
-    // ============================================================================
-    // PROXIMITY DIAGNOSIS: Log FormationCoherence value
-    // ============================================================================
-    UE_LOG(LogTemp, Verbose, TEXT("[MCTS] FormationCoherence=%.3f (reward component: %.1f)"),
-        TeamObs.FormationCoherence, FormationReward);
-
-    // Objective progress (0-100 points)
-    // Closer to objective = higher reward
-    float ObjectiveReward = 0.0f;
-    if (TeamObs.DistanceToObjective > 0.0f)
-    {
-        // Max reward at 0 distance, min at 10000cm (100m)
-        ObjectiveReward = FMath::Max(0.0f, 100.0f - (TeamObs.DistanceToObjective / 100.0f));
-    }
-
-    // Combat effectiveness (variable, can be negative)
-    float CombatReward = TeamObs.KillDeathRatio * 50.0f;
-
-    // Threat penalty (-100 to 0 points)
-    float ThreatPenalty = -TeamObs.ThreatLevel * 20.0f;
-
-    // Outnumbered penalty (-100 points)
-    float OutnumberedPenalty = TeamObs.bOutnumbered ? -100.0f : 0.0f;
-
-    // Flanked penalty (-50 points)
-    float FlankedPenalty = TeamObs.bFlanked ? -50.0f : 0.0f;
-
-    // Cover advantage bonus (+50 points)
-    float CoverBonus = TeamObs.bHasCoverAdvantage ? 50.0f : 0.0f;
-
-    // High ground bonus (+30 points)
-    float HighGroundBonus = TeamObs.bHasHighGround ? 30.0f : 0.0f;
-
-    float TotalReward = HealthReward + FormationReward + ObjectiveReward + CombatReward
-                      + ThreatPenalty + OutnumberedPenalty + FlankedPenalty
-                      + CoverBonus + HighGroundBonus;
-
-    UE_LOG(LogTemp, Verbose, TEXT("MCTS Team Reward: %.1f (Health=%.1f, Formation=%.1f, Objective=%.1f, Combat=%.1f, Threat=%.1f)"),
-        TotalReward, HealthReward, FormationReward, ObjectiveReward, CombatReward, ThreatPenalty);
-
-    return TotalReward;
-}
-
-
-
 TSharedPtr<FTeamMCTSNode> UMCTS::SelectNode(TSharedPtr<FTeamMCTSNode> Node)
 {
     // Traverse tree using UCT until reaching a leaf node
@@ -788,75 +732,6 @@ TMap<AActor*, UObjective*> UMCTS::RunTeamMCTSTreeSearchWithObjectives(
     }
 
     return BestObjectives;
-}
-
-
-float UMCTS::CalculateTeamReward(const FTeamObservation& TeamObs, const TMap<AActor*, UObjective*>& Objectives) const
-{
-    // Base team reward
-    float BaseReward = CalculateTeamReward(TeamObs);
-
-    // Objective-specific bonuses
-    float ObjectiveBonus = 0.0f;
-
-    // Count objective types
-    TMap<EObjectiveType, int32> ObjectiveCounts;
-    for (const auto& Pair : Objectives)
-    {
-        if (Pair.Value)
-        {
-            ObjectiveCounts.FindOrAdd(Pair.Value->Type, 0)++;
-        }
-    }
-
-    int32 TotalFollowers = Objectives.Num();
-
-    // Bonus for tactical diversity
-    if (ObjectiveCounts.Num() >= 2)
-    {
-        ObjectiveBonus += 25.0f; // Higher bonus for diversity
-    }
-
-    // Context-aware objective rewards (v4.0 simplified)
-    if (TeamObs.TotalVisibleEnemies > 0)
-    {
-        int32 AssaultCount = ObjectiveCounts.FindRef(EObjectiveType::Assault);
-        int32 SupportCount = ObjectiveCounts.FindRef(EObjectiveType::Support);
-        int32 DefendCount = ObjectiveCounts.FindRef(EObjectiveType::Defend);
-
-        // Reward combined arms (assault + support/defense)
-        if (AssaultCount > 0 && (SupportCount > 0 || DefendCount > 0))
-        {
-            ObjectiveBonus += 35.0f; // Combined tactics bonus
-        }
-
-        // Penalty for poor tactical choices
-        if (TeamObs.bOutnumbered && AssaultCount == TotalFollowers)
-        {
-            ObjectiveBonus -= 60.0f; // Heavy penalty for all-assault when outnumbered
-        }
-
-        if (TeamObs.AverageTeamHealth < 40.0f && ObjectiveCounts.FindRef(EObjectiveType::Retreat) == 0)
-        {
-            ObjectiveBonus -= 40.0f; // Penalty for not retreating when low health
-        }
-    }
-
-    // Bonus for high-priority objectives
-    for (const auto& Pair : Objectives)
-    {
-        if (Pair.Value && Pair.Value->Priority >= 7)
-        {
-            ObjectiveBonus += 10.0f;
-        }
-    }
-
-    float TotalReward = BaseReward + ObjectiveBonus;
-
-    UE_LOG(LogTemp, Verbose, TEXT("🎯 MCTS Objective Reward: %.1f (Base=%.1f, ObjBonus=%.1f)"),
-        TotalReward, BaseReward, ObjectiveBonus);
-
-    return TotalReward;
 }
 
 //==============================================================================

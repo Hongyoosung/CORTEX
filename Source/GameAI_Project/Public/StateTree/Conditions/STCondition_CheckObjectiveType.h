@@ -9,14 +9,17 @@
 #include "STCondition_CheckObjectiveType.generated.h"
 
 /**
- * State Tree Condition: Check Objective Type
+ * State Tree Condition: Check Objective Type (v4.0.1)
  *
- * Checks if the current objective matches the required type(s).
+ * Checks if the current objective matches the accepted type(s).
  * Used to control state transitions based on leader-assigned objectives.
  *
+ * v4.0.1: Uses bool flags instead of TArray<EObjectiveType> for reliable StateTree serialization.
+ * StateTree has a known bug where TArray instance data gets corrupted during context updates.
+ *
  * Example:
- * - Transition to "Assault" state when ObjectiveType == Eliminate
- * - Transition to "Defend" state when ObjectiveType IN [DefendObjective, CaptureObjective]
+ * - Transition to "Combat" state when bAcceptAssault=true OR bAcceptDefend=true
+ * - Transition to "Retreat" state when bAcceptRetreat=true ONLY
  *
  * Replaces: STCondition_CheckCommandType (v2.0)
  */
@@ -43,15 +46,28 @@ struct GAMEAI_PROJECT_API FSTCondition_CheckObjectiveTypeInstanceData
 	bool bHasActiveObjective = false;
 
 	//--------------------------------------------------------------------------
-	// CONFIGURATION
+	// CONFIGURATION (v4.0.1: Bool flags instead of TArray for StateTree reliability)
 	//--------------------------------------------------------------------------
 
-	/**
-	 * Objective types to check against.
-	 * If current objective matches ANY of these types, condition is true.
-	 */
+	/** Accept Assault objectives (offensive: push toward enemy/objective) */
 	UPROPERTY(EditAnywhere, Category = "Parameter")
-	TArray<EObjectiveType> AcceptedObjectiveTypes;
+	bool bAcceptAssault = true;
+
+	/** Accept Defend objectives (defensive: hold position/objective) */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bAcceptDefend = true;
+
+	/** Accept Support objectives (auxiliary: provide cover/assistance) */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bAcceptSupport = true;
+
+	/** Accept Retreat objectives (fallback: disengage and reposition) */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bAcceptRetreat = true;
+
+	/** Accept None (no objective assigned) */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bAcceptNone = false;
 
 	/** If true, condition is inverted (true when objective does NOT match) */
 	UPROPERTY(EditAnywhere, Category = "Parameter")

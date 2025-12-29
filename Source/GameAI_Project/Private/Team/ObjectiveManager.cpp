@@ -320,16 +320,22 @@ void UObjectiveManager::TickObjectives(float DeltaTime)
 
 void UObjectiveManager::CleanupObjectives()
 {
-    // Remove invalid, completed, or failed objectives
+    // Remove invalid, completed, failed, or cancelled objectives
+    // CRITICAL: Do NOT remove Inactive objectives (they might be newly created, awaiting activation)
     TArray<UObjective*> ToRemove;
 
     // CRITICAL: Same nullptr safety as TickObjectives
     for (const TObjectPtr<UObjective>& ObjectivePtr : Objectives)
     {
         UObjective* Objective = ObjectivePtr.Get();
-        if (Objective == nullptr || !IsValid(Objective) || !Objective->IsActive())
+        if (Objective == nullptr || !IsValid(Objective))
         {
-            // Remove invalid or inactive objectives
+            // Remove invalid objectives
+            ToRemove.Add(Objective);
+        }
+        else if (Objective->IsCompleted() || Objective->IsFailed() || Objective->Status == EObjectiveStatus::Cancelled)
+        {
+            // Remove finished objectives only (not Inactive)
             ToRemove.Add(Objective);
         }
     }

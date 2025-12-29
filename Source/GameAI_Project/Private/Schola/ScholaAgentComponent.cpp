@@ -24,9 +24,6 @@ UScholaAgentComponent::UScholaAgentComponent()
 		PrimaryComponentTick.bCanEverTick = false;
 		PrimaryComponentTick.bStartWithTickEnabled = false;
 
-		// Mark as transient to discourage serialization/discovery
-		SetFlags(RF_Transient);
-
 		// DO NOT create subobjects for CDO (reduces memory footprint)
 		return;
 	}
