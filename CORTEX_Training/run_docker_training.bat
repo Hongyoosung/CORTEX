@@ -38,8 +38,19 @@ if "%MODE%"=="1" (
     echo Starting single-worker training...
     docker-compose --profile single up --build
 ) else if "%MODE%"=="2" (
-    echo Starting multi-worker training...
-    echo NOTE: Ensure 4 UE instances are running on ports 50051-50054
+    echo.
+    set /p NUM_WORKERS="Enter number of workers (default 4): "
+    if "%NUM_WORKERS%"=="" set NUM_WORKERS=4
+
+    echo Starting multi-worker training with %NUM_WORKERS% workers...
+    echo NOTE: Ensure %NUM_WORKERS% UE instances are running on ports 50051-%END_PORT%
+
+    REM Calculate the end port (50050 + NUM_WORKERS)
+    set /a END_PORT=50050+%NUM_WORKERS%
+    echo UE instances should be on ports 50051-%END_PORT%
+
+    REM Set environment variable for docker-compose
+    set NUM_WORKERS=%NUM_WORKERS%
     docker-compose --profile multi up --build
 ) else if "%MODE%"=="3" (
     echo Starting TensorBoard...

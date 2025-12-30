@@ -19,7 +19,7 @@ bool FSTCondition_CheckObjectiveType::TestCondition(FStateTreeExecutionContext& 
 	static int32 EvalCounter = 0;
 	EvalCounter++;
 
-	UE_LOG(LogTemp, Warning, TEXT("🔍 [CHECK OBJECTIVE TYPE] Eval #%d: Objective=%s, Active=%d, Flags=[A:%d D:%d S:%d R:%d N:%d], RequireActive=%d"),
+	/*UE_LOG(LogTemp, Warning, TEXT("🔍 [CHECK OBJECTIVE TYPE] Eval #%d: Objective=%s, Active=%d, Flags=[A:%d D:%d S:%d R:%d N:%d], RequireActive=%d"),
 		EvalCounter,
 		CurrentObjective ? *UEnum::GetValueAsString(CurrentObjective->Type) : TEXT("NULL"),
 		bHasActiveObjective ? 1 : 0,
@@ -28,7 +28,7 @@ bool FSTCondition_CheckObjectiveType::TestCondition(FStateTreeExecutionContext& 
 		InstanceData.bAcceptSupport ? 1 : 0,
 		InstanceData.bAcceptRetreat ? 1 : 0,
 		InstanceData.bAcceptNone ? 1 : 0,
-		InstanceData.bRequireActiveObjective ? 1 : 0);
+		InstanceData.bRequireActiveObjective ? 1 : 0);*/
 
 	// Check if no accepted types configured
 	if (!bAnyTypeAccepted)
@@ -78,11 +78,11 @@ bool FSTCondition_CheckObjectiveType::TestCondition(FStateTreeExecutionContext& 
 
 	bool bResult = InstanceData.bInvertCondition ? !bMatches : bMatches;
 
-	UE_LOG(LogTemp, Warning, TEXT("[CHECK OBJECTIVE TYPE] %s CurrentType=%s, Matches=%d, Result=%d"),
-		bResult ? TEXT("✅") : TEXT("❌"),
-		*UEnum::GetValueAsString(CurrentObjective->Type),
-		bMatches ? 1 : 0,
-		bResult ? 1 : 0);
+	//UE_LOG(LogTemp, Warning, TEXT("[CHECK OBJECTIVE TYPE] %s CurrentType=%s, Matches=%d, Result=%d"),
+	//	bResult ? TEXT("✅") : TEXT("❌"),
+	//	*UEnum::GetValueAsString(CurrentObjective->Type),
+	//	bMatches ? 1 : 0,
+	//	bResult ? 1 : 0);
 
 	return bResult;
 }

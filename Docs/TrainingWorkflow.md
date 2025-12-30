@@ -111,7 +111,7 @@ python train_rllib.py --iterations 100 --host localhost --port 50051
 **Expected Output:**
 ```
 ============================================================
-SBDAPM RLlib Training
+CORTEX RLlib Training
 ============================================================
 
 Output directory: training_results/20251213_143022
@@ -218,7 +218,7 @@ tensorboard --logdir=training_results
 cd C:\Users\Foryoucom\Documents\GitHub\CORTEX\CORTEX_Training
 
 # Build image (only needed once, or when dependencies change)
-docker build -t cortex_training:latest .
+docker build -t cortex_training:latest -f CORTEX_Training/Dockerfile .
 ```
 
 **Verify Build:**
@@ -231,8 +231,7 @@ docker images | grep cortex_training
 
 **Terminal 1: UE Instance 1 (Port 50051)**
 ```bash
-cd C:\Users\Foryoucom\Documents\GitHub\CORTEX\Binaries\Win64
-GameAI_Project.exe -game -ResX=800 -ResY=600 -windowed -ScholaPort=50051
+"C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.exe" "C:\Users\Foryoucom\Documents\GitHub\CORTEX\GameAI_Project.uproject" -game -ResX=800 -ResY=600 -windowed -ScholaPort=50051
 ```
 
 **Terminal 2: UE Instance 2 (Port 50052)**

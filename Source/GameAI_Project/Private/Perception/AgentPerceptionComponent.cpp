@@ -122,30 +122,15 @@ void UAgentPerceptionComponent::OnTargetPerceivedCallback(AActor* Actor, FAIStim
 		// Successfully sensed enemy
 		if (Stimulus.WasSuccessfullySensed())
 		{
-			UE_LOG(LogTemp, Display, TEXT("🔵 [PERCEPTION] %s detected enemy: %s (Distance: %.0f, Age: %.2fs)"),
-				*GetOwner()->GetName(),
-				*Actor->GetName(),
-				FVector::Dist(GetOwner()->GetActorLocation(), Actor->GetActorLocation()),
-				Stimulus.GetAge());
-
 			// Report to team leader if enabled and not already reported
 			if (bAutoReportToLeader && !ReportedEnemies.Contains(Actor))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("🔵 [PERCEPTION] %s reporting NEW enemy %s to Team Leader (Priority: 7)"),
-					*GetOwner()->GetName(),
-					*Actor->GetName());
-
 				SignalEnemySpotted(Actor);
 				ReportedEnemies.Add(Actor);
 			}
 		}
 		else
 		{
-			// Lost sight of enemy
-			UE_LOG(LogTemp, Display, TEXT("🔵 [PERCEPTION] %s lost sight of enemy: %s"),
-				*GetOwner()->GetName(),
-				*Actor->GetName());
-
 			ReportedEnemies.Remove(Actor);
 		}
 	}
@@ -166,23 +151,11 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 	static int32 LogCounter = 0;
 	bool bShouldLog = (++LogCounter % 60 == 0); // Log every 60 calls (~6 seconds at 10Hz)
 
-	if (bShouldLog)
-	{
-		UE_LOG(LogTemp, Display, TEXT("[PERCEPTION] '%s': GetCurrentlyPerceivedActors returned %d actors"),
-			*GetOwner()->GetName(), PerceivedActors.Num());
-	}
-
 	// Get owner's team ID for diagnostic logging
 	int32 OwnerTeamID = -1;
 	if (CachedSimulationManager && GetOwner())
 	{
 		OwnerTeamID = CachedSimulationManager->GetTeamIDForActor(GetOwner());
-	}
-
-	if (bShouldLog)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[PERCEPTION] '%s': Owner TeamID = %d, SimManager = %s"),
-			*GetOwner()->GetName(), OwnerTeamID, CachedSimulationManager ? TEXT("Valid") : TEXT("NULL"));
 	}
 
 	// Filter for enemies only (must be alive)
@@ -197,22 +170,12 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 
 		bool bIsEnemy = IsActorEnemy(Actor);
 
-		if (bShouldLog)
-		{
-			UE_LOG(LogTemp, Display, TEXT("  → Actor '%s': TeamID=%d, IsEnemy=%d (OwnerTeam=%d)"),
-				*GetNameSafe(Actor), ActorTeamID, bIsEnemy ? 1 : 0, OwnerTeamID);
-		}
-
 		if (bIsEnemy)
 		{
 			// Skip dead enemies
 			UHealthComponent* HealthComp = Actor->FindComponentByClass<UHealthComponent>();
 			if (HealthComp && HealthComp->IsDead())
 			{
-				if (bShouldLog)
-				{
-					UE_LOG(LogTemp, Display, TEXT("    → Skipping (dead)"));
-				}
 				// Remove from reported enemies so they can be re-reported if respawned
 				ReportedEnemies.Remove(Actor);
 				continue;
@@ -242,12 +205,6 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 		OnAllEnemiesLost.Broadcast();
 		UE_LOG(LogTemp, Warning, TEXT("🔵 [EVENT] '%s': All enemies lost → Triggering strategic decision"),
 			*GetOwner()->GetName());
-	}
-
-	if (bShouldLog)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[PERCEPTION] '%s': Final TrackedEnemies count = %d"),
-			*GetOwner()->GetName(), TrackedEnemies.Num());
 	}
 
 	// Sort by distance (nearest first)
@@ -496,11 +453,6 @@ void UAgentPerceptionComponent::SignalEnemySpotted(AActor* Enemy)
 	// Register enemy with leader
 	Leader->RegisterEnemy(Enemy);
 
-	UE_LOG(LogTemp, Warning, TEXT("🔵 [PERCEPTION] %s signaling EnemySpotted event to Team Leader '%s' for enemy %s"),
-		*GetOwner()->GetName(),
-		*Leader->TeamName,
-		*Enemy->GetName());
-
 	// Signal event to leader (high priority)
 	CachedFollowerComponent->SignalEventToLeader(
 		EStrategicEvent::EnemySpotted,
@@ -509,8 +461,6 @@ void UAgentPerceptionComponent::SignalEnemySpotted(AActor* Enemy)
 		7 // High priority to trigger MCTS
 	);
 
-	UE_LOG(LogTemp, Warning, TEXT("🔵 [PERCEPTION] %s → Event signaled successfully"),
-		*GetOwner()->GetName());
 }
 
 ASimulationManagerGameMode* UAgentPerceptionComponent::GetSimulationManager() const

@@ -74,9 +74,20 @@ if SCHOLA_AVAILABLE:
             port = self._resolve_port(kwargs)
             self.max_episode_steps = kwargs.get("max_episode_steps", 100000)
 
+            print(f"[SBDAPMMultiAgentEnv] Initializing connection to {host}:{port}")
+            print(f"  Attempting to connect to UE instance...")
+
             # Schola 연결
-            connection = UnrealEditorConnection(url=host, port=port)
-            self.schola_env = ScholaEnv(unreal_connection=connection, verbosity=1)
+            try:
+                connection = UnrealEditorConnection(url=host, port=port)
+                print(f"  UnrealEditorConnection created, establishing ScholaEnv...")
+                self.schola_env = ScholaEnv(unreal_connection=connection, verbosity=1)
+                print(f"  ScholaEnv initialized successfully!")
+            except Exception as e:
+                print(f"  [ERROR] Failed to connect to {host}:{port}")
+                print(f"  Error: {e}")
+                print(f"  Make sure UE instance is running and listening on port {port}")
+                raise
 
             # ID 매핑 초기화
             self.agent_map = {}
@@ -108,6 +119,9 @@ if SCHOLA_AVAILABLE:
             self._alive_agents = set()  # Agents still alive in current episode
             self._dead_agents = set()   # Agents that died mid-episode (masked until episode ends)
 
+            # v7.7: Track cumulative episode rewards for logging
+            self._episode_rewards = {}  # Cumulative reward per agent in current episode
+
             print(f"[SBDAPMMultiAgentEnv] Initialized (host={host}, port={port})")
             print(f"  Python-side rate limiting: {self.decision_interval}s ({1.0/self.decision_interval:.1f} Hz)")
             
@@ -115,12 +129,17 @@ if SCHOLA_AVAILABLE:
             base_port = kwargs.get("base_port")
             if base_port is not None:
                 try:
-                    import ray
-                    worker = ray.get_runtime_context()
-                    worker_index = getattr(worker, 'worker_index', 0)
-                    port = base_port + worker_index
+                    from ray.rllib.evaluation.rollout_worker import get_global_worker
+                    worker = get_global_worker()
+                    worker_index = worker.worker_index if worker else 0
+                    # RLlib remote workers start at index 1, so subtract 1 to start from base_port
+                    # Worker 1 -> base_port+0, Worker 2 -> base_port+1, etc.
+                    port_offset = max(0, worker_index - 1)
+                    port = base_port + port_offset
+                    print(f"[Port Resolution] Worker index={worker_index}, offset={port_offset}, base_port={base_port}, resolved port={port}")
                     return port
-                except:
+                except Exception as e:
+                    print(f"[Port Resolution] Failed to get worker index: {e}, using base_port={base_port}")
                     return base_port
             return kwargs.get("port", 50051)
 
@@ -183,14 +202,26 @@ if SCHOLA_AVAILABLE:
             return self._action_space
 
         def reset(self, *, seed=None, options=None):
-            # v7.4: Step rate diagnostics
+            # v7.4 & v7.7: Step rate and reward diagnostics
             if hasattr(self, '_episode_start_time') and self.episode_steps > 0:
                 episode_duration = time.time() - self._episode_start_time
                 step_rate = self.episode_steps / max(episode_duration, 0.001)
+
+                # v7.7: Calculate total episode reward
+                total_reward = sum(self._episode_rewards.values())
+                avg_reward = total_reward / max(len(self._episode_rewards), 1)
+
                 print(f"[EPISODE END] Steps={self.episode_steps}, Duration={episode_duration:.1f}s, Rate={step_rate:.1f} steps/sec")
+                print(f"[EPISODE REWARD] Total={total_reward:.2f}, Avg={avg_reward:.2f}, Agents={len(self._episode_rewards)}")
+
+                # Log individual agent rewards
+                if self._episode_rewards:
+                    reward_list = [f"{aid}:{rew:.1f}" for aid, rew in sorted(self._episode_rewards.items())]
+                    print(f"[AGENT REWARDS] {', '.join(reward_list)}")
 
             self.episode_steps = 0
             self._episode_start_time = time.time()
+            self._episode_rewards.clear()  # Reset reward tracking
 
             # v7.3: Clear rate limiting state on reset
             self.last_action_time.clear()
@@ -200,11 +231,21 @@ if SCHOLA_AVAILABLE:
             if hasattr(self, '_first_step_logged'):
                 delattr(self, '_first_step_logged')
 
-            print("[SBDAPMMultiAgentEnv] Resetting environment via hard_reset()...")
+            # Track if this is the first reset (during worker initialization)
+            is_first_reset = not hasattr(self, '_first_reset_done')
+            if is_first_reset:
+                print("[SBDAPMMultiAgentEnv] FIRST RESET - Initializing worker environment...")
+            else:
+                print("[SBDAPMMultiAgentEnv] Resetting environment via hard_reset()...")
 
             try:
                 # 1. Hard Reset (UE5와 동기화)
+                if is_first_reset:
+                    print("  Calling hard_reset() to sync with UE5...")
                 raw_obs = self.schola_env.hard_reset()
+                if is_first_reset:
+                    print("  hard_reset() completed successfully!")
+                    self._first_reset_done = True
 
                 # 2. Update agent mapping
                 self._update_agent_map()
@@ -212,7 +253,10 @@ if SCHOLA_AVAILABLE:
                 # v7.6: Reset alive/dead agent tracking AFTER agent map is updated
                 self._alive_agents = set(self._agent_ids)  # All agents start alive
                 self._dead_agents = set()
-                print(f"[v7.6] Episode start: {len(self._alive_agents)} agents alive")
+                if is_first_reset:
+                    print(f"[WORKER READY] {len(self._alive_agents)} agents detected and ready for training")
+                else:
+                    print(f"[v7.6] Episode start: {len(self._alive_agents)} agents alive")
 
                 # 3. Log all action keys
                 all_keys = self._get_all_action_keys()
@@ -349,7 +393,7 @@ if SCHOLA_AVAILABLE:
                         self._dead_agents.add(flat_id)
                         print(f"[v7.6] Agent {flat_id} died. Alive: {len(self._alive_agents)}, Dead: {len(self._dead_agents)}")
 
-                # v7.6: Second pass - build RLlib outputs
+                # v7.6 & v7.7: Second pass - build RLlib outputs and track rewards
                 for flat_id in self._agent_ids:
                     env_idx, agent_idx = self.agent_map[flat_id]
 
@@ -373,7 +417,13 @@ if SCHOLA_AVAILABLE:
                         else:
                             obs_dict[flat_id] = np.zeros(74, dtype=np.float32)
 
-                        reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
+                        reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
+                        reward_dict[flat_id] = reward
+
+                        # v7.7: Accumulate episode rewards
+                        if flat_id not in self._episode_rewards:
+                            self._episode_rewards[flat_id] = 0.0
+                        self._episode_rewards[flat_id] += reward
 
                         # Mid-episode: never set terminated/truncated for live agents
                         terminated_dict[flat_id] = False

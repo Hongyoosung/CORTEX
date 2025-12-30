@@ -107,11 +107,11 @@ void FSTEvaluator_SyncObjective::Tick(FStateTreeExecutionContext& Context, float
 				UEnum::GetValueAsString(InstanceData.LastObjective->Type) :
 				TEXT("None");
 
-			UE_LOG(LogTemp, Warning, TEXT("[SYNC OBJECTIVE] 📝 Objective changed: '%s' → '%s', Active=%d, %s"),
+			/*UE_LOG(LogTemp, Warning, TEXT("[SYNC OBJECTIVE] 📝 Objective changed: '%s' → '%s', Active=%d, %s"),
 				*OldTypeStr,
 				*UEnum::GetValueAsString(NewObjective->Type),
 				bHasNewObjective,
-				*TargetInfo);
+				*TargetInfo);*/
 
 			InstanceData.LastObjectiveType = NewObjective->Type;
 		}

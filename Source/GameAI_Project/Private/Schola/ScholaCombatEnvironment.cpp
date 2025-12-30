@@ -102,13 +102,11 @@ void AScholaCombatEnvironment::BeginPlay()
 		DiscoverAgents();
 	}
 
-	
-	// NOW call Super::BeginPlay() to initialize Schola base class
-	// (moved here to ensure our agents are discovered first)
-	// NOTE: Super::BeginPlay() internally calls Initialize(), which triggers InternalRegisterAgents()
-	// Do NOT call Initialize() manually again!
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Calling Super::BeginPlay() (this will call Initialize() internally)..."));
-	Super::BeginPlay();
+
+	// NOTE: Do NOT call Super::BeginPlay() here!
+	// The ScholaManagerSubsystem will call Initialize() via GymConnector->Init()
+	// Calling it here would cause duplicate initialization
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Setup complete. ScholaManagerSubsystem will call Initialize() via GymConnector"));
 
 	// Note: ScholaManagerSubsystem automatically handles server startup and agent registration.
 	// We do not need to manually start the server here.

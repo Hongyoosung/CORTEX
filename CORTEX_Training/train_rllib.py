@@ -82,10 +82,22 @@ class SBDAPMConfig:
 
 def create_env_config():
     """Create environment configuration for Schola."""
+
+    # AWS distributed mode: Get worker IPs from environment variable
+    worker_ips_str = os.getenv("WORKER_IPS", None)
+    if worker_ips_str:
+        worker_ips = worker_ips_str.strip().split()
+        print(f"AWS Distributed Mode: {len(worker_ips)} worker IPs configured")
+        print(f"Worker IPs: {worker_ips}")
+    else:
+        worker_ips = None
+        print("Local Mode: Using localhost with port offsets")
+
     return {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,  # Base port, each worker adds worker_index
         "max_episode_steps": SBDAPMConfig.MAX_EPISODE_STEPS,
+        "worker_ips": worker_ips,  # Pass to env creator for AWS mode
         # v4.0: Rate limiting handled UE-side (ScholaAgentComponent::DecisionInterval = 1.0s)
         # Python responds immediately to avoid blocking gRPC - UE5 controls decision frequency
     }
@@ -151,7 +163,23 @@ def register_env():
         # Use multi-agent Schola environment (v3.1)
         def env_creator(config):
             from sbdapm_env import SBDAPMMultiAgentEnv
-            return SBDAPMMultiAgentEnv(**config)
+
+            # AWS distributed mode: Use specific worker IP
+            worker_ips = config.get("worker_ips")
+            if worker_ips:
+                worker_index = config.get("worker_index", 0)
+                host = worker_ips[worker_index % len(worker_ips)]
+                port = config.get("base_port", 50051)
+                print(f"[Worker {worker_index}] Connecting to {host}:{port}")
+
+                return SBDAPMMultiAgentEnv(
+                    host=host,
+                    port=port,
+                    max_episode_steps=config.get("max_episode_steps", 1000)
+                )
+            else:
+                # Local mode: Use base_port + worker_index
+                return SBDAPMMultiAgentEnv(**config)
     else:
         # Fallback to dummy env for testing
         def env_creator(config):

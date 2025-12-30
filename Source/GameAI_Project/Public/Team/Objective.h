@@ -38,8 +38,9 @@ enum class EObjectiveStatus : uint8
  * Base class for strategic objectives
  * Objectives define WHAT agents should do (strategic layer)
  * Tactical layer (RL policy) determines HOW to execute
+ * v4.0: Made concrete (no subclasses needed)
  */
-UCLASS(Abstract, Blueprintable)
+UCLASS(Blueprintable)
 class GAMEAI_PROJECT_API UObjective : public UObject
 {
     GENERATED_BODY()
