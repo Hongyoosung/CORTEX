@@ -3,10 +3,11 @@
 TArray<float> FObservationElement::ToFeatureVector() const
 {
     TArray<float> Features;
-    Features.Reserve(70);
+    Features.Reserve(64);  // v5.0: 64 features (streamlined from 70)
 
     // ========================================
-    // AGENT STATE (11 features)
+    // AGENT STATE (7 features) - v5.0 streamlined
+    // Removed: rotation(3), shield(1)
     // ========================================
 
     // Position (3)
@@ -19,22 +20,16 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(FMath::Clamp(Velocity.Y / 1000.0f, -1.0f, 1.0f));
     Features.Add(FMath::Clamp(Velocity.Z / 1000.0f, -1.0f, 1.0f));
 
-    // Rotation (3) - Convert to normalized values
-    Features.Add(Rotation.Pitch / 180.0f);  // [-1, 1]
-    Features.Add(Rotation.Yaw / 180.0f);
-    Features.Add(Rotation.Roll / 180.0f);
-
-    // Health, Shield (2)
-    Features.Add(AgentHealth / 100.0f);  // [0, 1]
-    Features.Add(Shield / 100.0f);
+    // Health (1) - already normalized [0, 1]
+    Features.Add(FMath::Clamp(AgentHealth, 0.0f, 1.0f));
 
     // ========================================
-    // COMBAT STATE (3 features)
+    // COMBAT STATE (1 feature) - v5.0 streamlined
+    // Removed: cooldown(1), ammo(1), weapon(1)
     // ========================================
 
-    Features.Add(FMath::Clamp(WeaponCooldown / 5.0f, 0.0f, 1.0f));  // Max 5s cooldown
-    Features.Add(Ammunition / 100.0f);
-    Features.Add(static_cast<float>(CurrentWeaponType) / 10.0f);  // Max 10 weapon types
+    // Distance to nearest enemy (1) - already normalized [0, 1]
+    Features.Add(FMath::Clamp(DistanceToNearestEnemy, 0.0f, 1.0f));
 
     // ========================================
     // ENVIRONMENT PERCEPTION (32 features)
@@ -80,45 +75,38 @@ TArray<float> FObservationElement::ToFeatureVector() const
     }
 
     // ========================================
-    // TACTICAL CONTEXT (5 features)
+    // TACTICAL CONTEXT (4 features) - v5.0 streamlined
+    // Removed: terrain(1)
     // ========================================
 
     Features.Add(bHasCover ? 1.0f : 0.0f);
-    Features.Add(FMath::Clamp(NearestCoverDistance / 5000.0f, 0.0f, 1.0f));  // Max 50m
+    Features.Add(FMath::Clamp(NearestCoverDistance, 0.0f, 1.0f));  // Already normalized
     Features.Add(CoverDirection.X);  // Already normalized
     Features.Add(CoverDirection.Y);
-    Features.Add(static_cast<float>(CurrentTerrain) / 4.0f);  // 5 enum values (0-4)
 
     // ========================================
-    // TEMPORAL FEATURES (2 features)
+    // SUPPORT CONTEXT (4 features) - v5.0 NEW
+    // For Support strategy head selection
     // ========================================
 
-    Features.Add(FMath::Clamp(TimeSinceLastAction / 10.0f, 0.0f, 1.0f));  // Max 10s
-    Features.Add(static_cast<float>(FMath::Max(LastActionType, 0)) / 20.0f);  // Max 20 actions
+    Features.Add(bAllyNeedsHelp ? 1.0f : 0.0f);
+    Features.Add(FMath::Clamp(AllyHealth, 0.0f, 1.0f));
+    Features.Add(FMath::Clamp(AllyDistance, 0.0f, 1.0f));
+    Features.Add(FMath::Clamp(AllyDirectionAngle, -1.0f, 1.0f));
 
-    // ========================================
-    // COMBAT PROXIMITY (1 feature)
-    // ========================================
-
-    Features.Add(FMath::Clamp(DistanceToNearestEnemy / 10000.0f, 0.0f, 1.0f));  // Max 100m
-
-    check(Features.Num() == 70);
+    check(Features.Num() == 64);
     return Features;
 }
 
 void FObservationElement::Reset()
 {
-    // Agent State
+    // Agent State (v5.0: 7 features)
     Position = FVector::ZeroVector;
     Velocity = FVector::ZeroVector;
-    Rotation = FRotator::ZeroRotator;
-    AgentHealth = 100.0f;
-    Shield = 0.0f;
+    AgentHealth = 1.0f;  // Normalized [0, 1]
 
-    // Combat State
-    WeaponCooldown = 0.0f;
-    Ammunition = 0;
-    CurrentWeaponType = 0;
+    // Combat State (v5.0: 1 feature)
+    DistanceToNearestEnemy = 1.0f;  // Normalized [0, 1]
 
     // Environment Perception
     RaycastDistances.Init(1.0f, 16);
@@ -128,38 +116,40 @@ void FObservationElement::Reset()
     VisibleEnemyCount = 0;
     NearbyEnemies.Init(FEnemyObservation(), 5);
 
-    // Tactical Context
+    // Tactical Context (v5.0: 4 features)
     bHasCover = false;
-    NearestCoverDistance = 0.0f;
+    NearestCoverDistance = 1.0f;  // Normalized [0, 1]
     CoverDirection = FVector2D::ZeroVector;
-    CurrentTerrain = ETerrainType::Unknown;
 
-    // Temporal Features
-    TimeSinceLastAction = 0.0f;
-    LastActionType = 0;
-
-    // Combat Proximity
-    DistanceToNearestEnemy = 99999.0f;
+    // Support Context (v5.0: 4 features - NEW)
+    bAllyNeedsHelp = false;
+    AllyHealth = 1.0f;
+    AllyDistance = 0.0f;
+    AllyDirectionAngle = 0.0f;
 }
 
 float FObservationElement::CalculateSimilarity(
     const FObservationElement& A,
     const FObservationElement& B)
 {
-    // Weighted feature comparison
-    float HealthDiff = FMath::Abs(A.AgentHealth - B.AgentHealth) / 100.0f;
-    float DistanceDiff = FMath::Abs(A.DistanceToNearestEnemy - B.DistanceToNearestEnemy) / 10000.0f;
+    // Weighted feature comparison (v5.0: all values already normalized [0, 1])
+    float HealthDiff = FMath::Abs(A.AgentHealth - B.AgentHealth);
+    float DistanceDiff = FMath::Abs(A.DistanceToNearestEnemy - B.DistanceToNearestEnemy);
     float EnemyDiff = FMath::Abs(A.VisibleEnemyCount - B.VisibleEnemyCount) / 10.0f;
 
-    // Position similarity
+    // Position similarity (still needs normalization)
     float PositionDiff = FVector::Dist(A.Position, B.Position) / 10000.0f;
+
+    // Support context similarity (v5.0)
+    float AllyHealthDiff = FMath::Abs(A.AllyHealth - B.AllyHealth);
 
     // Weighted average
     float WeightedDiff =
-        0.3f * HealthDiff +
-        0.25f * DistanceDiff +
-        0.25f * EnemyDiff +
-        0.2f * PositionDiff;
+        0.25f * HealthDiff +
+        0.2f * DistanceDiff +
+        0.2f * EnemyDiff +
+        0.2f * PositionDiff +
+        0.15f * AllyHealthDiff;
 
     // Convert difference to similarity (exponential decay)
     return FMath::Exp(-WeightedDiff * 5.0f);  // [0, 1], higher = more similar

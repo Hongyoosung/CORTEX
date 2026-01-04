@@ -12,14 +12,16 @@
 #include "MCTS.generated.h"
 
 /**
- * Monte Carlo Tree Search (MCTS) for team-level strategic decision making (v4.0)
+ * Monte Carlo Tree Search (MCTS) for team-level strategic decision making (v5.0)
  *
- * Implements MCTS to assign strategic objectives to follower agents based on
- * team observation. Uses PUCT for node selection with heuristic action priors,
- * strategic heuristic evaluation for leaf nodes, and backpropagation of values.
+ * Implements MCTS to assign individual strategies to each follower agent based on
+ * team observation and agent-specific context. Uses PUCT for node selection with
+ * heuristic action priors, strategic heuristic evaluation for leaf nodes, and
+ * backpropagation of values.
  *
- * Architecture (v4.0):
- * - Strategic layer: Assigns high-level objectives (Assault, Defend, Support, Retreat)
+ * Architecture (v5.0 - Individual Strategy Assignment):
+ * - Strategic layer: Assigns individual strategies per agent (Assault, Defend, Support, Retreat)
+ * - Individual scoring: Agent health, ammo, position, ally needs determine strategy fit
  * - Leaf evaluation: Handcrafted heuristics (objective progress + team strength + positioning)
  * - Action priors: Heuristic analysis of team state (via GetObjectivePriors)
  * - Parallelization: Root parallelization for 2-4x speedup on multi-core CPUs
@@ -53,11 +55,11 @@ public:
 
 
     /**
-     * Run team-level MCTS with objectives (v3.0 Combat Refactoring)
+     * Run team-level MCTS with individual strategy assignment (v5.0)
      * @param TeamObservation - Current team observation
      * @param Followers - List of follower actors
      * @param ObjectiveManager - Manager to create/assign objectives
-     * @return Map of follower to objective assignment
+     * @return Map of follower to objective assignment (each follower gets individual strategy)
      */
     TMap<AActor*, class UObjective*> RunTeamMCTSWithObjectives(
         const FTeamObservation& TeamObservation,
@@ -73,11 +75,11 @@ private:
 
 
     /**
-     * Run full MCTS tree search with objectives (v3.0 Combat Refactoring)
+     * Run full MCTS tree search with individual strategy assignment (v5.0)
      * @param TeamObs - Current team observation
      * @param Followers - List of followers
      * @param ObjectiveManager - Manager to create objectives
-     * @return Best objective assignment found
+     * @return Best objective assignment found (individual strategy per agent)
      */
     TMap<AActor*, class UObjective*> RunTeamMCTSTreeSearchWithObjectives(
         const FTeamObservation& TeamObs,
@@ -139,8 +141,9 @@ private:
     );
 
     /**
-     * Generate possible objective assignments for expansion (v3.0 Combat Refactoring)
-     * Much smaller action space: 7 objective types × N agents ≈ 50 combinations (vs 14,641)
+     * Generate possible objective assignments for expansion (v5.0 Individual Assignment)
+     * Smaller action space: 4 strategy types × N agents ≈ 20-40 combinations
+     * Each agent receives individual strategy based on state
      * @param Followers - List of follower actors
      * @param TeamObs - Current team observation
      * @param ObjectiveManager - Manager to create objectives
@@ -154,17 +157,17 @@ private:
     ) const;
 
     /**
-     * Calculate objective score for follower-objective pair (Sprint 5)
-     * Scores based on context: health, distance, threat level, etc.
+     * Calculate objective score for follower-objective pair (v5.0 Individual Assignment)
+     * Scores based on individual agent context: health, ammo, position, ally needs
      * @param Follower - The follower actor
      * @param ObjType - The objective type to score
      * @param TeamObs - Current team observation for context
-     * @return Score value (higher = better fit)
+     * @return Score value (higher = better fit for this specific agent)
      */
     float CalculateObjectiveScore(AActor* Follower, EObjectiveType ObjType, const FTeamObservation& TeamObs) const;
 
     /**
-     * Calculate synergy bonus between objectives (Sprint 5)
+     * Calculate synergy bonus between objectives (v5.0)
      * Rewards tactical diversity and coordinated actions
      * @param ObjType - New objective being considered
      * @param ExistingObjectives - Already assigned objectives
@@ -177,7 +180,7 @@ private:
 
 public:
     //--------------------------------------------------------------------------
-    // MCTS STATISTICS EXPORT (Sprint 3 - Curriculum Learning)
+    // MCTS STATISTICS EXPORT (v5.0 - Curriculum Learning)
     //--------------------------------------------------------------------------
 
     /**
@@ -234,7 +237,7 @@ private:
     UPROPERTY()
     FTeamObservation CachedTeamObservation;
 
-    /** Cached ObjectiveManager for objective-based MCTS (v3.0) */
+    /** Cached ObjectiveManager for individual strategy assignment (v5.0) */
     UPROPERTY()
     TObjectPtr<class UObjectiveManager> CachedObjectiveManager;
 

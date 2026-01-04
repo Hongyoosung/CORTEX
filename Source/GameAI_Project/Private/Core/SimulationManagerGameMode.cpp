@@ -2,6 +2,7 @@
 #include "Team/TeamLeaderComponent.h"
 #include "Team/FollowerAgentComponent.h"
 #include "Combat/HealthComponent.h"
+#include "StateTree/FollowerStateTreeComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -40,13 +41,44 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 			CheckEpisodeTermination();
 		}
 
-		// Check for max duration termination (2 minutes by default)
+		// Check for max duration termination (10 minutes by default, matches Python MAX_EPISODE_DURATION)
 		if (MaxEpisodeDuration > 0.0f)
 		{
 			float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
 			if (EpisodeElapsed >= MaxEpisodeDuration)
 			{
 				CheckEpisodeTermination();
+			}
+		}
+
+		// CONTINUOUS TRAINING: Award objective proximity rewards
+		if (bEnableContinuousTraining && ObjectiveLocation != FVector::ZeroVector)
+		{
+			for (auto& TeamPair : RegisteredTeams)
+			{
+				FTeamInfo& TeamInfo = TeamPair.Value;
+
+				for (AActor* Member : TeamInfo.TeamMembers)
+				{
+					if (!Member || !IsValid(Member))
+					{
+						continue;
+					}
+
+					// Check distance to objective
+					float Distance = FVector::Dist(Member->GetActorLocation(), ObjectiveLocation);
+
+					if (Distance <= ObjectiveProximityRadius)
+					{
+						// Award proximity reward to alive agents only
+						UFollowerAgentComponent* FollowerComp = Member->FindComponentByClass<UFollowerAgentComponent>();
+						if (FollowerComp && FollowerComp->GetIsAlive())
+						{
+							float Reward = ObjectiveProximityReward * DeltaTime;  // Scale by delta time for consistent rewards
+							FollowerComp->AccumulateReward(Reward);
+						}
+					}
+				}
 			}
 		}
 
@@ -645,7 +677,7 @@ void ASimulationManagerGameMode::CheckEpisodeTermination()
 		return;
 	}
 
-	// Check max duration (2 minutes by default)
+	// Check max duration (10 minutes by default, matches Python MAX_EPISODE_DURATION)
 	if (MaxEpisodeDuration > 0.0f)
 	{
 		float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
@@ -684,16 +716,32 @@ void ASimulationManagerGameMode::CheckEpisodeTermination()
 	UE_LOG(LogTemp, Log, TEXT("CheckEpisodeTermination: %d teams alive, %d eliminated (Total: %d)"),
 		AliveTeams.Num(), EliminatedTeams.Num(), AllTeamIDs.Num());
 
-	// End episode if only one team survives (or all eliminated)
+	// Handle team elimination
 	if (AliveTeams.Num() <= 1 && AllTeamIDs.Num() > 1)
 	{
 		int32 WinningTeamID = AliveTeams.Num() == 1 ? AliveTeams[0] : -1;
 		int32 LosingTeamID = EliminatedTeams.Num() > 0 ? EliminatedTeams[0] : -1;
 
-		UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode %d - Team %d eliminated! Winner: %d"),
-			CurrentEpisode, LosingTeamID, WinningTeamID);
+		// CONTINUOUS TRAINING MODE: Respawn losing team instead of ending episode
+		if (bEnableContinuousTraining && WinningTeamID != -1 && LosingTeamID != -1)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("🔄 SimulationManager: Team %d eliminated! Team %d wins this round (Continuous Training)"),
+				LosingTeamID, WinningTeamID);
 
-		EndEpisode(WinningTeamID, LosingTeamID);
+			// Award objective capture bonus to winning team
+			AwardObjectiveCaptureBonus(WinningTeamID);
+
+			// Schedule losing team to respawn
+			ScheduleTeamRespawn(LosingTeamID, RespawnDelay);
+		}
+		// TRADITIONAL MODE: End episode on team elimination
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode %d - Team %d eliminated! Winner: %d"),
+				CurrentEpisode, LosingTeamID, WinningTeamID);
+
+			EndEpisode(WinningTeamID, LosingTeamID);
+		}
 	}
 }
 
@@ -876,9 +924,146 @@ void ASimulationManagerGameMode::StartNewEpisode()
 	OnEpisodeStarted.Broadcast(CurrentEpisode);
 }
 
-void ASimulationManagerGameMode::IncrementStep()
+//------------------------------------------------------------------------------
+// CONTINUOUS TRAINING (Respawn System)
+//------------------------------------------------------------------------------
+
+void ASimulationManagerGameMode::ScheduleTeamRespawn(int32 TeamID, float Delay)
 {
-	// DEPRECATED: Steps now auto-increment in Tick()
-	// This function is kept for backward compatibility but does nothing
-	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: IncrementStep() is deprecated - steps auto-increment in Tick()"));
+	if (!bEnableContinuousTraining)
+	{
+		return;
+	}
+
+	// Check if team is already in respawn queue
+	if (RespawningTeams.Contains(TeamID))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Team %d already scheduled for respawn, ignoring duplicate request"), TeamID);
+		return;
+	}
+
+	// Verify team exists
+	if (!RegisteredTeams.Contains(TeamID))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SimulationManager: Cannot schedule respawn for unknown team %d"), TeamID);
+		return;
+	}
+
+	// Mark team as respawning
+	RespawningTeams.Add(TeamID);
+
+	// Schedule respawn timer
+	FTimerHandle& TimerHandle = TeamRespawnTimers.FindOrAdd(TeamID);
+	GetWorldTimerManager().SetTimer(
+		TimerHandle,
+		[this, TeamID]()
+		{
+			RespawnTeam(TeamID);
+		},
+		Delay,
+		false
+	);
+
+	UE_LOG(LogTemp, Warning, TEXT("🔄 SimulationManager: Team %d scheduled to respawn in %.1fs"), TeamID, Delay);
+}
+
+void ASimulationManagerGameMode::RespawnTeam(int32 TeamID)
+{
+	if (!bEnableContinuousTraining)
+	{
+		return;
+	}
+
+	FTeamInfo* TeamInfo = RegisteredTeams.Find(TeamID);
+	if (!TeamInfo)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SimulationManager: Cannot respawn unknown team %d"), TeamID);
+		RespawningTeams.Remove(TeamID);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("===== RESPAWNING TEAM %d ====="), TeamID);
+
+	int32 RespawnedCount = 0;
+
+	// Reset each team member
+	for (AActor* Member : TeamInfo->TeamMembers)
+	{
+		if (!Member || !IsValid(Member))
+		{
+			continue;
+		}
+
+		// Reset to spawn position
+		FTransform* SpawnTransform = SpawnTransforms.Find(Member);
+		if (SpawnTransform)
+		{
+			Member->SetActorTransform(*SpawnTransform, false, nullptr, ETeleportType::ResetPhysics);
+			UE_LOG(LogTemp, Log, TEXT("  → %s: Reset position"), *Member->GetName());
+		}
+
+		// Reset health (resurrects dead agents)
+		UHealthComponent* HealthComp = Member->FindComponentByClass<UHealthComponent>();
+		if (HealthComp)
+		{
+			HealthComp->ResetHealth();
+			HealthComp->ResetCombatStats();
+			UE_LOG(LogTemp, Log, TEXT("  → %s: Reset health (%.0f/%.0f)"),
+				*Member->GetName(), HealthComp->GetCurrentHealth(), HealthComp->GetMaxHealth());
+		}
+
+		// Mark agent as alive (syncs FollowerAgentComponent state)
+		UFollowerAgentComponent* FollowerComp = Member->FindComponentByClass<UFollowerAgentComponent>();
+		if (FollowerComp)
+		{
+			FollowerComp->MarkAsAlive();
+			UE_LOG(LogTemp, Log, TEXT("  → %s: Marked alive & cleared experiences"), *Member->GetName());
+		}
+
+		// Restart StateTree
+		UFollowerStateTreeComponent* StateTreeComp = Member->FindComponentByClass<UFollowerStateTreeComponent>();
+		if (StateTreeComp)
+		{
+			StateTreeComp->OnFollowerRespawned();
+		}
+
+		RespawnedCount++;
+	}
+
+	// Remove from respawning queue
+	RespawningTeams.Remove(TeamID);
+
+	UE_LOG(LogTemp, Warning, TEXT("✅ Team %d respawned: %d agents back in action!"), TeamID, RespawnedCount);
+}
+
+void ASimulationManagerGameMode::AwardObjectiveCaptureBonus(int32 TeamID)
+{
+	if (!bEnableContinuousTraining)
+	{
+		return;
+	}
+
+	FTeamInfo* TeamInfo = RegisteredTeams.Find(TeamID);
+	if (!TeamInfo)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("🎯 Team %d captured objective - awarding bonus rewards"), TeamID);
+
+	// Award immediate capture bonus to all team members
+	for (AActor* Member : TeamInfo->TeamMembers)
+	{
+		if (!Member || !IsValid(Member))
+		{
+			continue;
+		}
+
+		UFollowerAgentComponent* FollowerComp = Member->FindComponentByClass<UFollowerAgentComponent>();
+		if (FollowerComp && FollowerComp->GetIsAlive())
+		{
+			float CaptureBonus = 10.0f;  // Immediate bonus for team wipe
+			FollowerComp->AccumulateReward(CaptureBonus);
+		}
+	}
 }

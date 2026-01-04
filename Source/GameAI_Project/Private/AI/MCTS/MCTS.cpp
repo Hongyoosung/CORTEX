@@ -5,6 +5,7 @@
 #include "Team/Objective.h"
 #include "Team/FollowerAgentComponent.h"
 #include "RL/RLPolicyNetwork.h"
+#include "RL/RLTypes.h"  // v5.0: FAssignmentScoreConfig for individual scoring
 #include "Combat/HealthComponent.h"
 #include "Combat/WeaponComponent.h"
 
@@ -372,44 +373,210 @@ float UMCTS::CalculateObjectiveScore(AActor* Follower, EObjectiveType ObjType, c
 
     float Score = 0.0f;
 
-    // v4.0: Simplified strategic scoring for 4 objective types
+    //==========================================================================
+    // v5.0: INDIVIDUAL AGENT STATE
+    // Get agent-specific health, ammo, and cover status for individual scoring
+    //
+    // NOTE: Ammo is used for MCTS strategic assignment (not RL observation)
+    // - Removed from individual follower RL observations (64-feature v5.0)
+    // - Still used here for team-level MCTS heuristics (assault assignment)
+    // - Also tracked in TeamObservation as AverageTeamAmmo aggregate
+    //==========================================================================
+    float AgentHealth = 1.0f;
+    float AgentAmmo = 1.0f;   // MCTS-only (not in individual RL observation)
+    bool bHasCover = false;
+    float CoverDistance = FLT_MAX;
+
+    // Get health
+    UHealthComponent* HealthComp = Follower->FindComponentByClass<UHealthComponent>();
+    if (HealthComp)
+    {
+        AgentHealth = HealthComp->GetHealthPercentage();
+    }
+
+    // Get ammo (MCTS strategic scoring only, not for RL observation)
+    UWeaponComponent* WeaponComp = Follower->FindComponentByClass<UWeaponComponent>();
+    if (WeaponComp)
+    {
+        AgentAmmo = WeaponComp->GetAmmoPercentage();
+    }
+
+    // Get cover status from follower observation
+    UFollowerAgentComponent* FollowerComp = Follower->FindComponentByClass<UFollowerAgentComponent>();
+    if (FollowerComp)
+    {
+        FObservationElement Obs = FollowerComp->GetLocalObservation();
+        bHasCover = Obs.bHasCover;
+        CoverDistance = Obs.NearestCoverDistance;
+    }
+
+    //==========================================================================
+    // v5.0: ALLY IN NEED DETECTION (Support Strategy Triggers)
+    //==========================================================================
+    AActor* AllyInNeed = nullptr;
+    float WorstAllyHealth = 1.0f;
+    int32 EnemiesNearAlly = 0;
+
+    // Find ally most in need of support
+    for (const auto& TrackedAlly : TeamObs.FollowerPositions)
+    {
+        AActor* Ally = TrackedAlly.Key;
+        if (!Ally || Ally == Follower) continue;
+
+        UHealthComponent* AllyHealth = Ally->FindComponentByClass<UHealthComponent>();
+        if (AllyHealth && AllyHealth->IsAlive())
+        {
+            float AllyHealthPct = AllyHealth->GetHealthPercentage();
+
+            // Check if ally is in critical condition
+            if (AllyHealthPct < WorstAllyHealth)
+            {
+                WorstAllyHealth = AllyHealthPct;
+                AllyInNeed = Ally;
+
+                // Count enemies near this ally
+                EnemiesNearAlly = 0;
+                FVector AllyPos = Ally->GetActorLocation();
+                for (AActor* Enemy : TeamObs.TrackedEnemies)
+                {
+                    if (Enemy && FVector::Dist(AllyPos, Enemy->GetActorLocation()) < FAssignmentScoreConfig::ALLY_SURROUNDED_RANGE)
+                    {
+                        EnemiesNearAlly++;
+                    }
+                }
+            }
+        }
+    }
+
+    bool bAllyNeedsHelp = (WorstAllyHealth < FAssignmentScoreConfig::ALLY_NEEDS_HELP_HEALTH) ||
+                          (EnemiesNearAlly >= FAssignmentScoreConfig::ALLY_SURROUNDED_COUNT);
+
+    //==========================================================================
+    // BASE SCORING (Team-Level Factors)
+    //==========================================================================
     switch (ObjType)
     {
         case EObjectiveType::Assault:
-            // Offensive: Prefer when enemies present, team healthy, and coordinated
+            // Base: Prefer when enemies present, team coordinated
             Score = TeamObs.TrackedEnemies.Num() * 10.0f;
-            Score += TeamObs.AverageTeamHealth * 0.5f;
             Score += TeamObs.FormationCoherence * 15.0f;
-            Score -= TeamObs.ThreatLevel * 5.0f; // Avoid if under heavy fire
-            Score += 50.0f - (TeamObs.DistanceToObjective / 100.0f); // Prefer when near objective
+            Score -= TeamObs.ThreatLevel * 5.0f;
+            Score += 50.0f - (TeamObs.DistanceToObjective / 100.0f);
             break;
 
         case EObjectiveType::Defend:
-            // Defensive: Prefer when on objective, threat is moderate, formation good
+            // Base: Prefer when on objective, threat is moderate
             Score = 30.0f - (TeamObs.DistanceToObjective / 50.0f);
-            Score += TeamObs.ThreatLevel * 5.0f; // Higher threat = more defense needed
+            Score += TeamObs.ThreatLevel * 5.0f;
             Score += TeamObs.FormationCoherence * 15.0f;
-            Score += TeamObs.AverageTeamHealth * 0.3f;
             break;
 
         case EObjectiveType::Support:
-            // Auxiliary: Prefer when team health low, formation broken, or high threat
+            // Base: Prefer when team health low, formation broken
             Score = (100.0f - TeamObs.AverageTeamHealth) * 0.4f;
             Score += (1.0f - TeamObs.FormationCoherence) * 25.0f;
             Score += TeamObs.ThreatLevel * 4.0f;
             break;
 
         case EObjectiveType::Retreat:
-            // Fallback: Prefer when health low, threat high, or K/D poor
-            Score = (100.0f - TeamObs.AverageTeamHealth) * 0.6f;
-            Score += TeamObs.ThreatLevel * 10.0f;
+            // Base: Prefer when threat high, K/D poor
+            Score = TeamObs.ThreatLevel * 10.0f;
             Score += (TeamObs.KillDeathRatio < 0.5f) ? 25.0f : 0.0f;
             break;
 
         case EObjectiveType::None:
-            Score = 0.0f;
+            return 0.0f;
+    }
+
+    //==========================================================================
+    // v5.0: INDIVIDUAL CONTEXT MODIFIERS
+    // Apply agent-specific bonuses based on FAssignmentScoreConfig
+    //==========================================================================
+    switch (ObjType)
+    {
+        case EObjectiveType::Assault:
+            // Healthy agents with ammo should push
+            if (AgentHealth > FAssignmentScoreConfig::HEALTHY_THRESHOLD)
+            {
+                Score += FAssignmentScoreConfig::ASSAULT_HEALTHY_BONUS * 100.0f;  // Scale to match base scoring
+            }
+            if (AgentAmmo > 0.5f)
+            {
+                Score += FAssignmentScoreConfig::ASSAULT_AMMO_BONUS * 100.0f;
+            }
+            // Wounded agents should NOT assault
+            if (AgentHealth < FAssignmentScoreConfig::WOUNDED_THRESHOLD)
+            {
+                Score -= 50.0f;  // Strong penalty
+            }
+            break;
+
+        case EObjectiveType::Defend:
+            // Agents in good cover should defend
+            if (bHasCover && CoverDistance < 200.0f)  // Within 2m of cover
+            {
+                Score += FAssignmentScoreConfig::DEFEND_COVER_BONUS * 100.0f;
+            }
+            // Moderate health is acceptable for defense
+            Score += AgentHealth * 20.0f;
+            break;
+
+        case EObjectiveType::Support:
+            // Strong bonus if ally actually needs help
+            if (bAllyNeedsHelp && AllyInNeed)
+            {
+                // More bonus for more critical allies
+                float CriticalBonus = FAssignmentScoreConfig::SUPPORT_ALLY_CRITICAL_BONUS * (1.0f - WorstAllyHealth);
+                Score += CriticalBonus * 100.0f;
+
+                // Extra bonus if ally is surrounded
+                if (EnemiesNearAlly >= FAssignmentScoreConfig::ALLY_SURROUNDED_COUNT)
+                {
+                    Score += 30.0f;  // High priority
+                }
+            }
+            else
+            {
+                // No ally in need, reduce support score significantly
+                Score *= 0.3f;
+            }
+            // Healthy agents should be supporters
+            if (AgentHealth > FAssignmentScoreConfig::HEALTHY_THRESHOLD)
+            {
+                Score += 15.0f;
+            }
+            break;
+
+        case EObjectiveType::Retreat:
+            // Wounded agents should retreat
+            if (AgentHealth < FAssignmentScoreConfig::WOUNDED_THRESHOLD)
+            {
+                Score += FAssignmentScoreConfig::RETREAT_WOUNDED_BONUS * 100.0f;
+            }
+            // Critical agents MUST retreat
+            if (AgentHealth < FAssignmentScoreConfig::CRITICAL_THRESHOLD)
+            {
+                Score += 80.0f;  // Very high priority
+            }
+            // Healthy agents should NOT retreat
+            if (AgentHealth > FAssignmentScoreConfig::HEALTHY_THRESHOLD)
+            {
+                Score -= 40.0f;  // Penalty for healthy agents retreating
+            }
+            break;
+
+        default:
             break;
     }
+
+    UE_LOG(LogTemp, Verbose, TEXT("🎯 [INDIVIDUAL SCORE] %s → %s: Base=%.1f, Health=%.2f, Ammo=%.2f, Cover=%s, AllyNeedsHelp=%s"),
+        *Follower->GetName(),
+        *UEnum::GetValueAsString(ObjType),
+        Score,
+        AgentHealth,
+        AgentAmmo,
+        bHasCover ? TEXT("Yes") : TEXT("No"),
+        bAllyNeedsHelp ? TEXT("Yes") : TEXT("No"));
 
     return FMath::Max(0.0f, Score);
 }

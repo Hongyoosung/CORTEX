@@ -176,6 +176,10 @@ struct GAMEAI_PROJECT_API FTeamObservation
     UPROPERTY(BlueprintReadOnly, Category = "Team|Followers")
     TArray<FObservationElement> FollowerObservations;
 
+    /** Map of follower actors to their positions (for MCTS ally tracking) */
+    UPROPERTY(BlueprintReadOnly, Category = "Team|Followers")
+    TMap<AActor*, FVector> FollowerPositions;
+
     //--------------------------------------------------------------------------
     // UTILITY FUNCTIONS
     //--------------------------------------------------------------------------

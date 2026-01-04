@@ -370,11 +370,25 @@ public:
 	void StartNewEpisode();
 
 	/**
-	 * DEPRECATED: Steps now auto-increment in Tick()
-	 * Kept for backward compatibility
+	 * Schedule a team to respawn after delay (for continuous training)
+	 * @param TeamID - Team to respawn
+	 * @param Delay - Delay in seconds before respawn
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Episode", meta = (DeprecatedFunction, DeprecationMessage = "Steps now auto-increment in Tick()"))
-	void IncrementStep();
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Respawn")
+	void ScheduleTeamRespawn(int32 TeamID, float Delay);
+
+	/**
+	 * Respawn a team at their spawn positions (for continuous training)
+	 * @param TeamID - Team to respawn
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Respawn")
+	void RespawnTeam(int32 TeamID);
+
+	/**
+	 * Award objective capture bonus to winning team
+	 * @param TeamID - Team that captured the objective
+	 */
+	void AwardObjectiveCaptureBonus(int32 TeamID);
 
 	/**
 	 * Get current episode number
@@ -444,9 +458,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
 	int32 MaxStepsPerEpisode = 0;
 
-	/** Max episode duration in seconds (0 = unlimited, default = 120s for 2 minutes) */
+	/** Max episode duration in seconds (0 = unlimited, default = 600s for 10 minutes to match Python) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	float MaxEpisodeDuration = 120.0f;
+	float MaxEpisodeDuration = 600.0f;
 
 	/** Win reward for episode victory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
@@ -459,6 +473,30 @@ public:
 	/** Include team leader in elimination checks? (If false, team is eliminated when all followers are dead) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
 	bool bIncludeLeaderInElimination = true;
+
+	//--------------------------------------------------------------------------
+	// CONTINUOUS TRAINING CONFIG (Respawn System)
+	//--------------------------------------------------------------------------
+
+	/** Enable continuous training (teams respawn after elimination instead of ending episode) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
+	bool bEnableContinuousTraining = false;
+
+	/** Delay before respawning eliminated team (seconds) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
+	float RespawnDelay = 5.0f;
+
+	/** Reward per second for staying near objective (within ObjectiveProximityRadius) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
+	float ObjectiveProximityReward = 0.5f;
+
+	/** Radius (cm) for objective proximity rewards */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
+	float ObjectiveProximityRadius = 500.0f;
+
+	/** Objective location (set in BeginPlay or via Blueprint) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
+	FVector ObjectiveLocation = FVector::ZeroVector;
 
 
 private:
@@ -504,4 +542,14 @@ private:
 
 	/** Is episode transition in progress */
 	bool bEpisodeEnding = false;
+
+	//--------------------------------------------------------------------------
+	// CONTINUOUS TRAINING STATE (Respawn System)
+	//--------------------------------------------------------------------------
+
+	/** Team respawn timer handles (one per team) */
+	TMap<int32, FTimerHandle> TeamRespawnTimers;
+
+	/** Teams currently in respawn queue (prevents double-respawn) */
+	TSet<int32> RespawningTeams;
 };

@@ -5,8 +5,13 @@
 #include "ObservationElement.generated.h"
 
 /**
- * Enhanced observation structure for individual agents
- * 70 total features, fully normalized for neural network input
+ * Enhanced observation structure for individual agents (v5.0)
+ * 64 total features, fully normalized for neural network input
+ *
+ * v5.0 Changes:
+ * - Removed: rotation(3), shield(1), cooldown(1), ammo(1), weapon(1), terrain(1), temporal(2)
+ * - Added: Support context(4) via FAllyContext
+ * - Engine handles auto-aim, infinite ammo assumed, single weapon type
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FObservationElement
@@ -14,7 +19,7 @@ struct GAMEAI_PROJECT_API FObservationElement
     GENERATED_BODY()
 
     //--------------------------------------------------------------------------
-    // AGENT STATE (11 features)
+    // AGENT STATE (7 features) - v5.0 streamlined
     //--------------------------------------------------------------------------
 
     /** Agent position in world space */
@@ -25,36 +30,17 @@ struct GAMEAI_PROJECT_API FObservationElement
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
     FVector Velocity = FVector::ZeroVector;  // 3 features (VX, VY, VZ)
 
-    /** Agent rotation */
+    /** Health percentage (0-1 normalized) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
-    FRotator Rotation = FRotator::ZeroRotator;  // 3 features (Pitch, Yaw, Roll)
-
-    /** Health percentage (0-100) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
-    float AgentHealth = 100.0f;  // 1 feature
-
-    /** Shield/Armor percentage (0-100) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
-    float Shield = 100.0f;  // 1 feature
+    float AgentHealth = 1.0f;  // 1 feature
 
     //--------------------------------------------------------------------------
-    // COMBAT STATE (3 features)
+    // COMBAT STATE (1 feature) - v5.0 streamlined
     //--------------------------------------------------------------------------
 
-    /** Weapon cooldown remaining (seconds) */
+    /** Distance to nearest enemy (normalized) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Combat")
-    float WeaponCooldown = 0.0f;  // 1 feature
-
-    /** Current ammunition count/percentage */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Combat")
-    float Ammunition = 100.0f;  // 1 feature
-
-    /** Current weapon type ID */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Combat")
-    int32 CurrentWeaponType = 0;  // 1 feature
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Combat")
-    float DistanceToNearestEnemy = 99999.0f;
+    float DistanceToNearestEnemy = 1.0f;  // 1 feature (normalized by max range)
 
     //--------------------------------------------------------------------------
     // ENVIRONMENT PERCEPTION (32 features)
@@ -81,36 +67,40 @@ struct GAMEAI_PROJECT_API FObservationElement
     TArray<FEnemyObservation> NearbyEnemies;  // 5×3 = 15 features
 
     //--------------------------------------------------------------------------
-    // TACTICAL CONTEXT (5 features)
+    // TACTICAL CONTEXT (4 features) - v5.0 streamlined (removed terrain)
     //--------------------------------------------------------------------------
 
     /** Is cover available nearby? */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Tactical")
     bool bHasCover = false;  // 1 feature (0 or 1)
 
-    /** Distance to nearest cover (meters) */
+    /** Distance to nearest cover (normalized by max range) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Tactical")
-    float NearestCoverDistance = 9999.0f;  // 1 feature
+    float NearestCoverDistance = 1.0f;  // 1 feature
 
     /** Direction to nearest cover (normalized 2D) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Tactical")
     FVector2D CoverDirection = FVector2D::ZeroVector;  // 2 features
 
-    /** Current terrain type */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Tactical")
-    ETerrainType CurrentTerrain = ETerrainType::Flat;  // 1 feature (encoded as 0-4)
-
     //--------------------------------------------------------------------------
-    // TEMPORAL FEATURES (2 features)
+    // SUPPORT CONTEXT (4 features) - v5.0 NEW for Support strategy
     //--------------------------------------------------------------------------
 
-    /** Time since last action (seconds) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Temporal")
-    float TimeSinceLastAction = 0.0f;  // 1 feature
+    /** Whether any ally needs immediate help (health < 50% or surrounded) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    bool bAllyNeedsHelp = false;  // 1 feature
 
-    /** Last action type ID */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Temporal")
-    int32 LastActionType = -1;  // 1 feature
+    /** Normalized health of the ally most in need [0, 1] */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    float AllyHealth = 1.0f;  // 1 feature
+
+    /** Distance to ally in need (normalized by max range) [0, 1] */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    float AllyDistance = 0.0f;  // 1 feature
+
+    /** Direction to ally (normalized angle [-1, 1]) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    float AllyDirectionAngle = 0.0f;  // 1 feature
 
 
     //--------------------------------------------------------------------------
@@ -130,11 +120,11 @@ struct GAMEAI_PROJECT_API FObservationElement
         NearbyEnemies.Init(FEnemyObservation(), 5);  // Track top 5 closest enemies
     }
 
-    /** Convert observation to normalized feature vector (70 elements) */
+    /** Convert observation to normalized feature vector (64 elements) - v5.0 */
     TArray<float> ToFeatureVector() const;
 
-    /** Get feature count */
-    static int32 GetFeatureCount() { return 70; }
+    /** Get feature count (v5.0: 64 features) */
+    static int32 GetFeatureCount() { return 64; }
 
     /** Reset to default values */
     void Reset();

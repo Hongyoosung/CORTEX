@@ -94,7 +94,4 @@ protected:
 	/** Classify raycast hit type */
 	ERaycastHitType ClassifyHitType(const FHitResult& HitResult) const;
 
-	/** Detect terrain type */
-	ETerrainType DetectTerrainType(APawn* ControlledPawn) const;
-
 };

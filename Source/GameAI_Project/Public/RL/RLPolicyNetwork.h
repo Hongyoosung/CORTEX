@@ -16,25 +16,29 @@ class INNERuntime;
 class INNERuntimeGPU;
 
 /**
- * Neural Network-based RL Policy for Tactical Action Selection (v4.0 Simplified)
+ * Neural Network-based RL Policy for Tactical Action Selection (v5.0 Multi-Head)
  *
  * Architecture:
- *   Input Layer:  74 features (70 observation + 4 objective embedding)
- *   Shared Trunk: 128 → 128 → 64 (ReLU)
- *   ├─ Position Head: 4 logits (Hold, ForwardCover, Retreat, Advance)
- *   ├─ Target Head: (N+1) logits (None, Enemy_0...Enemy_N) [dynamic, max 6]
- *   ├─ Fire Mode Head: 3 logits (HoldFire, Fire, Suppress)
- *   └─ Critic Head: 1 value (for PPO advantage estimation only)
+ *   Input Layer:  64 features (streamlined observation)
+ *   Shared Trunk: 128 → 128 → 64 (ReLU) - learns common features
+ *   Strategy-Gated Multi-Head Network:
+ *   ├─ Assault Head:  Position(4) + Target(6) + Fire(3) = 13 logits
+ *   ├─ Defend Head:   Position(4) + Target(6) + Fire(3) = 13 logits
+ *   ├─ Support Head:  Position(4) + Target(6) + Fire(3) = 13 logits
+ *   ├─ Retreat Head:  Position(4) + Target(6) + Fire(3) = 13 logits
+ *   └─ Critic Head:   1 value (for MCTS value estimation)
  *
- * Simplified Changes (v4.0):
- *   - Removed Stance action (no crouch/prone) - agents always standing
- *   - Reduced objective types: 7→4 (Assault/Defend/Support/Retreat)
- *   - Focus on core tactical loop: WHERE to go, WHO to shoot, WHEN to fire
+ * v5.0 Changes:
+ *   - Multi-head architecture: 4 strategy-specific heads (Assault/Defend/Support/Retreat)
+ *   - Streamlined observations: 64 features (down from 74)
+ *   - Individual strategy assignment: MCTS assigns different strategies per agent
+ *   - Strategy-specific rewards: Each head trained with specialized reward functions
  *
  * Usage:
- *   1. Load trained policy from ONNX: LoadPolicy("path/to/model.onnx")
- *   2. Query for action: GetAction(Observation, Objective)
- *   3. Training handled by real-time RLlib (no C++ experience collection needed)
+ *   1. Load trained policy from ONNX: LoadPolicy("path/to/assault_policy.onnx")
+ *   2. Query for action: GetAction(Observation, Strategy)
+ *   3. Strategy selection handled by MCTS (TeamLeaderComponent)
+ *   4. Training handled by real-time RLlib with multi-head PPO
  */
 UCLASS(BlueprintType, Blueprintable)
 class GAMEAI_PROJECT_API URLPolicyNetwork : public UObject
@@ -55,7 +59,7 @@ public:
 	 * @return True if initialization succeeded
 	 */
 	UFUNCTION(BlueprintCallable, Category = "RL")
-	bool Initialize(const FRLPolicyConfig& InConfig);
+	bool Initialize(const FMultiHeadPolicyConfig& InConfig);
 
 	/**
 	 * Load a trained policy from ONNX file
@@ -72,38 +76,39 @@ public:
 	void UnloadPolicy();
 
 	// ========================================
-	// Macro Action Inference (v4.0)
+	// Macro Action Inference (v5.0 Multi-Head)
 	// ========================================
 
 	/**
-	 * Get macro action with objective context (v4.0)
+	 * Get macro action with strategy context (v5.0 Multi-Head)
 	 * High-level tactical decisions: WHERE to go, WHO to shoot, HOW to engage
-	 * @param Observation - Current 71-feature observation
-	 * @param CurrentObjective - Current objective from team leader (can be nullptr)
-	 * @return Macro action (position, target, fire mode, stance)
+	 * Strategy-gated head selection for specialized behavior
+	 * @param Observation - Current 64-feature observation
+	 * @param CurrentStrategy - Current strategy assigned by MCTS (Assault/Defend/Support/Retreat)
+	 * @return Macro action (position, target, fire mode) - strategy-specific
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v4")
-	FTacticalAction GetAction(const FObservationElement& Observation, class UObjective* CurrentObjective);
+	UFUNCTION(BlueprintCallable, Category = "RL|v5")
+	FTacticalAction GetAction(const FObservationElement& Observation, EStrategyType CurrentStrategy);
 
 	/**
-	 * Get macro action with objective context and action masking (v4.0)
+	 * Get macro action with strategy context and action masking (v5.0 Multi-Head)
 	 * Masks invalid target indices based on visible enemy count
-	 * @param Observation - Current observation (includes VisibleEnemyCount)
-	 * @param CurrentObjective - Current objective (can be nullptr)
-	 * @return Macro action with masked target selection
+	 * Strategy-gated head selection for specialized behavior
+	 * @param Observation - Current 64-feature observation (includes VisibleEnemyCount)
+	 * @param CurrentStrategy - Current strategy assigned by MCTS
+	 * @return Macro action with masked target selection (strategy-specific)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v4")
-	FTacticalAction GetActionWithMask(const FObservationElement& Observation, class UObjective* CurrentObjective);
+	UFUNCTION(BlueprintCallable, Category = "RL|v5")
+	FTacticalAction GetActionWithMask(const FObservationElement& Observation, EStrategyType CurrentStrategy);
 
 	/**
-	 * Get state value estimate for MCTS (PPO Critic - v4.0)
-	 * Uses the PPO critic network (value function) trained alongside the policy
-	 * @param Observation - Current 71-feature observation
-	 * @param CurrentObjective - Current objective (for embedding)
+	 * Get state value estimate for MCTS (Shared Critic - v5.0)
+	 * Uses the shared PPO critic network (value function) trained alongside all strategy heads
+	 * @param Observation - Current 64-feature observation
 	 * @return State value estimate (higher = better expected return)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v4")
-	float GetStateValue(const FObservationElement& Observation, class UObjective* CurrentObjective);
+	UFUNCTION(BlueprintCallable, Category = "RL|v5")
+	float GetStateValue(const FObservationElement& Observation);
 
 	/**
 	 * Get action priors for MCTS initialization (v4.0)
@@ -159,9 +164,9 @@ private:
 	// ========================================
 
 	/**
-	 * Forward pass through the neural network
-	 * @param InputFeatures - 71-element input vector
-	 * @return 16-element output vector (action probabilities)
+	 * Forward pass through the neural network (v5.0)
+	 * @param InputFeatures - 64-element input vector (streamlined observation)
+	 * @return Multi-head output: [4 heads × 13 logits each] or selected head output
 	 */
 	TArray<float> ForwardPass(const TArray<float>& InputFeatures);
 
@@ -175,8 +180,8 @@ private:
 	// ========================================
 
 	/**
-	 * Generate macro action from network output (v4.0)
-	 * @param NetworkOutput - Multi-discrete logits: [4 position + 6 target + 3 fire + 1 value] = 14
+	 * Generate macro action from network output (v5.0)
+	 * @param NetworkOutput - Multi-discrete logits: [4 position + 6 target + 3 fire] = 13 per head
 	 * @param VisibleEnemies - Number of visible enemies for action masking (default 5)
 	 * @return Macro action struct
 	 */
@@ -190,11 +195,12 @@ private:
 	int32 SampleFromLogits(const TArray<float>& Logits);
 
 	/**
-	 * Build objective embedding for network input (v4.0 simplified)
-	 * @param CurrentObjective - Current objective (can be nullptr)
-	 * @return 4-element objective embedding (Assault/Defend/Support/Retreat)
+	 * Select strategy-specific head output from multi-head network (v5.0)
+	 * @param AllHeadsOutput - Output from all 4 heads (52 logits total: 4×13)
+	 * @param Strategy - Current strategy type
+	 * @return Selected head output (13 logits: 4 pos + 6 target + 3 fire)
 	 */
-	TArray<float> GetObjectiveEmbedding(class UObjective* CurrentObjective);
+	TArray<float> SelectStrategyHead(const TArray<float>& AllHeadsOutput, EStrategyType Strategy);
 
 public:
 	// ========================================
@@ -202,7 +208,7 @@ public:
 	// ========================================
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RL|Config")
-	FRLPolicyConfig Config;
+	FMultiHeadPolicyConfig Config;
 
 	// Enable epsilon-greedy exploration
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RL|Config")

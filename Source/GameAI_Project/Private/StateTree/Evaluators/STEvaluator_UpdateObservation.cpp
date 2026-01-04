@@ -414,8 +414,3 @@ ERaycastHitType FSTEvaluator_UpdateObservation::ClassifyHitType(const FHitResult
 {
 	return ERaycastHitType::None;
 }
-
-ETerrainType FSTEvaluator_UpdateObservation::DetectTerrainType(APawn* ControlledPawn) const
-{
-	return ETerrainType::Flat;
-}

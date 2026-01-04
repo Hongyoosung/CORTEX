@@ -157,6 +157,9 @@ FTeamObservation FTeamObservation::BuildFromTeam(
             FObservationElement Obs = Follower->GetLocalObservation();
             TeamObs.FollowerObservations.Add(Obs);
 
+            // Track follower positions for MCTS ally detection
+            TeamObs.FollowerPositions.Add(Member, Member->GetActorLocation());
+
             // Aggregate statistics
             // Note: AgentHealth is 0-100 scale, consider alive if > 0
             if (Obs.AgentHealth > 0.0f)

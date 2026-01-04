@@ -5,6 +5,7 @@
 #include "AI/MCTS/MCTS.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
 #include "RL/CurriculumManager.h"
+#include "RL/RLTypes.h"  // v5.0: EStrategyType
 #include "Core/SimulationManagerGameMode.h"
 #include "DrawDebugHelpers.h"
 #include "Async/Async.h"
@@ -14,6 +15,26 @@
 #include "RL/RewardCalculator.h"
 #include "Kismet/GameplayStatics.h"
 #include "Combat/HealthComponent.h"
+
+//==============================================================================
+// v5.0 HELPER: Convert EObjectiveType to EStrategyType
+//==============================================================================
+static EStrategyType ObjectiveTypeToStrategy(EObjectiveType ObjType)
+{
+	switch (ObjType)
+	{
+		case EObjectiveType::Assault:
+			return EStrategyType::Assault;
+		case EObjectiveType::Defend:
+			return EStrategyType::Defend;
+		case EObjectiveType::Support:
+			return EStrategyType::Support;
+		case EObjectiveType::Retreat:
+			return EStrategyType::Retreat;
+		default:
+			return EStrategyType::Assault;  // Default to Assault
+	}
+}
 
 
 
@@ -905,15 +926,20 @@ void UTeamLeaderComponent::OnObjectiveMCTSComplete(TMap<AActor*, UObjective*> Ne
 		TArray<AActor*> SingleAgent = { Follower };
 		ObjectiveManager->AssignAgentsToObjective(Objective, SingleAgent);
 
-		// Notify follower component of new objective
+		// Notify follower component of new objective AND strategy (v5.0)
 		if (UFollowerAgentComponent* FollowerComp = Follower->FindComponentByClass<UFollowerAgentComponent>())
 		{
 			FollowerComp->SetCurrentObjective(Objective);
+
+			// v5.0: Convert objective type to strategy and assign
+			EStrategyType Strategy = ObjectiveTypeToStrategy(Objective->Type);
+			FollowerComp->SetCurrentStrategy(Strategy);
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("🎯 [OBJECTIVE ASSIGNMENT] Agent '%s': Objective=%s, Target=%s, Priority=%d"),
+		UE_LOG(LogTemp, Warning, TEXT("🎯 [INDIVIDUAL ASSIGNMENT] Agent '%s': Objective=%s, Strategy=%s, Target=%s, Priority=%d"),
 			*Follower->GetName(),
 			*UEnum::GetValueAsString(Objective->Type),
+			*UEnum::GetValueAsString(ObjectiveTypeToStrategy(Objective->Type)),
 			Objective->TargetActor ? *Objective->TargetActor->GetName() : TEXT("None"),
 			Objective->Priority);
 	}

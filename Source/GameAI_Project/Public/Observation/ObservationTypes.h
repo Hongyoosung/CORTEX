@@ -20,20 +20,6 @@ enum class ERaycastHitType : uint8
 };
 
 /**
- * Terrain type classification
- */
-UENUM(BlueprintType)
-enum class ETerrainType : uint8
-{
-    Unknown     UMETA(DisplayName = "Unknown"),
-    Flat        UMETA(DisplayName = "Flat Ground"),
-    Incline     UMETA(DisplayName = "Inclined/Slope"),
-    Rough       UMETA(DisplayName = "Rough Terrain"),
-    Steep       UMETA(DisplayName = "Steep Slope"),
-    Cliff       UMETA(DisplayName = "Cliff/Vertical")
-};
-
-/**
  * Information about a single nearby enemy
  */
 USTRUCT(BlueprintType)

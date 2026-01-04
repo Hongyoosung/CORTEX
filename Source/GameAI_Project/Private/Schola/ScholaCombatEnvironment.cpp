@@ -37,25 +37,25 @@ void AScholaCombatEnvironment::BeginPlay()
 		bIsPrimaryEnvironment = true;
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] %s is PRIMARY environment"), *GetName());
 	}
-	else if (PrimaryEnvironmentInstance != this)
-	{
-		// This is a duplicate instance - disable it
-		bIsPrimaryEnvironment = false;
-		bEnableTraining = false;  // Disable training on duplicate
+	//else if (PrimaryEnvironmentInstance != this)
+	//{
+	//	// This is a duplicate instance - disable it
+	//	bIsPrimaryEnvironment = false;
+	//	bEnableTraining = false;  // Disable training on duplicate
 
-		UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════╗"));
-		UE_LOG(LogTemp, Error, TEXT("║ DUPLICATE ScholaCombatEnvironment DETECTED!                   ║"));
-		UE_LOG(LogTemp, Error, TEXT("║ Primary: %s                                                   ║"), *PrimaryEnvironmentInstance->GetName());
-		UE_LOG(LogTemp, Error, TEXT("║ Duplicate: %s (THIS - DISABLED)                               ║"), *GetName());
-		UE_LOG(LogTemp, Error, TEXT("║ Training has been DISABLED on this instance.                  ║"));
-		UE_LOG(LogTemp, Error, TEXT("║ ACTION: Remove duplicate ScholaCombatEnvironment from level   ║"));
-		UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════╝"));
+	//	UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════╗"));
+	//	UE_LOG(LogTemp, Error, TEXT("║ DUPLICATE ScholaCombatEnvironment DETECTED!                   ║"));
+	//	UE_LOG(LogTemp, Error, TEXT("║ Primary: %s                                                   ║"), *PrimaryEnvironmentInstance->GetName());
+	//	UE_LOG(LogTemp, Error, TEXT("║ Duplicate: %s (THIS - DISABLED)                               ║"), *GetName());
+	//	UE_LOG(LogTemp, Error, TEXT("║ Training has been DISABLED on this instance.                  ║"));
+	//	UE_LOG(LogTemp, Error, TEXT("║ ACTION: Remove duplicate ScholaCombatEnvironment from level   ║"));
+	//	UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════╝"));
 
-		// Still call parent to maintain proper lifecycle
-		Super::BeginPlay();
-		// But do NOT initialize this instance
-		return;
-	}
+	//	// Still call parent to maintain proper lifecycle
+	//	Super::BeginPlay();
+	//	// But do NOT initialize this instance
+	//	return;
+	//}
 
 	// Check for multiple environment instances (common mistake)
 	int32 EnvCount = 0;

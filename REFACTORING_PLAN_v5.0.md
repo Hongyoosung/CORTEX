@@ -1,7 +1,7 @@
 # CORTEX v5.0 Refactoring Plan
 ## Multi-Head Architecture + Individual Strategy Assignment
 
-**Version:** 5.0 | **Date:** 2026-01-02 | **Status:** Phase 1-2 Complete
+**Version:** 5.0 | **Date:** 2026-01-02 | **Status:** ✅ ALL PHASES COMPLETE
 
 ---
 
@@ -294,10 +294,10 @@ FAllyContext CalculateSupportContext(AAgent* Agent)
 |-------|-------------|--------------|-----------------|--------|
 | **1** | RLTypes.h refactor | None | Low | ✅ Complete |
 | **2** | MCTS individual assignment | Phase 1 | Medium | ✅ Complete |
-| **3** | Python multi-head network | Phase 1 | Medium | ⏳ Pending |
-| **4** | Strategy-specific rewards | Phase 2 | Medium | ⏳ Pending |
-| **5** | C++ inference updates | Phase 3 | High | ⏳ Pending |
-| **6** | Support context observation | Phase 1 | Low | ⏳ Pending |
+| **3** | Python multi-head network | Phase 1 | Medium | ✅ Complete |
+| **4** | Strategy-specific rewards | Phase 2 | Medium | ✅ Complete |
+| **5** | C++ inference updates | Phase 3 | High | ✅ Complete |
+| **6** | Support context observation | Phase 1 | Low | ✅ Complete |
 
 ### Critical Path
 ```
@@ -370,4 +370,46 @@ Phase 1 → Phase 6 ───────────────→ (parallel)
 
 ---
 
-**Document Version:** 1.0 | **Author:** Claude | **Review Status:** Pending User Approval
+## ✅ IMPLEMENTATION COMPLETE (2026-01-02)
+
+All 6 phases of the v5.0 refactoring have been successfully implemented:
+
+### Phase 4: Strategy-Specific Rewards - VERIFIED ✅
+**Implemented in:** `RewardCalculator.cpp:60-235`
+
+**Assault Rewards:**
+- Kill enemy: +15.0 (line 70)
+- Damage dealt: +0.01 per damage point (line 71)
+- Advance toward objective: +0.5/sec (line 85)
+- Reach objective: +20.0/sec (line 93)
+- Death penalty: -8.0 (line 447)
+
+**Defend Rewards:**
+- Kill enemy: +10.0 (line 103)
+- Hold position: +0.3/sec (line 109)
+- Leave position penalty: -2.0/sec (line 114)
+- Suppress enemies: +3.0 (line 121)
+- Death penalty: -12.0 (line 450)
+
+**Support Rewards:**
+- Protected ally survives: +15.0 (line 143)
+- Kill threat to ally: +12.0 (line 129)
+- Maintain support distance: +0.2/sec (line 161)
+- Ally dies: -20.0 (line 149)
+- Draw enemy fire: +5.0 (line 170)
+- Death penalty: -8.0 (line 453)
+
+**Retreat Rewards:**
+- Increase distance: +0.3/sec (line 189)
+- Reach safe zone: +10.0 (line 198)
+- Covering fire: +3.0 (line 205)
+- Death penalty: -15.0 (line 456)
+
+**Integration:**
+- `TeamLeaderComponent:936` - Assigns strategy when setting objective
+- `FollowerAgentComponent:1031` - Updates RewardCalculator on strategy change
+- `TacticalObserver:114` - Appends strategy index to observations (65th feature)
+
+---
+
+**Document Version:** 2.0 | **Author:** Claude | **Status:** ✅ IMPLEMENTATION COMPLETE

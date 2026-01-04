@@ -1,4 +1,4 @@
-// TacticalObserver.h - Schola observer for 70-feature tactical observation (v4.0)
+// TacticalObserver.h - Schola observer for 64-feature streamlined observation (v5.0)
 
 #pragma once
 
@@ -9,22 +9,28 @@
 class UFollowerAgentComponent;
 
 /**
- * Schola observer that exposes 74-feature tactical observation for RL training (v4.0 Simplified).
- * Used for live training via gRPC connection to Python/RLlib.
+ * Schola observer for v5.0 Multi-Head Architecture (64 streamlined features)
+ * Used for live RL training via gRPC connection to Python/RLlib.
  *
- * Total: 74 features = 70 tactical + 4 objective embedding
+ * v5.0 STREAMLINED OBSERVATION (64 features total):
+ * - Agent State (7): position(3), velocity(3), health(1)
+ * - Combat (1): enemy_distance(1)
+ * - Perception (32): raycast_distances(16), raycast_hit_types(16)
+ * - Enemy Info (16): enemy_count(1), nearby_enemies(15)
+ * - Tactical (4): has_cover(1), cover_distance(1), cover_direction(2)
+ * - Support Context (4): ally_needs_help(1), ally_health(1), ally_distance(1), ally_direction(1)
  *
- * Tactical Features (70 total):
- * - Agent State: Position, Velocity, Rotation, Health, Shield (11 features) [Stamina removed]
- * - Combat State: WeaponCooldown, Ammunition, WeaponType (3 features)
- * - Environment: RaycastDistances, RaycastHitTypes (32 features)
- * - Enemies: VisibleEnemyCount, NearbyEnemies (16 features)
- * - Tactical: Cover info, Terrain (5 features)
- * - Temporal: TimeSinceLastAction, LastActionType (2 features)
- * - Combat Proximity: DistanceToNearestEnemy (1 feature)
+ * REMOVED in v5.0 (-14 features from v4.0):
+ * - Rotation (3) - engine handles auto-aim
+ * - Shield (1) - not implemented
+ * - Ammo (1) - infinite ammo assumed (team-level only in MCTS)
+ * - Cooldown (1) - handled by engine
+ * - Weapon type (1) - single weapon type
+ * - Terrain type (1) - covered by raycasts
+ * - Objective embedding (4) - replaced by strategy head selection
+ * - Unused padding (2)
  *
- * Objective Embedding (4 features, one-hot, v4.0 simplified):
- * - [70]: Assault, [71]: Defend, [72]: Support, [73]: Retreat
+ * Note: Strategy selection is handled by multi-head network, not as input feature.
  */
 UCLASS(BlueprintType, meta = (DisplayName = "Tactical Observer"))
 class GAMEAI_PROJECT_API UTacticalObserver : public UBoxObserver

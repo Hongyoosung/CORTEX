@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "RL/RLTypes.h"  // v5.0: EStrategyType, FStrategyRewardWeights
 #include "RewardCalculator.generated.h"
 
 class UFollowerAgentComponent;
@@ -105,6 +106,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void SetCurrentObjective(UObjective* Objective);
 
+	/** Set current strategy for reward calculation (v5.0) */
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	void SetCurrentStrategy(EStrategyType Strategy);
+
+	/** Get current strategy */
+	UFUNCTION(BlueprintPure, Category = "Reward")
+	EStrategyType GetCurrentStrategy() const { return CurrentStrategy; }
+
 	//--------------------------------------------------------------------------
 	// COORDINATION TRACKING
 	//--------------------------------------------------------------------------
@@ -138,6 +147,84 @@ public:
 	/** Reward weight for objectives */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Weights")
 	float ObjectiveRewardWeight = 1.0f;
+
+	//--------------------------------------------------------------------------
+	// STRATEGY-SPECIFIC REWARD CONSTANTS (v5.0)
+	//--------------------------------------------------------------------------
+
+	// Assault Strategy Rewards
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
+	float Assault_KillReward = 15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
+	float Assault_DamageMultiplier = 0.01f;  // +0.1 per 10 damage
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
+	float Assault_AdvanceReward = 0.5f;  // Per second
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
+	float Assault_ObjectiveReachReward = 20.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
+	float Assault_DeathPenalty = -8.0f;
+
+	// Defend Strategy Rewards
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
+	float Defend_KillReward = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
+	float Defend_HoldPositionReward = 0.3f;  // Per second
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
+	float Defend_SuppressReward = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
+	float Defend_LeavePositionPenalty = -2.0f;  // Per second
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
+	float Defend_DeathPenalty = -12.0f;
+
+	// Support Strategy Rewards
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
+	float Support_AllyProtectedReward = 15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
+	float Support_KillThreatReward = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
+	float Support_MaintainDistanceReward = 0.2f;  // Per second
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
+	float Support_AllyDeathPenalty = -20.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
+	float Support_DrawFireReward = 5.0f;
+
+	// Retreat Strategy Rewards
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
+	float Retreat_DistanceIncreaseReward = 0.3f;  // Per second
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
+	float Retreat_SafeZoneReward = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
+	float Retreat_CoveringFireReward = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
+	float Retreat_SurvivalReward = 5.0f;  // Per episode
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
+	float Retreat_DeathPenalty = -15.0f;
+
+	// Strategy-specific distance thresholds
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
+	float Support_MinDistance = 500.0f;  // 5m
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
+	float Support_MaxDistance = 1500.0f;  // 15m
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
+	float Retreat_SafeDistance = 2000.0f;  // 20m from enemies
 
 	/** Time window for combined fire detection (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
@@ -181,6 +268,9 @@ private:
 	UPROPERTY()
 	UObjective* CurrentObjective = nullptr;
 
+	/** Current strategy (v5.0) - affects reward calculation */
+	EStrategyType CurrentStrategy = EStrategyType::Assault;
+
 	//--------------------------------------------------------------------------
 	// REWARD ACCUMULATORS
 	//--------------------------------------------------------------------------
@@ -215,4 +305,27 @@ private:
 
 	/** Time spent in cover this episode */
 	float TimeInCover = 0.0f;
+
+	//--------------------------------------------------------------------------
+	// STRATEGY-SPECIFIC TRACKING (v5.0)
+	//--------------------------------------------------------------------------
+
+	/** Last distance to objective (for advance tracking) */
+	float LastDistanceToObjective = 0.0f;
+
+	/** Last distance to nearest enemy (for retreat tracking) */
+	float LastDistanceToEnemy = 0.0f;
+
+	/** Protected ally (for Support strategy) */
+	UPROPERTY()
+	AActor* ProtectedAlly = nullptr;
+
+	/** Protected ally's last health (to detect protection success) */
+	float ProtectedAllyLastHealth = 1.0f;
+
+	/** Was agent in safe zone last tick? (for Retreat strategy) */
+	bool bWasInSafeZone = false;
+
+	/** Was agent on objective last tick? (for Defend strategy) */
+	bool bWasOnObjective = false;
 };

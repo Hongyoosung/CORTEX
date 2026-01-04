@@ -1,9 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/HealthComponent.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Core/SimulationManagerGameMode.h"
-#include "RL/RLTypes.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -89,17 +86,9 @@ float UHealthComponent::TakeDamage(float DamageAmount, AActor* Instigator, AActo
 	FDamageEventData DamageEvent(Instigator, DamageCauser, ActualDamage, HitLocation, HitNormal);
 	LastDamageEvent = DamageEvent;
 
-	// Broadcast events
+	// Broadcast events (FollowerAgentComponent handles reward integration)
 	OnDamageTaken.Broadcast(DamageEvent, CurrentHealth);
 	OnHealthChanged.Broadcast(CurrentHealth, MaxHealth);
-
-	// Notify FollowerAgentComponent for RL reward
-	if (UFollowerAgentComponent* FollowerComp = GetOwner()->FindComponentByClass<UFollowerAgentComponent>())
-	{
-		FollowerComp->AccumulateReward(FTacticalRewards::TAKE_DAMAGE);
-		UE_LOG(LogTemp, Log, TEXT("🔴 %s took %.1f damage → RL Reward: %.1f"),
-			*GetOwner()->GetName(), ActualDamage, FTacticalRewards::TAKE_DAMAGE);
-	}
 
 	/*UE_LOG(LogTemp, Warning, TEXT("💥 %s took %.1f damage (%.1f mitigated) from %s → HP: %.1f/%.1f"),
 		*GetOwner()->GetName(), ActualDamage, DamageAmount - MitigatedDamage,
@@ -125,16 +114,8 @@ void UHealthComponent::NotifyDamageDealt(AActor* Victim, float DamageAmount)
 	// Update stats
 	TotalDamageDealt += DamageAmount;
 
-	// Broadcast event
+	// Broadcast event (FollowerAgentComponent handles reward integration)
 	OnDamageDealt.Broadcast(Victim, DamageAmount);
-
-	// Notify FollowerAgentComponent for RL reward
-	if (UFollowerAgentComponent* FollowerComp = GetOwner()->FindComponentByClass<UFollowerAgentComponent>())
-	{
-		FollowerComp->AccumulateReward(FTacticalRewards::DAMAGE_ENEMY);
-		UE_LOG(LogTemp, Log, TEXT("%s dealt %.1f damage to %s → RL Reward: %.1f"),
-			*GetOwner()->GetName(), DamageAmount, *Victim->GetName(), FTacticalRewards::DAMAGE_ENEMY);
-	}
 
 	UE_LOG(LogTemp, Log, TEXT("⚔️ %s dealt %.1f damage to %s"),
 		*GetOwner()->GetName(), DamageAmount, *Victim->GetName());
@@ -150,16 +131,8 @@ void UHealthComponent::NotifyKillConfirmed(AActor* Victim, float InTotalDamageDe
 	// Update stats
 	KillCount++;
 
-	// Broadcast event
+	// Broadcast event (FollowerAgentComponent handles reward integration)
 	OnKillConfirmed.Broadcast(Victim, InTotalDamageDealt);
-
-	// Notify FollowerAgentComponent for RL reward
-	if (UFollowerAgentComponent* FollowerComp = GetOwner()->FindComponentByClass<UFollowerAgentComponent>())
-	{
-		FollowerComp->AccumulateReward(FTacticalRewards::KILL_ENEMY);
-		UE_LOG(LogTemp, Log, TEXT("🌟 %s killed %s → RL Reward: %.1f (Total Kills: %d)"),
-			*GetOwner()->GetName(), *Victim->GetName(), FTacticalRewards::KILL_ENEMY, KillCount);
-	}
 
 	UE_LOG(LogTemp, Warning, TEXT("💀 %s KILLED %s! Total Kills: %d"),
 		*GetOwner()->GetName(), *Victim->GetName(), KillCount);
@@ -269,18 +242,8 @@ void UHealthComponent::HandleDeath(AActor* Killer, float FinalDamage)
 	FDeathEventData DeathEvent(GetOwner(), Killer, FinalDamage, GetWorld()->GetTimeSeconds());
 	LastDeathEvent = DeathEvent;
 
-	// Broadcast death event
+	// Broadcast death event (FollowerAgentComponent handles reward integration)
 	OnDeath.Broadcast(DeathEvent);
-
-	// Notify FollowerAgentComponent for RL reward
-	if (UFollowerAgentComponent* FollowerComp = GetOwner()->FindComponentByClass<UFollowerAgentComponent>())
-	{
-		FollowerComp->AccumulateReward(FTacticalRewards::DIE);
-		FollowerComp->MarkAsDead();
-
-		UE_LOG(LogTemp, Error, TEXT("☠️ %s DIED → RL Reward: %.1f"),
-			*GetOwner()->GetName(), FTacticalRewards::DIE);
-	}
 
 	// Notify killer's HealthComponent
 	if (Killer && Killer != GetOwner())

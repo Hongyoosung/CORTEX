@@ -48,8 +48,9 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 		return (CurrentTime - Record.Timestamp) > CombinedFireWindow;
 	});
 
-	// Check objective compliance (MCTS-RL alignment)
-	CheckObjectiveCompliance();
+	// v8.0: Objective compliance checking DISABLED
+	// Action masking in Python environment now prevents invalid actions
+	// CheckObjectiveCompliance();
 }
 
 //--------------------------------------------------------------------------
@@ -60,25 +61,167 @@ float URewardCalculator::CalculateTotalReward(float DeltaTime)
 {
 	float TotalReward = 0.0f;
 
-	// 1. Individual rewards
-	float IndividualReward = CalculateIndividualReward();
-	TotalReward += IndividualReward * IndividualRewardWeight;
+	// v5.0: Strategy-specific reward calculation
+	switch (CurrentStrategy)
+	{
+		case EStrategyType::Assault:
+		{
+			// Assault: Kills, damage, advancement
+			TotalReward += KillsSinceLastUpdate * Assault_KillReward;
+			TotalReward += DamageSinceLastUpdate * Assault_DamageMultiplier;
 
-	// 2. Coordination rewards
-	float CoordinationReward = CalculateCoordinationReward();
-	TotalReward += CoordinationReward * CoordinationRewardWeight;
+			// Reward for advancing toward objective
+			if (CurrentObjective && FollowerComponent)
+			{
+				AActor* Owner = GetOwner();
+				if (Owner)
+				{
+					float CurrentDistance = FVector::Dist(Owner->GetActorLocation(), CurrentObjective->TargetLocation);
+					if (LastDistanceToObjective > 0.0f)
+					{
+						float DistanceReduction = LastDistanceToObjective - CurrentDistance;
+						if (DistanceReduction > 0.0f)
+						{
+							TotalReward += Assault_AdvanceReward * DeltaTime;
+						}
+					}
+					LastDistanceToObjective = CurrentDistance;
 
-	// 3. Objective rewards
-	float ObjectiveReward = CalculateObjectiveReward();
-	TotalReward += ObjectiveReward * ObjectiveRewardWeight;
+					// Bonus for reaching objective
+					if (CurrentDistance < ObjectiveRadiusThreshold)
+					{
+						TotalReward += Assault_ObjectiveReachReward * DeltaTime;
+					}
+				}
+			}
+			break;
+		}
 
-	// 4. Efficiency penalties
-	float EfficiencyPenalty = CalculateEfficiencyPenalty(DeltaTime);
-	TotalReward += EfficiencyPenalty;
+		case EStrategyType::Defend:
+		{
+			// Defend: Kills, hold position, suppression
+			TotalReward += KillsSinceLastUpdate * Defend_KillReward;
 
-	// 5. Cover usage rewards (Sprint 6)
-	float CoverReward = CalculateCoverReward();
-	TotalReward += CoverReward;
+			// Reward for holding position
+			bool bOnObjective = IsOnObjective();
+			if (bOnObjective)
+			{
+				TotalReward += Defend_HoldPositionReward * DeltaTime;
+			}
+			else if (bWasOnObjective)
+			{
+				// Penalty for leaving position
+				TotalReward += Defend_LeavePositionPenalty * DeltaTime;
+			}
+			bWasOnObjective = bOnObjective;
+
+			// Bonus for suppressing enemies (firing without killing)
+			if (FollowerComponent && DamageSinceLastUpdate > 0.0f && KillsSinceLastUpdate == 0)
+			{
+				TotalReward += Defend_SuppressReward;
+			}
+			break;
+		}
+
+		case EStrategyType::Support:
+		{
+			// Support: Protect ally, kill threats, maintain distance
+			TotalReward += KillsSinceLastUpdate * Support_KillThreatReward;
+
+			// Track protected ally
+			if (CurrentObjective && CurrentObjective->TargetActor)
+			{
+				ProtectedAlly = CurrentObjective->TargetActor;
+				UHealthComponent* AllyHealth = ProtectedAlly->FindComponentByClass<UHealthComponent>();
+				if (AllyHealth)
+				{
+					float CurrentHealth = AllyHealth->GetCurrentHealth() / AllyHealth->GetMaxHealth();
+
+					// Reward for maintaining ally health
+					if (CurrentHealth > ProtectedAllyLastHealth)
+					{
+						TotalReward += Support_AllyProtectedReward;
+					}
+
+					// Penalty if ally died
+					if (CurrentHealth <= 0.0f && ProtectedAllyLastHealth > 0.0f)
+					{
+						TotalReward += Support_AllyDeathPenalty;
+					}
+
+					ProtectedAllyLastHealth = CurrentHealth;
+
+					// Reward for maintaining optimal support distance (5-15m)
+					AActor* Owner = GetOwner();
+					if (Owner)
+					{
+						float DistToAlly = FVector::Dist(Owner->GetActorLocation(), ProtectedAlly->GetActorLocation());
+						if (DistToAlly >= Support_MinDistance && DistToAlly <= Support_MaxDistance)
+						{
+							TotalReward += Support_MaintainDistanceReward * DeltaTime;
+						}
+					}
+				}
+			}
+
+			// Bonus for drawing enemy fire (taking damage while protecting)
+			if (DamageTakenSinceLastUpdate > 0.0f && ProtectedAlly)
+			{
+				TotalReward += Support_DrawFireReward;
+			}
+			break;
+		}
+
+		case EStrategyType::Retreat:
+		{
+			// Retreat: Increase distance, reach safety, cover fire
+			if (FollowerComponent)
+			{
+				FObservationElement Obs = FollowerComponent->GetLocalObservation();
+				float CurrentDistToEnemy = Obs.DistanceToNearestEnemy;
+
+				// Reward for increasing distance from enemies
+				if (LastDistanceToEnemy > 0.0f)
+				{
+					float DistanceIncrease = CurrentDistToEnemy - LastDistanceToEnemy;
+					if (DistanceIncrease > 0.0f)
+					{
+						TotalReward += Retreat_DistanceIncreaseReward * DeltaTime;
+					}
+				}
+				LastDistanceToEnemy = CurrentDistToEnemy;
+
+				// Reward for reaching safe distance
+				bool bInSafeZone = (CurrentDistToEnemy > Retreat_SafeDistance);
+				if (bInSafeZone && !bWasInSafeZone)
+				{
+					TotalReward += Retreat_SafeZoneReward;
+				}
+				bWasInSafeZone = bInSafeZone;
+
+				// Bonus for covering fire while retreating (suppression)
+				if (DamageSinceLastUpdate > 0.0f && KillsSinceLastUpdate == 0)
+				{
+					TotalReward += Retreat_CoveringFireReward;
+				}
+			}
+			break;
+		}
+
+		default:
+			// Fallback to legacy reward calculation
+			TotalReward += CalculateIndividualReward() * IndividualRewardWeight;
+			TotalReward += CalculateCoordinationReward() * CoordinationRewardWeight;
+			TotalReward += CalculateObjectiveReward() * ObjectiveRewardWeight;
+			TotalReward += CalculateEfficiencyPenalty(DeltaTime);
+			TotalReward += CalculateCoverReward();
+			break;
+	}
+
+	// Add accumulated rewards (global events like objective completion)
+	TotalReward += AccumulatedIndividualReward;
+	TotalReward += AccumulatedCoordinationReward;
+	TotalReward += AccumulatedObjectiveReward;
 
 	// Reset accumulators
 	AccumulatedIndividualReward = 0.0f;
@@ -145,12 +288,9 @@ float URewardCalculator::CalculateCoordinationReward()
 		Reward += 0.5f; // +0.5 per tick in formation (~5/sec at 10Hz)
 	}
 
-	// Objective disobedience penalty
-	if (bDisobeyedObjective)
-	{
-		Reward -= 15.0f; // -15 for disobeying objective
-		bDisobeyedObjective = false; // Reset flag
-	}
+	// v8.0: Objective disobedience penalty REMOVED
+	// Action masking in sbdapm_env.py prevents invalid actions at source
+	// Agents can no longer choose actions that conflict with strategic objectives
 
 	// On-objective bonus for kills (already tracked in OnKillEnemy)
 	// This is just the accumulator
@@ -298,8 +438,31 @@ void URewardCalculator::OnTakeDamage(float Damage)
 
 void URewardCalculator::OnDeath()
 {
-	AccumulatedIndividualReward -= 10.0f; // -10 for death
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD] Death: -10"));
+	// v5.0: Strategy-specific death penalties
+	float DeathPenalty = 0.0f;
+
+	switch (CurrentStrategy)
+	{
+		case EStrategyType::Assault:
+			DeathPenalty = Assault_DeathPenalty;  // -8.0 (lower penalty, expected risk)
+			break;
+		case EStrategyType::Defend:
+			DeathPenalty = Defend_DeathPenalty;  // -12.0 (higher penalty, losing anchor)
+			break;
+		case EStrategyType::Support:
+			DeathPenalty = Assault_DeathPenalty;  // -8.0 (moderate penalty)
+			break;
+		case EStrategyType::Retreat:
+			DeathPenalty = Retreat_DeathPenalty;  // -15.0 (highest penalty, failed retreat)
+			break;
+		default:
+			DeathPenalty = -10.0f;  // Legacy default
+			break;
+	}
+
+	AccumulatedIndividualReward += DeathPenalty;
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD] Death (%s): %.1f"),
+		*UEnum::GetValueAsString(CurrentStrategy), DeathPenalty);
 }
 
 void URewardCalculator::OnObjectiveComplete(UObjective* Objective)
@@ -322,6 +485,19 @@ void URewardCalculator::SetCurrentObjective(UObjective* Objective)
 		LastObjectiveProgress = Objective ? Objective->GetProgress() : 0.0f;
 		UE_LOG(LogTemp, Log, TEXT("[REWARD] Objective updated: %s"),
 			Objective ? *UEnum::GetValueAsString(Objective->Type) : TEXT("None"));
+	}
+}
+
+void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
+{
+	if (CurrentStrategy != Strategy)
+	{
+		EStrategyType PreviousStrategy = CurrentStrategy;
+		CurrentStrategy = Strategy;
+
+		UE_LOG(LogTemp, Log, TEXT("[REWARD] Strategy updated: %s → %s (reward weights may change)"),
+			*UEnum::GetValueAsString(PreviousStrategy),
+			*UEnum::GetValueAsString(Strategy));
 	}
 }
 

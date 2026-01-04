@@ -1,9 +1,16 @@
 """
-SBDAPM Environment for Schola/RLlib Training (v7.6 Trajectory Fix)
+SBDAPM Environment for Schola/RLlib Training (v8.0 Continuous Training)
 
 Solution: Provides actions for ALL keys in the DictSpace because Schola's
 fill_proto() iterates through ALL sub-spaces and expects action data for each key.
 Each agent's action is duplicated across all its component keys.
+
+v8.0 Changes (Continuous Training):
+- FEATURE: Team elimination no longer ends episodes
+- UE5 respawns eliminated teams after 5 seconds (configurable)
+- Winning teams earn objective proximity rewards (+0.5/sec within 5m)
+- Episodes only end on timeout (10 minutes default), not team wipe
+- This enables continuous attack/defend role switching for richer training
 
 v7.6 Changes:
 - FIXED: "Batches sent to postprocessing must only contain steps from a single trajectory"
@@ -50,7 +57,7 @@ except ImportError:
 
 
 # The maximum duration of an episode. After this time, the environment will reset.
-MAX_EPISODE_DURATION = 180.0
+MAX_EPISODE_DURATION = 600.0
 
 
 
@@ -98,9 +105,17 @@ if SCHOLA_AVAILABLE:
             if hasattr(self.schola_env, 'ids'):
                 self._update_agent_map()
 
-            # Space 정의 (v4.0: 70 observation + 4 objective embedding = 74 features)
-            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(74,), dtype=np.float32)
-            self._action_space = spaces.MultiDiscrete([4, 6, 3])  # v4.0: Position(4) × Target(6) × Fire(3), stance removed
+            # Space 정의 (v5.0: 64 core observation + 1 strategy index = 65 features)
+            # Observation breakdown:
+            # - Agent State (7): pos(3), vel(3), health(1)
+            # - Combat (1): enemy_dist(1)
+            # - Perception (32): raycasts(16), hit_types(16)
+            # - Enemy Info (16): count(1), nearby(15)
+            # - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
+            # - Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
+            # - Strategy Index (1): current strategy (0=Assault, 1=Defend, 2=Support, 3=Retreat)
+            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(65,), dtype=np.float32)
+            self._action_space = spaces.MultiDiscrete([4, 6, 3])  # v5.0: Position(4) × Target(6) × Fire(3)
 
             self.episode_steps = 0
 
@@ -200,6 +215,50 @@ if SCHOLA_AVAILABLE:
         @property
         def action_space(self):
             return self._action_space
+
+        def _get_action_mask(self, obs):
+            """
+            Generate action mask based on current strategy (v5.0).
+
+            Strategy is encoded in last observation feature (index 64):
+            0 = Assault
+            1 = Defend
+            2 = Support
+            3 = Retreat
+
+            Returns:
+                Dict with position_mask (4 dims), target_mask (6 dims), fire_mask (3 dims)
+                1 = valid action, 0 = invalid action
+            """
+            # Extract strategy index from observation (last feature)
+            strategy_idx = int(obs[64]) if len(obs) > 64 else 0
+
+            # Default: all actions valid (for Support)
+            position_mask = [1, 1, 1, 1]  # [Hold, ForwardCover, Retreat, Advance]
+            target_mask = [1, 1, 1, 1, 1, 1]  # [None, Enemy_0-4]
+            fire_mask = [1, 1, 1]  # [HoldFire, Fire, Suppress]
+
+            # Assault (0): disable Hold and Retreat (must move forward)
+            if strategy_idx == 0:
+                position_mask = [0, 1, 0, 1]  # Allow ForwardCover, Advance only
+
+            # Defend (1): disable Retreat and Advance (must hold position)
+            elif strategy_idx == 1:
+                position_mask = [1, 1, 0, 0]  # Allow Hold, ForwardCover only
+
+            # Support (2): all actions valid (context-dependent)
+            elif strategy_idx == 2:
+                position_mask = [1, 1, 1, 1]  # No restrictions
+
+            # Retreat (3): ONLY Retreat allowed
+            elif strategy_idx == 3:
+                position_mask = [0, 0, 1, 0]  # Retreat only
+
+            return {
+                "position": np.array(position_mask, dtype=np.int8),
+                "target": np.array(target_mask, dtype=np.int8),
+                "fire": np.array(fire_mask, dtype=np.int8)
+            }
 
         def reset(self, *, seed=None, options=None):
             # v7.4 & v7.7: Step rate and reward diagnostics
@@ -400,11 +459,15 @@ if SCHOLA_AVAILABLE:
                     if flat_id in self._dead_agents:
                         # Dead agents get zero obs/rewards but NOT terminated (yet)
                         # They'll be terminated when the whole episode ends
-                        obs_dict[flat_id] = np.zeros(74, dtype=np.float32)
+                        obs_dict[flat_id] = np.zeros(65, dtype=np.float32)  # v5.0: 64 obs + 1 strategy
                         reward_dict[flat_id] = 0.0
                         terminated_dict[flat_id] = False  # Will be set True when episode ends
                         truncated_dict[flat_id] = False
-                        info_dict[flat_id] = {"dead": True}
+                        # Dead agents: all actions masked
+                        info_dict[flat_id] = {
+                            "dead": True,
+                            "action_mask": np.zeros(4 + 6 + 3, dtype=np.int8)  # All actions invalid
+                        }
                     else:
                         # Live agents get normal obs/rewards
                         agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
@@ -415,7 +478,7 @@ if SCHOLA_AVAILABLE:
                                 obs_val = agent_obs_data
                             obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                         else:
-                            obs_dict[flat_id] = np.zeros(74, dtype=np.float32)
+                            obs_dict[flat_id] = np.zeros(65, dtype=np.float32)  # v5.0: 64 obs + 1 strategy
 
                         reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
                         reward_dict[flat_id] = reward
@@ -428,9 +491,20 @@ if SCHOLA_AVAILABLE:
                         # Mid-episode: never set terminated/truncated for live agents
                         terminated_dict[flat_id] = False
                         truncated_dict[flat_id] = False
-                        info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
 
-                # Episode Termination Logic (v7.6)
+                        # v8.0: Add action masking based on objective
+                        masks = self._get_action_mask(obs_dict[flat_id])
+                        # Flatten masks: [position(4), target(6), fire(3)]
+                        flat_mask = np.concatenate([
+                            masks["position"],
+                            masks["target"],
+                            masks["fire"]
+                        ])
+
+                        info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
+                        info_dict[flat_id]["action_mask"] = flat_mask
+
+                # Episode Termination Logic (v7.6 + v8.0 Continuous Training)
                 self.episode_steps += 1
                 episode_duration = current_time - self._episode_start_time
 
@@ -438,27 +512,18 @@ if SCHOLA_AVAILABLE:
                 if self.episode_steps <= 3:
                     print(f"[DIAGNOSTIC] Step {self.episode_steps}: Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)}")
 
-                # v7.6: Check episode end conditions using tracked alive agents
-                # Condition 1: All agents dead (team eliminated)
-                all_agents_dead = len(self._alive_agents) == 0
+                # v8.0 CONTINUOUS TRAINING: Team elimination handled by UE5 (respawn system)
+                # Python ONLY terminates on timeout, NOT on team elimination
+                # This allows teams to respawn and continue fighting within the same episode
 
-                # Condition 2: Timeout
+                # Condition 1: Timeout (10 minutes default)
                 timeout_reached = episode_duration >= MAX_EPISODE_DURATION
 
-                # Condition 3: Max step safeguard (fallback)
+                # Condition 2: Max step safeguard (fallback)
                 max_steps_reached = self.episode_steps >= self.max_episode_steps
 
-                # v7.6: When episode ends, ALL agents terminate/truncate TOGETHER
-                if all_agents_dead:
-                    # Real termination: all agents eliminated
-                    # ALL agents (including those who died earlier) get terminated=True
-                    for aid in self._agent_ids:
-                        terminated_dict[aid] = True
-                        truncated_dict[aid] = False
-                    terminated_dict["__all__"] = True
-                    truncated_dict["__all__"] = False
-                    print(f"[EPISODE END] All agents eliminated at step {self.episode_steps}")
-                elif timeout_reached or max_steps_reached:
+                # v8.0: ONLY terminate on timeout/max steps, NEVER on team elimination
+                if timeout_reached or max_steps_reached:
                     # Truncation: time limit reached
                     # ALL agents (including those who died earlier) get truncated=True
                     for aid in self._agent_ids:
@@ -481,7 +546,7 @@ if SCHOLA_AVAILABLE:
                 traceback.print_exc()
 
                 return (
-                    {aid: np.zeros(74, dtype=np.float32) for aid in self._agent_ids},  # v4.0: 70 obs + 4 objective
+                    {aid: np.zeros(65, dtype=np.float32) for aid in self._agent_ids},  # v5.0: 64 obs + 1 strategy
                     {aid: 0.0 for aid in self._agent_ids},
                     {aid: True for aid in self._agent_ids} | {"__all__": True},
                     {aid: False for aid in self._agent_ids} | {"__all__": True},
@@ -494,10 +559,12 @@ if SCHOLA_AVAILABLE:
                 obs_nested = raw_data[0]
 
             obs_dict = {}
+            info_dict = {}
+
             for flat_id in self._agent_ids:
                 env_idx, agent_idx = self.agent_map[flat_id]
                 agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
-                
+
                 if agent_obs_data is not None:
                     if isinstance(agent_obs_data, dict):
                         obs_val = list(agent_obs_data.values())[0]
@@ -505,9 +572,18 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    obs_dict[flat_id] = np.zeros(74, dtype=np.float32)  # v4.0: 70 obs + 4 objective
+                    obs_dict[flat_id] = np.zeros(65, dtype=np.float32)  # v5.0: 64 obs + 1 strategy
 
-            return obs_dict, {aid: {} for aid in self._agent_ids}
+                # v8.0: Add action masking on reset
+                masks = self._get_action_mask(obs_dict[flat_id])
+                flat_mask = np.concatenate([
+                    masks["position"],
+                    masks["target"],
+                    masks["fire"]
+                ])
+                info_dict[flat_id] = {"action_mask": flat_mask}
+
+            return obs_dict, info_dict
 
         def render(self):
             return self.schola_env.render() if hasattr(self.schola_env, 'render') else None

@@ -25,7 +25,7 @@ URLPolicyNetwork::URLPolicyNetwork()
 // Initialization
 // ========================================
 
-bool URLPolicyNetwork::Initialize(const FRLPolicyConfig& InConfig)
+bool URLPolicyNetwork::Initialize(const FMultiHeadPolicyConfig& InConfig)
 {
 	Config = InConfig;
 	bIsInitialized = true;
@@ -123,13 +123,13 @@ bool URLPolicyNetwork::LoadPolicy(const FString& ModelPath)
 	UE_LOG(LogTemp, Log, TEXT("  Input tensors: %d"), InputDescs.Num());
 	UE_LOG(LogTemp, Log, TEXT("  Output tensors: %d"), OutputDescs.Num());
 
-	// Setup input buffer (78 features: 71 obs + 7 objective embedding)
+	// Setup input buffer (64 features: v5.0 streamlined observation)
 	InputBuffer.SetNum(Config.InputSize);
 
-	// Setup output buffers for dual-head PPO model
-	// Output 0: action_logits (8 atomic actions)
-	// Output 1: state_value (1 value estimate)
-	OutputBuffer.SetNum(Config.OutputSize + 1);  // 8 + 1 = 9 total
+	// Setup output buffers for multi-head PPO model (v5.0)
+	// Output 0: action_logits from all heads (4 heads × 13 logits = 52 total)
+	// Output 1: state_value (1 value estimate from shared critic)
+	OutputBuffer.SetNum(Config.OutputSize + 1);  // 52 + 1 = 53 total (or 13 + 1 if model does head selection)
 
 	bUseONNXModel = true;
 	bIsInitialized = true;
@@ -297,17 +297,17 @@ TArray<float> URLPolicyNetwork::Softmax(const TArray<float>& Logits)
 }
 
 // ========================================
-// Atomic Action Space (v3.0)
+// Multi-Head Inference (v5.0)
 // ========================================
 
-FTacticalAction URLPolicyNetwork::GetAction(const FObservationElement& Observation, UObjective* CurrentObjective)
+FTacticalAction URLPolicyNetwork::GetAction(const FObservationElement& Observation, EStrategyType CurrentStrategy)
 {
-	return GetActionWithMask(Observation, CurrentObjective);
+	return GetActionWithMask(Observation, CurrentStrategy);
 }
 
-FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& Observation, UObjective* CurrentObjective)
+FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& Observation, EStrategyType CurrentStrategy)
 {
-	// v4.0: Implements action masking for dynamic target count
+	// v5.0: Multi-head architecture with strategy-gated head selection
 	if (!bIsInitialized)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Not initialized, returning default action"));
@@ -317,19 +317,33 @@ FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& O
 
 	if (bUseONNXModel && ModelInstance.IsValid())
 	{
-		// Build enhanced input: 70 observation + 4 objective embedding = 74 features
+		// Build input: 64-feature observation (v5.0, no objective embedding)
 		TArray<float> InputFeatures = Observation.ToFeatureVector();
-		TArray<float> ObjectiveEmbed = GetObjectiveEmbedding(CurrentObjective);
-		InputFeatures.Append(ObjectiveEmbed);
+		check(InputFeatures.Num() == 64);  // v5.0 streamlined observation
 
-		// Forward pass (expects 14-dim output: 4 pos + 6 target + 3 fire + 1 value)
+		// Forward pass through multi-head network
+		// Returns either all heads (52 logits: 4×13) or selected head (13 logits)
 		TArray<float> NetworkOutput = ForwardPass(InputFeatures);
+
+		// If network outputs all heads, select the appropriate head based on strategy
+		TArray<float> SelectedHeadOutput;
+		if (NetworkOutput.Num() >= 52)
+		{
+			// Multi-head model: select strategy-specific head
+			SelectedHeadOutput = SelectStrategyHead(NetworkOutput, CurrentStrategy);
+		}
+		else
+		{
+			// Single-head fallback or model does internal head selection
+			SelectedHeadOutput = NetworkOutput;
+		}
 
 		// Convert to macro action with action masking based on visible enemies
 		int32 VisibleEnemies = FMath::Min(Observation.VisibleEnemyCount, 5);  // Max 5 enemies tracked
-		FTacticalAction Action = NetworkOutputToAction(NetworkOutput, VisibleEnemies);
+		FTacticalAction Action = NetworkOutputToAction(SelectedHeadOutput, VisibleEnemies);
 
-		UE_LOG(LogTemp, Display, TEXT("✅ [ONNX MODEL] MacroAction: Pos=%d Target=%d Fire=%d (VisibleEnemies=%d)"),
+		UE_LOG(LogTemp, Display, TEXT("✅ [ONNX v5.0] Strategy=%s MacroAction: Pos=%d Target=%d Fire=%d (VisibleEnemies=%d)"),
+			*UEnum::GetValueAsString(CurrentStrategy),
 			static_cast<int32>(Action.MacroAction.PositionChoice),
 			Action.MacroAction.TargetIndex,
 			static_cast<int32>(Action.MacroAction.FireMode),
@@ -343,17 +357,17 @@ FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& O
 	}
 }
 
-float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, UObjective* CurrentObjective)
+float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation)
 {
+	// v5.0: Shared critic uses 64-feature observation (no objective embedding)
 	if (!bIsInitialized)
 	{
 		return 0.0f;
 	}
 
-	// Build input: 71 observation + 7 objective embedding = 78 features
+	// Build input: 64-feature observation (v5.0)
 	TArray<float> InputFeatures = Observation.ToFeatureVector();
-	TArray<float> ObjectiveEmbed = GetObjectiveEmbedding(CurrentObjective);
-	InputFeatures.Append(ObjectiveEmbed);
+	check(InputFeatures.Num() == 64);
 
 	// Use PPO critic network if loaded
 	if (bUseONNXModel && ModelInstance.IsValid())
@@ -567,37 +581,52 @@ int32 URLPolicyNetwork::SampleFromLogits(const TArray<float>& Logits)
 	return Probs.Num() - 1;
 }
 
-TArray<float> URLPolicyNetwork::GetObjectiveEmbedding(UObjective* CurrentObjective)
+TArray<float> URLPolicyNetwork::SelectStrategyHead(const TArray<float>& AllHeadsOutput, EStrategyType Strategy)
 {
-	// 4-element one-hot encoding for objective type (v4.0 simplified)
-	TArray<float> Embedding;
-	Embedding.Init(0.0f, 4);
+	// v5.0: Select appropriate head output based on strategy
+	// AllHeadsOutput format: [Assault(13) | Defend(13) | Support(13) | Retreat(13)] = 52 logits
+	// Each head outputs: [Position(4) | Target(6) | Fire(3)] = 13 logits
 
-	if (CurrentObjective)
+	if (AllHeadsOutput.Num() < 52)
 	{
-		// Get objective type and encode as one-hot
-		EObjectiveType ObjType = CurrentObjective->Type;
-
-		switch (ObjType)
-		{
-			case EObjectiveType::Assault:
-				Embedding[0] = 1.0f;
-				break;
-			case EObjectiveType::Defend:
-				Embedding[1] = 1.0f;
-				break;
-			case EObjectiveType::Support:
-				Embedding[2] = 1.0f;
-				break;
-			case EObjectiveType::Retreat:
-				Embedding[3] = 1.0f;
-				break;
-			default:
-				// None or unknown - leave as zeros
-				break;
-		}
+		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork::SelectStrategyHead: Expected 52 logits, got %d"),
+			AllHeadsOutput.Num());
+		return AllHeadsOutput;  // Return as-is if size mismatch
 	}
-	// If null objective, return all zeros (no objective)
 
-	return Embedding;
+	const int32 HeadSize = 13;  // 4 pos + 6 target + 3 fire
+	int32 HeadIndex = 0;
+
+	// Map strategy to head index
+	switch (Strategy)
+	{
+		case EStrategyType::Assault:
+			HeadIndex = 0;
+			break;
+		case EStrategyType::Defend:
+			HeadIndex = 1;
+			break;
+		case EStrategyType::Support:
+			HeadIndex = 2;
+			break;
+		case EStrategyType::Retreat:
+			HeadIndex = 3;
+			break;
+		default:
+			UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork::SelectStrategyHead: Unknown strategy, defaulting to Assault"));
+			HeadIndex = 0;
+			break;
+	}
+
+	// Extract head-specific logits
+	TArray<float> SelectedHead;
+	SelectedHead.Reserve(HeadSize);
+	int32 StartIdx = HeadIndex * HeadSize;
+
+	for (int32 i = 0; i < HeadSize; ++i)
+	{
+		SelectedHead.Add(AllHeadsOutput[StartIdx + i]);
+	}
+
+	return SelectedHead;
 }

@@ -30,7 +30,7 @@ void UFollowerAgentComponent::BeginPlay()
 	if (!TacticalPolicy && bUseRLPolicy)
 	{
 		TacticalPolicy = NewObject<URLPolicyNetwork>(this);
-		FRLPolicyConfig Config;
+		FMultiHeadPolicyConfig Config;
 		TacticalPolicy->Initialize(Config);
 
 		UE_LOG(LogTemp, Log, TEXT("FollowerAgent '%s': Created RL policy"), *GetOwner()->GetName());
@@ -425,12 +425,18 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 	AActor* Owner = GetOwner();
 	if (!Owner) return Observation;
 
-	// Basic agent state
+	// v5.0: Streamlined Agent State (7 features)
 	Observation.Position = Owner->GetActorLocation();
 	Observation.Velocity = Owner->GetVelocity();
-	Observation.Rotation = Owner->GetActorRotation();
 
-	// Get perception component
+	// v5.0: Health (normalized [0, 1])
+	UHealthComponent* HealthComp = Owner->FindComponentByClass<UHealthComponent>();
+	if (HealthComp)
+	{
+		Observation.AgentHealth = HealthComp->GetHealthPercentage();  // Already [0, 1]
+	}
+
+	// Get perception component for enemy and raycast info
 	UAgentPerceptionComponent* PerceptionComp = Owner->FindComponentByClass<UAgentPerceptionComponent>();
 	if (PerceptionComp)
 	{
@@ -449,11 +455,12 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 
 		const float MaxRayDistance = 5000.0f;
 		const float AngleStep = 360.0f / 16;
+		const FRotator OwnerRotation = Owner->GetActorRotation();  // Use local variable for raycast calculation
 
 		for (int32 i = 0; i < 16; ++i)
 		{
 			const float Angle = i * AngleStep;
-			const FRotator RayRotation = Observation.Rotation + FRotator(0, Angle, 0);
+			const FRotator RayRotation = OwnerRotation + FRotator(0, Angle, 0);
 			const FVector RayDirection = RayRotation.Vector();
 			const FVector EndLocation = OwnerLocation + (RayDirection * MaxRayDistance);
 
@@ -470,22 +477,6 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 	{
 		// Initialize empty if no perception component
 		Observation.InitializeRaycasts(16);
-	}
-
-	// Gather combat state from components
-	UHealthComponent* HealthComp = Owner->FindComponentByClass<UHealthComponent>();
-	if (HealthComp)
-	{
-		Observation.AgentHealth = HealthComp->GetHealthPercentage() * 100.0f;
-		Observation.Shield = HealthComp->GetArmor(); // Map armor to shield
-	}
-
-	UWeaponComponent* WeaponComp = Owner->FindComponentByClass<UWeaponComponent>();
-	if (WeaponComp)
-	{
-		Observation.WeaponCooldown = WeaponComp->GetRemainingCooldown();
-		Observation.Ammunition = WeaponComp->HasAmmo() ?
-			(float)WeaponComp->GetCurrentAmmo() / FMath::Max(WeaponComp->GetMaxAmmo(), 1) * 100.0f : 0.0f;
 	}
 
 	// Get cover information from perception (cached to avoid expensive per-tick queries)
@@ -510,10 +501,11 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 			}
 
 			// Use cached cover data
+			const float MaxCoverDistance = 5000.0f;  // v5.0: normalization constant
 			if (bHasCachedCover)
 			{
 				Observation.bHasCover = true;
-				Observation.NearestCoverDistance = CachedCoverDistance;
+				Observation.NearestCoverDistance = FMath::Clamp(CachedCoverDistance / MaxCoverDistance, 0.0f, 1.0f);
 
 				// Calculate direction to cover (normalized 2D)
 				FVector ToCover = CachedCoverLocation - Owner->GetActorLocation();
@@ -524,7 +516,7 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 			else
 			{
 				Observation.bHasCover = false;
-				Observation.NearestCoverDistance = 9999.0f;
+				Observation.NearestCoverDistance = 1.0f;  // v5.0: normalized max distance
 				Observation.CoverDirection = FVector2D::ZeroVector;
 			}
 		}
@@ -532,8 +524,68 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 		{
 			// No enemies - no cover needed
 			Observation.bHasCover = false;
-			Observation.NearestCoverDistance = 9999.0f;
+			Observation.NearestCoverDistance = 1.0f;  // v5.0: normalized max distance
 			Observation.CoverDirection = FVector2D::ZeroVector;
+		}
+	}
+
+	// ========================================
+	// v5.0: SUPPORT CONTEXT (4 features)
+	// Find ally most in need of help for Support strategy
+	// ========================================
+	if (TeamLeader)
+	{
+		const float MaxAllyDistance = 5000.0f;  // Normalization constant
+		const float AllyNeedsHelpThreshold = 0.5f;  // Health below 50% triggers help
+
+		AActor* AllyInNeed = nullptr;
+		float WorstAllyHealth = 1.0f;
+		FVector AllyLocation = FVector::ZeroVector;
+
+		// Find ally with lowest health
+		for (AActor* Ally : TeamLeader->GetAliveFollowers())
+		{
+			if (!Ally || Ally == Owner) continue;
+
+			UHealthComponent* AllyHealthComp = Ally->FindComponentByClass<UHealthComponent>();
+			if (AllyHealthComp && AllyHealthComp->IsAlive())
+			{
+				float AllyHealthPct = AllyHealthComp->GetHealthPercentage();
+				if (AllyHealthPct < WorstAllyHealth)
+				{
+					WorstAllyHealth = AllyHealthPct;
+					AllyInNeed = Ally;
+					AllyLocation = Ally->GetActorLocation();
+				}
+			}
+		}
+
+		if (AllyInNeed)
+		{
+			Observation.bAllyNeedsHelp = (WorstAllyHealth < AllyNeedsHelpThreshold);
+			Observation.AllyHealth = WorstAllyHealth;
+
+			// Calculate distance and direction to ally
+			FVector ToAlly = AllyLocation - Owner->GetActorLocation();
+			float Distance = ToAlly.Size();
+			Observation.AllyDistance = FMath::Clamp(Distance / MaxAllyDistance, 0.0f, 1.0f);
+
+			// Calculate angle to ally (normalized [-1, 1] based on forward direction)
+			ToAlly.Normalize();
+			FVector Forward = Owner->GetActorForwardVector();
+			float Angle = FMath::Atan2(
+				FVector::CrossProduct(Forward, ToAlly).Z,
+				FVector::DotProduct(Forward, ToAlly)
+			);
+			Observation.AllyDirectionAngle = FMath::Clamp(Angle / PI, -1.0f, 1.0f);
+		}
+		else
+		{
+			// No ally in need
+			Observation.bAllyNeedsHelp = false;
+			Observation.AllyHealth = 1.0f;
+			Observation.AllyDistance = 0.0f;
+			Observation.AllyDirectionAngle = 0.0f;
 		}
 	}
 
@@ -833,27 +885,38 @@ void UFollowerAgentComponent::DrawDebugInfo()
 }
 
 //------------------------------------------------------------------------------
-// COMBAT EVENT HANDLERS (RL REWARD INTEGRATION)
+// COMBAT EVENT HANDLERS (RL REWARD INTEGRATION v5.0)
+//------------------------------------------------------------------------------
+// Architecture: HealthComponent → FollowerAgentComponent → RewardCalculator
+//
+// HealthComponent broadcasts combat events (damage, kills, death)
+// FollowerAgentComponent subscribes and forwards to RewardCalculator
+// RewardCalculator calculates strategy-specific rewards based on:
+//   - Assault: High kill rewards (+15), low death penalty (-8)
+//   - Defend: Position holding rewards, higher death penalty (-12)
+//   - Support: Ally protection rewards, severe ally death penalty (-20)
+//   - Retreat: Survival rewards, highest death penalty if failed (-15)
+//
+// The RewardCalculator is REQUIRED in v5.0 - fallback code removed.
 //------------------------------------------------------------------------------
 
 void UFollowerAgentComponent::OnDamageTakenEvent(const FDamageEventData& DamageEvent, float CurrentHealth)
 {
-	// Notify RewardCalculator (Sprint 4)
+	// Notify RewardCalculator (v5.0 strategy-specific rewards)
 	if (RewardCalculator)
 	{
 		RewardCalculator->OnTakeDamage(DamageEvent.DamageAmount);
 	}
 	else
 	{
-		// Fallback to direct reward
-		ProvideReward(FTacticalRewards::TAKE_DAMAGE, false);
+		UE_LOG(LogTemp, Error, TEXT("FollowerAgent '%s': RewardCalculator missing! Cannot calculate damage reward."),
+			*GetOwner()->GetName());
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("FollowerAgent '%s': Took %.1f damage from %s (Reward: %.1f)"),
+	UE_LOG(LogTemp, Verbose, TEXT("FollowerAgent '%s': Took %.1f damage from %s"),
 		*GetOwner()->GetName(),
 		DamageEvent.DamageAmount,
-		DamageEvent.Instigator ? *DamageEvent.Instigator->GetName() : TEXT("Unknown"),
-		FTacticalRewards::TAKE_DAMAGE);
+		DamageEvent.Instigator ? *DamageEvent.Instigator->GetName() : TEXT("Unknown"));
 
 	// Signal event to team leader if damage is significant
 	if (TeamLeader && DamageEvent.DamageAmount >= 10.0f)
@@ -864,41 +927,39 @@ void UFollowerAgentComponent::OnDamageTakenEvent(const FDamageEventData& DamageE
 
 void UFollowerAgentComponent::OnDamageDealtEvent(AActor* Victim, float DamageAmount)
 {
-	// Notify RewardCalculator (Sprint 4)
+	// Notify RewardCalculator (v5.0 strategy-specific rewards)
 	if (RewardCalculator)
 	{
 		RewardCalculator->OnDealDamage(DamageAmount, Victim);
 	}
 	else
 	{
-		// Fallback to direct reward
-		ProvideReward(FTacticalRewards::DAMAGE_ENEMY, false);
+		UE_LOG(LogTemp, Error, TEXT("FollowerAgent '%s': RewardCalculator missing! Cannot calculate damage reward."),
+			*GetOwner()->GetName());
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("FollowerAgent '%s': Dealt %.1f damage to %s (Reward: %.1f)"),
+	UE_LOG(LogTemp, Verbose, TEXT("FollowerAgent '%s': Dealt %.1f damage to %s"),
 		*GetOwner()->GetName(),
 		DamageAmount,
-		Victim ? *Victim->GetName() : TEXT("Unknown"),
-		FTacticalRewards::DAMAGE_ENEMY);
+		Victim ? *Victim->GetName() : TEXT("Unknown"));
 }
 
 void UFollowerAgentComponent::OnKillEvent(AActor* Victim, float TotalDamage)
 {
-	// Notify RewardCalculator (Sprint 4)
+	// Notify RewardCalculator (v5.0 strategy-specific rewards)
 	if (RewardCalculator)
 	{
 		RewardCalculator->OnKillEnemy(Victim);
 	}
 	else
 	{
-		// Fallback to direct reward
-		ProvideReward(FTacticalRewards::KILL_ENEMY, false);
+		UE_LOG(LogTemp, Error, TEXT("FollowerAgent '%s': RewardCalculator missing! Cannot calculate kill reward."),
+			*GetOwner()->GetName());
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("FollowerAgent '%s': KILL confirmed on %s (Reward: %.1f)"),
+	UE_LOG(LogTemp, Log, TEXT("FollowerAgent '%s': KILL confirmed on %s"),
 		*GetOwner()->GetName(),
-		Victim ? *Victim->GetName() : TEXT("Unknown"),
-		FTacticalRewards::KILL_ENEMY);
+		Victim ? *Victim->GetName() : TEXT("Unknown"));
 
 	// Signal kill to team leader
 	if (TeamLeader)
@@ -909,21 +970,20 @@ void UFollowerAgentComponent::OnKillEvent(AActor* Victim, float TotalDamage)
 
 void UFollowerAgentComponent::OnDeathEvent(const FDeathEventData& DeathEvent)
 {
-	// Notify RewardCalculator (Sprint 4)
+	// Notify RewardCalculator (v5.0 strategy-specific rewards)
 	if (RewardCalculator)
 	{
 		RewardCalculator->OnDeath();
 	}
 	else
 	{
-		// Fallback to direct reward
-		ProvideReward(FTacticalRewards::DIE, true);
+		UE_LOG(LogTemp, Error, TEXT("FollowerAgent '%s': RewardCalculator missing! Cannot calculate death penalty."),
+			*GetOwner()->GetName());
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("FollowerAgent '%s': DIED (Killed by %s, Reward: %.1f)"),
+	UE_LOG(LogTemp, Warning, TEXT("FollowerAgent '%s': DIED (Killed by %s)"),
 		*GetOwner()->GetName(),
-		DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("Unknown"),
-		FTacticalRewards::DIE);
+		DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("Unknown"));
 
 	// Mark as dead
 	MarkAsDead();
@@ -957,6 +1017,34 @@ void UFollowerAgentComponent::SetCurrentObjective(UObjective* Objective)
 
 	// Broadcast delegate for StateTree event binding
 	OnObjectiveReceived.Broadcast(Objective);
+}
+
+//------------------------------------------------------------------------------
+// INDIVIDUAL STRATEGY (v5.0)
+//------------------------------------------------------------------------------
+
+void UFollowerAgentComponent::SetCurrentStrategy(EStrategyType Strategy)
+{
+	EStrategyType PreviousStrategy = CurrentStrategy;
+	CurrentStrategy = Strategy;
+
+	// Update the last tactical action to reflect the new strategy
+	LastTacticalAction.ActiveStrategy = Strategy;
+
+	// Notify reward calculator of strategy change (for strategy-specific rewards)
+	if (RewardCalculator)
+	{
+		RewardCalculator->SetCurrentStrategy(Strategy);
+	}
+
+	// Log strategy change if different
+	if (PreviousStrategy != Strategy)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("🎯 [STRATEGY] '%s': Strategy changed %s → %s"),
+			*GetOwner()->GetName(),
+			*UEnum::GetValueAsString(PreviousStrategy),
+			*UEnum::GetValueAsString(Strategy));
+	}
 }
 
 //------------------------------------------------------------------------------

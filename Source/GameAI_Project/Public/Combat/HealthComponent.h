@@ -113,10 +113,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnKillConfirmed, AActor*, Victim, 
  * - Thread-safe damage queuing
  * - Network replication ready (stub)
  *
- * Integration:
- * - Implements ICombatStatsInterface
- * - Broadcasts events to FollowerAgentComponent for RL rewards
- * - Supports WeaponComponent for damage dealing
+ * v5.0 RL Reward Integration Architecture:
+ * 1. HealthComponent broadcasts combat events (OnDamageTaken, OnDamageDealt, OnDeath, OnKillConfirmed)
+ * 2. FollowerAgentComponent subscribes to these events
+ * 3. FollowerAgentComponent forwards events to RewardCalculator
+ * 4. RewardCalculator applies strategy-specific reward logic (Assault/Defend/Support/Retreat)
+ * 5. FollowerAgentComponent aggregates rewards each tick and sends to RL training
+ *
+ * IMPORTANT: HealthComponent should NEVER directly call RewardCalculator to avoid double-counting!
+ * The event broadcast pattern ensures proper separation of concerns.
  */
 UCLASS(ClassGroup=(Combat), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UHealthComponent : public UActorComponent

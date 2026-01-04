@@ -1,4 +1,4 @@
-// TacticalObserver.cpp - Schola observer for 70-feature tactical observation (v4.0)
+// TacticalObserver.cpp - Schola observer for 64-feature tactical observation (v5.0)
 
 #include "Schola/TacticalObserver.h"
 #include "Team/FollowerAgentComponent.h"
@@ -8,18 +8,24 @@
 
 UTacticalObserver::UTacticalObserver()
 {
-	// Build observation space (74 continuous features = 70 tactical + 4 objective embedding, v4.0)
+	// Build observation space (65 continuous features, v5.0: 64 + strategy index)
 	TArray<FBoxSpaceDimension> Dimensions;
-	Dimensions.Reserve(74);
+	Dimensions.Reserve(65);
 
 	// All features normalized to [-1, 1] or [0, 1]
-	for (int32 i = 0; i < 74; ++i)
+	for (int32 i = 0; i < 64; ++i)
 	{
 		FBoxSpaceDimension Dim;
 		Dim.Low = -1.0f;
 		Dim.High = 1.0f;
 		Dimensions.Add(Dim);
 	}
+
+	// Strategy index (65th feature): 0=Assault, 1=Defend, 2=Support, 3=Retreat
+	FBoxSpaceDimension StrategyDim;
+	StrategyDim.Low = 0.0f;
+	StrategyDim.High = 3.0f;
+	Dimensions.Add(StrategyDim);
 
 	CachedObservationSpace = FBoxSpace(Dimensions);
 }
@@ -62,7 +68,7 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 	static int32 CallCount = 0;
 	CallCount++;
 
-	OutObservations.Values.SetNum(74);
+	OutObservations.Values.SetNum(65);  // v5.0: 64 core features + 1 strategy index
 
 	// CRITICAL: Add safety checks to prevent crash during initialization
 	if (!FollowerAgent || !FollowerAgent->IsValidLowLevel() || !FollowerAgent->GetOwner())
@@ -72,7 +78,7 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			UE_LOG(LogTemp, Error, TEXT("[TacticalObserver] CollectObservations called but FollowerAgent is NULL or invalid! (Call #%d)"), CallCount);
 		}
 		// Return zeros if no follower
-		for (int32 i = 0; i < 74; ++i)
+		for (int32 i = 0; i < 65; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
@@ -85,40 +91,30 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			CallCount, *FollowerAgent->GetOwner()->GetName());
 	}
 
-	// Get observation from follower and convert to feature vector (70 features, v4.0)
+	// Get observation from follower and convert to feature vector (64 features, v5.0)
+	// Includes: Agent State(7) + Combat(1) + Perception(32) + Enemies(16) + Tactical(4) + Support Context(4)
 	const FObservationElement& Obs = FollowerAgent->GetLocalObservation();
 	TArray<float> Features = Obs.ToFeatureVector();
 
-	// Copy all 70 tactical features
-	check(Features.Num() == 70);
-	for (int32 i = 0; i < 70; ++i)
+	// Copy all 64 core features
+	check(Features.Num() == 64);
+	for (int32 i = 0; i < 64; ++i)
 	{
 		OutObservations.Values[i] = Features[i];
 	}
 
-	// Add 4-dimensional objective embedding (one-hot encoding, v4.0 simplified)
-	// Assault=0, Defend=1, Support=2, Retreat=3
-	// None = all zeros
-	for (int32 i = 0; i < 4; ++i)
-	{
-		OutObservations.Values[70 + i] = 0.0f;
-	}
-
-	// Get current objective from follower and encode as one-hot
+	// v5.0: Append strategy index as 65th feature for Python multi-head network
+	// Strategy derived from current objective assigned by MCTS
 	UObjective* CurrentObjective = FollowerAgent->GetCurrentObjective();
+	float StrategyIndex = 0.0f;  // Default: Assault
+
 	if (CurrentObjective && CurrentObjective->IsActive())
 	{
-		// EObjectiveType enum (v4.0): None=0, Assault=1, Defend=2, Support=3, Retreat=4
-		int32 ObjectiveIndex = static_cast<int32>(CurrentObjective->Type);
-
-		// Map to 0-3 range (skip None=0 by subtracting 1)
-		if (ObjectiveIndex >= 1 && ObjectiveIndex <= 4)
-		{
-			OutObservations.Values[70 + (ObjectiveIndex - 1)] = 1.0f;
-		}
-		// If None (0) or invalid: keep all zeros (already initialized)
+		// Map EStrategyType to index: Assault=0, Defend=1, Support=2, Retreat=3
+		StrategyIndex = static_cast<float>(CurrentObjective->Type);
 	}
-	// If no objective or inactive: keep all zeros (already initialized)
+
+	OutObservations.Values[64] = StrategyIndex;
 }
 
 UFollowerAgentComponent* UTacticalObserver::FindFollowerAgent() const

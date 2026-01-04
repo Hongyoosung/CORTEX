@@ -104,6 +104,22 @@ public:
 	bool HasActiveObjective() const;
 
 	//--------------------------------------------------------------------------
+	// INDIVIDUAL STRATEGY (v5.0)
+	//--------------------------------------------------------------------------
+
+	/** Get current strategy assigned by leader (determines which policy head to use) */
+	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
+	EStrategyType GetCurrentStrategy() const { return CurrentStrategy; }
+
+	/** Set current strategy (called by TeamLeader when assigning objectives) */
+	UFUNCTION(BlueprintCallable, Category = "Follower|Strategy")
+	void SetCurrentStrategy(EStrategyType Strategy);
+
+	/** Get ally context for support strategy (v5.0) */
+	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
+	FAllyContext GetAllyContext() const { return CachedAllyContext; }
+
+	//--------------------------------------------------------------------------
 	// STATE MANAGEMENT
 	//--------------------------------------------------------------------------
 
@@ -303,6 +319,14 @@ public:
 	/** Current objective from leader (v3.0) */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
 	TObjectPtr<UObjective> CurrentObjective = nullptr;
+
+	/** Current strategy from leader (v5.0) - determines which policy head to use */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
+	EStrategyType CurrentStrategy = EStrategyType::Assault;
+
+	/** Cached ally context for support strategy observation (v5.0) */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
+	FAllyContext CachedAllyContext;
 
 	/** Local observation (71 features) */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
