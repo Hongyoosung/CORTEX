@@ -56,11 +56,11 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::EnterState(FStateTreeExecutionCont
 	SharedContext.TimeInTacticalAction = 0.0f;
 	SharedContext.ActionProgress = 0.0f;
 
-	// Reset action throttle timer and previous action (to trigger initial execution)
-	InstanceData.TimeSinceLastAction = 0.0f;
+	// Reset fire update timer and previous action (to trigger initial execution)
+	InstanceData.TimeSinceLastFire = 0.0f;
 	InstanceData.PreviousMacroAction = FMacroAction();  // Default-initialized (will differ from any real action)
 
-	// v4.0: Validate EQS queries are assigned (prevent runtime failures)
+	// v5.0: Validate EQS queries are assigned (prevent runtime failures)
 	if (!InstanceData.ForwardCoverQuery || !InstanceData.RetreatQuery || !InstanceData.AdvanceQuery)
 	{
 		UE_LOG(LogTemp, Error, TEXT("❌ STTask_ExecuteObjective: EQS queries not assigned!"));
@@ -96,45 +96,41 @@ EStateTreeRunStatus FSTTask_ExecuteObjective::Tick(FStateTreeExecutionContext& C
 
 	SharedContext.TimeInTacticalAction += DeltaTime;
 
-	// v4.0: Action throttling - decouple execution rate from FPS
-	// Only execute actions at fixed rate (default 20 Hz) for continuous updates (aiming, firing)
+	// v5.0: Fire update throttling - decouple firing rate from FPS
+	// Movement/aiming execute once when action changes (macro actions)
+	// Firing executes continuously at fixed rate (default 20 Hz)
 	InstanceData = Context.GetInstanceData(*this);
-	InstanceData.TimeSinceLastAction += DeltaTime;
+	InstanceData.TimeSinceLastFire += DeltaTime;
 
-	bool bShouldExecuteAction = (InstanceData.TimeSinceLastAction >= InstanceData.ActionApplicationInterval);
+	bool bShouldUpdateFire = (InstanceData.TimeSinceLastFire >= InstanceData.FireUpdateInterval);
 
-	if (bShouldExecuteAction)
+	// v5.0: Execute macro action components
+	const FTacticalAction& Action = SharedContext.CurrentAtomicAction;
+	const FMacroAction& CurrentMacro = Action.MacroAction;
+	const FMacroAction& PreviousMacro = InstanceData.PreviousMacroAction;
+
+	// CRITICAL: Detect action changes for one-shot execution
+	// Movement/Aiming only execute when action changes (macro behavior)
+	// Firing updates continuously at FireUpdateInterval
+	bool bActionChanged = (
+		CurrentMacro.PositionChoice != PreviousMacro.PositionChoice ||
+		CurrentMacro.TargetIndex != PreviousMacro.TargetIndex ||
+		CurrentMacro.FireMode != PreviousMacro.FireMode
+	);
+
+	// One-shot execution (only when action changes)
+	if (bActionChanged)
 	{
-		// Reset timer for next interval
-		InstanceData.TimeSinceLastAction = 0.0f;
+		ExecuteMovement(Context, Action, DeltaTime);  // EQS + NavMesh pathfinding
+		ExecuteAiming(Context, Action);                // SetFocus (engine auto-aim)
+		InstanceData.PreviousMacroAction = CurrentMacro;
+	}
 
-		// v4.0: Execute macro action components
-		const FTacticalAction& Action = SharedContext.CurrentAtomicAction;
-		const FMacroAction& CurrentMacro = Action.MacroAction;
-		const FMacroAction& PreviousMacro = InstanceData.PreviousMacroAction;
-
-		// CRITICAL: Detect action changes to avoid redundant EQS queries
-		// Movement/Target only change when action changes (one-shot setup)
-		// Aiming/Firing update continuously (20 Hz smooth tracking)
-		bool bActionChanged = (
-			CurrentMacro.PositionChoice != PreviousMacro.PositionChoice ||
-			CurrentMacro.TargetIndex != PreviousMacro.TargetIndex
-		);
-
-		// One-shot setup (only when action changes)
-		if (bActionChanged)
-		{
-			ExecuteMovement(Context, Action, DeltaTime);  // EQS + NavMesh
-			ExecuteAiming(Context, Action, DeltaTime);     // SetFocus on new target
-			InstanceData.PreviousMacroAction = CurrentMacro;
-		}
-		else
-		{
-			// Continuous updates (every 0.05s while action persists)
-			// Aiming: Track moving target (SetFocus handles this automatically)
-			// Firing: Pull trigger if conditions met
-			ExecuteFire(Context, Action);
-		}
+	// Continuous firing updates (at fixed rate)
+	if (bShouldUpdateFire)
+	{
+		InstanceData.TimeSinceLastFire = 0.0f;
+		ExecuteFire(Context, Action);
 	}
 
 	// Calculate and provide reward (every frame, not throttled)
@@ -161,7 +157,7 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 	APawn* Pawn = InstanceData.ControlledPawn;
 	if (!Pawn)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] No ControlledPawn available"));
+		UE_LOG(LogTemp, Error, TEXT("[MOVE v5.0] No ControlledPawn available"));
 		return;
 	}
 
@@ -169,7 +165,7 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 	// Skip movement until AIController is available - this is normal during initialization
 	if (!InstanceData.AIController)
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("[MOVE v4.0] '%s': AIController not yet assigned, skipping movement this tick"), *Pawn->GetName());
+		UE_LOG(LogTemp, Verbose, TEXT("[MOVE v5.0] '%s': AIController not yet assigned, skipping movement this tick"), *Pawn->GetName());
 		return;
 	}
 
@@ -181,7 +177,7 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 		return;
 	}
 
-	// v4.0: Use macro action for high-level tactical movement
+	// v5.0: Use macro action for high-level tactical movement
 	const FMacroAction& Macro = Action.MacroAction;
 
 	TArray<FVector> CandidatePositions = QueryEQSPositions(Context, Macro.PositionChoice);
@@ -226,7 +222,7 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 			EPathFollowingStatus::Type PathStatus = PathComp->GetStatus();
 			bool bHasValidPath = PathComp->HasValidPath();
 
-			// v7.4: Check if already moving to same destination (within tolerance)
+			// v5.0: Check if already moving to same destination (within tolerance)
 			// If so, DON'T interrupt - let current movement complete
 			const float SameDestinationTolerance = 200.0f;  // 2 meters tolerance
 			bool bAlreadyMovingToSameDestination = false;
@@ -253,10 +249,10 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 				bHasValidPath ? 1 : 0,
 				(int32)PathComp->GetCurrentRequestId().GetID());
 
-			// v7.4: Only stop if moving to DIFFERENT destination
+			// v5.0: Only stop if moving to DIFFERENT destination
 			if (PathStatus == EPathFollowingStatus::Moving && !bAlreadyMovingToSameDestination)
 			{
-				UE_LOG(LogTemp, Log, TEXT("[PATHFOLLOW v7.4] '%s': New destination requested, stopping current movement"),
+				UE_LOG(LogTemp, Log, TEXT("[PATHFOLLOW v5.0] '%s': New destination requested, stopping current movement"),
 					*Pawn->GetName());
 				InstanceData.AIController->StopMovement();
 			}
@@ -287,10 +283,10 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 
 		FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
 
-		// v7.4: Only log failures at Error level, success at Verbose
+		// v5.0: Only log failures at Error level, success at Verbose
 		if (MoveResult.Code == EPathFollowingRequestResult::Failed)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[MOVE v7.4] '%s': MoveTo FAILED! RequestID=%s"),
+			UE_LOG(LogTemp, Error, TEXT("[MOVE v5.0] '%s': MoveTo FAILED! RequestID=%s"),
 				*Pawn->GetName(), *MoveResult.MoveId.ToString());
 
 			// Log details only on failure
@@ -326,13 +322,13 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 					SharedContext.MovementDestination = ObjectiveLocation;
 					SharedContext.bIsMoving = true;
 
-					UE_LOG(LogTemp, Log, TEXT("[MOVE v4.0] ✅ '%s': EQS failed but using direct pathfinding to objective (fallback)"),
+					UE_LOG(LogTemp, Log, TEXT("[MOVE v5.0] ✅ '%s': EQS failed but using direct pathfinding to objective (fallback)"),
 						*Pawn->GetName());
 					return; // Fallback succeeded
 				}
 				else
 				{
-					UE_LOG(LogTemp, Error, TEXT("[MOVE v4.0] ❌ '%s': EQS failed AND direct pathfinding failed - truly stuck!"),
+					UE_LOG(LogTemp, Error, TEXT("[MOVE v5.0] ❌ '%s': EQS failed AND direct pathfinding failed - truly stuck!"),
 						*Pawn->GetName());
 				}
 			}
@@ -344,13 +340,13 @@ void FSTTask_ExecuteObjective::ExecuteMovement(FStateTreeExecutionContext& Conte
 
 		if (Macro.PositionChoice != ETacticalPosition::Hold)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[MOVE v4.0] ⚠️ '%s': EQS query failed for %s - holding position"),
+			UE_LOG(LogTemp, Warning, TEXT("[MOVE v5.0] ⚠️ '%s': EQS query failed for %s - holding position"),
 				*Pawn->GetName(), *UEnum::GetValueAsString(Macro.PositionChoice));
 		}
 	}
 }
 
-void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const
+void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
@@ -361,74 +357,40 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 		return;
 	}
 
-	// v4.0: Ensure CharacterMovementComponent rotates pawn to match controller rotation
+	// v5.0: Configure CharacterMovementComponent to use controller rotation (engine auto-aim)
+	// This allows SetFocus to control pawn rotation automatically
 	UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
 	if (MoveComp)
 	{
-		MoveComp->bOrientRotationToMovement = false;  // Don't override aim with movement direction
-		MoveComp->bUseControllerDesiredRotation = true;  // FIX: Rotate pawn to match AIController rotation
-		MoveComp->RotationRate = FRotator(0.0f, InstanceData.RotationSpeed, 0.0f);  // Use configured rotation speed
+		MoveComp->bOrientRotationToMovement = false;           // Don't override aim with movement direction
+		MoveComp->bUseControllerDesiredRotation = true;        // Rotate pawn to match AIController rotation
+		// RotationRate uses CharacterMovementComponent default - engine handles interpolation
 	}
 
-	// v4.0: Use macro action for engine-driven aiming
+	// v5.0: Use macro action for engine-driven aiming (SetFocus only)
 	const FMacroAction& Macro = Action.MacroAction;
 
-	// FIX (Issue #3): If no enemies visible, face objective direction instead of Y+ default
-	// This prevents agents from firing at walls when episode starts
-	if (SharedContext.VisibleEnemies.Num() == 0)
+	if (!InstanceData.AIController)
 	{
-		// Face toward objective if one is assigned
-		if (InstanceData.AIController && SharedContext.CurrentObjective && !SharedContext.CurrentObjective->TargetLocation.IsNearlyZero())
-		{
-			FVector ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
-			FVector PawnLocation = Pawn->GetActorLocation();
-			FVector DirectionToObjective = (ObjectiveLocation - PawnLocation).GetSafeNormal();
-			FRotator DesiredRotation = DirectionToObjective.Rotation();
-
-			// Set controller rotation to face objective
-			InstanceData.AIController->SetControlRotation(DesiredRotation);
-
-			UE_LOG(LogTemp, Verbose, TEXT("[AIM v4.1] '%s': No enemies visible, facing objective at (%.1f, %.1f)"),
-				*Pawn->GetName(), ObjectiveLocation.X, ObjectiveLocation.Y);
-		}
-		return;  // No enemies to aim at
+		return; // AIController required for SetFocus
 	}
 
+	// Handle target selection based on macro action
 	if (Macro.TargetIndex >= 0 && SharedContext.VisibleEnemies.Num() > 0)
 	{
-		// FIX: Clamp target index to valid range (prevents out-of-bounds during training)
+		// Clamp target index to valid range (prevents out-of-bounds during training)
 		int32 ClampedIndex = FMath::Clamp(Macro.TargetIndex, 0, SharedContext.VisibleEnemies.Num() - 1);
-
 		AActor* TargetEnemy = SharedContext.VisibleEnemies[ClampedIndex];
 
 		// Validate enemy is alive and valid
-		if (TargetEnemy && TargetEnemy->IsValidLowLevel() && InstanceData.AIController)
+		if (TargetEnemy && TargetEnemy->IsValidLowLevel())
 		{
-			// FIX v4.1: Manually set controller rotation instead of relying on SetFocus
-			FVector EnemyLocation = TargetEnemy->GetActorLocation();
-			FVector PawnLocation = Pawn->GetActorLocation();
-			FVector AimDirection = (EnemyLocation - PawnLocation).GetSafeNormal();
-			FRotator DesiredRotation = AimDirection.Rotation();
-
-			// Set controller rotation directly (immediate, no delay)
-			InstanceData.AIController->SetControlRotation(DesiredRotation);
-
-			// Also set focus for engine systems that use it
+			// v5.0: Use SetFocus for engine auto-aim (macro action)
 			InstanceData.AIController->SetFocus(TargetEnemy);
 			SharedContext.PrimaryTarget = TargetEnemy;
 
-			// DIAGNOSTIC: Verify rotation is set correctly (reduced to Verbose)
-			FVector ActualControlDir = InstanceData.AIController->GetControlRotation().Vector();
-			float DotProduct = FVector::DotProduct(AimDirection, ActualControlDir);
-
-			UE_LOG(LogTemp, Verbose, TEXT("[AIM v4.1] '%s' → '%s': Rotation set (match: %.2f)"),
-				*Pawn->GetName(), *TargetEnemy->GetName(), DotProduct);
-
-			if (DotProduct < 0.95f)  // Log warning if aim is off by more than ~18 degrees
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[AIM WARNING] '%s': Control rotation mismatch (%.2f) - target '%s'"),
-					*Pawn->GetName(), DotProduct, *TargetEnemy->GetName());
-			}
+			UE_LOG(LogTemp, Verbose, TEXT("[AIM v5.0] '%s' → '%s': SetFocus (engine auto-aim)"),
+				*Pawn->GetName(), *TargetEnemy->GetName());
 
 			if (ClampedIndex != Macro.TargetIndex)
 			{
@@ -439,20 +401,20 @@ void FSTTask_ExecuteObjective::ExecuteAiming(FStateTreeExecutionContext& Context
 		else
 		{
 			// Enemy dead/invalid - keep previous focus (don't clear immediately)
-			UE_LOG(LogTemp, Verbose, TEXT("[AIM] '%s': Target index %d invalid, keeping previous focus"),
+			UE_LOG(LogTemp, Verbose, TEXT("[AIM v5.0] '%s': Target index %d invalid, keeping previous focus"),
 				*Pawn->GetName(), ClampedIndex);
 		}
 	}
 	else if (Macro.TargetIndex < 0)
 	{
 		// RL policy explicitly chose "no target" - clear focus
-		if (InstanceData.AIController)
-		{
-			InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
-		}
+		InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
 		SharedContext.PrimaryTarget = nullptr;
+
+		UE_LOG(LogTemp, Verbose, TEXT("[AIM v5.0] '%s': Cleared focus (no target selected)"),
+			*Pawn->GetName());
 	}
-	// else: No enemies visible - keep previous focus (don't spam ClearFocus)
+	// else: No visible enemies - keep previous focus (don't spam ClearFocus)
 }
 
 void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const
@@ -474,10 +436,9 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 		return;
 	}
 
-	// v4.0: Use macro action fire mode
+	// v5.0: Use macro action fire mode
 	const FMacroAction& Macro = Action.MacroAction;
 
-	// FIX (Issue #2): Support both AIController and non-AIController modes
 	// Get focus target from AIController if available, otherwise use SharedContext.PrimaryTarget
 	AActor* FocusTarget = nullptr;
 	if (InstanceData.AIController)
@@ -500,7 +461,7 @@ void FSTTask_ExecuteObjective::ExecuteFire(FStateTreeExecutionContext& Context, 
 		FVector PawnLocation = Pawn->GetActorLocation();
 		FireDirection = (TargetLocation - PawnLocation).GetSafeNormal();
 
-		UE_LOG(LogTemp, Verbose, TEXT("[FIRE v4.1] '%s' → '%s': Direct fire direction calculated"),
+		UE_LOG(LogTemp, Verbose, TEXT("[FIRE v5.0] '%s' → '%s': Direct fire direction calculated"),
 			*Pawn->GetName(), *FocusTarget->GetName());
 		UE_LOG(LogTemp, Verbose, TEXT("  Fire dir: %s (Target: %s, Pawn: %s)"),
 			*FireDirection.ToString(), *TargetLocation.ToString(), *PawnLocation.ToString());
@@ -666,7 +627,7 @@ bool FSTTask_ExecuteObjective::CheckObjectiveStatus(FStateTreeExecutionContext& 
 }
 
 //------------------------------------------------------------------------------
-// v4.0 MACRO ACTION HELPERS
+// v5.0 MACRO ACTION HELPERS
 //------------------------------------------------------------------------------
 
 TArray<FVector> FSTTask_ExecuteObjective::QueryEQSPositions(FStateTreeExecutionContext& Context, ETacticalPosition PositionType) const
@@ -714,29 +675,29 @@ TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, UEnvQuery* Qu
 
 	if (!Pawn)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ RunEQSQuery failed: Invalid Pawn"));
+		UE_LOG(LogTemp, Error, TEXT("[EQS v5.0] ❌ RunEQSQuery failed: Invalid Pawn"));
 		return Results;
 	}
 
 	if (!Query)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': No EQS query assigned for '%s'"),
+		UE_LOG(LogTemp, Error, TEXT("[EQS v5.0] ❌ '%s': No EQS query assigned for '%s'"),
 			*Pawn->GetName(), *QueryName);
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0]    Assign the query asset in StateTree editor: STTask_ExecuteObjective > EQS Queries section"));
+		UE_LOG(LogTemp, Error, TEXT("[EQS v5.0]    Assign the query asset in StateTree editor: STTask_ExecuteObjective > EQS Queries section"));
 		return Results;
 	}
 
 	UWorld* World = Pawn->GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': No valid World for EQS query"), *Pawn->GetName());
+		UE_LOG(LogTemp, Error, TEXT("[EQS v5.0] ❌ '%s': No valid World for EQS query"), *Pawn->GetName());
 		return Results;
 	}
 
 	UEnvQueryManager* QueryManager = UEnvQueryManager::GetCurrent(World);
 	if (!QueryManager)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EnvQueryManager not available"), *Pawn->GetName());
+		UE_LOG(LogTemp, Error, TEXT("[EQS v5.0] ❌ '%s': EnvQueryManager not available"), *Pawn->GetName());
 		return Results;
 	}
 
@@ -746,14 +707,14 @@ TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, UEnvQuery* Qu
 
 	if (!QueryResult.IsValid())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EQS query '%s' returned invalid result"),
+		UE_LOG(LogTemp, Error, TEXT("[EQS v5.0] ❌ '%s': EQS query '%s' returned invalid result"),
 			*Pawn->GetName(), *QueryName);
 		return Results;
 	}
 
 	if (!QueryResult->IsSuccessful())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[EQS v4.0] ❌ '%s': EQS query '%s' failed to execute"),
+		UE_LOG(LogTemp, Error, TEXT("[EQS v5.0] ❌ '%s': EQS query '%s' failed to execute"),
 			*Pawn->GetName(), *QueryName);
 		return Results;
 	}
@@ -762,7 +723,7 @@ TArray<FVector> FSTTask_ExecuteObjective::RunEQSQuery(APawn* Pawn, UEnvQuery* Qu
 	const int32 ItemCount = QueryResult->Items.Num();
 	if (ItemCount == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[EQS v4.0] ⚠️ '%s': EQS query '%s' returned no valid positions"),
+		UE_LOG(LogTemp, Warning, TEXT("[EQS v5.0] ⚠️ '%s': EQS query '%s' returned no valid positions"),
 			*Pawn->GetName(), *QueryName);
 		return Results;
 	}

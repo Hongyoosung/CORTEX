@@ -15,16 +15,16 @@ class APawn;
 class AAIController;
 
 /**
- * State Tree Task: Execute Objective (v4.0 Macro Actions)
+ * State Tree Task: Execute Objective (v5.0 Macro Actions)
  *
  * Universal execution task that handles ALL objective types using macro actions.
  * Replaces ExecuteAssault, ExecuteDefend, ExecuteSupport, ExecuteMove, ExecuteRetreat.
  *
- * Execution Flow (v4.0):
- * 1. RL policy outputs macro action: [Position, Target, FireMode, Stance]
- * 2. Execute movement via NavMesh pathfinding (EQS + MoveToLocation)
- * 3. Execute aiming via engine auto-aim (SetFocus)
- * 4. Execute fire mode and stance
+ * Execution Flow (v5.0):
+ * 1. RL policy outputs macro action: [Position, Target, FireMode]
+ * 2. Execute movement via NavMesh pathfinding (EQS + MoveToLocation) - one-shot on action change
+ * 3. Execute aiming via engine auto-aim (SetFocus) - one-shot on action change
+ * 4. Execute fire mode continuously at FireUpdateInterval
  * 5. Calculate rewards based on objective progress
  *
  * Requirements:
@@ -61,19 +61,12 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteObjectiveInstanceData
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.1", ClampMax = "2.0"))
 	float MovementSpeedMultiplier = 1.0f;
 
-	/** Rotation speed (degrees/sec) */
-	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "90.0", ClampMax = "720.0"))
-	float RotationSpeed = 360.0f;
-
-	/** Fire if aim within this error (degrees) */
-	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "1.0", ClampMax = "15.0"))
-	float AimTolerance = 5.0f;
-
-	/** Action application rate (seconds) - controls StateTree update frequency for aiming/firing.
+	/** Fire update rate (seconds) - controls continuous firing check frequency.
 	 * NOTE: This is NOT the action REQUEST rate (controlled by ScholaAgentComponent.DecisionInterval).
-	 * Default 0.05s = 20 Hz for smooth aiming and continuous firing updates. */
+	 * Movement/aiming execute once when action changes; firing updates continuously at this rate.
+	 * Default 0.05s = 20 Hz for responsive firing. */
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.01", ClampMax = "0.2"))
-	float ActionApplicationInterval = 0.05f;
+	float FireUpdateInterval = 0.05f;
 
 	//--------------------------------------------------------------------------
 	// EQS Query Assets (assign in StateTree editor)
@@ -95,8 +88,8 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteObjectiveInstanceData
 	// Internal State
 	//--------------------------------------------------------------------------
 
-	/** Time since last action application (internal state) */
-	float TimeSinceLastAction = 0.0f;
+	/** Time since last fire update (internal state) */
+	float TimeSinceLastFire = 0.0f;
 
 	/** Previous macro action (to detect changes) */
 	FMacroAction PreviousMacroAction;
@@ -125,8 +118,8 @@ protected:
 	/** Execute movement using EQS + NavMesh */
 	void ExecuteMovement(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const;
 
-	/** Execute aiming using SetFocus */
-	void ExecuteAiming(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const;
+	/** Execute aiming using SetFocus (engine auto-aim) */
+	void ExecuteAiming(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
 
 	/** Execute fire mode (HoldFire/Fire/Suppress) */
 	void ExecuteFire(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
