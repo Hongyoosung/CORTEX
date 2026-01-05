@@ -6,6 +6,7 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+#include "Kismet/GameplayStatics.h"
 
 ASimulationManagerGameMode::ASimulationManagerGameMode()
 {
@@ -19,6 +20,20 @@ ASimulationManagerGameMode::ASimulationManagerGameMode()
 void ASimulationManagerGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Auto-discover objective actor if not manually assigned
+	if (!ObjectiveActor)
+	{
+		ObjectiveActor = FindObjectiveActor();
+		if (ObjectiveActor)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Auto-discovered ObjectiveActor: %s"), *ObjectiveActor->GetName());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SimulationManager] No ObjectiveActor found with tag '%s'. Objective proximity rewards disabled."), *ObjectiveActorTag.ToString());
+		}
+	}
 
 	if (bAutoStartSimulation)
 	{
@@ -52,8 +67,10 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 		}
 
 		// CONTINUOUS TRAINING: Award objective proximity rewards
-		if (bEnableContinuousTraining && ObjectiveLocation != FVector::ZeroVector)
+		if (bEnableContinuousTraining && ObjectiveActor && IsValid(ObjectiveActor))
 		{
+			FVector ObjectiveLocation = ObjectiveActor->GetActorLocation();
+
 			for (auto& TeamPair : RegisteredTeams)
 			{
 				FTeamInfo& TeamInfo = TeamPair.Value;
@@ -1066,4 +1083,33 @@ void ASimulationManagerGameMode::AwardObjectiveCaptureBonus(int32 TeamID)
 			FollowerComp->AccumulateReward(CaptureBonus);
 		}
 	}
+}
+
+//------------------------------------------------------------------------------
+// OBJECTIVE MANAGEMENT
+//------------------------------------------------------------------------------
+
+AActor* ASimulationManagerGameMode::FindObjectiveActor()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	// Search for actors with the objective tag
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsWithTag(World, ObjectiveActorTag, FoundActors);
+
+	if (FoundActors.Num() > 0)
+	{
+		if (FoundActors.Num() > 1)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SimulationManager] Found %d actors with tag '%s', using first one: %s"),
+				FoundActors.Num(), *ObjectiveActorTag.ToString(), *FoundActors[0]->GetName());
+		}
+		return FoundActors[0];
+	}
+
+	return nullptr;
 }

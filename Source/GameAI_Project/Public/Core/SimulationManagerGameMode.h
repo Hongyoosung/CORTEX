@@ -408,6 +408,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
 	FEpisodeResult GetLastEpisodeResult() const { return LastEpisodeResult; }
 
+	/**
+	 * Find objective actor by tag (auto-discovery helper)
+	 * @return First actor with ObjectiveActorTag, or nullptr if not found
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Objective")
+	AActor* FindObjectiveActor();
+
 	/** Delegate broadcast when episode ends */
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEpisodeEnded, const FEpisodeResult&, Result);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
@@ -494,9 +501,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
 	float ObjectiveProximityRadius = 500.0f;
 
-	/** Objective location (set in BeginPlay or via Blueprint) */
+	/** Objective actor (set in BeginPlay, via Blueprint, or auto-discovered by tag) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
-	FVector ObjectiveLocation = FVector::ZeroVector;
+	AActor* ObjectiveActor = nullptr;
+
+	/** Tag to search for objective actor if not manually assigned (default: "Objective") */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
+	FName ObjectiveActorTag = TEXT("Objective");
 
 
 private:

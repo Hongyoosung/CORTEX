@@ -115,10 +115,10 @@ float URewardCalculator::CalculateTotalReward(float DeltaTime)
 			}
 			bWasOnObjective = bOnObjective;
 
-			// Bonus for suppressing enemies (firing without killing)
+			// v5.0: Bonus for damaging enemies without killing (area denial)
 			if (FollowerComponent && DamageSinceLastUpdate > 0.0f && KillsSinceLastUpdate == 0)
 			{
-				TotalReward += Defend_SuppressReward;
+				TotalReward += Defend_AreaDenialReward;
 			}
 			break;
 		}
@@ -249,7 +249,8 @@ float URewardCalculator::CalculateIndividualReward()
 	if (FollowerComponent)
 	{
 		FObservationElement Obs = FollowerComponent->GetLocalObservation();
-		bool bFiredThisTick = (FollowerComponent->LastTacticalAction.MacroAction.FireMode != EFireMode::HoldFire);
+		// v5.0: Firing is indicated by TargetIndex >= 0
+		bool bFiredThisTick = (FollowerComponent->LastTacticalAction.MacroAction.TargetIndex >= 0);
 
 		if (bFiredThisTick && Obs.VisibleEnemyCount == 0)
 		{
@@ -259,8 +260,9 @@ float URewardCalculator::CalculateIndividualReward()
 		// Exploration bonus: small reward for taking ANY action other than default Hold
 		// Encourages agents to explore movement and tactical positions during early training
 		FMacroAction CurrentAction = FollowerComponent->LastTacticalAction.MacroAction;
+		// v5.0: Action taken if moving OR firing (TargetIndex >= 0)
 		bool bTookAction = (CurrentAction.PositionChoice != ETacticalPosition::Hold) ||
-		                   (CurrentAction.FireMode != EFireMode::HoldFire);
+		                   (CurrentAction.TargetIndex >= 0);
 
 		if (bTookAction)
 		{
@@ -690,7 +692,8 @@ void URewardCalculator::CheckObjectiveCompliance()
 			if (CurrentObjective->TargetActor)
 			{
 				float DistToAlly = FVector::Dist(AgentLocation, CurrentObjective->TargetActor->GetActorLocation());
-				bool bProvidingCover = (FollowerComponent->LastTacticalAction.MacroAction.FireMode != EFireMode::HoldFire);
+				// v5.0: Providing cover is indicated by TargetIndex >= 0
+				bool bProvidingCover = (FollowerComponent->LastTacticalAction.MacroAction.TargetIndex >= 0);
 				if (DistToAlly > 3000.0f && !bProvidingCover)
 				{
 					// Too far from ally (>30m) and not providing covering fire

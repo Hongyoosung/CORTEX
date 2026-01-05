@@ -13,256 +13,314 @@
 #include "Observation/TeamObservation.h"
 
 URLPolicyNetwork::URLPolicyNetwork()
-	: bEnableExploration(true)
-	, bUseONNXModel(false)
-	, bIsInitialized(false)
-	, CurrentEpisodeReward(0.0f)
-	, CurrentEpisodeSteps(0)
+	: bUseONNXModel(false)
 {
 }
 
+
+
 // ========================================
-// Initialization
+// v6.0: Strategy Selection
 // ========================================
 
-bool URLPolicyNetwork::Initialize(const FMultiHeadPolicyConfig& InConfig)
+EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext)
 {
-	Config = InConfig;
-	bIsInitialized = true;
+	if (!bUseONNXModel || !ModelInstance.IsValid())
+	{
+		// Fallback heuristic
+		if (Observation.AgentHealth < 0.3f)
+			return EStrategyType::Retreat;
+		if (ObjectiveContext.Type == EObjectiveType::Defend)
+			return EStrategyType::Defend;
+		return EStrategyType::Assault;
+	}
 
-	UE_LOG(LogTemp, Log, TEXT("URLPolicyNetwork: Initialized with %d inputs, %d outputs"),
-		Config.InputSize, Config.OutputSize);
+	// Build 68-feature input
+	TArray<float> InputFeatures = BuildNetworkInput(Observation, ObjectiveContext);
+	check(InputFeatures.Num() == 68);
 
-	return true;
+	// Forward pass
+	FNetworkOutput Output = ForwardPassV6(InputFeatures);
+
+	// Sample strategy
+	EStrategyType Strategy = SampleStrategy(Output.PolicyLogits);
+
+	UE_LOG(LogTemp, Verbose, TEXT("✅ [RL v6.0] Strategy=%s, Value=%.2f, Objective=%d"),
+		*UEnum::GetValueAsString(Strategy),
+		Output.Value,
+		static_cast<int32>(ObjectiveContext.Type));
+
+	return Strategy;
 }
 
-bool URLPolicyNetwork::LoadPolicy(const FString& ModelPath)
+float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext)
 {
-	Config.ModelPath = ModelPath;
-
-	// Resolve path - support both absolute and relative paths
-	FString ResolvedPath = ModelPath;
-	if (!FPaths::FileExists(ResolvedPath))
+	if (!bUseONNXModel || !ModelInstance.IsValid())
 	{
-		// Try relative to project content directory
-		ResolvedPath = FPaths::ProjectContentDir() / ModelPath;
-	}
-	if (!FPaths::FileExists(ResolvedPath))
-	{
-		// Try relative to project saved directory
-		ResolvedPath = FPaths::ProjectSavedDir() / ModelPath;
+		// Fallback heuristic value
+		float value = (Observation.AgentHealth - 0.5f) * 2.0f;
+		value -= Observation.VisibleEnemyCount * 0.2f;
+		return FMath::Clamp(value, -1.0f, 1.0f);
 	}
 
-	if (!FPaths::FileExists(ResolvedPath))
-	{
-		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Model file not found: %s"), *ModelPath);
-		bUseONNXModel = false;
-		bIsInitialized = true;
-		return false;
-	}
+	// Build 68-feature input
+	TArray<float> InputFeatures = BuildNetworkInput(Observation, ObjectiveContext);
 
-	UE_LOG(LogTemp, Log, TEXT("URLPolicyNetwork: Loading ONNX model from: %s"), *ResolvedPath);
+	// Forward pass
+	FNetworkOutput Output = ForwardPassV6(InputFeatures);
 
-	// Load model data from file
-	TArray<uint8> ModelBytes;
-	if (!FFileHelper::LoadFileToArray(ModelBytes, *ResolvedPath))
-	{
-		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Failed to read model file"));
-		bUseONNXModel = false;
-		bIsInitialized = true;
-		return false;
-	}
-
-	// Get NNE runtime
-	TWeakInterfacePtr<INNERuntimeCPU> RuntimeCPU = UE::NNE::GetRuntime<INNERuntimeCPU>(TEXT("NNERuntimeORTCpu"));
-	if (!RuntimeCPU.IsValid())
-	{
-		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: NNERuntimeORTCpu not available. Using rule-based fallback."));
-		bUseONNXModel = false;
-		bIsInitialized = true;
-		return false;
-	}
-
-	// Create model from bytes
-	TObjectPtr<UNNEModelData> NewModelData = NewObject<UNNEModelData>();
-	NewModelData->Init(TEXT("Onnx"), ModelBytes, TMap<FString, TConstArrayView64<uint8>>());
-	TSharedPtr<UE::NNE::IModelCPU> Model = RuntimeCPU->CreateModelCPU(NewModelData);
-	if (!Model.IsValid())
-	{
-		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Failed to create NNE model from ONNX data"));
-		bUseONNXModel = false;
-		bIsInitialized = true;
-		return false;
-	}
-
-	// Create model instance
-	ModelInstance = Model->CreateModelInstanceCPU();
-	if (!ModelInstance.IsValid())
-	{
-		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Failed to create NNE model instance"));
-		bUseONNXModel = false;
-		bIsInitialized = true;
-		return false;
-	}
-
-	// Get input/output tensor info
-	TConstArrayView<UE::NNE::FTensorDesc> InputDescs = ModelInstance->GetInputTensorDescs();
-	TConstArrayView<UE::NNE::FTensorDesc> OutputDescs = ModelInstance->GetOutputTensorDescs();
-
-	if (InputDescs.Num() < 1 || OutputDescs.Num() < 1)
-	{
-		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Model must have at least 1 input and 1 output"));
-		ModelInstance.Reset();
-		bUseONNXModel = false;
-		bIsInitialized = true;
-		return false;
-	}
-
-	// Log tensor info
-	UE_LOG(LogTemp, Log, TEXT("URLPolicyNetwork: Model loaded successfully"));
-	UE_LOG(LogTemp, Log, TEXT("  Input tensors: %d"), InputDescs.Num());
-	UE_LOG(LogTemp, Log, TEXT("  Output tensors: %d"), OutputDescs.Num());
-
-	// Setup input buffer (64 features: v5.0 streamlined observation)
-	InputBuffer.SetNum(Config.InputSize);
-
-	// Setup output buffers for multi-head PPO model (v5.0)
-	// Output 0: action_logits from all heads (4 heads × 13 logits = 52 total)
-	// Output 1: state_value (1 value estimate from shared critic)
-	OutputBuffer.SetNum(Config.OutputSize + 1);  // 52 + 1 = 53 total (or 13 + 1 if model does head selection)
-
-	bUseONNXModel = true;
-	bIsInitialized = true;
-
-	UE_LOG(LogTemp, Log, TEXT("URLPolicyNetwork: ONNX model ready for inference"));
-	return true;
-}
-
-void URLPolicyNetwork::UnloadPolicy()
-{
-	bIsInitialized = false;
-	bUseONNXModel = false;
-	Config.ModelPath = TEXT("");
-
-	// Reset NNE model instance
-	if (ModelInstance.IsValid())
-	{
-		ModelInstance.Reset();
-	}
-	ModelData = nullptr;
-	InputBuffer.Empty();
-	OutputBuffer.Empty();
-
-	UE_LOG(LogTemp, Log, TEXT("URLPolicyNetwork: Policy unloaded"));
+	return FMath::Clamp(Output.Value, -1.0f, 1.0f);
 }
 
 // ========================================
-// Experience Collection - REMOVED
-// Real-time PPO training via RLlib handles experience collection automatically
-// No need for C++ side JSON export or offline training
+// v6.0: Batched Inference (Performance Critical)
 // ========================================
 
-// ========================================
-// Statistics
-// ========================================
-
-void URLPolicyNetwork::ResetStatistics()
+TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
+	const TArray<FObservationElement>& Observations,
+	const TArray<FObjectiveContext>& ObjectiveContexts)
 {
-	TrainingStats = FRLTrainingStats();
-	CurrentEpisodeReward = 0.0f;
-	CurrentEpisodeSteps = 0;
+	TArray<EStrategyType> Strategies;
 
-	UE_LOG(LogTemp, Log, TEXT("URLPolicyNetwork: Reset statistics"));
-}
-
-void URLPolicyNetwork::UpdateEpsilon()
-{
-	Config.Epsilon = FMath::Max(Config.Epsilon * Config.EpsilonDecay, Config.MinEpsilon);
-}
-
-// ========================================
-// Neural Network Inference
-// ========================================
-
-TArray<float> URLPolicyNetwork::ForwardPass(const TArray<float>& InputFeatures)
-{
-	if (!ModelInstance.IsValid())
+	if (Observations.Num() != ObjectiveContexts.Num())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Model instance not valid, returning zero action"));
-		TArray<float> ZeroAction;
-		ZeroAction.Init(0.0f, Config.OutputSize);
-		return ZeroAction;
+		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Batch size mismatch"));
+		return Strategies;
 	}
 
-	// Copy input features to buffer
-	if (InputFeatures.Num() != Config.InputSize)
+	int32 BatchSize = Observations.Num();
+	if (BatchSize == 0) return Strategies;
+
+	// Fallback if model not loaded
+	if (!bUseONNXModel || !ModelInstance.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Input size mismatch (got %d, expected %d)"),
-			InputFeatures.Num(), Config.InputSize);
-		TArray<float> ZeroAction;
-		ZeroAction.Init(0.0f, Config.OutputSize);
-		return ZeroAction;
+		for (int32 i = 0; i < BatchSize; ++i)
+		{
+			Strategies.Add(GetStrategy(Observations[i], ObjectiveContexts[i]));
+		}
+		return Strategies;
 	}
 
-	// Prepare input tensor binding
-	InputBuffer = InputFeatures;
+	// Build batched input tensor [BatchSize, 68]
+	TArray<float> BatchedInput;
+	BatchedInput.Reserve(BatchSize * 68);
 
-	// Create tensor shapes for binding
-	UE::NNE::FTensorShape InputTensorShape = UE::NNE::FTensorShape::Make({ 1u, static_cast<uint32>(Config.InputSize) });
+	for (int32 i = 0; i < BatchSize; ++i)
+	{
+		TArray<float> Features = BuildNetworkInput(Observations[i], ObjectiveContexts[i]);
+		check(Features.Num() == 68);
+		BatchedInput.Append(Features);
+	}
 
-	// Create input tensor bindings
-	TArray<UE::NNE::FTensorBindingCPU> InputBindings;
-	InputBindings.Add(UE::NNE::FTensorBindingCPU{
-		InputBuffer.GetData(),
-		static_cast<uint64>(InputBuffer.Num() * sizeof(float))
+	// Prepare input tensor
+	UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::Make({
+		static_cast<uint32>(BatchSize),
+		68u
 	});
 
-	// Create output tensor bindings
-	// First output: action_probabilities (16 values)
-	// Second output: state_value (1 value)
-	TArray<float> ActionProbsBuffer;
-	TArray<float> StateValueBuffer;
-	ActionProbsBuffer.SetNum(Config.OutputSize);
-	StateValueBuffer.SetNum(1);
+	// Prepare output buffers
+	TArray<float> PolicyBuffer, ValueBuffer;
+	PolicyBuffer.SetNum(BatchSize * 4);   // 4 strategy logits per agent
+	ValueBuffer.SetNum(BatchSize);        // 1 value per agent
+
+	// Bind tensors
+	TArray<UE::NNE::FTensorBindingCPU> InputBindings;
+	InputBindings.Add({BatchedInput.GetData(), static_cast<uint64>(BatchedInput.Num() * sizeof(float))});
 
 	TArray<UE::NNE::FTensorBindingCPU> OutputBindings;
-	OutputBindings.Add(UE::NNE::FTensorBindingCPU{
-		ActionProbsBuffer.GetData(),
-		static_cast<uint64>(ActionProbsBuffer.Num() * sizeof(float))
-	});
-	OutputBindings.Add(UE::NNE::FTensorBindingCPU{
-		StateValueBuffer.GetData(),
-		static_cast<uint64>(StateValueBuffer.Num() * sizeof(float))
-	});
+	OutputBindings.Add({PolicyBuffer.GetData(), static_cast<uint64>(PolicyBuffer.Num() * sizeof(float))});
+	OutputBindings.Add({ValueBuffer.GetData(), static_cast<uint64>(ValueBuffer.Num() * sizeof(float))});
 
-	// Set input tensor shapes
-	TArray<UE::NNE::FTensorShape> InputShapes;
-	InputShapes.Add(InputTensorShape);
-
-	UE::NNE::EResultStatus SetInputStatus = ModelInstance->SetInputTensorShapes(InputShapes);
-	if (SetInputStatus != UE::NNE::EResultStatus::Ok)
+	// Run batched inference
+	TArray<UE::NNE::FTensorShape> InputShapes = {InputShape};
+	if (ModelInstance->SetInputTensorShapes(InputShapes) == UE::NNE::EResultStatus::Ok &&
+		ModelInstance->RunSync(InputBindings, OutputBindings) == UE::NNE::EResultStatus::Ok)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Failed to set input tensor shapes"));
-		TArray<float> ZeroAction;
-		ZeroAction.Init(0.0f, Config.OutputSize);
-		return ZeroAction;
+		// Decode strategies from batched output
+		for (int32 i = 0; i < BatchSize; ++i)
+		{
+			int32 Offset = i * 4;
+			TArray<float> AgentLogits = {
+				PolicyBuffer[Offset],
+				PolicyBuffer[Offset + 1],
+				PolicyBuffer[Offset + 2],
+				PolicyBuffer[Offset + 3]
+			};
+			Strategies.Add(SampleStrategy(AgentLogits));
+		}
 	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Batched inference failed"));
+		// Fallback to individual inference
+		for (int32 i = 0; i < BatchSize; ++i)
+		{
+			Strategies.Add(GetStrategy(Observations[i], ObjectiveContexts[i]));
+		}
+	}
+
+	return Strategies;
+}
+
+TArray<float> URLPolicyNetwork::GetStateValuesBatched(
+	const TArray<FObservationElement>& Observations,
+	const TArray<FObjectiveContext>& ObjectiveContexts)
+{
+	TArray<float> Values;
+
+	if (Observations.Num() != ObjectiveContexts.Num())
+	{
+		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Batch size mismatch"));
+		return Values;
+	}
+
+	int32 BatchSize = Observations.Num();
+	if (BatchSize == 0) return Values;
+
+	// Fallback if model not loaded
+	if (!bUseONNXModel || !ModelInstance.IsValid())
+	{
+		for (int32 i = 0; i < BatchSize; ++i)
+		{
+			Values.Add(GetStateValue(Observations[i], ObjectiveContexts[i]));
+		}
+		return Values;
+	}
+
+	// Build batched input tensor (same as GetStrategiesBatched)
+	TArray<float> BatchedInput;
+	BatchedInput.Reserve(BatchSize * 68);
+
+	for (int32 i = 0; i < BatchSize; ++i)
+	{
+		TArray<float> Features = BuildNetworkInput(Observations[i], ObjectiveContexts[i]);
+		BatchedInput.Append(Features);
+	}
+
+	// Run batched inference (same tensor binding as above)
+	UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::Make({
+		static_cast<uint32>(BatchSize),
+		68u
+	});
+
+	TArray<float> PolicyBuffer, ValueBuffer;
+	PolicyBuffer.SetNum(BatchSize * 4);
+	ValueBuffer.SetNum(BatchSize);
+
+	TArray<UE::NNE::FTensorBindingCPU> InputBindings;
+	InputBindings.Add({BatchedInput.GetData(), static_cast<uint64>(BatchedInput.Num() * sizeof(float))});
+
+	TArray<UE::NNE::FTensorBindingCPU> OutputBindings;
+	OutputBindings.Add({PolicyBuffer.GetData(), static_cast<uint64>(PolicyBuffer.Num() * sizeof(float))});
+	OutputBindings.Add({ValueBuffer.GetData(), static_cast<uint64>(ValueBuffer.Num() * sizeof(float))});
+
+	TArray<UE::NNE::FTensorShape> InputShapes = {InputShape};
+	if (ModelInstance->SetInputTensorShapes(InputShapes) == UE::NNE::EResultStatus::Ok &&
+		ModelInstance->RunSync(InputBindings, OutputBindings) == UE::NNE::EResultStatus::Ok)
+	{
+		// Extract values from batched output
+		Values = ValueBuffer;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Batched value inference failed"));
+		// Fallback
+		for (int32 i = 0; i < BatchSize; ++i)
+		{
+			Values.Add(GetStateValue(Observations[i], ObjectiveContexts[i]));
+		}
+	}
+
+	return Values;
+}
+
+// ========================================
+// v6.0: Helper Methods
+// ========================================
+
+TArray<float> URLPolicyNetwork::BuildNetworkInput(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext) const
+{
+	TArray<float> Input;
+	Input.Reserve(68);
+
+	// Base observation (64 features)
+	TArray<float> BaseFeatures = Observation.ToFeatureVector();
+	check(BaseFeatures.Num() == 64);
+	Input.Append(BaseFeatures);
+
+	// Objective context (4 features)
+	TArray<float> ObjectiveFeatures = ObjectiveContext.ToFeatureVector();
+	check(ObjectiveFeatures.Num() == 4);
+	Input.Append(ObjectiveFeatures);
+
+	return Input;
+}
+
+URLPolicyNetwork::FNetworkOutput URLPolicyNetwork::ForwardPassV6(const TArray<float>& InputFeatures)
+{
+	FNetworkOutput Output;
+
+	// Prepare input tensor
+	InputBuffer = InputFeatures;
+	UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::Make({1u, 68u});
+
+	// Prepare output tensors
+	TArray<float> PolicyBuffer, ValueBuffer;
+	PolicyBuffer.SetNum(4);   // 4 strategy logits
+	ValueBuffer.SetNum(1);    // 1 value estimate
+
+	// Bind tensors
+	TArray<UE::NNE::FTensorBindingCPU> InputBindings;
+	InputBindings.Add({InputBuffer.GetData(), static_cast<uint64>(InputBuffer.Num() * sizeof(float))});
+
+	TArray<UE::NNE::FTensorBindingCPU> OutputBindings;
+	OutputBindings.Add({PolicyBuffer.GetData(), static_cast<uint64>(PolicyBuffer.Num() * sizeof(float))});
+	OutputBindings.Add({ValueBuffer.GetData(), static_cast<uint64>(ValueBuffer.Num() * sizeof(float))});
 
 	// Run inference
-	UE::NNE::EResultStatus RunStatus = ModelInstance->RunSync(InputBindings, OutputBindings);
-
-	if (RunStatus != UE::NNE::EResultStatus::Ok)
+	TArray<UE::NNE::FTensorShape> InputShapes = {InputShape};
+	if (ModelInstance->SetInputTensorShapes(InputShapes) == UE::NNE::EResultStatus::Ok &&
+		ModelInstance->RunSync(InputBindings, OutputBindings) == UE::NNE::EResultStatus::Ok)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Inference failed, returning zero action"));
-		TArray<float> ZeroAction;
-		ZeroAction.Init(0.0f, Config.OutputSize);
-		return ZeroAction;
+		Output.PolicyLogits = PolicyBuffer;
+		Output.Value = ValueBuffer[0];
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Inference failed"));
+		Output.PolicyLogits = {0.0f, 0.0f, 0.0f, 0.0f};
+		Output.Value = 0.0f;
 	}
 
-	// Model outputs raw logits (8 atomic action dimensions)
-	// NetworkOutputToAction() applies appropriate activations per dimension
-	return ActionProbsBuffer;
+	return Output;
 }
+
+EStrategyType URLPolicyNetwork::SampleStrategy(const TArray<float>& Logits) const
+{
+	if (Logits.Num() != 4)
+	{
+		return EStrategyType::Assault;
+	}
+
+	// Softmax
+	TArray<float> Probs = Softmax(Logits);
+
+	// Sample
+	float Rand = FMath::FRand();
+	float CumulativeProb = 0.0f;
+
+	for (int32 i = 0; i < 4; ++i)
+	{
+		CumulativeProb += Probs[i];
+		if (Rand <= CumulativeProb)
+		{
+			return static_cast<EStrategyType>(i);
+		}
+	}
+
+	return EStrategyType::Assault;
+}
+
 
 TArray<float> URLPolicyNetwork::Softmax(const TArray<float>& Logits)
 {
@@ -296,263 +354,6 @@ TArray<float> URLPolicyNetwork::Softmax(const TArray<float>& Logits)
 	return Probabilities;
 }
 
-// ========================================
-// Multi-Head Inference (v5.0)
-// ========================================
-
-FTacticalAction URLPolicyNetwork::GetAction(const FObservationElement& Observation, EStrategyType CurrentStrategy)
-{
-	return GetActionWithMask(Observation, CurrentStrategy);
-}
-
-FTacticalAction URLPolicyNetwork::GetActionWithMask(const FObservationElement& Observation, EStrategyType CurrentStrategy)
-{
-	// v5.0: Multi-head architecture with strategy-gated head selection
-	if (!bIsInitialized)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Not initialized, returning default action"));
-		FTacticalAction DefaultAction;
-		return DefaultAction;
-	}
-
-	if (bUseONNXModel && ModelInstance.IsValid())
-	{
-		// Build input: 64-feature observation (v5.0, no objective embedding)
-		TArray<float> InputFeatures = Observation.ToFeatureVector();
-		check(InputFeatures.Num() == 64);  // v5.0 streamlined observation
-
-		// Forward pass through multi-head network
-		// Returns either all heads (52 logits: 4×13) or selected head (13 logits)
-		TArray<float> NetworkOutput = ForwardPass(InputFeatures);
-
-		// If network outputs all heads, select the appropriate head based on strategy
-		TArray<float> SelectedHeadOutput;
-		if (NetworkOutput.Num() >= 52)
-		{
-			// Multi-head model: select strategy-specific head
-			SelectedHeadOutput = SelectStrategyHead(NetworkOutput, CurrentStrategy);
-		}
-		else
-		{
-			// Single-head fallback or model does internal head selection
-			SelectedHeadOutput = NetworkOutput;
-		}
-
-		// Convert to macro action with action masking based on visible enemies
-		int32 VisibleEnemies = FMath::Min(Observation.VisibleEnemyCount, 5);  // Max 5 enemies tracked
-		FTacticalAction Action = NetworkOutputToAction(SelectedHeadOutput, VisibleEnemies);
-
-		UE_LOG(LogTemp, Display, TEXT("✅ [ONNX v5.0] Strategy=%s MacroAction: Pos=%d Target=%d Fire=%d (VisibleEnemies=%d)"),
-			*UEnum::GetValueAsString(CurrentStrategy),
-			static_cast<int32>(Action.MacroAction.PositionChoice),
-			Action.MacroAction.TargetIndex,
-			static_cast<int32>(Action.MacroAction.FireMode),
-			VisibleEnemies);
-
-		return Action;
-	}
-	else
-	{
-		return FTacticalAction();  // Default action
-	}
-}
-
-float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation)
-{
-	// v5.0: Shared critic uses 64-feature observation (no objective embedding)
-	if (!bIsInitialized)
-	{
-		return 0.0f;
-	}
-
-	// Build input: 64-feature observation (v5.0)
-	TArray<float> InputFeatures = Observation.ToFeatureVector();
-	check(InputFeatures.Num() == 64);
-
-	// Use PPO critic network if loaded
-	if (bUseONNXModel && ModelInstance.IsValid())
-	{
-		// Prepare input tensor
-		InputBuffer = InputFeatures;
-		UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::Make({ 1u, static_cast<uint32>(Config.InputSize) });
-
-		// Create buffers
-		TArray<float> ActionBuffer, ValueBuffer;
-		ActionBuffer.SetNum(Config.OutputSize);
-		ValueBuffer.SetNum(1);
-
-		// Bind tensors
-		TArray<UE::NNE::FTensorBindingCPU> InputBindings;
-		InputBindings.Add({ InputBuffer.GetData(), static_cast<uint64>(InputBuffer.Num() * sizeof(float)) });
-
-		TArray<UE::NNE::FTensorBindingCPU> OutputBindings;
-		OutputBindings.Add({ ActionBuffer.GetData(), static_cast<uint64>(ActionBuffer.Num() * sizeof(float)) });
-		OutputBindings.Add({ ValueBuffer.GetData(), static_cast<uint64>(ValueBuffer.Num() * sizeof(float)) });
-
-		// Run inference
-		TArray<UE::NNE::FTensorShape> InputShapes = { InputShape };
-		if (ModelInstance->SetInputTensorShapes(InputShapes) == UE::NNE::EResultStatus::Ok &&
-			ModelInstance->RunSync(InputBindings, OutputBindings) == UE::NNE::EResultStatus::Ok)
-		{
-			return FMath::Clamp(ValueBuffer[0], -1.0f, 1.0f);
-		}
-	}
-
-	// Fallback heuristic (if model not loaded)
-	float Value = (Observation.AgentHealth - 50.0f) / 50.0f;
-	Value -= Observation.VisibleEnemyCount * 0.2f;
-	if (Observation.bHasCover) Value += 0.3f;
-
-	return FMath::Clamp(Value, -1.0f, 1.0f);
-}
-
-TArray<float> URLPolicyNetwork::GetObjectivePriors(const FTeamObservation& TeamObs)
-{
-	// v4.0: Heuristic-based priors for 4 simplified objective types
-	// Provides intelligent initial guidance for MCTS action selection
-
-	TArray<float> Priors;
-	Priors.Init(0.1f, 4);  // v4.0: Only 4 objective types
-
-	// Objective type indices (matching v4.0 EObjectiveType enum)
-	const int32 ASSAULT = 0;   // Attack enemies/objectives
-	const int32 DEFEND = 1;    // Hold position/defend area
-	const int32 SUPPORT = 2;   // Support allies
-	const int32 RETREAT = 3;   // Fall back to safety
-
-	// Context-aware prior assignment
-	if (TeamObs.TotalVisibleEnemies > 0)
-	{
-		// COMBAT SITUATION
-		if (TeamObs.bOutnumbered && TeamObs.AverageTeamHealth < 50.0f)
-		{
-			// Outnumbered and weak → retreat highly preferred
-			Priors[RETREAT] = 0.5f;
-			Priors[DEFEND] = 0.25f;
-			Priors[SUPPORT] = 0.15f;
-			Priors[ASSAULT] = 0.1f;
-		}
-		else if (TeamObs.bFlanked)
-		{
-			// Being flanked → defensive posture + support
-			Priors[DEFEND] = 0.4f;
-			Priors[SUPPORT] = 0.3f;
-			Priors[RETREAT] = 0.2f;
-			Priors[ASSAULT] = 0.1f;
-		}
-		else if (TeamObs.AverageTeamHealth > 70.0f && !TeamObs.bOutnumbered)
-		{
-			// Strong position → aggressive
-			Priors[ASSAULT] = 0.5f;
-			Priors[SUPPORT] = 0.25f;
-			Priors[DEFEND] = 0.15f;
-			Priors[RETREAT] = 0.1f;
-		}
-		else
-		{
-			// Balanced combat → mixed tactics
-			Priors[ASSAULT] = 0.35f;
-			Priors[DEFEND] = 0.25f;
-			Priors[SUPPORT] = 0.25f;
-			Priors[RETREAT] = 0.15f;
-		}
-	}
-	else
-	{
-		// NO ENEMIES VISIBLE
-		if (TeamObs.AverageTeamHealth < 40.0f)
-		{
-			// Low health, no enemies → recover and defend
-			Priors[DEFEND] = 0.5f;
-			Priors[SUPPORT] = 0.3f;
-			Priors[RETREAT] = 0.15f;
-			Priors[ASSAULT] = 0.05f;
-		}
-		else if (TeamObs.DistanceToObjective > 1000.0f)
-		{
-			// Far from objective → advance
-			Priors[ASSAULT] = 0.5f;
-			Priors[DEFEND] = 0.25f;
-			Priors[SUPPORT] = 0.15f;
-			Priors[RETREAT] = 0.1f;
-		}
-		else
-		{
-			// Stable situation → objective-focused
-			Priors[ASSAULT] = 0.4f;
-			Priors[DEFEND] = 0.35f;
-			Priors[SUPPORT] = 0.15f;
-			Priors[RETREAT] = 0.1f;
-		}
-	}
-
-	// Normalize to sum to 1.0
-	float Sum = 0.0f;
-	for (float Prior : Priors)
-	{
-		Sum += Prior;
-	}
-	if (Sum > 0.0f)
-	{
-		for (int32 i = 0; i < Priors.Num(); ++i)
-		{
-			Priors[i] /= Sum;
-		}
-	}
-
-	UE_LOG(LogTemp, Verbose, TEXT("RL Policy Priors (v4.0): Assault=%.2f, Defend=%.2f, Support=%.2f, Retreat=%.2f"),
-		Priors[ASSAULT], Priors[DEFEND], Priors[SUPPORT], Priors[RETREAT]);
-
-	return Priors;
-}
-
-FTacticalAction URLPolicyNetwork::NetworkOutputToAction(const TArray<float>& NetworkOutput, int32 VisibleEnemies)
-{
-	FTacticalAction Action;
-
-	// v4.0 Simplified: [4 position + 6 target + 3 fire + 1 value] = 14 outputs
-	// Position: Hold, ForwardCover, Retreat, Advance (4)
-	// Target: None + Enemy_0...Enemy_N (dynamic, max 6 for now)
-	// Fire: HoldFire, Fire, Suppress (3)
-	if (NetworkOutput.Num() >= 13)
-	{
-		// Extract logits for each action dimension
-		TArray<float> PositionLogits;
-		PositionLogits.Append(&NetworkOutput[0], 4);
-
-		TArray<float> TargetLogits;
-		TargetLogits.Append(&NetworkOutput[4], 6);
-
-		// ACTION MASKING: Mask invalid target indices based on visible enemy count
-		// Target indices: [0=None, 1=Enemy_0, 2=Enemy_1, ..., 5=Enemy_4]
-		// If only 2 enemies visible, mask indices 3+ (Enemy_2, Enemy_3, Enemy_4)
-		for (int32 i = VisibleEnemies + 1; i < TargetLogits.Num(); ++i)
-		{
-			TargetLogits[i] = -1e9f;  // Effectively zero probability after softmax
-		}
-
-		TArray<float> FireModeLogits;
-		FireModeLogits.Append(&NetworkOutput[10], 3);
-
-		// Sample from each discrete distribution
-		int32 PositionIdx = SampleFromLogits(PositionLogits);
-		int32 TargetIdx = SampleFromLogits(TargetLogits);
-		int32 FireModeIdx = SampleFromLogits(FireModeLogits);
-
-		// Convert indices to enum values
-		Action.MacroAction.PositionChoice = static_cast<ETacticalPosition>(FMath::Clamp(PositionIdx, 0, 3));
-		Action.MacroAction.TargetIndex = TargetIdx - 1;  // 0 = no target (-1), 1+ = enemy indices (0+)
-		Action.MacroAction.FireMode = static_cast<EFireMode>(FMath::Clamp(FireModeIdx, 0, 2));
-
-		// Note: Value estimate at NetworkOutput[13] handled separately by GetStateValue()
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork: Invalid network output size %d, expected 13+"), NetworkOutput.Num());
-	}
-
-	return Action;
-}
 
 int32 URLPolicyNetwork::SampleFromLogits(const TArray<float>& Logits)
 {

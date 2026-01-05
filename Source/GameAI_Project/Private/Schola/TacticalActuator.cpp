@@ -54,20 +54,19 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 		return;
 	}
 
-	// v4.0: Validate action dimensions: MultiDiscrete([4, N+1, 3]) - Stance removed
-	if (Action.Values.Num() < 3)
+	// v5.0: Validate action dimensions: MultiDiscrete([4, 11]) - FireMode removed
+	if (Action.Values.Num() < 2)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 3, got %d)"),
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 2, got %d)"),
 			*GetNameSafe(GetOuter()), Action.Values.Num());
 		return;
 	}
 
-	// Parse MultiDiscrete action indices
+	// v5.0: Parse MultiDiscrete action indices (FireMode removed)
 	int32 PositionIdx = Action.Values[0];    // [0-3]: Position choice (4 options)
-	int32 TargetIdx = Action.Values[1];      // [0-N]: Target index (0 = none)
-	int32 FireModeIdx = Action.Values[2];    // [0-2]: Fire mode
+	int32 TargetIdx = Action.Values[1];      // [0-10]: Target index (0 = hold fire, 1+ = enemies)
 
-	// Validate indices (v4.0: Position is 0-3, not 0-5)
+	// Validate indices (v5.0: Position is 0-3)
 	if (PositionIdx < 0 || PositionIdx > 3)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid position index %d (expected 0-3)"),
@@ -81,16 +80,12 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 	// Map position index to enum
 	MacroAction.PositionChoice = static_cast<ETacticalPosition>(PositionIdx);
 
-	// Map target index (0 = none, 1+ = enemy index 0, 1, 2, ...)
-	// v7.3: Clamp to prevent "Target_X not found" spam when RLlib explores invalid indices
+	// v5.0: Map target index (0 = hold fire (-1), 1+ = enemy indices 0-9)
+	// Clamp to prevent "Target_X not found" spam when RLlib explores invalid indices
 	// Action space allows Target 0-10, but actual visible enemies may be 0-4
-	// Indices > 4 (enemy 3) are almost always invalid in 4v4 scenarios
-	const int32 MaxValidTarget = 5;  // Support up to 4 visible enemies (action values 1-4)
+	const int32 MaxValidTarget = 10;  // Support up to 9 visible enemies (action values 1-10)
 	int32 ClampedTargetIdx = FMath::Clamp(TargetIdx, 0, MaxValidTarget);
 	MacroAction.TargetIndex = (ClampedTargetIdx == 0) ? -1 : (ClampedTargetIdx - 1);
-
-	// Map fire mode index to enum
-	MacroAction.FireMode = static_cast<EFireMode>(FMath::Clamp(FireModeIdx, 0, 2));
 
 	// Store in FTacticalAction (v4.0 uses MacroAction field)
 	FTacticalAction ParsedAction(MacroAction);
@@ -117,18 +112,16 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 		{
 			FMacroAction& LastAction = LastLoggedActions[OwnerName];
 			bActionChanged = (LastAction.PositionChoice != MacroAction.PositionChoice ||
-			                  LastAction.TargetIndex != MacroAction.TargetIndex ||
-			                  LastAction.FireMode != MacroAction.FireMode);
+			                  LastAction.TargetIndex != MacroAction.TargetIndex);
 		}
 
 		if (bActionChanged)
 		{
-			// Log only significant action changes at Verbose level
-			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION] '%s': Position=%s, Target=%d, Fire=%s"),
+			// v5.0: Log only significant action changes at Verbose level
+			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION v5.0] '%s': Position=%s, Target=%d"),
 				*OwnerName,
 				*UEnum::GetValueAsString(MacroAction.PositionChoice),
-				MacroAction.TargetIndex,
-				*UEnum::GetValueAsString(MacroAction.FireMode));
+				MacroAction.TargetIndex);
 
 			LastLoggedActions.Add(OwnerName, MacroAction);
 		}

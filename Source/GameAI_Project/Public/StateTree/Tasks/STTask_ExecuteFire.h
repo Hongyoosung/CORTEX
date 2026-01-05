@@ -14,15 +14,15 @@ class APawn;
 class AAIController;
 
 /**
- * State Tree Task: Execute Fire (v4.0 Macro Actions)
+ * State Tree Task: Execute Fire (v5.0 Macro Actions)
  *
- * Handles weapon firing based on fire mode.
+ * Handles weapon firing based on target selection.
  * Extracted from STTask_ExecuteObjective for better modularity.
  *
- * Execution:
- * - Supports HoldFire, Fire, Suppress modes
- * - Line-of-sight checks before firing
- * - Integrates with WeaponComponent
+ * Execution (v5.0):
+ * - Fire control via TargetIndex: -1 = hold fire, >= 0 = engage if LOS clear
+ * - Always checks line-of-sight before firing (prevents shooting through walls)
+ * - Integrates with WeaponComponent for actual firing
  */
 
 USTRUCT()

@@ -11,7 +11,6 @@
 #include "RL/RLPolicyNetwork.h"
 #include "StateTree/Conditions/STCondition_IsAlive.h"
 #include "StateTree/Conditions/STCondition_CheckObjectiveType.h"
-#include "StateTree/Tasks/STTask_ExecuteObjective.h"
 #include "StateTree/Tasks/STTask_ExecuteMovement.h"
 #include "StateTree/Tasks/STTask_ExecuteAiming.h"
 #include "StateTree/Tasks/STTask_ExecuteFire.h"
@@ -190,7 +189,6 @@ bool UFollowerStateTreeSchema::IsStructAllowed(const UScriptStruct* InScriptStru
 			InScriptStruct->IsChildOf(FSTEvaluator_UpdateObservation::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTCondition_IsAlive::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTCondition_CheckObjectiveType::StaticStruct()) ||
-			InScriptStruct->IsChildOf(FSTTask_ExecuteObjective::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_Dead::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_Idle::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_ExecuteMovement::StaticStruct()) ||

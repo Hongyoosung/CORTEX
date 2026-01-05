@@ -176,7 +176,7 @@ public:
 	float Defend_HoldPositionReward = 0.3f;  // Per second
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
-	float Defend_SuppressReward = 3.0f;
+	float Defend_AreaDenialReward = 3.0f;  // v5.0: Damage without kill (area denial)
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
 	float Defend_LeavePositionPenalty = -2.0f;  // Per second

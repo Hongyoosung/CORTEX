@@ -105,9 +105,16 @@ EStateTreeRunStatus FSTTask_Dead::EnterState(FStateTreeExecutionContext& Context
 	{
 		if (ACharacter* Character = Cast<ACharacter>(Pawn))
 		{
+			// Disable capsule collision (character body)
 			if (UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
 			{
 				Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+
+			// Disable mesh collision (prevents bullets from hitting dead bodies)
+			if (USkeletalMeshComponent* MeshComp = Character->GetMesh())
+			{
+				MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			}
 		}
 		else
@@ -215,19 +222,21 @@ void FSTTask_Dead::ExitState(FStateTreeExecutionContext& Context, const FStateTr
 	{
 		if (ACharacter* Character = Cast<ACharacter>(Pawn))
 		{
+			// Re-enable capsule collision (character body)
 			if (UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
 			{
 				Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 			}
 
-			// Disable ragdoll if it was enabled (restore normal physics)
-			if (InstanceData.bEnableRagdoll)
+			// Re-enable mesh collision (restore to QueryOnly to avoid physics simulation)
+			if (USkeletalMeshComponent* MeshComp = Character->GetMesh())
 			{
-				if (USkeletalMeshComponent* MeshComp = Character->GetMesh())
+				// Disable ragdoll if it was enabled (restore normal physics)
+				if (InstanceData.bEnableRagdoll)
 				{
 					MeshComp->SetSimulatePhysics(false);
-					MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 				}
+				MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 			}
 
 			// Re-enable character movement

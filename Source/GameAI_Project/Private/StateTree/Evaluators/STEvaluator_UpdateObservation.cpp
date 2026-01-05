@@ -169,58 +169,34 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 		return;
 	}
 
-	// Get detected enemies from perception system (individual sight)
+	// v5.0: Individual perception only - NO team sharing
+	// This forces agents to position themselves for vision, making positioning critical for strategy differentiation
 	TArray<AActor*> IndividuallyDetected = PerceptionComp->GetDetectedEnemies();
 
-	// FIX (Issue #4): Team-based enemy sharing - merge individual sight with team knowledge
-	// This allows all team members to be aware of enemies spotted by any teammate
-	TSet<AActor*> AllKnownEnemies;
+	// Update visible enemies list in context (sorted by distance)
+	SharedContext.VisibleEnemies.Empty();
+	TArray<TPair<AActor*, float>> EnemyDistances;
 
-	// Add individually detected enemies
 	for (AActor* Enemy : IndividuallyDetected)
 	{
 		if (Enemy && Enemy->IsValidLowLevel())
 		{
-			AllKnownEnemies.Add(Enemy);
+			float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), Enemy->GetActorLocation());
+			EnemyDistances.Add(TPair<AActor*, float>(Enemy, Distance));
 		}
 	}
 
-	// Get team leader and merge team knowledge
+	// Optional: Still report to team leader for strategic planning (but don't receive shared knowledge)
 	UFollowerAgentComponent* FollowerComp = ControlledPawn->FindComponentByClass<UFollowerAgentComponent>();
 	if (FollowerComp && FollowerComp->GetTeamLeader())
 	{
 		UTeamLeaderComponent* TeamLeader = FollowerComp->GetTeamLeader();
-		TArray<AActor*> TeamKnownEnemies = TeamLeader->GetKnownEnemies();
-
-		// Merge team knowledge with individual perception
-		for (AActor* Enemy : TeamKnownEnemies)
-		{
-			if (Enemy && Enemy->IsValidLowLevel())
-			{
-				AllKnownEnemies.Add(Enemy);
-			}
-		}
-
-		// Report newly detected enemies to team leader
 		for (AActor* Enemy : IndividuallyDetected)
 		{
 			if (Enemy)
 			{
 				TeamLeader->RegisterEnemy(Enemy);
 			}
-		}
-	}
-
-	// Update visible enemies list in context (sorted by distance)
-	SharedContext.VisibleEnemies.Empty();
-	TArray<TPair<AActor*, float>> EnemyDistances;
-
-	for (AActor* Enemy : AllKnownEnemies)
-	{
-		if (Enemy)
-		{
-			float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), Enemy->GetActorLocation());
-			EnemyDistances.Add(TPair<AActor*, float>(Enemy, Distance));
 		}
 	}
 

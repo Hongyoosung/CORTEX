@@ -69,16 +69,31 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, c
 		return;
 	}
 
-	// Configure character movement for aiming
+	const FMacroAction& Macro = Action.MacroAction;
+
+	// Configure character movement based on whether we're aiming at a target
 	UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
 	if (MoveComp)
 	{
-		MoveComp->bOrientRotationToMovement = false;
-		MoveComp->bUseControllerDesiredRotation = true;
-		MoveComp->RotationRate = FRotator(0.0f, InstanceData.RotationSpeed, 0.0f);
-	}
+		// If we have a target to aim at, orient to controller (aim direction)
+		// Otherwise, orient to movement direction (prevents moonwalking)
+		bool bHasTarget = (Macro.TargetIndex >= 0 && SharedContext.VisibleEnemies.Num() > 0);
 
-	const FMacroAction& Macro = Action.MacroAction;
+		if (bHasTarget)
+		{
+			// Aiming mode: face the target
+			MoveComp->bOrientRotationToMovement = false;
+			MoveComp->bUseControllerDesiredRotation = true;
+			MoveComp->RotationRate = FRotator(0.0f, InstanceData.RotationSpeed, 0.0f);
+		}
+		else
+		{
+			// Moving mode: face the movement direction
+			MoveComp->bOrientRotationToMovement = true;
+			MoveComp->bUseControllerDesiredRotation = false;
+			MoveComp->RotationRate = FRotator(0.0f, InstanceData.RotationSpeed, 0.0f);
+		}
+	}
 
 	// If no enemies visible, face objective direction
 	if (SharedContext.VisibleEnemies.Num() == 0)

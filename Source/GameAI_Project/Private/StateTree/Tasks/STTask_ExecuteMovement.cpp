@@ -66,13 +66,13 @@ EStateTreeRunStatus FSTTask_ExecuteMovement::Tick(FStateTreeExecutionContext& Co
 	const FMacroAction& PreviousMacro = InstanceData.PreviousMacroAction;
 
 	// Detect action changes (only update movement when position choice changes)
-	bool bActionChanged = (CurrentMacro.PositionChoice != PreviousMacro.PositionChoice);
+	//bool bActionChanged = (CurrentMacro.PositionChoice != PreviousMacro.PositionChoice);
 
-	if (bActionChanged)
+	/*if (bActionChanged)
 	{
 		ExecuteMovement(Context, Action, DeltaTime);
 		InstanceData.PreviousMacroAction = CurrentMacro;
-	}
+	}*/
 
 	return EStateTreeRunStatus::Running;
 }
@@ -94,86 +94,62 @@ void FSTTask_ExecuteMovement::ExecuteMovement(FStateTreeExecutionContext& Contex
 	}
 
 	const FMacroAction& Macro = Action.MacroAction;
-	TArray<FVector> CandidatePositions = QueryEQSPositions(Context, Macro.PositionChoice);
+	// Macro.PositionChoice is removed
+	//TArray<FVector> CandidatePositions = QueryEQSPositions(Context, Macro.PositionChoice);
 
-	if (CandidatePositions.Num() > 0)
-	{
-		float AcceptanceRadius = 100.0f;
-		FVector TargetPos = CandidatePositions[0];
-		FVector CurrentPos = Pawn->GetActorLocation();
+	//if (CandidatePositions.Num() > 0)
+	//{
+	//	float AcceptanceRadius = 100.0f;
+	//	FVector TargetPos = CandidatePositions[0];
+	//	FVector CurrentPos = Pawn->GetActorLocation();
 
-		UWorld* World = Pawn->GetWorld();
-		UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+	//	UWorld* World = Pawn->GetWorld();
+	//	UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
 
-		// Project target onto NavMesh
-		FVector NavTargetPos = TargetPos;
-		if (NavSys)
-		{
-			FNavLocation NavLoc;
-			if (NavSys->ProjectPointToNavigation(TargetPos, NavLoc, FVector(500, 500, 500)))
-			{
-				NavTargetPos = NavLoc.Location;
-			}
-		}
+	//	// Project target onto NavMesh
+	//	FVector NavTargetPos = TargetPos;
+	//	if (NavSys)
+	//	{
+	//		FNavLocation NavLoc;
+	//		if (NavSys->ProjectPointToNavigation(TargetPos, NavLoc, FVector(500, 500, 500)))
+	//		{
+	//			NavTargetPos = NavLoc.Location;
+	//		}
+	//	}
 
-		// Check if already moving to same destination (within tolerance)
-		const float SameDestinationTolerance = 200.0f;
-		UPathFollowingComponent* PathComp = InstanceData.AIController->GetPathFollowingComponent();
-		if (PathComp && PathComp->GetStatus() == EPathFollowingStatus::Moving)
-		{
-			FVector CurrentDestination = SharedContext.MovementDestination;
-			float DistanceToNewTarget = FVector::Dist(CurrentDestination, NavTargetPos);
+	//	// Check if already moving to same destination (within tolerance)
+	//	const float SameDestinationTolerance = 200.0f;
+	//	UPathFollowingComponent* PathComp = InstanceData.AIController->GetPathFollowingComponent();
+	//	if (PathComp && PathComp->GetStatus() == EPathFollowingStatus::Moving)
+	//	{
+	//		FVector CurrentDestination = SharedContext.MovementDestination;
+	//		float DistanceToNewTarget = FVector::Dist(CurrentDestination, NavTargetPos);
 
-			if (DistanceToNewTarget < SameDestinationTolerance)
-			{
-				return; // Keep current movement
-			}
-			else
-			{
-				InstanceData.AIController->StopMovement();
-			}
-		}
+	//		if (DistanceToNewTarget < SameDestinationTolerance)
+	//		{
+	//			return; // Keep current movement
+	//		}
+	//		else
+	//		{
+	//			InstanceData.AIController->StopMovement();
+	//		}
+	//	}
 
-		// Issue new movement command
-		FAIMoveRequest MoveReq(NavTargetPos);
-		MoveReq.SetAcceptanceRadius(AcceptanceRadius);
-		MoveReq.SetUsePathfinding(true);
+	//	// Issue new movement command
+	//	FAIMoveRequest MoveReq(NavTargetPos);
+	//	MoveReq.SetAcceptanceRadius(AcceptanceRadius);
+	//	MoveReq.SetUsePathfinding(true);
 
-		FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
+	//	FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
 
-		SharedContext.MovementDestination = NavTargetPos;
-		SharedContext.bIsMoving = (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful);
+	//	SharedContext.MovementDestination = NavTargetPos;
+	//	SharedContext.bIsMoving = (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful);
 
-		if (MoveResult.Code == EPathFollowingRequestResult::Failed)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[MOVE] '%s': MoveTo FAILED"), *Pawn->GetName());
-		}
-	}
-	else
-	{
-		// Fallback for Advance: direct pathfinding to objective
-		if (Macro.PositionChoice == ETacticalPosition::Advance && SharedContext.CurrentObjective)
-		{
-			FVector ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
-			if (!ObjectiveLocation.IsNearlyZero())
-			{
-				FAIMoveRequest MoveReq(ObjectiveLocation);
-				MoveReq.SetAcceptanceRadius(200.0f);
-				MoveReq.SetUsePathfinding(true);
-
-				FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
-				if (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful)
-				{
-					SharedContext.MovementDestination = ObjectiveLocation;
-					SharedContext.bIsMoving = true;
-					return;
-				}
-			}
-		}
-
-		InstanceData.AIController->StopMovement();
-		SharedContext.bIsMoving = false;
-	}
+	//	if (MoveResult.Code == EPathFollowingRequestResult::Failed)
+	//	{
+	//		UE_LOG(LogTemp, Error, TEXT("[MOVE] '%s': MoveTo FAILED"), *Pawn->GetName());
+	//	}
+	//}
 }
 
 TArray<FVector> FSTTask_ExecuteMovement::QueryEQSPositions(FStateTreeExecutionContext& Context, ETacticalPosition PositionType) const
