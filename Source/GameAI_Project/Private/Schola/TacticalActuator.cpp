@@ -16,12 +16,11 @@ UTacticalActuator::UTacticalActuator()
 
 FDiscreteSpace UTacticalActuator::GetActionSpace()
 {
-	// v4.0: MultiDiscrete([4, MaxEnemies+1, 3]) - Stance removed for simpler learning
-	// [0]: Position (4 options: Hold, ForwardCover, Retreat, Advance)
-	// [1]: Target (MaxEnemies+1 options: None + Enemy_0...Enemy_N)
-	// [2]: Fire Mode (3 options: HoldFire, Fire, Suppress)
+	// v6.0: Discrete(4) - Strategy only (Assault, Defend, Support, Retreat)
+	// Position and targeting are now handled by rule-based StateTree execution
+	// This simplifies learning and aligns with MCTS-RL coordination architecture
 
-	TArray<int32> Nvec = { 4, MaxEnemies + 1, 3 };
+	TArray<int32> Nvec = { 4 };  // 4 strategies
 	FDiscreteSpace ActionSpace = FDiscreteSpace(Nvec);
 
 	return ActionSpace;
@@ -54,45 +53,32 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 		return;
 	}
 
-	// v5.0: Validate action dimensions: MultiDiscrete([4, 11]) - FireMode removed
-	if (Action.Values.Num() < 2)
+	// v6.0: Validate action dimensions: Discrete(4) - Strategy only
+	if (Action.Values.Num() < 1)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 2, got %d)"),
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 1, got %d)"),
 			*GetNameSafe(GetOuter()), Action.Values.Num());
 		return;
 	}
 
-	// v5.0: Parse MultiDiscrete action indices (FireMode removed)
-	int32 PositionIdx = Action.Values[0];    // [0-3]: Position choice (4 options)
-	int32 TargetIdx = Action.Values[1];      // [0-10]: Target index (0 = hold fire, 1+ = enemies)
+	// v6.0: Parse strategy index
+	int32 StrategyIdx = Action.Values[0];  // [0-3]: Strategy (Assault, Defend, Support, Retreat)
 
-	// Validate indices (v5.0: Position is 0-3)
-	if (PositionIdx < 0 || PositionIdx > 3)
+	// Validate index
+	if (StrategyIdx < 0 || StrategyIdx > 3)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid position index %d (expected 0-3)"),
-			*GetNameSafe(GetOuter()), PositionIdx);
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid strategy index %d (expected 0-3)"),
+			*GetNameSafe(GetOuter()), StrategyIdx);
 		return;
 	}
 
-	// Build macro action from indices
+	// Build macro action (v6.0 - strategy only)
 	FMacroAction MacroAction;
-
-	// Map position index to enum
-	MacroAction.PositionChoice = static_cast<ETacticalPosition>(PositionIdx);
-
-	// v5.0: Map target index (0 = hold fire (-1), 1+ = enemy indices 0-9)
-	// Clamp to prevent "Target_X not found" spam when RLlib explores invalid indices
-	// Action space allows Target 0-10, but actual visible enemies may be 0-4
-	const int32 MaxValidTarget = 10;  // Support up to 9 visible enemies (action values 1-10)
-	int32 ClampedTargetIdx = FMath::Clamp(TargetIdx, 0, MaxValidTarget);
-	MacroAction.TargetIndex = (ClampedTargetIdx == 0) ? -1 : (ClampedTargetIdx - 1);
-
-	// Store in FTacticalAction (v4.0 uses MacroAction field)
-	FTacticalAction ParsedAction(MacroAction);
+	MacroAction.Strategy = static_cast<EStrategyType>(StrategyIdx);
 
 	// Store action in shared context for StateTree execution
 	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-	SharedContext.CurrentAtomicAction = ParsedAction;
+	SharedContext.CurrentAction = MacroAction;
 	SharedContext.bScholaActionReceived = true; // Flag that action came from Schola
 
 	LastMacroAction = MacroAction;

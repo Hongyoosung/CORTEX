@@ -140,25 +140,6 @@ private:
 	 */
 	static TArray<float> Softmax(const TArray<float>& Logits);
 
-	// ========================================
-	// Macro Action Helpers (v4.0)
-	// ========================================
-
-	/**
-	 * Sample discrete action from logits
-	 * @param Logits - Unnormalized log probabilities
-	 * @return Sampled index
-	 */
-	int32 SampleFromLogits(const TArray<float>& Logits);
-
-	/**
-	 * Select strategy-specific head output from multi-head network (v5.0)
-	 * @param AllHeadsOutput - Output from all 4 heads (52 logits total: 4×13)
-	 * @param Strategy - Current strategy type
-	 * @return Selected head output (13 logits: 4 pos + 6 target + 3 fire)
-	 */
-	TArray<float> SelectStrategyHead(const TArray<float>& AllHeadsOutput, EStrategyType Strategy);
-
 public:
 	// ========================================
 	// Configuration

@@ -15,13 +15,15 @@ class APawn;
 class AAIController;
 
 /**
- * State Tree Task: Execute Movement (v4.0 Macro Actions)
+ * State Tree Task: Execute Movement (v6.0 Strategy-Based)
  *
- * Handles tactical movement using EQS + NavMesh pathfinding.
- * Extracted from STTask_ExecuteObjective for better modularity.
+ * Handles tactical movement using deterministic strategy-to-position mapping.
+ * Maps RL-selected strategies to EQS queries for tactical positions.
  *
- * Execution:
- * - Queries EQS for tactical positions (Hold, ForwardCover, Retreat, Advance)
+ * v6.0 Execution:
+ * - Gets current strategy from FollowerAgentComponent (Assault/Defend/Support/Retreat)
+ * - Maps strategy to tactical position (ForwardCover/Hold/Retreat)
+ * - Queries EQS for tactical positions
  * - Uses NavMesh pathfinding via MoveToLocation
  * - No manual velocity input (engine-driven)
  */
@@ -79,8 +81,11 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteMovement : public FStateTreeTaskBase
 	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 protected:
-	/** Execute movement using EQS + NavMesh */
-	void ExecuteMovement(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const;
+	/** v6.0: Map strategy to tactical position (deterministic) */
+	ETacticalPosition StrategyToPosition(EStrategyType Strategy, const FFollowerStateTreeContext& Context) const;
+
+	/** v6.0: Execute movement to specific tactical position using EQS + NavMesh */
+	void ExecuteMovementToPosition(FStateTreeExecutionContext& Context, ETacticalPosition PositionType, float DeltaTime) const;
 
 	/** Query EQS for tactical positions */
 	TArray<FVector> QueryEQSPositions(FStateTreeExecutionContext& Context, ETacticalPosition PositionType) const;

@@ -12,25 +12,28 @@
 #include "MCTS.generated.h"
 
 /**
- * Monte Carlo Tree Search (MCTS) for team-level strategic decision making (v5.0)
+ * Monte Carlo Tree Search (MCTS) for team-level objective assignment (v6.0)
  *
- * Implements MCTS to assign individual strategies to each follower agent based on
- * team observation and agent-specific context. Uses PUCT for node selection with
- * heuristic action priors, strategic heuristic evaluation for leaf nodes, and
- * backpropagation of values.
+ * v6.0 Architecture Change:
+ * - MCTS now solves OBJECTIVE ASSIGNMENT (which agents → which objectives)
+ * - RL handles STRATEGY SELECTION (how to execute assigned objective)
+ * - Rules handle EXECUTION (deterministic position/target/fire logic)
  *
- * Architecture (v5.0 - Individual Strategy Assignment):
- * - Strategic layer: Assigns individual strategies per agent (Assault, Defend, Support, Retreat)
- * - Individual scoring: Agent health, ammo, position, ally needs determine strategy fit
- * - Leaf evaluation: Handcrafted heuristics (objective progress + team strength + positioning)
- * - Action priors: Heuristic analysis of team state (via GetObjectivePriors)
- * - Parallelization: Root parallelization for 2-4x speedup on multi-core CPUs
- * - Statistics export: Uncertainty metrics (visit count, value variance, policy entropy)
+ * Key Differences from v5.0:
+ * - v5.0: MCTS assigned strategies (Assault/Defend/Support/Retreat) to agents
+ * - v6.0: MCTS assigns objectives (Capture A, Defend B, Support Agent3) to agents
+ * - RL learns strategy adaptation based on objective + observation
+ * - Smaller MCTS action space: 4 agents × 3 objectives vs. 4^4 strategy combinations
+ *
+ * Evaluation Function (v6.0):
+ * - PRIMARY: RL value estimates (learned heuristic for each agent-objective pair)
+ * - SECONDARY: Coordination heuristics (team cohesion, objective coverage, capability match)
+ * - Replaces v5.0 hand-coded strategic heuristics with learned value function
  *
  * Performance:
- * - 30-50ms per search (500-1000 simulations)
- * - ~0.1ms per leaf evaluation (50x faster than neural network)
- * - Scales linearly with parallel batch size
+ * - 30-50ms per search (500 simulations)
+ * - ~2-4ms per RL value query (batched for multiple agents)
+ * - Async execution (doesn't block RL strategy selection)
  */
 
 
@@ -52,152 +55,88 @@ public:
      */
     void InitializeTeamMCTS(int32 InMaxSimulations = 500, float InExplorationParam = 1.41f);
 
-
+    //--------------------------------------------------------------------------
+    // v6.0 API: OBJECTIVE ASSIGNMENT
+    //--------------------------------------------------------------------------
 
     /**
-     * Run team-level MCTS with individual strategy assignment (v5.0)
-     * @param TeamObservation - Current team observation
-     * @param Followers - List of follower actors
-     * @param ObjectiveManager - Manager to create/assign objectives
-     * @return Map of follower to objective assignment (each follower gets individual strategy)
+     * Run MCTS to find best agent-to-objective assignment (v6.0)
+     * @param Agents - Available agents
+     * @param Objectives - Available objectives
+     * @param Simulations - Number of MCTS simulations (default: 500)
+     * @return Best assignment found (with expected value and visit count)
      */
-    TMap<AActor*, class UObjective*> RunTeamMCTSWithObjectives(
-        const FTeamObservation& TeamObservation,
-        const TArray<AActor*>& Followers,
-        class UObjectiveManager* ObjectiveManager
+    UFUNCTION(BlueprintCallable, Category = "MCTS|v6")
+    FObjectiveAssignment RunObjectiveAssignment(
+        const TArray<AActor*>& Agents,
+        const TArray<UObjective*>& Objectives,
+        int32 Simulations = 500
     );
-
 
 private:
     //--------------------------------------------------------------------------
-    // TEAM-LEVEL METHODS
-    //--------------------------------------------------------------------------
-
-
-    /**
-     * Run full MCTS tree search with individual strategy assignment (v5.0)
-     * @param TeamObs - Current team observation
-     * @param Followers - List of followers
-     * @param ObjectiveManager - Manager to create objectives
-     * @return Best objective assignment found (individual strategy per agent)
-     */
-    TMap<AActor*, class UObjective*> RunTeamMCTSTreeSearchWithObjectives(
-        const FTeamObservation& TeamObs,
-        const TArray<AActor*>& Followers,
-        class UObjectiveManager* ObjectiveManager
-    );
-
-    /**
-     * MCTS Selection Phase: Traverse tree using UCT until leaf node
-     */
-    TSharedPtr<FTeamMCTSNode> SelectNode(TSharedPtr<FTeamMCTSNode> Node);
-
-    /**
-     * MCTS Expansion Phase: Create child node with untried action
-     */
-    TSharedPtr<FTeamMCTSNode> ExpandNode(TSharedPtr<FTeamMCTSNode> Node, const TArray<AActor*>& Followers);
-
-    /**
-     * MCTS Simulation Phase: Rollout from node to estimate reward
-     */
-    float SimulateNode(TSharedPtr<FTeamMCTSNode> Node, const FTeamObservation& TeamObs);
-
-    //--------------------------------------------------------------------------
-    // STRATEGIC HEURISTIC EVALUATION
+    // v6.0: MCTS CORE PHASES
     //--------------------------------------------------------------------------
 
     /**
-     * Evaluate objective progress (PRIMARY strategic metric)
-     * @param Node - MCTS node with objective assignments
-     * @param TeamObs - Current team observation
-     * @return Value in range [-0.6, +0.6] based on objective completion
+     * MCTS Selection Phase: Traverse tree using UCT until leaf node (v6.0)
      */
-    float EvaluateObjectiveProgress(TSharedPtr<FTeamMCTSNode> Node, const FTeamObservation& TeamObs) const;
+    TSharedPtr<FTeamMCTSNode> Selection(TSharedPtr<FTeamMCTSNode> Root);
 
     /**
-     * Evaluate team strength and composition
-     * @param Followers - List of follower actors
-     * @param TeamObs - Current team observation
-     * @return Value in range [-0.3, +0.3] based on health/ammo/alive count
+     * MCTS Expansion Phase: Add new child node (v6.0)
      */
-    float EvaluateTeamStrength(const TArray<AActor*>& Followers, const FTeamObservation& TeamObs) const;
+    TSharedPtr<FTeamMCTSNode> Expansion(TSharedPtr<FTeamMCTSNode> Node);
 
     /**
-     * Evaluate positional/tactical advantage
-     * @param Followers - List of follower actors
-     * @param TeamObs - Current team observation
-     * @return Value in range [-0.1, +0.1] based on cover/formation
+     * MCTS Simulation Phase: Evaluate assignment (v6.0)
      */
-    float EvaluatePositionalAdvantage(const TArray<AActor*>& Followers, const FTeamObservation& TeamObs) const;
+    float Simulation(TSharedPtr<FTeamMCTSNode> Node);
 
     /**
-     * Run single MCTS simulation (select → expand → simulate → backpropagate)
-     * Used by both sequential and parallel implementations
+     * MCTS Backpropagation Phase: Update ancestors (v6.0)
      */
-    void RunSingleSimulation(
-        TSharedPtr<FTeamMCTSNode> Root,
-        const TArray<AActor*>& Followers,
-        const FTeamObservation& TeamObs
-    );
+    void Backpropagation(TSharedPtr<FTeamMCTSNode> Node, float Value);
+
+    //--------------------------------------------------------------------------
+    // v6.0: ASSIGNMENT EVALUATION (RL-GUIDED)
+    //--------------------------------------------------------------------------
 
     /**
-     * Generate possible objective assignments for expansion (v5.0 Individual Assignment)
-     * Smaller action space: 4 strategy types × N agents ≈ 20-40 combinations
-     * Each agent receives individual strategy based on state
-     * @param Followers - List of follower actors
-     * @param TeamObs - Current team observation
-     * @param ObjectiveManager - Manager to create objectives
-     * @param MaxCombinations - Maximum number of combinations to generate
+     * Evaluate assignment using RL value estimates + heuristics (v6.0)
+     * @param Assignment - Agent-to-objective mapping
+     * @return Value estimate [-1, 1]
      */
-    TArray<TMap<AActor*, class UObjective*>> GenerateObjectiveAssignments(
-        const TArray<AActor*>& Followers,
-        const FTeamObservation& TeamObs,
-        class UObjectiveManager* ObjectiveManager,
-        int32 MaxCombinations = 20
-    ) const;
+    float EvaluateAssignment(const FObjectiveAssignment& Assignment);
 
     /**
-     * Calculate objective score for follower-objective pair (v5.0 Individual Assignment)
-     * Scores based on individual agent context: health, ammo, position, ally needs
-     * @param Follower - The follower actor
-     * @param ObjType - The objective type to score
-     * @param TeamObs - Current team observation for context
-     * @return Score value (higher = better fit for this specific agent)
+     * Generate possible assignments from current node (v6.0)
      */
-    float CalculateObjectiveScore(AActor* Follower, EObjectiveType ObjType, const FTeamObservation& TeamObs) const;
+    TArray<FObjectiveAssignment> GeneratePossibleAssignments(const FObjectiveAssignment& CurrentAssignment);
+
+    //--------------------------------------------------------------------------
+    // v6.0: COORDINATION HEURISTICS
+    //--------------------------------------------------------------------------
 
     /**
-     * Calculate synergy bonus between objectives (v5.0)
-     * Rewards tactical diversity and coordinated actions
-     * @param ObjType - New objective being considered
-     * @param ExistingObjectives - Already assigned objectives
-     * @param TeamObs - Current team observation for context
-     * @return Synergy bonus (positive = good synergy, negative = conflict)
+     * Team cohesion score: Agents on same objective should be near each other (v6.0)
+     * @return Score [0, 1] - Higher = better cohesion
      */
-    float CalculateObjectiveSynergy(EObjectiveType ObjType, const TMap<AActor*, EObjectiveType>& ExistingObjectives, const FTeamObservation& TeamObs) const;
+    float TeamCohesionScore(const FObjectiveAssignment& Assignment) const;
 
+    /**
+     * Objective coverage score: All high-priority objectives have agents (v6.0)
+     * @return Score [0, 1] - Higher = better coverage
+     */
+    float ObjectiveCoverageScore(const FObjectiveAssignment& Assignment) const;
 
+    /**
+     * Capability match score: Right agents for the job (v6.0)
+     * @return Score [0, 1] - Higher = better match
+     */
+    float CapabilityMatchScore(const FObjectiveAssignment& Assignment) const;
 
 public:
-    //--------------------------------------------------------------------------
-    // MCTS STATISTICS EXPORT (v5.0 - Curriculum Learning)
-    //--------------------------------------------------------------------------
-
-    /**
-     * Extract MCTS statistics from tree search for curriculum learning
-     * Called after RunTeamMCTSTreeSearchWithObjectives to get uncertainty metrics
-     * @param OutValueVariance - Standard deviation of child node values
-     * @param OutPolicyEntropy - Entropy of visit count distribution (action uncertainty)
-     * @param OutAverageValue - Mean value estimate from root node
-     */
-    void GetMCTSStatistics(float& OutValueVariance, float& OutPolicyEntropy, float& OutAverageValue) const;
-
-    /**
-     * Get visit count for root node (indicates search depth)
-     */
-    int32 GetRootVisitCount() const;
-
-
     //--------------------------------------------------------------------------
     // CONFIGURATION (Team-Level)
     //--------------------------------------------------------------------------
@@ -241,10 +180,19 @@ private:
     UPROPERTY()
     TObjectPtr<class UObjectiveManager> CachedObjectiveManager;
 
-    /** RL Policy Network for heuristic action priors
-     * Provides GetObjectivePriors() for PUCT formula guidance
-     * Note: Does NOT use neural network - purely heuristic analysis
+    /** RL Policy Network for heuristic action priors (v5.0 - DEPRECATED)
+     * v6.0: Now used for GetStateValue() queries (actual RL value estimates)
      */
     UPROPERTY()
     TObjectPtr<class URLPolicyNetwork> RLPolicyNetwork;
+
+    //--------------------------------------------------------------------------
+    // v6.0: ASSIGNMENT STATE
+    //--------------------------------------------------------------------------
+
+    /** Current agents available for assignment (v6.0) */
+    TArray<AActor*> AvailableAgents;
+
+    /** Current objectives available for assignment (v6.0) */
+    TArray<UObjective*> AvailableObjectives;
 };

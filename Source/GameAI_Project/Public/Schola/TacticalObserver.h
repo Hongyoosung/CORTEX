@@ -9,28 +9,24 @@
 class UFollowerAgentComponent;
 
 /**
- * Schola observer for v5.0 Multi-Head Architecture (64 streamlined features)
+ * Schola observer for v6.0 Single-Head Architecture (68 features)
  * Used for live RL training via gRPC connection to Python/RLlib.
  *
- * v5.0 STREAMLINED OBSERVATION (64 features total):
+ * v6.0 OBSERVATION WITH OBJECTIVE CONTEXT (68 features total):
  * - Agent State (7): position(3), velocity(3), health(1)
  * - Combat (1): enemy_distance(1)
  * - Perception (32): raycast_distances(16), raycast_hit_types(16)
  * - Enemy Info (16): enemy_count(1), nearby_enemies(15)
  * - Tactical (4): has_cover(1), cover_distance(1), cover_direction(2)
  * - Support Context (4): ally_needs_help(1), ally_health(1), ally_distance(1), ally_direction(1)
+ * - Objective Context (4): type(1), distance(1), direction(2) - NEW in v6.0
  *
- * REMOVED in v5.0 (-14 features from v4.0):
- * - Rotation (3) - engine handles auto-aim
- * - Shield (1) - not implemented
- * - Ammo (1) - infinite ammo assumed (team-level only in MCTS)
- * - Cooldown (1) - handled by engine
- * - Weapon type (1) - single weapon type
- * - Terrain type (1) - covered by raycasts
- * - Objective embedding (4) - replaced by strategy head selection
- * - Unused padding (2)
+ * v6.0 CHANGES (from v5.0):
+ * - Added: Objective context (4) - informs RL about MCTS-assigned objective
+ * - Removed: Strategy index (1) - strategy now selected by single-head RL policy
+ * - Total: 64 → 68 features
  *
- * Note: Strategy selection is handled by multi-head network, not as input feature.
+ * Note: Strategy selection is now handled by RL policy based on observation + objective context.
  */
 UCLASS(BlueprintType, meta = (DisplayName = "Tactical Observer"))
 class GAMEAI_PROJECT_API UTacticalObserver : public UBoxObserver

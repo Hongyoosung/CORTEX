@@ -12,7 +12,7 @@ class UObjective;
 class UObjectiveManager;
 
 /**
- * Async task for running MCTS in background thread
+ * Async task for running MCTS objective assignment in background thread (v6.0)
  *
  * Provides better lifecycle management than raw AsyncTask lambdas:
  * - Integrated UE5 stat tracking (Insights profiler)
@@ -20,15 +20,20 @@ class UObjectiveManager;
  * - Built-in execution time tracking
  * - Manual cleanup control
  *
+ * v6.0 Updates:
+ * - Now runs RunObjectiveAssignment() instead of RunTeamMCTSWithObjectives()
+ * - Returns FObjectiveAssignment instead of TMap
+ * - Takes agents and objectives directly (no TeamObservation or ObjectiveManager)
+ *
  * Usage:
  *   auto* Task = new FAsyncTask<FMCTSAsyncTask>(
- *       MCTS, TeamObs, Followers, ObjectiveManager
+ *       MCTS, Agents, Objectives
  *   );
  *   Task->StartBackgroundTask();
  *
  *   // Later (e.g., in Tick):
  *   if (Task->IsDone()) {
- *       Results = Task->GetTask().GetResults();
+ *       FObjectiveAssignment Assignment = Task->GetTask().GetResults();
  *       ExecutionTime = Task->GetTask().GetExecutionTime();
  *       delete Task;  // Manual cleanup required
  *   }
@@ -39,23 +44,23 @@ class GAMEAI_PROJECT_API FMCTSAsyncTask : public FNonAbandonableTask
 
 public:
     /**
-     * Constructor
+     * Constructor (v6.0)
      *
      * @param InMCTS - MCTS instance to run
-     * @param InTeamObs - Team observation snapshot
-     * @param InFollowers - List of follower actors
-     * @param InObjectiveManager - Objective manager for creating objectives
+     * @param InAgents - Available agents for assignment
+     * @param InObjectives - Available objectives for assignment
+     * @param InSimulations - Number of MCTS simulations (default: 500)
      */
     FMCTSAsyncTask(
         UMCTS* InMCTS,
-        const FTeamObservation& InTeamObs,
-        const TArray<AActor*>& InFollowers,
-        UObjectiveManager* InObjectiveManager
+        const TArray<AActor*>& InAgents,
+        const TArray<UObjective*>& InObjectives,
+        int32 InSimulations = 500
     )
         : MCTS(InMCTS)
-        , TeamObservation(InTeamObs)
-        , Followers(InFollowers)
-        , ObjectiveManager(InObjectiveManager)
+        , Agents(InAgents)
+        , Objectives(InObjectives)
+        , Simulations(InSimulations)
         , bCompleted(false)
         , ExecutionTime(0.0f)
     {
@@ -77,10 +82,10 @@ public:
     }
 
     /**
-     * Get results (call after IsComplete() returns true)
-     * @return Map of follower to objective assignments
+     * Get results (call after IsComplete() returns true) - v6.0
+     * @return Objective assignment with value estimates
      */
-    TMap<AActor*, UObjective*> GetResults() const { return Results; }
+    FObjectiveAssignment GetResults() const { return ResultAssignment; }
 
     /**
      * Get execution time in milliseconds
@@ -99,17 +104,17 @@ private:
     /** MCTS instance (safe to access from background thread) */
     UMCTS* MCTS;
 
-    /** Team observation snapshot (copied, not referenced) */
-    FTeamObservation TeamObservation;
+    /** Agents available for assignment (v6.0) */
+    TArray<AActor*> Agents;
 
-    /** Follower actors (copied array) */
-    TArray<AActor*> Followers;
+    /** Objectives available for assignment (v6.0) */
+    TArray<UObjective*> Objectives;
 
-    /** Objective manager (safe to access from background thread for objective creation) */
-    UObjectiveManager* ObjectiveManager;
+    /** Number of MCTS simulations (v6.0) */
+    int32 Simulations;
 
-    /** Results from MCTS execution */
-    TMap<AActor*, UObjective*> Results;
+    /** Results from MCTS execution (v6.0) */
+    FObjectiveAssignment ResultAssignment;
 
     /** Thread-safe completion flag */
     FThreadSafeBool bCompleted;

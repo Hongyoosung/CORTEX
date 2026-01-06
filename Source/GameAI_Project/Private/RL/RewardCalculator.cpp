@@ -54,7 +54,212 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 }
 
 //--------------------------------------------------------------------------
-// CORE REWARD CALCULATION
+// v6.0: OBJECTIVE-AWARE REWARD CALCULATION
+//--------------------------------------------------------------------------
+
+float URewardCalculator::CalculateReward(
+	const FObservationElement& PrevObs,
+	const FObservationElement& CurrentObs,
+	const FMacroAction& Action)
+{
+	float Reward = 0.0f;
+
+	EStrategyType Strategy = Action.Strategy;
+	EObjectiveType Objective = CurrentObs.ObjectiveContext.Type;
+
+	// Strategy-specific rewards (base combat rewards)
+	Reward += CalculateStrategyReward(Strategy, PrevObs, CurrentObs);
+
+	// Objective-aware modifiers (CRITICAL for MCTS-RL alignment)
+	Reward += CalculateObjectiveProgressReward(Objective, PrevObs, CurrentObs);
+
+	// Alignment bonus: Strategy matches objective
+	Reward += CalculateAlignmentBonus(Strategy, Objective);
+
+	// Add accumulated global events (objective completion, death)
+	Reward += AccumulatedIndividualReward;
+	Reward += AccumulatedObjectiveReward;
+
+	// Reset accumulators
+	AccumulatedIndividualReward = 0.0f;
+	AccumulatedObjectiveReward = 0.0f;
+	KillsSinceLastUpdate = 0;
+	DamageSinceLastUpdate = 0.0f;
+	DamageTakenSinceLastUpdate = 0.0f;
+
+	return Reward;
+}
+
+float URewardCalculator::CalculateStrategyReward(
+	EStrategyType Strategy,
+	const FObservationElement& PrevObs,
+	const FObservationElement& CurrentObs)
+{
+	float Reward = 0.0f;
+
+	// Base combat rewards (applies to all strategies)
+	Reward += KillsSinceLastUpdate * RewardConfig::KILL_REWARD;
+	Reward += DamageSinceLastUpdate * 0.05f; // +5 per 100 damage
+
+	// Strategy-specific modifiers
+	switch (Strategy)
+	{
+		case EStrategyType::Assault:
+			// Aggressive combat bonus
+			if (KillsSinceLastUpdate > 0)
+			{
+				Reward += 5.0f; // Extra bonus for kills during assault
+			}
+			break;
+
+		case EStrategyType::Defend:
+			// Holding position bonus
+			if (IsOnObjective())
+			{
+				Reward += 2.0f; // Reward for maintaining defensive position
+			}
+			break;
+
+		case EStrategyType::Support:
+			// Ally protection bonus
+			if (DamageTakenSinceLastUpdate > 0.0f)
+			{
+				Reward += 3.0f; // Reward for drawing fire (protecting allies)
+			}
+			break;
+
+		case EStrategyType::Retreat:
+			// Survival bonus
+			if (CurrentObs.AgentHealth > PrevObs.AgentHealth)
+			{
+				Reward += 5.0f; // Reward for recovering health
+			}
+			break;
+
+		default:
+			break;
+	}
+
+	return Reward;
+}
+
+float URewardCalculator::CalculateObjectiveProgressReward(
+	EObjectiveType Objective,
+	const FObservationElement& PrevObs,
+	const FObservationElement& CurrentObs)
+{
+	float Reward = 0.0f;
+
+	// Get objective context from observations
+	const FObjectiveContext& PrevCtx = PrevObs.ObjectiveContext;
+	const FObjectiveContext& CurrentCtx = CurrentObs.ObjectiveContext;
+
+	float DistancePrev = PrevCtx.Distance;
+	float DistanceCurrent = CurrentCtx.Distance;
+	float DistanceDelta = DistancePrev - DistanceCurrent; // Positive = moving closer
+
+	switch (Objective)
+	{
+		case EObjectiveType::Capture:
+		{
+			// Reward for getting closer to objective
+			if (DistanceDelta > 0.0f)
+			{
+				Reward += DistanceDelta * RewardConfig::PROGRESS_PER_METER;
+			}
+
+			// Bonus for reaching objective
+			if (DistanceCurrent < 0.2f) // Within normalized threshold
+			{
+				Reward += 10.0f;
+			}
+			break;
+		}
+
+		case EObjectiveType::Defend:
+		{
+			// Reward for staying near objective
+			if (DistanceCurrent < 0.2f) // Within 10m (normalized)
+			{
+				Reward += 3.0f; // Continuous holding bonus
+			}
+			else
+			{
+				// Small penalty for leaving position
+				Reward -= 1.0f;
+			}
+			break;
+		}
+
+		case EObjectiveType::Support:
+		{
+			// Reward for being near protected ally
+			if (DistanceCurrent < 0.3f) // Within support range
+			{
+				Reward += 2.0f;
+			}
+
+			// Check if protected ally health improved
+			if (CurrentCtx.TargetActor && PrevCtx.TargetActor)
+			{
+				UHealthComponent* AllyHealth = CurrentCtx.TargetActor->FindComponentByClass<UHealthComponent>();
+				if (AllyHealth)
+				{
+					float currentAllyHealth = AllyHealth->GetCurrentHealth() / AllyHealth->GetMaxHealth();
+					// If ally survived and maintained health, bonus
+					if (currentAllyHealth >= ProtectedAllyLastHealth && currentAllyHealth > 0.0f)
+					{
+						Reward += 5.0f;
+					}
+					ProtectedAllyLastHealth = currentAllyHealth;
+				}
+			}
+			break;
+		}
+
+		case EObjectiveType::Retreat:
+		{
+			// Reward for increasing distance from danger
+			if (DistanceDelta < 0.0f) // Moving away (distance increasing)
+			{
+				Reward += -DistanceDelta * RewardConfig::PROGRESS_PER_METER;
+			}
+
+			// Bonus for reaching safe distance
+			if (DistanceCurrent > 0.8f) // Far from danger
+			{
+				Reward += 10.0f;
+			}
+			break;
+		}
+
+		case EObjectiveType::None:
+		default:
+			// No objective-specific rewards
+			break;
+	}
+
+	return Reward;
+}
+
+float URewardCalculator::CalculateAlignmentBonus(
+	EStrategyType Strategy,
+	EObjectiveType Objective)
+{
+	// Bonus for strategy matching objective intent
+	if ((Strategy == EStrategyType::Assault && Objective == EObjectiveType::Capture) ||
+		(Strategy == EStrategyType::Defend && Objective == EObjectiveType::Defend) ||
+		(Strategy == EStrategyType::Support && Objective == EObjectiveType::Support) ||
+		(Strategy == EStrategyType::Retreat && Objective == EObjectiveType::Retreat))
+	{
+		return 1.0f; // Small bonus for perfect alignment
+	}
+
+	return 0.0f;
+}
+
+//--------------------------------------------------------------------------
+// LEGACY REWARD CALCULATION (Deprecated in v6.0)
 //--------------------------------------------------------------------------
 
 float URewardCalculator::CalculateTotalReward(float DeltaTime)
@@ -440,43 +645,62 @@ void URewardCalculator::OnTakeDamage(float Damage)
 
 void URewardCalculator::OnDeath()
 {
-	// v5.0: Strategy-specific death penalties
-	float DeathPenalty = 0.0f;
+	// v6.0: Unified death penalty (CRITICAL: Must be < objective rewards)
+	// This ensures agents will sacrifice themselves to complete objectives
+	AccumulatedIndividualReward += RewardConfig::DEATH_PENALTY;
 
-	switch (CurrentStrategy)
-	{
-		case EStrategyType::Assault:
-			DeathPenalty = Assault_DeathPenalty;  // -8.0 (lower penalty, expected risk)
-			break;
-		case EStrategyType::Defend:
-			DeathPenalty = Defend_DeathPenalty;  // -12.0 (higher penalty, losing anchor)
-			break;
-		case EStrategyType::Support:
-			DeathPenalty = Assault_DeathPenalty;  // -8.0 (moderate penalty)
-			break;
-		case EStrategyType::Retreat:
-			DeathPenalty = Retreat_DeathPenalty;  // -15.0 (highest penalty, failed retreat)
-			break;
-		default:
-			DeathPenalty = -10.0f;  // Legacy default
-			break;
-	}
-
-	AccumulatedIndividualReward += DeathPenalty;
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD] Death (%s): %.1f"),
-		*UEnum::GetValueAsString(CurrentStrategy), DeathPenalty);
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Death: %.1f (acceptable if objective achieved)"),
+		RewardConfig::DEATH_PENALTY);
 }
 
 void URewardCalculator::OnObjectiveComplete(UObjective* Objective)
 {
-	AccumulatedObjectiveReward += 50.0f; // +50 for objective completion
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD] Objective complete: +50"));
+	if (!Objective)
+	{
+		return;
+	}
+
+	// v6.0: Objective-specific completion rewards
+	float CompletionReward = 0.0f;
+
+	switch (Objective->Type)
+	{
+		case EObjectiveType::Capture:
+			CompletionReward = RewardConfig::OBJECTIVE_CAPTURE_REWARD;
+			break;
+		case EObjectiveType::Defend:
+			CompletionReward = RewardConfig::OBJECTIVE_DEFEND_REWARD;
+			break;
+		case EObjectiveType::Support:
+			CompletionReward = RewardConfig::OBJECTIVE_SUPPORT_REWARD;
+			break;
+		case EObjectiveType::Retreat:
+			CompletionReward = RewardConfig::OBJECTIVE_RETREAT_REWARD;
+			break;
+		default:
+			CompletionReward = 50.0f; // Legacy default
+			break;
+	}
+
+	AccumulatedObjectiveReward += CompletionReward;
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Objective complete (%s): +%.1f"),
+		*UEnum::GetValueAsString(Objective->Type), CompletionReward);
 }
 
 void URewardCalculator::OnObjectiveFailed(UObjective* Objective)
 {
-	AccumulatedObjectiveReward -= 30.0f; // -30 for objective failure
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD] Objective failed: -30"));
+	// v6.0: Objective failure penalty (but still less than completion reward)
+	AccumulatedObjectiveReward -= 30.0f;
+
+	if (Objective)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Objective failed (%s): -30"),
+			*UEnum::GetValueAsString(Objective->Type));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Objective failed: -30"));
+	}
 }
 
 void URewardCalculator::SetCurrentObjective(UObjective* Objective)

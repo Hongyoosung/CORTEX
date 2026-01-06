@@ -57,16 +57,16 @@ struct GAMEAI_PROJECT_API FFollowerStateTreeContext
 	TObjectPtr<URLPolicyNetwork> TacticalPolicy = nullptr;
 
 	//--------------------------------------------------------------------------
-	// TACTICAL STATE (Updated by RL policy and execution tasks)
+	// TACTICAL STATE (Updated by RL policy and execution tasks) - v6.0
 	//--------------------------------------------------------------------------
 
-	/** Current atomic action from RL policy (8-dimensional) */
+	/** Current strategy from RL policy (v6.0 - simplified action space) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical")
-	FTacticalAction CurrentAtomicAction;
+	FMacroAction CurrentAction;
 
-	/** Time in current tactical action (seconds) */
+	/** Time in current strategy (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical")
-	float TimeInTacticalAction = 0.0f;
+	float TimeInStrategy = 0.0f;
 
 	/** Progress of current action (0-1) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tactical")

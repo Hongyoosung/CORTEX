@@ -55,24 +55,32 @@ EStateTreeRunStatus FSTTask_ExecuteMovement::Tick(FStateTreeExecutionContext& Co
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 
 	// Check abort conditions
-	if (!SharedContext.bIsAlive || !SharedContext.CurrentObjective)
+	if (!SharedContext.bIsAlive)
 	{
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// Get current action
-	const FTacticalAction& Action = SharedContext.CurrentAtomicAction;
-	const FMacroAction& CurrentMacro = Action.MacroAction;
-	const FMacroAction& PreviousMacro = InstanceData.PreviousMacroAction;
-
-	// Detect action changes (only update movement when position choice changes)
-	//bool bActionChanged = (CurrentMacro.PositionChoice != PreviousMacro.PositionChoice);
-
-	/*if (bActionChanged)
+	// v6.0: Get current strategy from RL policy (via FollowerComponent)
+	if (!SharedContext.FollowerComponent)
 	{
-		ExecuteMovement(Context, Action, DeltaTime);
-		InstanceData.PreviousMacroAction = CurrentMacro;
-	}*/
+		return EStateTreeRunStatus::Failed;
+	}
+
+	EStrategyType CurrentStrategy = SharedContext.FollowerComponent->GetCurrentStrategy();
+	EStrategyType PreviousStrategy = InstanceData.PreviousMacroAction.Strategy;
+
+	// Detect strategy change
+	if (CurrentStrategy != PreviousStrategy)
+	{
+		// Map strategy to tactical position (deterministic)
+		ETacticalPosition TargetPosition = StrategyToPosition(CurrentStrategy, SharedContext);
+
+		// Execute movement
+		ExecuteMovementToPosition(Context, TargetPosition, DeltaTime);
+
+		// Update previous strategy
+		InstanceData.PreviousMacroAction.Strategy = CurrentStrategy;
+	}
 
 	return EStateTreeRunStatus::Running;
 }
@@ -82,7 +90,35 @@ void FSTTask_ExecuteMovement::ExitState(FStateTreeExecutionContext& Context, con
 	// Cleanup if needed
 }
 
-void FSTTask_ExecuteMovement::ExecuteMovement(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const
+ETacticalPosition FSTTask_ExecuteMovement::StrategyToPosition(
+	EStrategyType Strategy,
+	const FFollowerStateTreeContext& Context) const
+{
+	switch (Strategy)
+	{
+		case EStrategyType::Assault:
+			return ETacticalPosition::ForwardCover;
+
+		case EStrategyType::Defend:
+			return ETacticalPosition::Hold;
+
+		case EStrategyType::Support:
+			// Move toward ally in need
+			if (Context.FollowerComponent && Context.FollowerComponent->GetAllyContext().bAllyNeedsHelp)
+			{
+				return ETacticalPosition::ForwardCover; // Toward ally
+			}
+			return ETacticalPosition::Hold;
+
+		case EStrategyType::Retreat:
+			return ETacticalPosition::Retreat;
+
+		default:
+			return ETacticalPosition::Hold;
+	}
+}
+
+void FSTTask_ExecuteMovement::ExecuteMovementToPosition(FStateTreeExecutionContext& Context, ETacticalPosition PositionType, float DeltaTime) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
@@ -93,63 +129,69 @@ void FSTTask_ExecuteMovement::ExecuteMovement(FStateTreeExecutionContext& Contex
 		return;
 	}
 
-	const FMacroAction& Macro = Action.MacroAction;
-	// Macro.PositionChoice is removed
-	//TArray<FVector> CandidatePositions = QueryEQSPositions(Context, Macro.PositionChoice);
+	// Query EQS for tactical positions based on position type
+	TArray<FVector> CandidatePositions = QueryEQSPositions(Context, PositionType);
 
-	//if (CandidatePositions.Num() > 0)
-	//{
-	//	float AcceptanceRadius = 100.0f;
-	//	FVector TargetPos = CandidatePositions[0];
-	//	FVector CurrentPos = Pawn->GetActorLocation();
+	if (CandidatePositions.Num() > 0)
+	{
+		float AcceptanceRadius = 100.0f;
+		FVector TargetPos = CandidatePositions[0];
+		FVector CurrentPos = Pawn->GetActorLocation();
 
-	//	UWorld* World = Pawn->GetWorld();
-	//	UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+		UWorld* World = Pawn->GetWorld();
+		UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
 
-	//	// Project target onto NavMesh
-	//	FVector NavTargetPos = TargetPos;
-	//	if (NavSys)
-	//	{
-	//		FNavLocation NavLoc;
-	//		if (NavSys->ProjectPointToNavigation(TargetPos, NavLoc, FVector(500, 500, 500)))
-	//		{
-	//			NavTargetPos = NavLoc.Location;
-	//		}
-	//	}
+		// Project target onto NavMesh
+		FVector NavTargetPos = TargetPos;
+		if (NavSys)
+		{
+			FNavLocation NavLoc;
+			if (NavSys->ProjectPointToNavigation(TargetPos, NavLoc, FVector(500, 500, 500)))
+			{
+				NavTargetPos = NavLoc.Location;
+			}
+		}
 
-	//	// Check if already moving to same destination (within tolerance)
-	//	const float SameDestinationTolerance = 200.0f;
-	//	UPathFollowingComponent* PathComp = InstanceData.AIController->GetPathFollowingComponent();
-	//	if (PathComp && PathComp->GetStatus() == EPathFollowingStatus::Moving)
-	//	{
-	//		FVector CurrentDestination = SharedContext.MovementDestination;
-	//		float DistanceToNewTarget = FVector::Dist(CurrentDestination, NavTargetPos);
+		// Check if already moving to same destination (within tolerance)
+		const float SameDestinationTolerance = 200.0f;
+		UPathFollowingComponent* PathComp = InstanceData.AIController->GetPathFollowingComponent();
+		if (PathComp && PathComp->GetStatus() == EPathFollowingStatus::Moving)
+		{
+			FVector CurrentDestination = SharedContext.MovementDestination;
+			float DistanceToNewTarget = FVector::Dist(CurrentDestination, NavTargetPos);
 
-	//		if (DistanceToNewTarget < SameDestinationTolerance)
-	//		{
-	//			return; // Keep current movement
-	//		}
-	//		else
-	//		{
-	//			InstanceData.AIController->StopMovement();
-	//		}
-	//	}
+			if (DistanceToNewTarget < SameDestinationTolerance)
+			{
+				return; // Keep current movement
+			}
+			else
+			{
+				InstanceData.AIController->StopMovement();
+			}
+		}
 
-	//	// Issue new movement command
-	//	FAIMoveRequest MoveReq(NavTargetPos);
-	//	MoveReq.SetAcceptanceRadius(AcceptanceRadius);
-	//	MoveReq.SetUsePathfinding(true);
+		// Issue new movement command
+		FAIMoveRequest MoveReq(NavTargetPos);
+		MoveReq.SetAcceptanceRadius(AcceptanceRadius);
+		MoveReq.SetUsePathfinding(true);
 
-	//	FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
+		FPathFollowingRequestResult MoveResult = InstanceData.AIController->MoveTo(MoveReq);
 
-	//	SharedContext.MovementDestination = NavTargetPos;
-	//	SharedContext.bIsMoving = (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful);
+		SharedContext.MovementDestination = NavTargetPos;
+		SharedContext.bIsMoving = (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful);
 
-	//	if (MoveResult.Code == EPathFollowingRequestResult::Failed)
-	//	{
-	//		UE_LOG(LogTemp, Error, TEXT("[MOVE] '%s': MoveTo FAILED"), *Pawn->GetName());
-	//	}
-	//}
+		if (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful)
+		{
+			UE_LOG(LogTemp, Display, TEXT("[MOVE v6.0] '%s': Moving to %s (Strategy: %s)"),
+				*Pawn->GetName(),
+				*UEnum::GetValueAsString(PositionType),
+				*UEnum::GetValueAsString(SharedContext.FollowerComponent->GetCurrentStrategy()));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[MOVE v6.0] '%s': MoveTo FAILED"), *Pawn->GetName());
+		}
+	}
 }
 
 TArray<FVector> FSTTask_ExecuteMovement::QueryEQSPositions(FStateTreeExecutionContext& Context, ETacticalPosition PositionType) const

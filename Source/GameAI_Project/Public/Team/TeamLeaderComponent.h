@@ -168,15 +168,18 @@ public:
 	FTeamObservation BuildTeamObservation();
 
 
-	/** Run objective-based decision-making (sync) - v3.0 Combat Refactoring */
+	/** Run objective-based decision-making (sync) - v6.0 MCTS Coordination */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
 	void RunObjectiveDecisionMaking();
 
-	/** Run objective-based decision-making (async) - v3.0 Combat Refactoring */
+	/** Run objective-based decision-making (async) - v6.0 MCTS Coordination */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
 	void RunObjectiveDecisionMakingAsync();
 
-	/** Callback when async objective-based MCTS completes (v3.0) */
+	/** Apply objective assignment to followers (v6.0) */
+	void ApplyObjectiveAssignment(const FObjectiveAssignment& Assignment);
+
+	/** Callback when async objective-based MCTS completes (LEGACY v5.0 - kept for async compatibility) */
 	void OnObjectiveMCTSComplete(TMap<AActor*, UObjective*> NewObjectives);
 
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")

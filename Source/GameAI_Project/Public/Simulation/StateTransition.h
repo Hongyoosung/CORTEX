@@ -161,8 +161,9 @@ struct FStateTransitionSample
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Training")
 	TArray<float> StateBefore;
 
+	/** v6.0: Simplified to strategy-only actions */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Training")
-	TArray<FTacticalAction> TacticalActions;
+	TArray<FMacroAction> Actions;
 
 	// State at time t+1 (flattened team observation)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Training")
@@ -217,8 +218,8 @@ struct FActionEncoding
 	// Encode objective to feature vector
 	static FActionEncoding EncodeObjective(const UObjective* Objective);
 
-	// Encode tactical action to 8-dimensional continuous space
-	static TArray<float> EncodeTacticalAction(const FTacticalAction& Action);
+	/** v6.0: Encode strategy action (simplified from 8D to 1D discrete) */
+	static TArray<float> EncodeAction(const FMacroAction& Action);
 
 	// Flatten to single feature vector
 	TArray<float> Flatten() const;

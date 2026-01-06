@@ -14,13 +14,16 @@ class APawn;
 class AAIController;
 
 /**
- * State Tree Task: Execute Fire (v5.0 Macro Actions)
+ * State Tree Task: Execute Fire (v6.0 Strategy-Based)
  *
- * Handles weapon firing based on target selection.
- * Extracted from STTask_ExecuteObjective for better modularity.
+ * Handles weapon firing based on RL-selected strategy.
+ * Strategy determines targeting priority and firing behavior.
  *
- * Execution (v5.0):
- * - Fire control via TargetIndex: -1 = hold fire, >= 0 = engage if LOS clear
+ * v6.0 Execution:
+ * - Gets current strategy from FollowerAgentComponent (Assault/Defend/Support/Retreat)
+ * - Retreat strategy = hold fire
+ * - Assault/Defend = target closest enemy
+ * - Support = target enemy threatening ally
  * - Always checks line-of-sight before firing (prevents shooting through walls)
  * - Integrates with WeaponComponent for actual firing
  */
@@ -66,6 +69,18 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteFire : public FStateTreeTaskBase
 	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 protected:
-	/** Execute fire mode */
-	void ExecuteFire(FStateTreeExecutionContext& Context, const FTacticalAction& Action) const;
+	/** v6.0: Execute fire mode based on current strategy */
+	void ExecuteFire(FStateTreeExecutionContext& Context) const;
+
+	/** v6.0: Select target based on strategy */
+	AActor* SelectTarget(EStrategyType Strategy, const TArray<AActor*>& Enemies, const FFollowerStateTreeContext& Context) const;
+
+	/** Get closest enemy to pawn */
+	AActor* GetClosestEnemy(const TArray<AActor*>& Enemies, APawn* Pawn) const;
+
+	/** Get enemy threatening ally (for Support strategy) */
+	AActor* GetEnemyThreateningAlly(const TArray<AActor*>& Enemies, UFollowerAgentComponent* FollowerComp) const;
+
+	/** Stop firing and clear focus */
+	void StopFiring(FStateTreeExecutionContext& Context) const;
 };

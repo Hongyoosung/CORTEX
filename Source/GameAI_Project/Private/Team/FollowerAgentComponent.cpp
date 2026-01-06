@@ -26,14 +26,14 @@ void UFollowerAgentComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Initialize RL policy if not set
+	// Initialize RL policy if not set (v6.0: Single-head network)
 	if (!TacticalPolicy && bUseRLPolicy)
 	{
 		TacticalPolicy = NewObject<URLPolicyNetwork>(this);
-		FMultiHeadPolicyConfig Config;
+		FRLPolicyConfig Config;  // v6.0: Single-head policy config
 		TacticalPolicy->Initialize(Config);
 
-		UE_LOG(LogTemp, Log, TEXT("FollowerAgent '%s': Created RL policy"), *GetOwner()->GetName());
+		UE_LOG(LogTemp, Log, TEXT("FollowerAgent '%s': Created RL policy (v6.0 single-head)"), *GetOwner()->GetName());
 	}
 
 	// Find team leader component
@@ -594,6 +594,41 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 	TotalObservationTime += static_cast<float>((EndTime - StartTime) * 1000.0); // Convert to ms
 
 	return Observation;
+}
+
+// ============================================
+// v6.0: Build Objective Context
+// ============================================
+
+FObjectiveContext UFollowerAgentComponent::BuildObjectiveContext(UObjective* Objective)
+{
+	FObjectiveContext Context;
+
+	if (!Objective || !GetOwner())
+	{
+		// Return default (all zeros) if no objective or owner
+		return Context;
+	}
+
+	// Set objective type
+	Context.Type = Objective->Type;
+	Context.TargetActor = Objective->TargetActor;
+	Context.Priority = Objective->Priority;
+
+	// Calculate distance and direction to objective
+	FVector AgentLoc = GetOwner()->GetActorLocation();
+	FVector ObjectiveLoc = Objective->TargetLocation;
+
+	// Calculate distance (normalized by max distance)
+	float Distance = FVector::Dist(AgentLoc, ObjectiveLoc);
+	const float MaxDistanceNormalization = 5000.0f;  // 50m max (from RLConfig)
+	Context.Distance = FMath::Clamp(Distance / MaxDistanceNormalization, 0.0f, 1.0f);
+
+	// Calculate 2D direction to objective (normalized)
+	FVector Direction = (ObjectiveLoc - AgentLoc).GetSafeNormal2D();
+	Context.Direction = FVector2D(Direction.X, Direction.Y);
+
+	return Context;
 }
 
 bool UFollowerAgentComponent::FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies)

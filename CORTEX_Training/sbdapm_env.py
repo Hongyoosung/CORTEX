@@ -1,9 +1,16 @@
 """
-SBDAPM Environment for Schola/RLlib Training (v8.0 Continuous Training)
+SBDAPM Environment for Schola/RLlib Training (v6.0 - Single-Head Strategy Selection)
 
 Solution: Provides actions for ALL keys in the DictSpace because Schola's
 fill_proto() iterates through ALL sub-spaces and expects action data for each key.
 Each agent's action is duplicated across all its component keys.
+
+v6.0 Changes (MCTS-RL Coordination Architecture):
+- ARCHITECTURE: MCTS assigns objectives → RL selects strategies (4-action space)
+- Observation: 68 features (64 base + 4 objective context)
+- Action: Discrete(4) - Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
+- Removed multi-discrete action space (Position/Target/Fire now handled by rules)
+- Simplified action masking (all strategies always valid)
 
 v8.0 Changes (Continuous Training):
 - FEATURE: Team elimination no longer ends episodes
@@ -105,7 +112,7 @@ if SCHOLA_AVAILABLE:
             if hasattr(self.schola_env, 'ids'):
                 self._update_agent_map()
 
-            # Space 정의 (v5.0: 64 core observation + 1 strategy index = 65 features)
+            # Space 정의 (v6.0: 64 core observation + 4 objective context = 68 features)
             # Observation breakdown:
             # - Agent State (7): pos(3), vel(3), health(1)
             # - Combat (1): enemy_dist(1)
@@ -113,9 +120,9 @@ if SCHOLA_AVAILABLE:
             # - Enemy Info (16): count(1), nearby(15)
             # - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
             # - Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
-            # - Strategy Index (1): current strategy (0=Assault, 1=Defend, 2=Support, 3=Retreat)
-            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(65,), dtype=np.float32)
-            self._action_space = spaces.MultiDiscrete([4, 6, 3])  # v5.0: Position(4) × Target(6) × Fire(3)
+            # - Objective Context (4): type_encoded(1), distance(1), direction(2)
+            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(68,), dtype=np.float32)
+            self._action_space = spaces.Discrete(4)  # v6.0: Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
 
             self.episode_steps = 0
 
@@ -218,47 +225,17 @@ if SCHOLA_AVAILABLE:
 
         def _get_action_mask(self, obs):
             """
-            Generate action mask based on current strategy (v5.0).
+            Generate action mask for strategy selection (v6.0).
 
-            Strategy is encoded in last observation feature (index 64):
-            0 = Assault
-            1 = Defend
-            2 = Support
-            3 = Retreat
+            v6.0: RL selects strategy only, not micro-actions (Position/Target/Fire)
+            All 4 strategies are always valid (no masking needed in v6.0)
 
             Returns:
-                Dict with position_mask (4 dims), target_mask (6 dims), fire_mask (3 dims)
-                1 = valid action, 0 = invalid action
+                np.array: [1, 1, 1, 1] - All strategies valid
             """
-            # Extract strategy index from observation (last feature)
-            strategy_idx = int(obs[64]) if len(obs) > 64 else 0
-
-            # Default: all actions valid (for Support)
-            position_mask = [1, 1, 1, 1]  # [Hold, ForwardCover, Retreat, Advance]
-            target_mask = [1, 1, 1, 1, 1, 1]  # [None, Enemy_0-4]
-            fire_mask = [1, 1, 1]  # [HoldFire, Fire, Suppress]
-
-            # Assault (0): disable Hold and Retreat (must move forward)
-            if strategy_idx == 0:
-                position_mask = [0, 1, 0, 1]  # Allow ForwardCover, Advance only
-
-            # Defend (1): disable Retreat and Advance (must hold position)
-            elif strategy_idx == 1:
-                position_mask = [1, 1, 0, 0]  # Allow Hold, ForwardCover only
-
-            # Support (2): all actions valid (context-dependent)
-            elif strategy_idx == 2:
-                position_mask = [1, 1, 1, 1]  # No restrictions
-
-            # Retreat (3): ONLY Retreat allowed
-            elif strategy_idx == 3:
-                position_mask = [0, 0, 1, 0]  # Retreat only
-
-            return {
-                "position": np.array(position_mask, dtype=np.int8),
-                "target": np.array(target_mask, dtype=np.int8),
-                "fire": np.array(fire_mask, dtype=np.int8)
-            }
+            # v6.0: All strategies always valid (MCTS assigns objectives, RL selects strategy)
+            # No context-dependent masking needed
+            return np.array([1, 1, 1, 1], dtype=np.int8)  # [Assault, Defend, Support, Retreat]
 
         def reset(self, *, seed=None, options=None):
             # v7.4 & v7.7: Step rate and reward diagnostics
@@ -394,11 +371,16 @@ if SCHOLA_AVAILABLE:
                     # v7.5: No Python-side rate limiting - UE5's Think() controls the rate
                     # Just format and send the action directly
 
-                    # Clamp target index to valid range
-                    action = np.array(action, dtype=np.int32)
-                    max_target = 5  # Supports up to 4 visible enemies
-                    if action[1] > max_target:
-                        action[1] = 0  # Clear target if invalid
+                    # v6.0: Action is now a single integer (strategy index)
+                    # Convert scalar to array for Schola compatibility
+                    if isinstance(action, (int, np.integer)):
+                        action_value = int(action)
+                    else:
+                        action_value = int(action[0]) if len(action) > 0 else 0
+
+                    # Clamp to valid strategy range [0-3]
+                    action_value = np.clip(action_value, 0, 3)
+                    action_array = np.array([action_value], dtype=np.int32)
 
                     # Get ALL component keys for this agent
                     agent_keys = all_action_keys.get((env_idx, agent_idx), [])
@@ -408,7 +390,6 @@ if SCHOLA_AVAILABLE:
                         raise RuntimeError(f"Action keys missing for agent ({env_idx}, {agent_idx}).")
 
                     # Provide the SAME action for ALL keys (fill_proto expects all)
-                    action_array = np.array(action, dtype=np.int32)
                     formatted_actions[env_idx][agent_idx] = {
                         key: action_array for key in agent_keys
                     }
@@ -459,14 +440,14 @@ if SCHOLA_AVAILABLE:
                     if flat_id in self._dead_agents:
                         # Dead agents get zero obs/rewards but NOT terminated (yet)
                         # They'll be terminated when the whole episode ends
-                        obs_dict[flat_id] = np.zeros(65, dtype=np.float32)  # v5.0: 64 obs + 1 strategy
+                        obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 objective context
                         reward_dict[flat_id] = 0.0
                         terminated_dict[flat_id] = False  # Will be set True when episode ends
                         truncated_dict[flat_id] = False
                         # Dead agents: all actions masked
                         info_dict[flat_id] = {
                             "dead": True,
-                            "action_mask": np.zeros(4 + 6 + 3, dtype=np.int8)  # All actions invalid
+                            "action_mask": np.zeros(4, dtype=np.int8)  # v6.0: All 4 strategies invalid
                         }
                     else:
                         # Live agents get normal obs/rewards
@@ -478,7 +459,7 @@ if SCHOLA_AVAILABLE:
                                 obs_val = agent_obs_data
                             obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                         else:
-                            obs_dict[flat_id] = np.zeros(65, dtype=np.float32)  # v5.0: 64 obs + 1 strategy
+                            obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 objective context
 
                         reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
                         reward_dict[flat_id] = reward
@@ -492,17 +473,11 @@ if SCHOLA_AVAILABLE:
                         terminated_dict[flat_id] = False
                         truncated_dict[flat_id] = False
 
-                        # v8.0: Add action masking based on objective
-                        masks = self._get_action_mask(obs_dict[flat_id])
-                        # Flatten masks: [position(4), target(6), fire(3)]
-                        flat_mask = np.concatenate([
-                            masks["position"],
-                            masks["target"],
-                            masks["fire"]
-                        ])
+                        # v6.0: Add action masking (all strategies valid)
+                        action_mask = self._get_action_mask(obs_dict[flat_id])
 
                         info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
-                        info_dict[flat_id]["action_mask"] = flat_mask
+                        info_dict[flat_id]["action_mask"] = action_mask
 
                 # Episode Termination Logic (v7.6 + v8.0 Continuous Training)
                 self.episode_steps += 1
@@ -546,7 +521,7 @@ if SCHOLA_AVAILABLE:
                 traceback.print_exc()
 
                 return (
-                    {aid: np.zeros(65, dtype=np.float32) for aid in self._agent_ids},  # v5.0: 64 obs + 1 strategy
+                    {aid: np.zeros(68, dtype=np.float32) for aid in self._agent_ids},  # v6.0: 64 obs + 4 objective context
                     {aid: 0.0 for aid in self._agent_ids},
                     {aid: True for aid in self._agent_ids} | {"__all__": True},
                     {aid: False for aid in self._agent_ids} | {"__all__": True},
@@ -572,16 +547,11 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    obs_dict[flat_id] = np.zeros(65, dtype=np.float32)  # v5.0: 64 obs + 1 strategy
+                    obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 objective context
 
-                # v8.0: Add action masking on reset
-                masks = self._get_action_mask(obs_dict[flat_id])
-                flat_mask = np.concatenate([
-                    masks["position"],
-                    masks["target"],
-                    masks["fire"]
-                ])
-                info_dict[flat_id] = {"action_mask": flat_mask}
+                # v6.0: Add action masking on reset (all strategies valid)
+                action_mask = self._get_action_mask(obs_dict[flat_id])
+                info_dict[flat_id] = {"action_mask": action_mask}
 
             return obs_dict, info_dict
 

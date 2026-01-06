@@ -147,6 +147,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|Observation")
 	FObservationElement BuildLocalObservation();
 
+	/** Build objective context from assigned objective (v6.0) */
+	UFUNCTION(BlueprintCallable, Category = "Follower|Observation")
+	FObjectiveContext BuildObjectiveContext(UObjective* Objective);
+
 	/** Find nearest cover position relative to enemies */
 	UFUNCTION(BlueprintCallable, Category = "Follower|Tactical")
 	bool FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies);
@@ -344,9 +348,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|RL")
 	FObservationElement PreviousObservation;
 
-	/** Last tactical action taken (for experience collection) */
+	/** Last action taken (v6.0 - simplified to strategy only) */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|RL")
-	FTacticalAction LastTacticalAction;
+	FMacroAction LastAction;
 
 	/** Accumulated reward this episode */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|RL")

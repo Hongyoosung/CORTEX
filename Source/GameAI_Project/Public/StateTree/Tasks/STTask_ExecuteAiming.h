@@ -66,6 +66,6 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteAiming : public FStateTreeTaskBase
 	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 
 protected:
-	/** Execute aiming using SetFocus */
-	void ExecuteAiming(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const;
+	/** v6.0: Execute aiming using SetFocus (simplified - no action parameter needed) */
+	void ExecuteAiming(FStateTreeExecutionContext& Context, float DeltaTime) const;
 };

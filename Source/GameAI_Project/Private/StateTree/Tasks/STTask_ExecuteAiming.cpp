@@ -32,22 +32,19 @@ EStateTreeRunStatus FSTTask_ExecuteAiming::Tick(FStateTreeExecutionContext& Cont
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// Get current action
-	const FTacticalAction& Action = SharedContext.CurrentAtomicAction;
-	const FMacroAction& CurrentMacro = Action.MacroAction;
-	const FMacroAction& PreviousMacro = InstanceData.PreviousMacroAction;
+	// v6.0: Get current strategy (simplified action space)
+	const FMacroAction& CurrentAction = SharedContext.CurrentAction;
+	const FMacroAction& PreviousAction = InstanceData.PreviousMacroAction;
 
-	// Detect target changes (only update aim when target changes)
-	bool bActionChanged = (CurrentMacro.TargetIndex != PreviousMacro.TargetIndex);
+	// Detect strategy changes
+	bool bStrategyChanged = (CurrentAction.Strategy != PreviousAction.Strategy);
 
-	if (bActionChanged)
+	// v6.0: Always execute aiming (target selection is handled by STTask_ExecuteFire)
+	ExecuteAiming(Context, DeltaTime);
+
+	if (bStrategyChanged)
 	{
-		ExecuteAiming(Context, Action, DeltaTime);
-		InstanceData.PreviousMacroAction = CurrentMacro;
-	}
-	else
-	{
-		// Continuous aim tracking (SetFocus handles this automatically)
+		InstanceData.PreviousMacroAction = CurrentAction;
 	}
 
 	return EStateTreeRunStatus::Running;
@@ -58,7 +55,7 @@ void FSTTask_ExecuteAiming::ExitState(FStateTreeExecutionContext& Context, const
 	// Cleanup if needed
 }
 
-void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, const FTacticalAction& Action, float DeltaTime) const
+void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, float DeltaTime) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
@@ -69,15 +66,14 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, c
 		return;
 	}
 
-	const FMacroAction& Macro = Action.MacroAction;
+	// v6.0: Simplified aiming - aim at PrimaryTarget if set (by STTask_ExecuteFire)
+	// or face objective direction if no target
 
-	// Configure character movement based on whether we're aiming at a target
+	// Configure character movement based on whether we have a target
 	UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
 	if (MoveComp)
 	{
-		// If we have a target to aim at, orient to controller (aim direction)
-		// Otherwise, orient to movement direction (prevents moonwalking)
-		bool bHasTarget = (Macro.TargetIndex >= 0 && SharedContext.VisibleEnemies.Num() > 0);
+		bool bHasTarget = (SharedContext.PrimaryTarget != nullptr);
 
 		if (bHasTarget)
 		{
@@ -95,48 +91,26 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, c
 		}
 	}
 
-	// If no enemies visible, face objective direction
-	if (SharedContext.VisibleEnemies.Num() == 0)
+	// Aim at primary target if set (by ExecuteFire task)
+	if (SharedContext.PrimaryTarget && InstanceData.AIController)
 	{
-		if (InstanceData.AIController && SharedContext.CurrentObjective && !SharedContext.CurrentObjective->TargetLocation.IsNearlyZero())
-		{
-			FVector ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
-			FVector PawnLocation = Pawn->GetActorLocation();
-			FVector DirectionToObjective = (ObjectiveLocation - PawnLocation).GetSafeNormal();
-			FRotator DesiredRotation = DirectionToObjective.Rotation();
+		FVector EnemyLocation = SharedContext.PrimaryTarget->GetActorLocation();
+		FVector PawnLocation = Pawn->GetActorLocation();
+		FVector AimDirection = (EnemyLocation - PawnLocation).GetSafeNormal();
+		FRotator DesiredRotation = AimDirection.Rotation();
 
-			InstanceData.AIController->SetControlRotation(DesiredRotation);
-		}
-		return;
+		InstanceData.AIController->SetControlRotation(DesiredRotation);
+		InstanceData.AIController->SetFocus(SharedContext.PrimaryTarget);
 	}
-
-	if (Macro.TargetIndex >= 0 && SharedContext.VisibleEnemies.Num() > 0)
+	// Otherwise face objective direction
+	else if (InstanceData.AIController && SharedContext.CurrentObjective && !SharedContext.CurrentObjective->TargetLocation.IsNearlyZero())
 	{
-		// Clamp target index to valid range
-		int32 ClampedIndex = FMath::Clamp(Macro.TargetIndex, 0, SharedContext.VisibleEnemies.Num() - 1);
-		AActor* TargetEnemy = SharedContext.VisibleEnemies[ClampedIndex];
+		FVector ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
+		FVector PawnLocation = Pawn->GetActorLocation();
+		FVector DirectionToObjective = (ObjectiveLocation - PawnLocation).GetSafeNormal();
+		FRotator DesiredRotation = DirectionToObjective.Rotation();
 
-		// Validate enemy is alive and valid
-		if (TargetEnemy && TargetEnemy->IsValidLowLevel() && InstanceData.AIController)
-		{
-			// Manually set controller rotation for immediate response
-			FVector EnemyLocation = TargetEnemy->GetActorLocation();
-			FVector PawnLocation = Pawn->GetActorLocation();
-			FVector AimDirection = (EnemyLocation - PawnLocation).GetSafeNormal();
-			FRotator DesiredRotation = AimDirection.Rotation();
-
-			InstanceData.AIController->SetControlRotation(DesiredRotation);
-			InstanceData.AIController->SetFocus(TargetEnemy);
-			SharedContext.PrimaryTarget = TargetEnemy;
-		}
-	}
-	else if (Macro.TargetIndex < 0)
-	{
-		// RL policy explicitly chose "no target" - clear focus
-		if (InstanceData.AIController)
-		{
-			InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
-		}
-		SharedContext.PrimaryTarget = nullptr;
+		InstanceData.AIController->SetControlRotation(DesiredRotation);
+		InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
 	}
 }

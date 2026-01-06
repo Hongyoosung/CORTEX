@@ -3,7 +3,7 @@
 TArray<float> FObservationElement::ToFeatureVector() const
 {
     TArray<float> Features;
-    Features.Reserve(64);  // v5.0: 64 features (streamlined from 70)
+    Features.Reserve(68);  // v6.0: 68 features (64 base + 4 objective context)
 
     // ========================================
     // AGENT STATE (7 features) - v5.0 streamlined
@@ -94,7 +94,16 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(FMath::Clamp(AllyDistance, 0.0f, 1.0f));
     Features.Add(FMath::Clamp(AllyDirectionAngle, -1.0f, 1.0f));
 
-    check(Features.Num() == 64);
+    // ========================================
+    // OBJECTIVE CONTEXT (4 features) - v6.0 NEW
+    // Informs RL about MCTS-assigned objective
+    // ========================================
+
+    TArray<float> ObjectiveFeatures = ObjectiveContext.ToFeatureVector();
+    check(ObjectiveFeatures.Num() == 4);
+    Features.Append(ObjectiveFeatures);
+
+    check(Features.Num() == 68);
     return Features;
 }
 

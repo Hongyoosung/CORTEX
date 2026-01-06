@@ -2,12 +2,40 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "RL/RLTypes.h"  // v5.0: EStrategyType, FStrategyRewardWeights
+#include "RL/RLTypes.h"  // v6.0: EStrategyType, EObjectiveType, FObjectiveContext
 #include "RewardCalculator.generated.h"
 
 class UFollowerAgentComponent;
 class UHealthComponent;
 class UObjective;
+
+/**
+ * v6.0 Reward Configuration
+ * CRITICAL: Objective completion MUST be highest priority
+ * If death penalty > objective reward, RL learns to hide instead of completing objectives
+ * This ensures MCTS-RL value alignment for proper coordination
+ */
+namespace RewardConfig {
+	// === PRIORITY 0: Objective Completion (Dominant Term) ===
+	constexpr float OBJECTIVE_CAPTURE_REWARD = 100.0f;   // Mission success
+	constexpr float OBJECTIVE_DEFEND_REWARD = 80.0f;     // Hold for duration
+	constexpr float OBJECTIVE_SUPPORT_REWARD = 90.0f;    // Protected ally survives
+	constexpr float OBJECTIVE_RETREAT_REWARD = 70.0f;    // Reach safe zone
+
+	// === PRIORITY 1: Objective Progress ===
+	constexpr float PROGRESS_PER_METER = 0.5f;           // Incremental progress
+
+	// === PRIORITY 2: Combat Efficiency ===
+	constexpr float KILL_REWARD = 15.0f;                 // Enemy eliminated
+
+	// === PRIORITY 3: Survival (MUST be < Objective rewards) ===
+	constexpr float DEATH_PENALTY = -10.0f;              // Acceptable loss if objective achieved
+
+	// CRITICAL INVARIANT: Objective Completion > Death Penalty
+	// 100.0 > 10.0 ✅ (dying to capture objective = net +90 reward)
+	static_assert(OBJECTIVE_CAPTURE_REWARD > -DEATH_PENALTY,
+		"Objective reward must exceed death penalty for proper MCTS-RL alignment");
+}
 
 /**
  * Combined Fire Record - Tracks recent attacks on same target for coordination detection
@@ -25,15 +53,17 @@ struct FCombinedFireRecord
 };
 
 /**
- * Unified Hierarchical Reward System (Sprint 5)
+ * v6.0 Objective-Aware Reward System
  *
- * Combines individual tactical rewards with team coordination bonuses
- * and strategic objective rewards to align MCTS and RL objectives.
+ * Calculates rewards based on objective completion and progress, with proper MCTS-RL alignment.
+ * The reward structure ensures objective completion is the dominant term, preventing agents
+ * from learning to prioritize survival over mission success.
  *
- * Reward Structure:
- * - Individual rewards: Combat events (kill +10, damage +5, take damage -5, death -10)
- * - Coordination bonuses: Strategic kill +15, combined fire +10, formation +5, disobey -15
- * - Strategic rewards: Objective complete +50, enemy wipe +30, own wipe -30, objective lost -30
+ * Key Features:
+ * - Objective-aware rewards (rewards vary based on assigned objective type)
+ * - Strategy-objective alignment bonuses
+ * - Progress tracking (rewards for moving toward objective)
+ * - Proper value alignment with MCTS (objective reward > death penalty)
  */
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API URewardCalculator : public UActorComponent
@@ -47,30 +77,80 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	//--------------------------------------------------------------------------
-	// CORE REWARD CALCULATION
+	// CORE REWARD CALCULATION (v6.0)
 	//--------------------------------------------------------------------------
 
-	/** Calculate total hierarchical reward (combines all reward sources) */
+	/**
+	 * Calculate total reward (v6.0 - Objective-aware)
+	 * @param PrevObs - Previous observation
+	 * @param CurrentObs - Current observation (includes objective context)
+	 * @param Action - Action taken (strategy selection)
+	 * @return Total reward for this step
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	float CalculateReward(
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs,
+		const FMacroAction& Action
+	);
+
+	/**
+	 * Calculate strategy-specific rewards (v6.0)
+	 * Base rewards for combat events adjusted by current strategy
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	float CalculateStrategyReward(
+		EStrategyType Strategy,
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs
+	);
+
+	/**
+	 * Calculate objective progress rewards (v6.0 - CRITICAL)
+	 * Rewards for making progress toward assigned objective
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	float CalculateObjectiveProgressReward(
+		EObjectiveType Objective,
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs
+	);
+
+	/**
+	 * Calculate alignment bonus (v6.0)
+	 * Bonus for strategy matching objective intent
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	float CalculateAlignmentBonus(
+		EStrategyType Strategy,
+		EObjectiveType Objective
+	);
+
+	//--------------------------------------------------------------------------
+	// LEGACY METHODS (Deprecated in v6.0 - kept for backward compatibility)
+	//--------------------------------------------------------------------------
+
+	/** @deprecated Use CalculateReward() instead */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float CalculateTotalReward(float DeltaTime);
 
-	/** Calculate individual combat rewards */
+	/** @deprecated v6.0 - objective-aware rewards replace this */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float CalculateIndividualReward();
 
-	/** Calculate team coordination bonuses */
+	/** @deprecated v6.0 - coordination handled by MCTS */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float CalculateCoordinationReward();
 
-	/** Calculate objective-based rewards */
+	/** @deprecated v6.0 - replaced by CalculateObjectiveProgressReward */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float CalculateObjectiveReward();
 
-	/** Calculate efficiency penalties (time pressure, low health) */
+	/** @deprecated v6.0 - not used in new reward structure */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float CalculateEfficiencyPenalty(float DeltaTime);
 
-	/** Calculate cover usage rewards (Sprint 6) */
+	/** @deprecated v6.0 - not used in new reward structure */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float CalculateCoverReward();
 
@@ -133,126 +213,20 @@ public:
 	void CheckObjectiveCompliance();
 
 	//--------------------------------------------------------------------------
-	// CONFIGURATION
+	// CONFIGURATION (v6.0 - Simplified)
 	//--------------------------------------------------------------------------
-
-	/** Reward weight for individual combat */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Weights")
-	float IndividualRewardWeight = 1.0f;
-
-	/** Reward weight for coordination bonuses */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Weights")
-	float CoordinationRewardWeight = 1.0f;
-
-	/** Reward weight for objectives */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Weights")
-	float ObjectiveRewardWeight = 1.0f;
-
-	//--------------------------------------------------------------------------
-	// STRATEGY-SPECIFIC REWARD CONSTANTS (v5.0)
-	//--------------------------------------------------------------------------
-
-	// Assault Strategy Rewards
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
-	float Assault_KillReward = 15.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
-	float Assault_DamageMultiplier = 0.01f;  // +0.1 per 10 damage
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
-	float Assault_AdvanceReward = 0.5f;  // Per second
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
-	float Assault_ObjectiveReachReward = 20.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Assault")
-	float Assault_DeathPenalty = -8.0f;
-
-	// Defend Strategy Rewards
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
-	float Defend_KillReward = 10.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
-	float Defend_HoldPositionReward = 0.3f;  // Per second
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
-	float Defend_AreaDenialReward = 3.0f;  // v5.0: Damage without kill (area denial)
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
-	float Defend_LeavePositionPenalty = -2.0f;  // Per second
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Defend")
-	float Defend_DeathPenalty = -12.0f;
-
-	// Support Strategy Rewards
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
-	float Support_AllyProtectedReward = 15.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
-	float Support_KillThreatReward = 12.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
-	float Support_MaintainDistanceReward = 0.2f;  // Per second
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
-	float Support_AllyDeathPenalty = -20.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
-	float Support_DrawFireReward = 5.0f;
-
-	// Retreat Strategy Rewards
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
-	float Retreat_DistanceIncreaseReward = 0.3f;  // Per second
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
-	float Retreat_SafeZoneReward = 10.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
-	float Retreat_CoveringFireReward = 3.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
-	float Retreat_SurvivalReward = 5.0f;  // Per episode
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
-	float Retreat_DeathPenalty = -15.0f;
-
-	// Strategy-specific distance thresholds
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
-	float Support_MinDistance = 500.0f;  // 5m
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Support")
-	float Support_MaxDistance = 1500.0f;  // 15m
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Strategy|Retreat")
-	float Retreat_SafeDistance = 2000.0f;  // 20m from enemies
-
-	/** Time window for combined fire detection (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
-	float CombinedFireWindow = 2.0f;
 
 	/** Radius to consider "on objective" (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
 	float ObjectiveRadiusThreshold = 1000.0f;
 
+	/** Time window for combined fire detection (seconds) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
+	float CombinedFireWindow = 2.0f;
+
 	/** Distance threshold for formation detection (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
 	float FormationDistanceThreshold = 1500.0f;
-
-	/** Reward for using cover when under fire (Sprint 6) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")
-	float CoverUnderFireReward = 10.0f;
-
-	/** Penalty for being exposed when enemies are visible (Sprint 6) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")
-	float ExposedPenalty = -5.0f;
-
-	/** Reward for crouching in cover (Sprint 6) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")
-	float CrouchInCoverReward = 5.0f;
-
-	/** Distance to cover to consider "in cover" (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Cover")
-	float CoverDistanceThreshold = 200.0f;
 
 private:
 	//--------------------------------------------------------------------------

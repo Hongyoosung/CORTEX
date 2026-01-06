@@ -2,13 +2,18 @@
 
 #include "CoreMinimal.h"
 #include "ObservationTypes.h"
+#include "RL/RLTypes.h"  // v6.0: For FObjectiveContext
 #include "ObservationElement.generated.h"
 
 /**
- * Enhanced observation structure for individual agents (v5.0)
- * 64 total features, fully normalized for neural network input
+ * Enhanced observation structure for individual agents (v6.0)
+ * 68 total features, fully normalized for neural network input
  *
- * v5.0 Changes:
+ * v6.0 Changes (from v5.0):
+ * - Added: Objective context(4) - type, distance, direction to assigned objective
+ * - Total features: 64 base + 4 objective context = 68
+ *
+ * v5.0 Changes (from v4.0):
  * - Removed: rotation(3), shield(1), cooldown(1), ammo(1), weapon(1), terrain(1), temporal(2)
  * - Added: Support context(4) via FAllyContext
  * - Engine handles auto-aim, infinite ammo assumed, single weapon type
@@ -102,6 +107,13 @@ struct GAMEAI_PROJECT_API FObservationElement
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
     float AllyDirectionAngle = 0.0f;  // 1 feature
 
+    //--------------------------------------------------------------------------
+    // OBJECTIVE CONTEXT (4 features) - v6.0 NEW
+    //--------------------------------------------------------------------------
+
+    /** Objective context from MCTS assignment (v6.0) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
+    FObjectiveContext ObjectiveContext;  // 4 features (type, distance, direction)
 
     //--------------------------------------------------------------------------
     // CONSTRUCTOR & UTILITY FUNCTIONS
@@ -120,11 +132,11 @@ struct GAMEAI_PROJECT_API FObservationElement
         NearbyEnemies.Init(FEnemyObservation(), 5);  // Track top 5 closest enemies
     }
 
-    /** Convert observation to normalized feature vector (64 elements) - v5.0 */
+    /** Convert observation to normalized feature vector (68 elements) - v6.0 */
     TArray<float> ToFeatureVector() const;
 
-    /** Get feature count (v5.0: 64 features) */
-    static int32 GetFeatureCount() { return 64; }
+    /** Get feature count (v6.0: 68 features = 64 base + 4 objective context) */
+    static int32 GetFeatureCount() { return 68; }
 
     /** Reset to default values */
     void Reset();
