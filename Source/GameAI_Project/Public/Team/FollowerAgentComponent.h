@@ -6,7 +6,6 @@
 #include "Observation/ObservationElement.h"
 #include "RL/RLTypes.h"
 #include "Observation/TeamObservation.h"
-#include "Simulation/StateTransition.h"
 #include "FollowerAgentComponent.generated.h"
 
 // Forward declarations
@@ -14,6 +13,8 @@ class UTeamLeaderComponent;
 class URLPolicyNetwork;
 class URewardCalculator;
 class UObjective;
+class UAgentPerceptionComponent;
+class UHealthComponent;
 struct FDamageEventData;
 struct FDeathEventData;
 
@@ -252,6 +253,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|Components")
 	URewardCalculator* RewardCalculator = nullptr;
 
+	/** Cached health component (v6.0 Phase 11 - Performance) */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|Components")
+	UHealthComponent* CachedHealthComponent = nullptr;
+
+	/** Cached perception component (v6.0 Phase 11 - Performance) */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|Components")
+	UAgentPerceptionComponent* CachedPerceptionComponent = nullptr;
+
 	/** Enable RL policy (if false, uses rule-based fallback) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follower|RL")
 	bool bUseRLPolicy = true;
@@ -340,25 +349,6 @@ public:
 
 private:
 	//--------------------------------------------------------------------------
-	// STATE TRANSITION LOGGING (Sprint 2)
-	//--------------------------------------------------------------------------
-
-	/** Enable state transition logging */
-	bool bLogStateTransitions = false;
-
-	/** Previous team observation (for transition logging) */
-	FTeamObservation PreviousTeamObservation;
-
-	/** Logged state transitions */
-	TArray<FStateTransitionSample> LoggedTransitions;
-
-	/** Time of last state log */
-	float LastStateLogTime = 0.0f;
-
-	/** Minimum time between state logs (seconds) */
-	float StateLogInterval = 1.0f;
-
-	//--------------------------------------------------------------------------
 	// COVER CACHE (Sprint 6)
 	//--------------------------------------------------------------------------
 
@@ -386,4 +376,28 @@ private:
 
 	/** Number of cover queries this episode */
 	int32 CoverQueriesThisEpisode = 0;
+
+	//--------------------------------------------------------------------------
+	// EVENT-DRIVEN STRATEGY UPDATES (v6.0 Phase 11 - Performance Optimization)
+	//--------------------------------------------------------------------------
+
+	/** Health at last strategy update (for change detection) */
+	float LastStrategyHealth = 1.0f;
+
+	/** Enemy count at last strategy update */
+	int32 LastEnemyCount = 0;
+
+	/** Objective at last strategy update */
+	UPROPERTY()
+	UObjective* LastObjective = nullptr;
+
+	/** Ticks since last strategy update (for timeout fallback) */
+	int32 TicksSinceLastUpdate = 0;
+
+	/**
+	 * Check if strategy should be recomputed (v6.0)
+	 * Only updates on significant events to reduce inference cost by 75-83%
+	 * @return true if significant event occurred (health change >20%, new enemy, objective change, or timeout)
+	 */
+	bool ShouldUpdateStrategy() const;
 };

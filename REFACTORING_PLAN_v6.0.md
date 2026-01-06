@@ -1675,12 +1675,114 @@ Document:
 
 ---
 
+## Phase 11: Performance Optimization - Event-Driven Updates (Priority: P1, Effort: 3 hours)
 
-## Phase 11: Sim2Real Synchronization Script (Priority: P1, Effort: 2 hours)
+**Purpose:** Reduce inference cost by 75-83% (from 120-240ms/sec to 12-40ms/sec)
+
+### 11.1 Add Event-Driven Update Logic to FollowerAgentComponent
+
+**File:** `Source/GameAI_Project/Public/Team/FollowerAgentComponent.h`
+
+**Add member variables:**
+
+```cpp
+UCLASS()
+class GAMEAI_PROJECT_API UFollowerAgentComponent : public UActorComponent
+{
+    GENERATED_BODY()
+
+private:
+    // Event-driven strategy update (v6.0 - Performance)
+    UPROPERTY()
+    float LastStrategyHealth = 1.0f;
+
+    UPROPERTY()
+    int32 LastEnemyCount = 0;
+
+    UPROPERTY()
+    UObjective* LastObjective = nullptr;
+
+    UPROPERTY()
+    int32 TicksSinceLastUpdate = 0;
+
+    UPROPERTY()
+    EStrategyType CurrentStrategy = EStrategyType::Assault;
+
+    /**
+     * Check if strategy should be recomputed (v6.0)
+     * @return true if significant event occurred
+     */
+    bool ShouldUpdateStrategy() const;
+};
+```
+
+**File:** `Source/GameAI_Project/Private/Team/FollowerAgentComponent.cpp`
+
+**Implement event-driven logic:**
+
+```cpp
+bool UFollowerAgentComponent::ShouldUpdateStrategy() const
+{
+    // Check significant state changes
+    float CurrentHealth = GetCurrentHealth() / GetMaxHealth();
+    bool healthChanged = FMath::Abs(CurrentHealth - LastStrategyHealth) > 0.2f;
+
+    int32 CurrentEnemyCount = GetPerceivedEnemies().Num();
+    bool newEnemyDetected = CurrentEnemyCount > LastEnemyCount;
+
+    bool objectiveChanged = CurrentObjective != LastObjective;
+
+    // Fallback: Force update every 10 ticks (~0.16s at 60 FPS)
+    bool timeout = TicksSinceLastUpdate > 10;
+
+    return healthChanged || newEnemyDetected || objectiveChanged || timeout;
+}
+
+void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    // Event-driven strategy update (v6.0 - Performance optimization)
+    if (ShouldUpdateStrategy())
+    {
+        // Build observation and objective context
+        FObservationElement Obs = TacticalObserver->BuildObservation(GetOwner());
+        FObjectiveContext ObjCtx = TacticalObserver->BuildObjectiveContext(CurrentObjective, GetOwner());
+
+        // Run RL inference (batched by TeamLeader if possible)
+        CurrentStrategy = RLPolicy->GetStrategy(Obs, ObjCtx);
+
+        // Cache for next check
+        LastStrategyHealth = GetCurrentHealth() / GetMaxHealth();
+        LastEnemyCount = GetPerceivedEnemies().Num();
+        LastObjective = CurrentObjective;
+        TicksSinceLastUpdate = 0;
+
+        UE_LOG(LogTemp, Verbose, TEXT("🔄 [EVENT-DRIVEN] Agent updated strategy to %s"),
+            *UEnum::GetValueAsString(CurrentStrategy));
+    }
+
+    // Always execute current strategy (cheap, <0.5ms)
+    // ... existing execution logic ...
+
+    TicksSinceLastUpdate++;
+}
+```
+
+**Testing:**
+1. Agent with 100% health → No strategy updates (only timeout updates)
+2. Agent takes 25% damage → Triggers strategy update (health change >20%)
+3. New enemy appears → Triggers strategy update
+4. Objective reassignment → Triggers strategy update
+5. Profile and verify ~6-10 updates/sec instead of 60/sec
+
+---
+
+## Phase 12: Sim2Real Synchronization Script (Priority: P1, Effort: 2 hours)
 
 **Purpose:** Prevent training drift by auto-syncing C++ → Python config
 
-### 11.1 Create Sync Script
+### 12.1 Create Sync Script
 
 **File:** `CORTEX_Training/tools/sync_config_from_cpp.py`
 
@@ -1824,7 +1926,7 @@ class RLConfig:
     OBSERVATION_SIZE = 68
 ```
 
-### 11.2 Add to Training Pipeline
+### 12.2 Add to Training Pipeline
 
 **File:** `CORTEX_Training/train.sh` or `train.bat`
 
@@ -1848,11 +1950,11 @@ python train.py --config training_env/config.py
 
 ---
 
-## Phase 12: Debug Visualization System (Priority: P2, Effort: 3 hours)
+## Phase 13: Debug Visualization System (Priority: P2, Effort: 3 hours)
 
 **Purpose:** Visualize MCTS assignments and RL strategies in-world for debugging
 
-### 12.1 Add MCTS Debug Visualization
+### 13.1 Add MCTS Debug Visualization
 
 **File:** `Source/GameAI_Project/Private/Team/TeamLeaderComponent.cpp`
 
@@ -1913,7 +2015,7 @@ void UTeamLeaderComponent::DebugDrawMCTSAssignments()
 }
 ```
 
-### 12.2 Add Strategy Debug Visualization
+### 13.2 Add Strategy Debug Visualization
 
 **File:** `Source/GameAI_Project/Private/Team/FollowerAgentComponent.cpp`
 
@@ -1975,7 +2077,7 @@ void UFollowerAgentComponent::DebugDrawStrategyState()
 }
 ```
 
-### 12.3 Add Console Commands
+### 13.3 Add Console Commands
 
 **File:** `Source/GameAI_Project/Private/Core/SimulationManagerGameMode.cpp`
 
@@ -2036,11 +2138,11 @@ void PrintMCTSStats()
 
 ---
 
-## Phase 13: Profiling Setup & Validation (Priority: P2, Effort: 2 hours)
+## Phase 14: Profiling Setup & Validation (Priority: P2, Effort: 2 hours)
 
 **Purpose:** Measure and validate performance targets
 
-### 13.1 Add Profiling Macros
+### 14.1 Add Profiling Macros
 
 **File:** `Source/GameAI_Project/Public/Core/ProfilingMacros.h`
 
@@ -2057,7 +2159,7 @@ DECLARE_CYCLE_STAT(TEXT("StateTree: Execution"), STAT_StateTreeExecution, STATGR
 DECLARE_CYCLE_STAT(TEXT("Observation: Build"), STAT_ObservationBuild, STATGROUP_AI);
 ```
 
-### 13.2 Add Profiling Scopes
+### 14.2 Add Profiling Scopes
 
 **File:** `Source/GameAI_Project/Private/AI/MCTS/MCTS.cpp`
 
@@ -2088,7 +2190,7 @@ EStrategyType URLPolicyNetwork::GetStrategy(...)
 }
 ```
 
-### 13.3 Create Profiling Checklist
+### 14.3 Create Profiling Checklist
 
 **File:** `Docs/PROFILING_CHECKLIST_v6.0.md`
 
@@ -2279,5 +2381,3 @@ Once v6.0 is stable:
 **Target Venue:** CoG 2026 or AAMAS 2026
 
 ---
-
-**Good luck with the refactoring! The architecture is sound, and the implementation is straightforward. Take it one phase at a time, and you'll have a state-of-the-art system.**
