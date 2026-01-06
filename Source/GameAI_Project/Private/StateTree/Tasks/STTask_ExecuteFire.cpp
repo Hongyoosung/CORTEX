@@ -78,8 +78,15 @@ void FSTTask_ExecuteFire::ExecuteFire(FStateTreeExecutionContext& Context) const
 		return;
 	}
 
-	// Get visible enemies (assuming this is available via FollowerComponent or perception)
-	TArray<AActor*> VisibleEnemies = SharedContext.FollowerComponent->GetPerceivedEnemies();
+	// Get visible enemies from shared context (populated by perception system)
+	TArray<AActor*> VisibleEnemies;
+	for (const TObjectPtr<AActor>& Enemy : SharedContext.VisibleEnemies)
+	{
+		if (Enemy)
+		{
+			VisibleEnemies.Add(Enemy);
+		}
+	}
 
 	if (VisibleEnemies.Num() == 0)
 	{

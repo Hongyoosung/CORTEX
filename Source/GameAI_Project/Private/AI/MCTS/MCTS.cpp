@@ -53,7 +53,7 @@ FObjectiveAssignment UMCTS::RunObjectiveAssignment(
     TSharedPtr<FTeamMCTSNode> Root = MakeShared<FTeamMCTSNode>();
 
     // Build initial assignment (empty or current assignment)
-    TMap<TObjectPtr<AActor>, TObjectPtr<UObjective>> InitialMapping;
+    TMap<AActor*, UObjective*> InitialMapping;
     for (AActor* Agent : Agents)
     {
         // Assign to first objective as default (will be explored by MCTS)
@@ -64,7 +64,29 @@ FObjectiveAssignment UMCTS::RunObjectiveAssignment(
     }
 
     Root->Initialize(nullptr, InitialMapping);
-    Root->UntriedActions = GeneratePossibleAssignments(FObjectiveAssignment{InitialMapping, 0.0f, 0, 0.0f});
+
+    // Generate possible assignments and extract maps for UntriedActions
+    FObjectiveAssignment InitialAssignment;
+
+    InitialAssignment.AgentToObjective.Empty(InitialMapping.Num());
+    for( const auto& [Agent, Objective] : InitialMapping)
+    {
+        InitialAssignment.AgentToObjective.Add(Agent, Objective);
+	}
+
+    TArray<FObjectiveAssignment> PossibleAssignments = GeneratePossibleAssignments(InitialAssignment);
+
+    // Convert FObjectiveAssignment array to TMap array for UntriedActions
+    Root->UntriedActions.Empty();
+    for (const FObjectiveAssignment& Assignment : PossibleAssignments)
+    {
+        TMap<AActor*, UObjective*> MapForNode;
+        for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+        {
+            MapForNode.Add(Agent.Get(), Objective.Get());
+        }
+        Root->UntriedActions.Add(MapForNode);
+    }
 
     // Run MCTS simulations
     for (int32 i = 0; i < Simulations; ++i)
@@ -199,7 +221,7 @@ float UMCTS::EvaluateAssignment(const FObjectiveAssignment& Assignment)
         UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
         if (!FollowerComp) continue;
 
-        FObservationElement Obs = FollowerComp->BuildObservation();
+        FObservationElement Obs = FollowerComp->BuildLocalObservation();
         FObjectiveContext ObjCtx = FollowerComp->BuildObjectiveContext(Objective);
 
         // Get RL value estimate

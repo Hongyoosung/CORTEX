@@ -18,7 +18,8 @@ enum class EObjectiveType : uint8
     Assault UMETA(DisplayName = "Assault"),   // Offensive: Push toward enemy/objective
     Defend  UMETA(DisplayName = "Defend"),    // Defensive: Hold position/objective
     Support UMETA(DisplayName = "Support"),   // Auxiliary: Provide cover/assistance
-    Retreat UMETA(DisplayName = "Retreat")    // Fallback: Disengage and reposition
+    Retreat UMETA(DisplayName = "Retreat"),    // Fallback: Disengage and reposition
+	Capture UMETA(DisplayName = "Capture"),   // Capture a specified point
 };
 
 /**

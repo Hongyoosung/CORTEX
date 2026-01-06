@@ -13,7 +13,13 @@ FTeamMCTSNode::FTeamMCTSNode()
 void FTeamMCTSNode::Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, UObjective*>& InObjectives)
 {
 	Parent = InParent;
-	Objectives = InObjectives;
+	Objectives.Empty(InObjectives.Num());
+	for (const auto& Pair : InObjectives)
+	{
+		// Pair.Key(AActor*) -> TObjectPtr<AActor> (자동 변환)
+		// Pair.Value(UObjective*) -> TObjectPtr<UObjective> (자동 변환)
+		Objectives.Add(Pair.Key, Pair.Value);
+	}
 	TotalReward = 0.0f;
 	VisitCount = 0;
 

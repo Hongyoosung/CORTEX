@@ -39,7 +39,7 @@ public:
 	void Backpropagate(float Reward);
 
 	/** Get the objective assignment for this node (v3.0) */
-	TMap<AActor*, UObjective*> GetObjectives() const { return Objectives; }
+	TMap<TObjectPtr<AActor>, TObjectPtr<UObjective>> GetObjectives() const { return Objectives; }
 
 	/** Calculate UCT value for this node */
 	float CalculateUCTValue(float ExplorationParam) const;
@@ -64,7 +64,7 @@ public:
 	mutable FCriticalSection NodeMutex;
 
 	/** Objective assignment for this node (follower -> objective) (v3.0) */
-	TMap<AActor*, UObjective*> Objectives;
+	TMap<TObjectPtr<AActor>, TObjectPtr<UObjective>> Objectives;
 
 	/** Total reward accumulated from simulations */
 	float TotalReward;

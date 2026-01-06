@@ -176,10 +176,6 @@ private:
     UPROPERTY()
     FTeamObservation CachedTeamObservation;
 
-    /** Cached ObjectiveManager for individual strategy assignment (v5.0) */
-    UPROPERTY()
-    TObjectPtr<class UObjectiveManager> CachedObjectiveManager;
-
     /** RL Policy Network for heuristic action priors (v5.0 - DEPRECATED)
      * v6.0: Now used for GetStateValue() queries (actual RL value estimates)
      */

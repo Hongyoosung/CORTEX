@@ -457,21 +457,6 @@ void UTeamLeaderComponent::UnregisterFollower(AActor* Follower)
 	}
 }
 
-TArray<AActor*> UTeamLeaderComponent::GetFollowersWithObjectiveType(
-	EObjectiveType ObjectiveType) const
-{
-	TArray<AActor*> Result;
-
-	for (const auto& Pair : CurrentObjectives)
-	{
-		if (Pair.Value && Pair.Value->Type == ObjectiveType)
-		{
-			Result.Add(Pair.Key);
-		}
-	}
-
-	return Result;
-}
 
 TArray<AActor*> UTeamLeaderComponent::GetAliveFollowers() const
 {
@@ -907,10 +892,21 @@ void UTeamLeaderComponent::ApplyObjectiveAssignment(const FObjectiveAssignment& 
 		{
 			FollowerComp->SetCurrentObjective(Objective);
 
-			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v6.0] Agent '%s' → Objective '%s' (Type=%s, Priority=%d)"),
+			// v6.0: Build objective description from type and target
+			FString ObjectiveDesc = FString::Printf(TEXT("%s"), *UEnum::GetValueAsString(Objective->Type));
+			if (Objective->TargetActor)
+			{
+				ObjectiveDesc += FString::Printf(TEXT(" (%s)"), *Objective->TargetActor->GetName());
+			}
+			else if (!Objective->TargetLocation.IsZero())
+			{
+				ObjectiveDesc += FString::Printf(TEXT(" at (%.0f,%.0f,%.0f)"),
+					Objective->TargetLocation.X, Objective->TargetLocation.Y, Objective->TargetLocation.Z);
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v6.0] Agent '%s' → Objective '%s' (Priority=%d)"),
 				*Agent->GetName(),
-				*Objective->Description,
-				*UEnum::GetValueAsString(Objective->Type),
+				*ObjectiveDesc,
 				Objective->Priority);
 		}
 		else
@@ -920,79 +916,17 @@ void UTeamLeaderComponent::ApplyObjectiveAssignment(const FObjectiveAssignment& 
 		}
 	}
 
-	// Broadcast event
+	// Broadcast event (v6.0: Convert TObjectPtr to raw pointers)
 	FObjectiveAssignmentMap AssignmentMap;
-	AssignmentMap.Objectives = Assignment.AgentToObjective;
+	for (const auto& Pair : Assignment.AgentToObjective)
+	{
+		AssignmentMap.Objectives.Add(Pair.Key.Get(), Pair.Value.Get());
+	}
 	OnStrategicDecisionMade.Broadcast(AssignmentMap);
 
 	bMCTSRunning = false;
 
 	UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v6.0] '%s': All assignments complete"),
-		*TeamName);
-}
-
-//==============================================================================
-// DEPRECATED: v5.0 COMPATIBILITY (OnObjectiveMCTSComplete)
-// This method is kept for backward compatibility but delegates to v6.0 API
-//==============================================================================
-
-void UTeamLeaderComponent::OnObjectiveMCTSComplete(TMap<AActor*, UObjective*> NewObjectives)
-{
-	UE_LOG(LogTemp, Warning, TEXT("⚠️ [DEPRECATED] OnObjectiveMCTSComplete called (v5.0 API) - Use ApplyObjectiveAssignment instead"));
-
-	// Convert v5.0 TMap to v6.0 FObjectiveAssignment
-	FObjectiveAssignment LegacyAssignment;
-	LegacyAssignment.AgentToObjective = NewObjectives;
-	LegacyAssignment.ExpectedValue = 0.0f;  // Not available in v5.0 API
-	LegacyAssignment.VisitCount = 0;        // Not available in v5.0 API
-	LegacyAssignment.Timestamp = FPlatformTime::Seconds();
-
-	// Delegate to v6.0 API
-	ApplyObjectiveAssignment(LegacyAssignment);
-
-	// Export MCTS statistics for curriculum learning (v3.0 Sprint 3) & confidence (Sprint 6)
-	float ValueVariance = 0.0f;
-	float PolicyEntropy = 0.0f;
-	float AverageValue = 0.0f;
-	float Confidence = 1.0f;
-
-	if (StrategicMCTS)
-	{
-		StrategicMCTS->GetMCTSStatistics(ValueVariance, PolicyEntropy, AverageValue);
-		int32 VisitCount = StrategicMCTS->GetRootVisitCount();
-
-		// Calculate confidence (0-1 based on visit count)
-		// Higher visit counts = higher confidence
-		// Normalize: 100 visits = 0.5 confidence, 500 visits = 1.0 confidence
-		Confidence = FMath::Clamp(static_cast<float>(VisitCount) / 500.0f, 0.0f, 1.0f);
-
-		UE_LOG(LogTemp, Display, TEXT("📊 [MCTS STATS] '%s': Confidence=%.2f, Variance=%.3f, Entropy=%.3f, Visits=%d"),
-			*TeamName, Confidence, ValueVariance, PolicyEntropy, VisitCount);
-
-		// Record scenario for curriculum learning
-		if (CurriculumManager)
-		{
-			FMCTSScenarioMetrics ScenarioMetrics;
-			ScenarioMetrics.TeamObservation = CurrentTeamObservation;
-			ScenarioMetrics.CommandType = 0; // Objective-based, no single command type
-			ScenarioMetrics.ValueVariance = ValueVariance;
-			ScenarioMetrics.PolicyEntropy = PolicyEntropy;
-			ScenarioMetrics.VisitCount = VisitCount;
-			ScenarioMetrics.AverageValue = AverageValue;
-			ScenarioMetrics.Timestamp = GetWorld()->GetTimeSeconds();
-
-			CurriculumManager->AddScenario(ScenarioMetrics);
-
-			UE_LOG(LogTemp, Verbose, TEXT("🎓 [CURRICULUM] '%s': Recorded MCTS scenario"),
-				*TeamName);
-		}
-	}
-
-	// Store objectives in CurrentObjectives for tracking (v3.0)
-	CurrentObjectives = NewObjectives;
-
-	bMCTSRunning = false;
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [OBJECTIVE MCTS COMPLETE] '%s': All objectives assigned, MCTS cycle complete"),
 		*TeamName);
 }
 
@@ -1129,287 +1063,4 @@ void UTeamLeaderComponent::DrawDebugInfo()
 		KnownEnemies.Num());
 
 	DrawDebugString(World, LeaderPos + FVector(0, 0, 200), TeamInfo, nullptr, TeamColor.ToFColor(true), 0.5f, true);
-}
-
-//------------------------------------------------------------------------------
-// STRATEGIC EXPERIENCE (for MCTS training)
-//------------------------------------------------------------------------------
-
-void UTeamLeaderComponent::RecordPreDecisionState()
-{
-	// Build current observation
-	CurrentTeamObservation = BuildTeamObservation();
-
-	// Initialize pending experience
-	PendingExperience = FStrategicExperience();
-	PendingExperience.StateFeatures = CurrentTeamObservation.ToFeatureVector();
-	PendingExperience.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-
-	// Get current step from SimulationManager
-	if (UWorld* World = GetWorld())
-	{
-		if (ASimulationManagerGameMode* GM = Cast<ASimulationManagerGameMode>(World->GetAuthGameMode()))
-		{
-			PendingExperience.StepNumber = GM->GetCurrentStep();
-		}
-	}
-
-	bHasPendingExperience = true;
-
-	UE_LOG(LogTemp, Verbose, TEXT("TeamLeader '%s': Recorded pre-decision state (%d features)"),
-		*TeamName, PendingExperience.StateFeatures.Num());
-}
-
-void UTeamLeaderComponent::RecordPostDecisionActions()
-{
-	if (!bHasPendingExperience)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': No pending experience to record actions"), *TeamName);
-		return;
-	}
-
-	// Encode current objectives as action indices (v3.0)
-	PendingExperience.ActionsTaken.Empty();
-	for (AActor* Follower : GetAliveFollowers())
-	{
-		if (UObjective* const* ObjectivePtr = CurrentObjectives.Find(Follower))
-		{
-			if (*ObjectivePtr)
-			{
-				int32 ActionIndex = static_cast<int32>((*ObjectivePtr)->Type);
-				PendingExperience.ActionsTaken.Add(ActionIndex);
-			}
-		}
-	}
-
-	// Store experience (reward will be assigned at episode end)
-	StrategicExperiences.Add(PendingExperience);
-	bHasPendingExperience = false;
-
-	UE_LOG(LogTemp, Verbose, TEXT("TeamLeader '%s': Recorded strategic experience #%d (%d actions)"),
-		*TeamName, StrategicExperiences.Num(), PendingExperience.ActionsTaken.Num());
-}
-
-void UTeamLeaderComponent::OnEpisodeEnded(float EpisodeReward)
-{
-	// Assign reward to all experiences from this episode
-	for (FStrategicExperience& Exp : StrategicExperiences)
-	{
-		Exp.EpisodeReward = EpisodeReward;
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Episode ended - assigned reward %.2f to %d strategic experiences"),
-		*TeamName, EpisodeReward, StrategicExperiences.Num());
-}
-
-bool UTeamLeaderComponent::ExportStrategicExperiences(const FString& FilePath)
-{
-	if (StrategicExperiences.Num() == 0)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': No strategic experiences to export"), *TeamName);
-		return false;
-	}
-
-	// Build JSON array
-	TSharedRef<FJsonObject> RootObject = MakeShared<FJsonObject>();
-	TArray<TSharedPtr<FJsonValue>> ExperienceArray;
-
-	for (const FStrategicExperience& Exp : StrategicExperiences)
-	{
-		TSharedRef<FJsonObject> ExpObject = MakeShared<FJsonObject>();
-
-		// State features
-		TArray<TSharedPtr<FJsonValue>> StateArray;
-		for (float Feature : Exp.StateFeatures)
-		{
-			StateArray.Add(MakeShared<FJsonValueNumber>(Feature));
-		}
-		ExpObject->SetArrayField(TEXT("state"), StateArray);
-
-		// Actions
-		TArray<TSharedPtr<FJsonValue>> ActionsArray;
-		for (int32 Action : Exp.ActionsTaken)
-		{
-			ActionsArray.Add(MakeShared<FJsonValueNumber>(Action));
-		}
-		ExpObject->SetArrayField(TEXT("actions"), ActionsArray);
-
-		// Reward
-		ExpObject->SetNumberField(TEXT("reward"), Exp.EpisodeReward);
-		ExpObject->SetNumberField(TEXT("step"), Exp.StepNumber);
-		ExpObject->SetNumberField(TEXT("timestamp"), Exp.Timestamp);
-
-		ExperienceArray.Add(MakeShared<FJsonValueObject>(ExpObject));
-	}
-
-	RootObject->SetStringField(TEXT("team"), TeamName);
-	RootObject->SetArrayField(TEXT("experiences"), ExperienceArray);
-
-	// Serialize to string
-	FString OutputString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
-	FJsonSerializer::Serialize(RootObject, Writer);
-
-	// Write to file
-	if (FFileHelper::SaveStringToFile(OutputString, *FilePath))
-	{
-		UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Exported %d strategic experiences to %s"),
-			*TeamName, StrategicExperiences.Num(), *FilePath);
-		return true;
-	}
-
-	UE_LOG(LogTemp, Error, TEXT("TeamLeader '%s': Failed to write experiences to %s"), *TeamName, *FilePath);
-	return false;
-}
-
-void UTeamLeaderComponent::ClearStrategicExperiences()
-{
-	int32 Count = StrategicExperiences.Num();
-	StrategicExperiences.Empty();
-	bHasPendingExperience = false;
-
-	UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Cleared %d strategic experiences"), *TeamName, Count);
-}
-
-//==============================================================================
-// OBJECTIVE MANAGEMENT (v3.0 Combat Refactoring)
-//==============================================================================
-
-UObjective* UTeamLeaderComponent::GetObjectiveForFollower(AActor* Follower) const
-{
-	if (!ObjectiveManager || !Follower)
-	{
-		return nullptr;
-	}
-
-	return ObjectiveManager->GetAgentObjective(Follower);
-}
-
-void UTeamLeaderComponent::AssignObjectiveToFollowers(UObjective* Objective, const TArray<AActor*>& FollowersToAssign)
-{
-	if (!ObjectiveManager || !Objective)
-	{
-		return;
-	}
-
-	// Assign agents to objective
-	ObjectiveManager->AssignAgentsToObjective(Objective, FollowersToAssign);
-
-	// Activate objective if not already active
-	if (!Objective->IsActive())
-	{
-		ObjectiveManager->ActivateObjective(Objective);
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Assigned %d followers to objective (Type: %d, Priority: %d)"),
-		*TeamName, FollowersToAssign.Num(), (int32)Objective->Type, Objective->Priority);
-}
-
-TArray<UObjective*> UTeamLeaderComponent::GetActiveObjectives() const
-{
-	if (!ObjectiveManager)
-	{
-		return TArray<UObjective*>();
-	}
-
-	return ObjectiveManager->GetActiveObjectives();
-}
-
-//==============================================================================
-// STRATEGIC REWARDS (Sprint 5 - Hierarchical Rewards)
-//==============================================================================
-
-void UTeamLeaderComponent::OnObjectiveCompleted(UObjective* Objective)
-{
-	if (!Objective)
-	{
-		return;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("🏆 TeamLeader '%s': Objective completed! Type=%d, Priority=%d"),
-		*TeamName, (int32)Objective->Type, Objective->Priority);
-
-	// Distribute team reward (+50)
-	const float ObjectiveReward = 50.0f;
-	DistributeTeamReward(ObjectiveReward, TEXT("Objective Completed"));
-
-	// Notify all followers' reward calculators
-	for (AActor* Follower : Followers)
-	{
-		if (!Follower) continue;
-
-		UFollowerAgentComponent* FollowerComp = Follower->FindComponentByClass<UFollowerAgentComponent>();
-		if (FollowerComp && FollowerComp->GetRewardCalculator())
-		{
-			FollowerComp->GetRewardCalculator()->OnObjectiveComplete(Objective);
-		}
-	}
-}
-
-void UTeamLeaderComponent::OnObjectiveFailed(UObjective* Objective)
-{
-	if (!Objective)
-	{
-		return;
-	}
-
-	UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': Objective FAILED! Type=%d, Priority=%d"),
-		*TeamName, (int32)Objective->Type, Objective->Priority);
-
-	// Distribute team penalty (-30)
-	const float ObjectivePenalty = -30.0f;
-	DistributeTeamReward(ObjectivePenalty, TEXT("Objective Failed"));
-
-	// Notify all followers' reward calculators
-	for (AActor* Follower : Followers)
-	{
-		if (!Follower) continue;
-
-		UFollowerAgentComponent* FollowerComp = Follower->FindComponentByClass<UFollowerAgentComponent>();
-		if (FollowerComp && FollowerComp->GetRewardCalculator())
-		{
-			FollowerComp->GetRewardCalculator()->OnObjectiveFailed(Objective);
-		}
-	}
-}
-
-void UTeamLeaderComponent::OnEnemySquadWiped()
-{
-	UE_LOG(LogTemp, Warning, TEXT("💀 TeamLeader '%s': Enemy squad WIPED!"), *TeamName);
-
-	// Distribute team reward (+30)
-	const float SquadWipeReward = 30.0f;
-	DistributeTeamReward(SquadWipeReward, TEXT("Enemy Squad Wiped"));
-}
-
-void UTeamLeaderComponent::OnOwnSquadWiped()
-{
-	UE_LOG(LogTemp, Error, TEXT("☠️ TeamLeader '%s': Own squad WIPED!"), *TeamName);
-
-	// Distribute team penalty (-30)
-	const float SquadWipePenalty = -30.0f;
-	DistributeTeamReward(SquadWipePenalty, TEXT("Own Squad Wiped"));
-}
-
-void UTeamLeaderComponent::DistributeTeamReward(float Reward, const FString& Reason)
-{
-	int32 AliveCount = 0;
-
-	for (AActor* Follower : Followers)
-	{
-		if (!Follower) continue;
-
-		UFollowerAgentComponent* FollowerComp = Follower->FindComponentByClass<UFollowerAgentComponent>();
-		if (!FollowerComp || !FollowerComp->GetIsAlive())
-		{
-			continue;
-		}
-
-		// Distribute reward to alive followers
-		FollowerComp->ProvideReward(Reward, false);
-		AliveCount++;
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Distributed %.1f reward to %d followers (Reason: %s)"),
-		*TeamName, Reward, AliveCount, *Reason);
 }

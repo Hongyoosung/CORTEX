@@ -83,13 +83,7 @@ public:
 		int32 Priority = 5
 	);
 
-	/** Report objective completion (v3.0) */
-	UFUNCTION(BlueprintCallable, Category = "Follower|Team")
-	void ReportObjectiveComplete(bool bSuccess = true);
 
-	/** Request assistance from team */
-	UFUNCTION(BlueprintCallable, Category = "Follower|Team")
-	void RequestAssistance(int32 Priority = 8);
 
 	//--------------------------------------------------------------------------
 	// OBJECTIVE EXECUTION (v3.0)
@@ -110,10 +104,6 @@ public:
 	/** Get current strategy assigned by leader (determines which policy head to use) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
 	EStrategyType GetCurrentStrategy() const { return CurrentStrategy; }
-
-	/** Set current strategy (called by TeamLeader when assigning objectives) */
-	UFUNCTION(BlueprintCallable, Category = "Follower|Strategy")
-	void SetCurrentStrategy(EStrategyType Strategy);
 
 	/** Get ally context for support strategy (v5.0) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
@@ -158,9 +148,6 @@ public:
 	//--------------------------------------------------------------------------
 	// REINFORCEMENT LEARNING
 	//--------------------------------------------------------------------------
-	/** Get action probabilities from RL policy */
-	UFUNCTION(BlueprintCallable, Category = "Follower|RL")
-	TArray<float> GetRLActionProbabilities();
 
 	/** Provide reward feedback to RL policy */
 	UFUNCTION(BlueprintCallable, Category = "Follower|RL")
@@ -194,21 +181,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|RL")
 	void SetCurrentObjective(UObjective* Objective);
 
-	//--------------------------------------------------------------------------
-	// STATE TRANSITION LOGGING (Sprint 2 - World Model Training)
-	//--------------------------------------------------------------------------
-
-	/** Enable state transition logging for world model training */
-	UFUNCTION(BlueprintCallable, Category = "Follower|WorldModel")
-	void EnableStateTransitionLogging(bool bEnable = true);
-
-	/** Log current state for world model training */
-	UFUNCTION(BlueprintCallable, Category = "Follower|WorldModel")
-	void LogStateTransition();
-
-	/** Export logged state transitions to JSON */
-	UFUNCTION(BlueprintCallable, Category = "Follower|WorldModel")
-	bool ExportStateTransitions(const FString& FilePath);
 
 	//--------------------------------------------------------------------------
 	// UTILITY
@@ -233,10 +205,6 @@ public:
 	/** Draw debug info */
 	UFUNCTION(BlueprintCallable, Category = "Follower|Debug")
 	void DrawDebugInfo();
-
-	/** Get performance statistics (Sprint 6) */
-	UFUNCTION(BlueprintPure, Category = "Follower|Profiling")
-	void GetPerformanceStats(float& OutObservationTime, float& OutCoverQueryTime, int32& OutCoverQueriesThisEpisode) const;
 
 
 

@@ -97,17 +97,16 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 		if (LastLoggedActions.Contains(OwnerName))
 		{
 			FMacroAction& LastAction = LastLoggedActions[OwnerName];
-			bActionChanged = (LastAction.PositionChoice != MacroAction.PositionChoice ||
-			                  LastAction.TargetIndex != MacroAction.TargetIndex);
+			// v6.0: FMacroAction now only has Strategy field
+			bActionChanged = (LastAction.Strategy != MacroAction.Strategy);
 		}
 
 		if (bActionChanged)
 		{
-			// v5.0: Log only significant action changes at Verbose level
-			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION v5.0] '%s': Position=%s, Target=%d"),
+			// v6.0: Log only strategy (position/target removed from FMacroAction)
+			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION v6.0] '%s': Strategy=%s"),
 				*OwnerName,
-				*UEnum::GetValueAsString(MacroAction.PositionChoice),
-				MacroAction.TargetIndex);
+				*UEnum::GetValueAsString(MacroAction.Strategy));
 
 			LastLoggedActions.Add(OwnerName, MacroAction);
 		}

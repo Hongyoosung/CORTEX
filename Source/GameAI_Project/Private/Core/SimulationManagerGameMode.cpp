@@ -803,8 +803,6 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 			{
 				Reward = LosePenalty;
 			}
-
-			TeamLeader->OnEpisodeEnded(Reward);
 		}
 
 		// Also notify followers via their FollowerAgentComponent
@@ -873,11 +871,6 @@ void ASimulationManagerGameMode::StartNewEpisode()
 
 		UTeamLeaderComponent* TeamLeader = TeamInfo.TeamLeader;
 
-		// Clear leader's strategic experiences for new episode
-		if (TeamLeader)
-		{
-			TeamLeader->ClearStrategicExperiences();
-		}
 
 		// Reset team members
 		for (AActor* Member : TeamInfo.TeamMembers)

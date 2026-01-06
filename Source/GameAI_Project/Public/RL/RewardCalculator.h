@@ -126,33 +126,7 @@ public:
 		EObjectiveType Objective
 	);
 
-	//--------------------------------------------------------------------------
-	// LEGACY METHODS (Deprecated in v6.0 - kept for backward compatibility)
-	//--------------------------------------------------------------------------
-
-	/** @deprecated Use CalculateReward() instead */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateTotalReward(float DeltaTime);
-
-	/** @deprecated v6.0 - objective-aware rewards replace this */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateIndividualReward();
-
-	/** @deprecated v6.0 - coordination handled by MCTS */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateCoordinationReward();
-
-	/** @deprecated v6.0 - replaced by CalculateObjectiveProgressReward */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateObjectiveReward();
-
-	/** @deprecated v6.0 - not used in new reward structure */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateEfficiencyPenalty(float DeltaTime);
-
-	/** @deprecated v6.0 - not used in new reward structure */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateCoverReward();
+	
 
 	//--------------------------------------------------------------------------
 	// EVENT TRACKING
@@ -209,8 +183,6 @@ public:
 	/** Register combined fire event (multiple agents targeting same enemy) */
 	void RegisterCombinedFire(AActor* Target);
 
-	/** Check if agent is complying with current objective */
-	void CheckObjectiveCompliance();
 
 	//--------------------------------------------------------------------------
 	// CONFIGURATION (v6.0 - Simplified)

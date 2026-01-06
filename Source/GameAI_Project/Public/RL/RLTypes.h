@@ -3,9 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Observation/ObservationElement.h"
 #include "Team/Objective.h"
 #include "RLTypes.generated.h"
+
+// Forward declarations (v6.0 - avoid circular dependency)
+struct FObservationElement;
 
 /**
  * RLConfig Namespace (v6.0)
@@ -98,7 +100,11 @@ struct FAllyContext
 	UPROPERTY(BlueprintReadWrite, Category = "Support")
 	FVector2D AllyDirection = FVector2D::ZeroVector;
 
-	
+	/** Reference to the closest ally actor (for targeting decisions) */
+	UPROPERTY(BlueprintReadWrite, Category = "Support")
+	TObjectPtr<AActor> ClosestAlly = nullptr;
+
+
 
 	/** Convert to feature array for neural network (4 features) */
 	TArray<float> ToFeatureVector() const

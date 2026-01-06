@@ -122,9 +122,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
 	TArray<AActor*> GetFollowers() const { return Followers; }
 
-	/** Get followers with specific objective type (v3.0) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Followers")
-	TArray<AActor*> GetFollowersWithObjectiveType(EObjectiveType ObjectiveType) const;
 
 	/** Get alive followers */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|Followers")
@@ -179,9 +176,6 @@ public:
 	/** Apply objective assignment to followers (v6.0) */
 	void ApplyObjectiveAssignment(const FObjectiveAssignment& Assignment);
 
-	/** Callback when async objective-based MCTS completes (LEGACY v5.0 - kept for async compatibility) */
-	void OnObjectiveMCTSComplete(TMap<AActor*, UObjective*> NewObjectives);
-
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
 	bool IsMCTSRunning() const { return bMCTSRunning; }
 
@@ -208,49 +202,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|Enemies")
 	void ClearKnownEnemies();
 
-	//--------------------------------------------------------------------------
-	// OBJECTIVE MANAGEMENT (v3.0 Combat Refactoring)
-	//--------------------------------------------------------------------------
-
-	/** Get the objective manager */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
-	UObjectiveManager* GetObjectiveManager() const { return ObjectiveManager; }
-
-	/** Get objective assigned to a follower */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
-	UObjective* GetObjectiveForFollower(AActor* Follower) const;
-
-	/** Assign objective to followers */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Objectives")
-	void AssignObjectiveToFollowers(UObjective* Objective, const TArray<AActor*>& FollowersToAssign);
-
-	/** Get all active objectives */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
-	TArray<UObjective*> GetActiveObjectives() const;
-
-	//--------------------------------------------------------------------------
-	// STRATEGIC REWARDS (Sprint 5 - Hierarchical Rewards)
-	//--------------------------------------------------------------------------
-
-	/** Track objective completion and distribute team reward (+50) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Rewards")
-	void OnObjectiveCompleted(UObjective* Objective);
-
-	/** Track objective failure and distribute team penalty (-30) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Rewards")
-	void OnObjectiveFailed(UObjective* Objective);
-
-	/** Track enemy squad wipe and distribute team reward (+30) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Rewards")
-	void OnEnemySquadWiped();
-
-	/** Track own squad wipe and distribute team penalty (-30) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Rewards")
-	void OnOwnSquadWiped();
-
-	/** Distribute strategic reward to all alive followers */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Rewards")
-	void DistributeTeamReward(float Reward, const FString& Reason);
 
 	//--------------------------------------------------------------------------
 	// METRICS & DEBUGGING
@@ -271,34 +222,6 @@ public:
 	/** Is MCTS currently running? */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Debug")
 	bool IsRunningMCTS() const { return bMCTSRunning; }
-
-	//--------------------------------------------------------------------------
-	// STRATEGIC EXPERIENCE (for MCTS training)
-	//--------------------------------------------------------------------------
-
-	/** Record current state before MCTS decision (call before RunStrategicDecisionMaking) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Training")
-	void RecordPreDecisionState();
-
-	/** Record MCTS actions after decision (call after commands issued) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Training")
-	void RecordPostDecisionActions();
-
-	/** Called when episode ends - assigns rewards to experiences */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Training")
-	void OnEpisodeEnded(float EpisodeReward);
-
-	/** Export strategic experiences to JSON file */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Training")
-	bool ExportStrategicExperiences(const FString& FilePath);
-
-	/** Clear recorded experiences */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Training")
-	void ClearStrategicExperiences();
-
-	/** Get experience count */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Training")
-	int32 GetStrategicExperienceCount() const { return StrategicExperiences.Num(); }
 
 
 private:
@@ -469,18 +392,4 @@ private:
 
 	/** Count of MCTS executions for averaging */
 	int32 MCTSExecutionCount = 0;
-
-	//--------------------------------------------------------------------------
-	// STRATEGIC EXPERIENCE STORAGE
-	//--------------------------------------------------------------------------
-
-	/** Recorded strategic experiences for this episode */
-	UPROPERTY()
-	TArray<FStrategicExperience> StrategicExperiences;
-
-	/** Pending experience (state recorded, waiting for actions) */
-	FStrategicExperience PendingExperience;
-
-	/** Is there a pending experience waiting for actions? */
-	bool bHasPendingExperience = false;
 };
