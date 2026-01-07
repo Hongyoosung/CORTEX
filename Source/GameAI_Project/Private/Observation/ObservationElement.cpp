@@ -1,7 +1,10 @@
 #include "Observation/ObservationElement.h"
+#include "Core/ProfilingMacros.h"  // v6.0: Performance profiling
 
 TArray<float> FObservationElement::ToFeatureVector() const
 {
+    SCOPE_CYCLE_COUNTER(STAT_ObservationBuild);  // v6.0: Profile observation building (target: <0.5ms)
+
     TArray<float> Features;
     Features.Reserve(68);  // v6.0: 68 features (64 base + 4 objective context)
 

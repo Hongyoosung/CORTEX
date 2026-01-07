@@ -8,6 +8,7 @@
 #include "RL/RLTypes.h"  // v5.0: FAssignmentScoreConfig for individual scoring
 #include "Combat/HealthComponent.h"
 #include "Combat/WeaponComponent.h"
+#include "Core/ProfilingMacros.h"  // v6.0: Performance profiling
 
 UMCTS::UMCTS()
     : MaxSimulations(500)
@@ -46,6 +47,8 @@ FObjectiveAssignment UMCTS::RunObjectiveAssignment(
     const TArray<UObjective*>& Objectives,
     int32 Simulations)
 {
+    SCOPE_CYCLE_COUNTER(STAT_MCTSAssignment);  // v6.0: Profile total assignment time (target: <50ms)
+
     AvailableAgents = Agents;
     AvailableObjectives = Objectives;
 
@@ -148,6 +151,8 @@ FObjectiveAssignment UMCTS::RunObjectiveAssignment(
 
 TSharedPtr<FTeamMCTSNode> UMCTS::Selection(TSharedPtr<FTeamMCTSNode> Root)
 {
+    SCOPE_CYCLE_COUNTER(STAT_MCTSSelection);  // v6.0: Profile selection phase
+
     TSharedPtr<FTeamMCTSNode> Node = Root;
 
     while (Node.IsValid() && !Node->IsTerminal())
@@ -167,6 +172,8 @@ TSharedPtr<FTeamMCTSNode> UMCTS::Selection(TSharedPtr<FTeamMCTSNode> Root)
 
 TSharedPtr<FTeamMCTSNode> UMCTS::Expansion(TSharedPtr<FTeamMCTSNode> Node)
 {
+    SCOPE_CYCLE_COUNTER(STAT_MCTSExpansion);  // v6.0: Profile expansion phase
+
     if (!Node.IsValid() || Node->UntriedActions.Num() == 0)
     {
         return Node;
@@ -177,6 +184,8 @@ TSharedPtr<FTeamMCTSNode> UMCTS::Expansion(TSharedPtr<FTeamMCTSNode> Node)
 
 float UMCTS::Simulation(TSharedPtr<FTeamMCTSNode> Node)
 {
+    SCOPE_CYCLE_COUNTER(STAT_MCTSSimulation);  // v6.0: Profile simulation phase
+
     if (!Node.IsValid())
     {
         return 0.0f;
@@ -190,6 +199,8 @@ float UMCTS::Simulation(TSharedPtr<FTeamMCTSNode> Node)
 
 void UMCTS::Backpropagation(TSharedPtr<FTeamMCTSNode> Node, float Value)
 {
+    SCOPE_CYCLE_COUNTER(STAT_MCTSBackpropagation);  // v6.0: Profile backpropagation phase
+
     while (Node.IsValid())
     {
         Node->Backpropagate(Value);
@@ -203,6 +214,8 @@ void UMCTS::Backpropagation(TSharedPtr<FTeamMCTSNode> Node, float Value)
 
 float UMCTS::EvaluateAssignment(const FObjectiveAssignment& Assignment)
 {
+    SCOPE_CYCLE_COUNTER(STAT_MCTSEvaluate);  // v6.0: Profile assignment evaluation
+
     if (!RLPolicyNetwork)
     {
         UE_LOG(LogTemp, Warning, TEXT("[MCTS v6.0] RLPolicyNetwork is null, using fallback heuristic"));

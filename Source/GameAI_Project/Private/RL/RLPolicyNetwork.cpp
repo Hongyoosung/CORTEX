@@ -11,6 +11,7 @@
 #include "Misc/Paths.h"
 #include "Team/Objective.h"
 #include "Observation/TeamObservation.h"
+#include "Core/ProfilingMacros.h"  // v6.0: Performance profiling
 
 URLPolicyNetwork::URLPolicyNetwork()
 	: bUseONNXModel(false)
@@ -25,6 +26,8 @@ URLPolicyNetwork::URLPolicyNetwork()
 
 EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext)
 {
+	SCOPE_CYCLE_COUNTER(STAT_RLSingleInference);  // v6.0: Profile single inference (target: <2ms)
+
 	if (!bUseONNXModel || !ModelInstance.IsValid())
 	{
 		// Fallback heuristic
@@ -55,6 +58,8 @@ EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observati
 
 float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext)
 {
+	SCOPE_CYCLE_COUNTER(STAT_RLGetStateValue);  // v6.0: Profile value estimation
+
 	if (!bUseONNXModel || !ModelInstance.IsValid())
 	{
 		// Fallback heuristic value
@@ -80,6 +85,8 @@ TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
 	const TArray<FObservationElement>& Observations,
 	const TArray<FObjectiveContext>& ObjectiveContexts)
 {
+	SCOPE_CYCLE_COUNTER(STAT_RLBatchedInference);  // v6.0: Profile batched inference (target: <4ms for 4 agents)
+
 	TArray<EStrategyType> Strategies;
 
 	if (Observations.Num() != ObjectiveContexts.Num())
@@ -240,6 +247,8 @@ TArray<float> URLPolicyNetwork::GetStateValuesBatched(
 
 TArray<float> URLPolicyNetwork::BuildNetworkInput(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext) const
 {
+	SCOPE_CYCLE_COUNTER(STAT_RLBuildInput);  // v6.0: Profile input preparation
+
 	TArray<float> Input;
 	Input.Reserve(68);
 
@@ -258,6 +267,8 @@ TArray<float> URLPolicyNetwork::BuildNetworkInput(const FObservationElement& Obs
 
 URLPolicyNetwork::FNetworkOutput URLPolicyNetwork::ForwardPassV6(const TArray<float>& InputFeatures)
 {
+	SCOPE_CYCLE_COUNTER(STAT_RLForwardPass);  // v6.0: Profile ONNX forward pass
+
 	FNetworkOutput Output;
 
 	// Prepare input tensor
@@ -297,6 +308,8 @@ URLPolicyNetwork::FNetworkOutput URLPolicyNetwork::ForwardPassV6(const TArray<fl
 
 EStrategyType URLPolicyNetwork::SampleStrategy(const TArray<float>& Logits) const
 {
+	SCOPE_CYCLE_COUNTER(STAT_RLSampleStrategy);  // v6.0: Profile strategy sampling
+
 	if (Logits.Num() != 4)
 	{
 		return EStrategyType::Assault;
