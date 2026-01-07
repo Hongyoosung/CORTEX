@@ -26,6 +26,16 @@ from pathlib import Path
 os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+# v6.0: Import RLConfig from auto-generated config (synced from C++)
+try:
+    from training_env.config import RLConfig
+except ImportError:
+    print("Warning: training_env/config.py not found. Run: python tools/sync_config_from_cpp.py")
+    # Fallback values if config not available
+    class RLConfig:
+        OBSERVATION_SIZE = 68
+        NUM_STRATEGIES = 4
+
 import torch  # Fix for Windows DLL error (must be imported before ray)
 import argparse
 from datetime import datetime
@@ -91,8 +101,8 @@ class SingleHeadStrategyPolicy(TorchModelV2, nn.Module):
         TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
 
-        # v6.0: Observation = 68 features (64 base + 4 objective context)
-        obs_dim = 68
+        # v6.0: Observation size from RLConfig (synced from C++)
+        obs_dim = RLConfig.OBSERVATION_SIZE  # 68 features (64 base + 4 objective context)
 
         # Shared trunk: learns common features (perception, tactical context)
         self.shared_trunk = nn.Sequential(
@@ -243,9 +253,9 @@ def create_ppo_config():
     config.model = {
         "custom_model": "single_head_strategy_policy",  # v6.0: Single-head network
         "custom_model_config": {
-            "obs_dim": 68,  # v6.0: 64 base + 4 objective context
+            "obs_dim": RLConfig.OBSERVATION_SIZE,  # v6.0: Synced from C++ RLConfig
             "hidden_layers": SBDAPMConfig.HIDDEN_LAYERS,  # [128, 128, 64]
-            "num_outputs": 4,  # v6.0: 4 strategy logits
+            "num_outputs": RLConfig.NUM_STRATEGIES,  # v6.0: 4 strategy logits (synced from C++)
         },
         "max_seq_len": 20,  # Required by RLlib (not used for feedforward nets)
     }
@@ -363,8 +373,8 @@ def export_onnx(algo, output_dir):
         wrapper = PolicyWrapper(model)
         wrapper.eval()
 
-        # Dummy input: 68 features (v6.0: 64 base + 4 objective context)
-        dummy_input = torch.randn(1, 68)
+        # Dummy input: observation size from RLConfig (synced from C++)
+        dummy_input = torch.randn(1, RLConfig.OBSERVATION_SIZE)
 
         # Export single unified model
         model_path = output_dir / "cortex_policy_v6.onnx"
@@ -385,8 +395,8 @@ def export_onnx(algo, output_dir):
         print(f"\n[v6.0 EXPORT COMPLETE]")
         print(f"[SUCCESS] Policy exported to: {model_path}")
         print(f"\nModel structure:")
-        print(f"  - Input: 68 dims (64 base + 4 objective context)")
-        print(f"  - Output 1 (Policy): 4 dims [Assault, Defend, Support, Retreat]")
+        print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (64 base + 4 objective context)")
+        print(f"  - Output 1 (Policy): {RLConfig.NUM_STRATEGIES} dims [Assault, Defend, Support, Retreat]")
         print(f"  - Output 2 (Value): 1 dim (state value for MCTS)")
         print(f"\nReady for UE5:")
         print(f"  - Copy cortex_policy_v6.onnx to: Content/Models/")

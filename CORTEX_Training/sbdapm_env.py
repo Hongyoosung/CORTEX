@@ -62,6 +62,18 @@ except ImportError:
     SCHOLA_AVAILABLE = False
     print("Warning: schola not installed. Install with: pip install schola[rllib]")
 
+# v6.0: Import RLConfig from auto-generated config (synced from C++)
+try:
+    from training_env.config import RLConfig
+    CONFIG_AVAILABLE = True
+except ImportError:
+    CONFIG_AVAILABLE = False
+    print("Warning: training_env/config.py not found. Run: python tools/sync_config_from_cpp.py")
+    # Fallback values if config not available
+    class RLConfig:
+        OBSERVATION_SIZE = 68
+        NUM_STRATEGIES = 4
+
 
 # The maximum duration of an episode. After this time, the environment will reset.
 MAX_EPISODE_DURATION = 600.0
@@ -121,8 +133,9 @@ if SCHOLA_AVAILABLE:
             # - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
             # - Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
             # - Objective Context (4): type_encoded(1), distance(1), direction(2)
-            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(68,), dtype=np.float32)
-            self._action_space = spaces.Discrete(4)  # v6.0: Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
+            # v6.0: Using RLConfig for consistency with C++ runtime
+            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
+            self._action_space = spaces.Discrete(RLConfig.NUM_STRATEGIES)  # v6.0: Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
 
             self.episode_steps = 0
 
