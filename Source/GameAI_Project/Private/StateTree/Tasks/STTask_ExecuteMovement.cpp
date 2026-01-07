@@ -94,11 +94,6 @@ EStateTreeRunStatus FSTTask_ExecuteMovement::Tick(FStateTreeExecutionContext& Co
 
 		// Update previous strategy
 		InstanceData.PreviousMacroAction.Strategy = CurrentStrategy;
-
-		UE_LOG(LogTemp, Display, TEXT("✅ [MOVEMENT v6.0] '%s': Strategy updated to %s (Schola=%d)"),
-			*GetNameSafe(SharedContext.FollowerComponent->GetOwner()),
-			*UEnum::GetValueAsString(CurrentStrategy),
-			SharedContext.bScholaActionReceived ? 1 : 0);
 	}
 
 	return EStateTreeRunStatus::Running;
@@ -151,6 +146,21 @@ void FSTTask_ExecuteMovement::ExecuteMovementToPosition(FStateTreeExecutionConte
 	// Query EQS for tactical positions based on position type
 	TArray<FVector> CandidatePositions = QueryEQSPositions(Context, PositionType);
 
+	// FALLBACK: If EQS returns no valid positions, stay in place (Hold)
+	if (CandidatePositions.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MOVE v6.0] '%s': EQS returned 0 positions for %s, falling back to Hold"),
+			*Pawn->GetName(), *UEnum::GetValueAsString(PositionType));
+
+		// Stop current movement and hold position
+		if (InstanceData.AIController)
+		{
+			InstanceData.AIController->StopMovement();
+		}
+		SharedContext.bIsMoving = false;
+		return;
+	}
+
 	if (CandidatePositions.Num() > 0)
 	{
 		float AcceptanceRadius = 100.0f;
@@ -201,14 +211,33 @@ void FSTTask_ExecuteMovement::ExecuteMovementToPosition(FStateTreeExecutionConte
 
 		if (MoveResult.Code == EPathFollowingRequestResult::RequestSuccessful)
 		{
-			UE_LOG(LogTemp, Display, TEXT("[MOVE v6.0] '%s': Moving to %s (Strategy: %s)"),
+			/*UE_LOG(LogTemp, Display, TEXT("[MOVE v6.0] '%s': Moving to %s (Strategy: %s)"),
 				*Pawn->GetName(),
 				*UEnum::GetValueAsString(PositionType),
-				*UEnum::GetValueAsString(SharedContext.FollowerComponent->GetCurrentStrategy()));
+				*UEnum::GetValueAsString(SharedContext.FollowerComponent->GetCurrentStrategy()));*/
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("[MOVE v6.0] '%s': MoveTo FAILED"), *Pawn->GetName());
+			// Log detailed failure reason
+			FString FailureReason;
+			switch (MoveResult.Code)
+			{
+				case EPathFollowingRequestResult::Failed:
+					FailureReason = TEXT("Pathfinding failed (no valid path to target)");
+					break;
+				case EPathFollowingRequestResult::AlreadyAtGoal:
+					FailureReason = TEXT("Already at goal");
+					break;
+				default:
+					FailureReason = FString::Printf(TEXT("Unknown failure code %d"), static_cast<int32>(MoveResult.Code));
+					break;
+			}
+
+			/*UE_LOG(LogTemp, Error, TEXT("[MOVE v6.0] '%s': MoveTo FAILED - %s (Position: %s, Target: %s)"),
+				*Pawn->GetName(),
+				*FailureReason,
+				*UEnum::GetValueAsString(PositionType),
+				*NavTargetPos.ToCompactString());*/
 		}
 	}
 }

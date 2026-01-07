@@ -2,9 +2,11 @@
 
 #include "Schola/FollowerAgentTrainer.h"
 #include "Schola/ScholaAgentComponent.h"
+#include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/TacticalRewardProvider.h"
 #include "Team/FollowerAgentComponent.h"
 #include "Combat/HealthComponent.h"
+#include "Core/SimulationManagerGameMode.h"
 
 AFollowerAgentTrainer::AFollowerAgentTrainer()
 {
@@ -116,38 +118,46 @@ float AFollowerAgentTrainer::ComputeReward()
 
 EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 {
-	bool bDead = IsAgentDead();
-	bool bRewardTerminated = (RewardProvider && RewardProvider->IsTerminated());
-	bool bTimeout = IsEpisodeTimeout();
+	// CRITICAL FIX: Episode termination is now environment-driven, NOT agent-driven
+	// Check if SimulationManager says the episode is ending (team annihilation or timeout)
+	// This ensures all agents terminate together when the episode ends
 
-	// DIAGNOSTIC: Log first call after reset (when EpisodeSteps == 0)
-	if (EpisodeSteps == 0)
+	if (!ScholaAgent || !ScholaAgent->ScholaEnvironment)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DIAGNOSTIC ComputeStatus] %s: Steps=%d, Dead=%d, RewardTerm=%d, Timeout=%d, FollowerAgent=%s, RewardProvider=%s"),
-			*TrainerConfiguration.Name, EpisodeSteps, bDead, bRewardTerminated, bTimeout,
-			FollowerAgent ? TEXT("Valid") : TEXT("NULL"),
-			RewardProvider ? TEXT("Valid") : TEXT("NULL"));
+		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeStatus: ScholaAgent or Environment is NULL!"));
+		return EAgentTrainingStatus::Running;
+	}
 
-		if (FollowerAgent)
+	// Get SimulationManager from environment
+	AScholaCombatEnvironment* Env = Cast<AScholaCombatEnvironment>(ScholaAgent->ScholaEnvironment);
+	if (!Env || !Env->SimulationManager)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeStatus: SimulationManager not found!"));
+		return EAgentTrainingStatus::Running;
+	}
+
+	ASimulationManagerGameMode* SimManager = Env->SimulationManager;
+
+	// Check if episode is ending (set by SimulationManager when team is annihilated or timeout)
+	if (SimManager->IsEpisodeEnding())
+	{
+		// Determine if it was a timeout (truncated) or team annihilation (completed)
+		bool bWasTimeout = (SimManager->GetMaxStepsPerEpisode() > 0 && SimManager->GetCurrentStep() >= SimManager->GetMaxStepsPerEpisode()) ||
+						   (SimManager->GetMaxEpisodeDuration() > 0.0f && (GetWorld()->GetTimeSeconds() - SimManager->GetEpisodeStartTime()) >= SimManager->GetMaxEpisodeDuration());
+
+		if (bWasTimeout)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("  → FollowerAgent->bIsAlive=%d"), FollowerAgent->bIsAlive);
+			UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Episode TRUNCATED (timeout)"), *TrainerConfiguration.Name);
+			return EAgentTrainingStatus::Truncated;
 		}
-		if (RewardProvider)
+		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("  → RewardProvider->bTerminated=%d"), RewardProvider->IsTerminated());
+			UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Episode COMPLETED (team annihilation)"), *TrainerConfiguration.Name);
+			return EAgentTrainingStatus::Completed;
 		}
 	}
 
-	if (bDead || bRewardTerminated)
-	{
-		return EAgentTrainingStatus::Completed;
-	}
-
-	if (bTimeout)
-	{
-		return EAgentTrainingStatus::Truncated;
-	}
-
+	// Episode is still running
 	return EAgentTrainingStatus::Running;
 }
 
@@ -223,41 +233,7 @@ void AFollowerAgentTrainer::OnUnPossess()
 }
 
 //------------------------------------------------------------------------------
-// INTERNAL HELPERS
+// REMOVED INTERNAL HELPERS (now using environment-level termination)
 //------------------------------------------------------------------------------
-
-bool AFollowerAgentTrainer::IsAgentDead() const
-{
-	if (!FollowerAgent)
-	{
-		return true;
-	}
-
-	// Check FollowerAgentComponent's alive flag
-	if (!FollowerAgent->bIsAlive)
-	{
-		return true;
-	}
-
-	// Double-check with HealthComponent
-	AActor* OwnerActor = FollowerAgent->GetOwner();
-	if (OwnerActor)
-	{
-		UHealthComponent* HealthComp = OwnerActor->FindComponentByClass<UHealthComponent>();
-		if (HealthComp && HealthComp->IsDead())
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
-bool AFollowerAgentTrainer::IsEpisodeTimeout() const
-{
-	// Check for max episode steps (configured in TrainerConfiguration)
-	// Reduced from 10000 to 1000 for faster episode completion during training
-	// This ensures RLlib sees completed episodes within each iteration
-	const int32 MaxSteps = 1000; // ~30 seconds at 30 FPS
-	return EpisodeSteps >= MaxSteps;
-}
+// IsAgentDead() - REMOVED: Individual agent death no longer triggers episode end
+// IsEpisodeTimeout() - REMOVED: Timeout checked at environment level via SimulationManager

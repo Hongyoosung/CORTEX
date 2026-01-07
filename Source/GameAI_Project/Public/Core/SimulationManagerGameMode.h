@@ -370,6 +370,30 @@ public:
 	void StartNewEpisode();
 
 	/**
+	 * Check if episode is currently ending (team annihilation or timeout)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	bool IsEpisodeEnding() const { return bEpisodeEnding; }
+
+	/**
+	 * Get episode start time
+	 */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	float GetEpisodeStartTime() const { return EpisodeStartTime; }
+
+	/**
+	 * Get max steps per episode
+	 */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	int32 GetMaxStepsPerEpisode() const { return MaxStepsPerEpisode; }
+
+	/**
+	 * Get max episode duration
+	 */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	float GetMaxEpisodeDuration() const { return MaxEpisodeDuration; }
+
+	/**
 	 * Schedule a team to respawn after delay (for continuous training)
 	 * @param TeamID - Team to respawn
 	 * @param Delay - Delay in seconds before respawn

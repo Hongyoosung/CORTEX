@@ -103,10 +103,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Schola")
 	float GetCurrentReward() const;
 
-	/** Check if episode has terminated */
-	UFUNCTION(BlueprintPure, Category = "Schola")
-	bool IsEpisodeTerminated() const;
-
 	/** Reset episode for new training round */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	void ResetEpisode();

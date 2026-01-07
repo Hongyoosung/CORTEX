@@ -189,7 +189,7 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		TArray<AActor*> AliveFollowers = GetAliveFollowers();
 		if (AliveFollowers.Num() >= 2)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[FORMATION] '%s': Inter-agent distances (%d agents):"), *TeamName, AliveFollowers.Num());
+			//UE_LOG(LogTemp, Warning, TEXT("[FORMATION] '%s': Inter-agent distances (%d agents):"), *TeamName, AliveFollowers.Num());
 
 			// Calculate all pairwise distances
 			float MinDistance = FLT_MAX;
@@ -209,10 +209,10 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 					float Distance = FVector::Dist(Agent1->GetActorLocation(), Agent2->GetActorLocation());
 
-					UE_LOG(LogTemp, Warning, TEXT("[FORMATION]   '%s' <-> '%s': %.1f cm"),
+					/*UE_LOG(LogTemp, Warning, TEXT("[FORMATION]   '%s' <-> '%s': %.1f cm"),
 						*Agent1->GetName(),
 						*Agent2->GetName(),
-						Distance);
+						Distance);*/
 
 					MinDistance = FMath::Min(MinDistance, Distance);
 					MaxDistance = FMath::Max(MaxDistance, Distance);
@@ -224,8 +224,8 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			if (PairCount > 0)
 			{
 				float AvgDistance = TotalDistance / PairCount;
-				UE_LOG(LogTemp, Warning, TEXT("[FORMATION] '%s': Distance stats - Min: %.1f cm, Max: %.1f cm, Avg: %.1f cm"),
-					*TeamName, MinDistance, MaxDistance, AvgDistance);
+				/*UE_LOG(LogTemp, Warning, TEXT("[FORMATION] '%s': Distance stats - Min: %.1f cm, Max: %.1f cm, Avg: %.1f cm"),
+					*TeamName, MinDistance, MaxDistance, AvgDistance);*/
 			}
 		}
 	}

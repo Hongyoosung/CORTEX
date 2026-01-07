@@ -29,6 +29,12 @@ void URewardCalculator::BeginPlay()
 		{
 			UE_LOG(LogTemp, Warning, TEXT("RewardCalculator: No FollowerAgentComponent found on %s"), *Owner->GetName());
 		}
+		else
+		{
+			// Initialize previous observation (v6.0 fix)
+			PreviousObservation = FollowerComponent->BuildLocalObservation();
+			UE_LOG(LogTemp, Log, TEXT("[REWARD INIT] '%s': PreviousObservation initialized"), *Owner->GetName());
+		}
 	}
 
 	// Reset state
@@ -42,16 +48,78 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// CRITICAL FIX (v6.0): Hybrid reward calculation (continuous + event-driven)
+	// This ensures ALL rewards (kills, damage, positioning, progress) are forwarded to FollowerComponent
+
+	if (!FollowerComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD TICK] No FollowerComponent - cannot forward rewards!"));
+		return;
+	}
+
+	// Build current observation
+	FObservationElement CurrentObs = FollowerComponent->BuildLocalObservation();
+
+	// Add objective context to observation
+	if (CurrentObjective)
+	{
+		CurrentObs.ObjectiveContext = FollowerComponent->BuildObjectiveContext(CurrentObjective);
+	}
+
+	float StepReward = 0.0f;
+
+	// === CONTINUOUS REWARDS (positioning, progress, strategy bonuses) ===
+	if (CurrentObjective && CurrentObjective->IsActive())
+	{
+		// Objective progress rewards (moving closer, holding position, etc.)
+		StepReward += CalculateObjectiveProgressReward(
+			CurrentObs.ObjectiveContext.Type,
+			PreviousObservation,
+			CurrentObs
+		);
+
+		// Alignment bonus (strategy matches objective)
+		StepReward += CalculateAlignmentBonus(CurrentStrategy, CurrentObs.ObjectiveContext.Type);
+	}
+
+	// Strategy-specific continuous rewards (position holding, health recovery, etc.)
+	float strategyReward = CalculateStrategyReward(CurrentStrategy, PreviousObservation, CurrentObs);
+	StepReward += strategyReward;
+
+	// === EVENT-BASED REWARDS (kills, damage, death accumulated since last tick) ===
+	float eventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward + AccumulatedObjectiveReward;
+	StepReward += eventRewards;
+
+	// Forward total reward to FollowerComponent (CRITICAL FIX)
+	if (FMath::Abs(StepReward) > 0.01f) // Avoid spam for tiny rewards
+	{
+		FollowerComponent->ProvideReward(StepReward);
+
+		UE_LOG(LogTemp, Display, TEXT("[REWARD TICK] '%s': Total=%.2f (Events=%.2f, Continuous=%.2f, Strategy=%.2f)"),
+			*GetOwner()->GetName(),
+			StepReward,
+			eventRewards,
+			StepReward - eventRewards - strategyReward,
+			strategyReward);
+	}
+
+	// Reset event accumulators (events are one-time, continuous rewards recalculate every tick)
+	AccumulatedIndividualReward = 0.0f;
+	AccumulatedCoordinationReward = 0.0f;
+	AccumulatedObjectiveReward = 0.0f;
+	KillsSinceLastUpdate = 0;
+	DamageSinceLastUpdate = 0.0f;
+	DamageTakenSinceLastUpdate = 0.0f;
+
+	// Update previous observation for next tick
+	PreviousObservation = CurrentObs;
+
 	// Clean up old combined fire records
 	float CurrentTime = GetWorld()->GetTimeSeconds();
 	RecentCombinedFires.RemoveAll([CurrentTime, this](const FCombinedFireRecord& Record) {
 		return (CurrentTime - Record.Timestamp) > CombinedFireWindow;
 	});
-
-	// v8.0: Objective compliance checking DISABLED
-	// Action masking in Python environment now prevents invalid actions
-	// CheckObjectiveCompliance();
-}
+} 
 
 //--------------------------------------------------------------------------
 // v6.0: OBJECTIVE-AWARE REWARD CALCULATION
@@ -267,15 +335,20 @@ void URewardCalculator::OnKillEnemy(AActor* Enemy)
 {
 	KillsSinceLastUpdate++;
 
+	// Base kill reward (will be added in CalculateStrategyReward during tick)
+	float killReward = RewardConfig::KILL_REWARD; // +15.0
+
 	// Bonus for kill while on objective
 	if (IsOnObjective())
 	{
 		AccumulatedCoordinationReward += 15.0f; // +15 for objective kill
-		UE_LOG(LogTemp, Log, TEXT("[REWARD] Kill on objective: +15 (total bonus: %.1f)"), AccumulatedCoordinationReward);
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Kill on objective → +15.0 coordination bonus (base +15.0 kill)"),
+			*GetOwner()->GetName());
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("[REWARD] Kill: +10"));
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Kill → base +15.0 (will be added in tick)"),
+			*GetOwner()->GetName());
 	}
 }
 
@@ -285,11 +358,17 @@ void URewardCalculator::OnDealDamage(float Damage, AActor* Target)
 
 	// Register for combined fire tracking
 	RegisterCombinedFire(Target);
+
+	UE_LOG(LogTemp, Verbose, TEXT("[REWARD EVENT] '%s': Dealt %.1f damage (accumulated: %.1f)"),
+		*GetOwner()->GetName(), Damage, DamageSinceLastUpdate);
 }
 
 void URewardCalculator::OnTakeDamage(float Damage)
 {
 	DamageTakenSinceLastUpdate += Damage;
+
+	UE_LOG(LogTemp, Verbose, TEXT("[REWARD EVENT] '%s': Took %.1f damage (accumulated: %.1f)"),
+		*GetOwner()->GetName(), Damage, DamageTakenSinceLastUpdate);
 }
 
 void URewardCalculator::OnDeath()
@@ -298,8 +377,8 @@ void URewardCalculator::OnDeath()
 	// This ensures agents will sacrifice themselves to complete objectives
 	AccumulatedIndividualReward += RewardConfig::DEATH_PENALTY;
 
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Death: %.1f (acceptable if objective achieved)"),
-		RewardConfig::DEATH_PENALTY);
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Death penalty %.1f (acceptable if objective achieved)"),
+		*GetOwner()->GetName(), RewardConfig::DEATH_PENALTY);
 }
 
 void URewardCalculator::OnObjectiveComplete(UObjective* Objective)
@@ -332,8 +411,8 @@ void URewardCalculator::OnObjectiveComplete(UObjective* Objective)
 	}
 
 	AccumulatedObjectiveReward += CompletionReward;
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Objective complete (%s): +%.1f"),
-		*UEnum::GetValueAsString(Objective->Type), CompletionReward);
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Objective complete (%s) → +%.1f"),
+		*GetOwner()->GetName(), *UEnum::GetValueAsString(Objective->Type), CompletionReward);
 }
 
 void URewardCalculator::OnObjectiveFailed(UObjective* Objective)
@@ -343,12 +422,13 @@ void URewardCalculator::OnObjectiveFailed(UObjective* Objective)
 
 	if (Objective)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Objective failed (%s): -30"),
-			*UEnum::GetValueAsString(Objective->Type));
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Objective failed (%s) → -30.0"),
+			*GetOwner()->GetName(), *UEnum::GetValueAsString(Objective->Type));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD v6.0] Objective failed: -30"));
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Objective failed → -30.0"),
+			*GetOwner()->GetName());
 	}
 }
 

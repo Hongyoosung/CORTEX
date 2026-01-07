@@ -84,11 +84,4 @@ public:
 	/** Step count for current episode */
 	UPROPERTY()
 	int32 EpisodeSteps = 0;
-
-private:
-	/** Check if agent is dead */
-	bool IsAgentDead() const;
-
-	/** Check if episode timeout reached */
-	bool IsEpisodeTimeout() const;
 };

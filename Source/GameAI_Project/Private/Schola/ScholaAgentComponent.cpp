@@ -200,17 +200,7 @@ float UScholaAgentComponent::GetCurrentReward() const
 	return RewardProvider->GetReward();
 }
 
-bool UScholaAgentComponent::IsEpisodeTerminated() const
-{
-	if (!RewardProvider)
-	{
-		return false;
-	}
-
-	bool bResult = RewardProvider->IsTerminated();
-
-	return bResult;
-}
+// REMOVED: IsEpisodeTerminated() - Episode termination now handled by FollowerAgentTrainer.ComputeStatus()
 
 void UScholaAgentComponent::ConfigureActuators()
 {

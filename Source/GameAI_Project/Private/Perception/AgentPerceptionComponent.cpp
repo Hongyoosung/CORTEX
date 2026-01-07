@@ -223,17 +223,21 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 
 TArray<AActor*> UAgentPerceptionComponent::GetDetectedEnemies() const
 {
-	return TrackedEnemies;
+	// THREAD SAFETY: Return a copy to avoid race conditions with async MCTS
+	return TArray<AActor*>(TrackedEnemies);
 }
 
 TArray<AActor*> UAgentPerceptionComponent::GetNearestEnemies(int32 MaxCount) const
 {
+	// THREAD SAFETY: Make a copy of TrackedEnemies to avoid race conditions with async MCTS
+	TArray<AActor*> EnemiesCopy = TrackedEnemies;
+
 	TArray<AActor*> Result;
-	const int32 Count = FMath::Min(MaxCount, TrackedEnemies.Num());
+	const int32 Count = FMath::Min(MaxCount, EnemiesCopy.Num());
 
 	for (int32 i = 0; i < Count; ++i)
 	{
-		Result.Add(TrackedEnemies[i]);
+		Result.Add(EnemiesCopy[i]);
 	}
 
 	return Result;
@@ -257,11 +261,15 @@ TArray<FEnemyObservation> UAgentPerceptionComponent::GetEnemyObservations(int32 
 	const FVector OwnerLocation = Owner->GetActorLocation();
 	const FVector OwnerForward = Owner->GetActorForwardVector();
 
+	// THREAD SAFETY: Make a copy of TrackedEnemies to avoid race conditions with async MCTS
+	// TrackedEnemies can be modified on game thread while this is called from worker thread
+	TArray<AActor*> EnemiesCopy = TrackedEnemies;
+
 	// Build observations for nearest enemies
-	const int32 NumEnemies = FMath::Min(MaxCount, TrackedEnemies.Num());
+	const int32 NumEnemies = FMath::Min(MaxCount, EnemiesCopy.Num());
 	for (int32 i = 0; i < NumEnemies; ++i)
 	{
-		AActor* Enemy = TrackedEnemies[i];
+		AActor* Enemy = EnemiesCopy[i];
 		if (!Enemy) continue;
 
 		FEnemyObservation Obs;

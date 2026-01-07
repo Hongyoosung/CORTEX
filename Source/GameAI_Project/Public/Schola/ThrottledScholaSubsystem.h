@@ -36,7 +36,7 @@ public:
 
 	/** Decision interval in seconds (default: 1.0s = 1 Hz) */
 	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling", meta = (ClampMin = "0.01", ClampMax = "10.0"))
-	float DecisionInterval = 1.0f;
+	float DecisionInterval = 0.1f;
 
 private:
 	/** Last decision time (FPlatformTime::Seconds()) */

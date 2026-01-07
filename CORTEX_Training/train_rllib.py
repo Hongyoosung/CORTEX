@@ -161,7 +161,7 @@ class SBDAPMConfig:
     # Environment
     HOST = "localhost"
     PORT = 50051
-    MAX_EPISODE_STEPS = 1000
+    MAX_EPISODE_STEPS = 2000  # MUST match UE5's MaxStepsPerEpisode (SimulationManagerGameMode.h:514)
 
     # Network architecture (matches train_tactical_policy.py)
     HIDDEN_LAYERS = [128, 128, 64]
@@ -514,14 +514,14 @@ def train(args):
     best_checkpoint_dir = os.path.join(output_dir, "best")
     if os.path.exists(best_checkpoint_dir):
         print(f"\nExporting best model from: {best_checkpoint_dir}")
-        # Restore best checkpoint (pass result object directly)
-        algo.restore(best_checkpoint)
+        # Restore best checkpoint (use absolute path for PyArrow compatibility)
+        algo.restore(os.path.abspath(best_checkpoint_dir))
         if export_onnx(algo, Path(output_dir)):
             print(f"\nBest model exported to: {output_dir}/cortex_policy_v6.onnx")
         else:
             print("\nBest model export failed, trying final checkpoint...")
-            # Fallback to final checkpoint (pass result object directly)
-            algo.restore(final_checkpoint)
+            # Fallback to final checkpoint (use absolute path for PyArrow compatibility)
+            algo.restore(os.path.abspath(output_dir))
             export_onnx(algo, Path(output_dir))
     else:
         # No best checkpoint, use final

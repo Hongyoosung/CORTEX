@@ -29,10 +29,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float GetReward();
 
-	/** Check if episode has terminated (agent died) */
-	UFUNCTION(BlueprintPure, Category = "Reward")
-	bool IsTerminated() const { return bTerminated; }
-
 	/** Reset reward state for new episode */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void Reset();
@@ -51,9 +47,6 @@ public:
 protected:
 	/** Last accumulated reward value (from FollowerAgentComponent) */
 	float LastRewardValue = 0.0f;
-
-	/** Has episode terminated? */
-	bool bTerminated = false;
 
 	/** Find follower agent component */
 	UFollowerAgentComponent* FindFollowerAgent() const;

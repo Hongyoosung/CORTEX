@@ -273,6 +273,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follower|Debug")
 	bool bEnableDebugDrawing = false;
 
+	/** Minimum time between strategy updates (prevents oscillation) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follower|RL")
+	float MinStrategyUpdateInterval = 0.05f;  // Never update faster than 20 Hz
+
 	//--------------------------------------------------------------------------
 	// COVER DETECTION CONFIG
 	//--------------------------------------------------------------------------
@@ -393,6 +397,11 @@ private:
 
 	/** Ticks since last strategy update (for timeout fallback) */
 	int32 TicksSinceLastUpdate = 0;
+
+	
+
+	/** Last time strategy was updated (FPlatformTime::Seconds()) */
+	double LastStrategyUpdateTime = 0.0;
 
 	/**
 	 * Check if strategy should be recomputed (v6.0)

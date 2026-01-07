@@ -96,6 +96,9 @@ void UFollowerAgentComponent::BeginPlay()
 	CachedHealthComponent = GetOwner()->FindComponentByClass<UHealthComponent>();
 	CachedPerceptionComponent = GetOwner()->FindComponentByClass<UAgentPerceptionComponent>();
 
+	// Initialize strategy update timestamp
+	LastStrategyUpdateTime = FPlatformTime::Seconds();
+
 	// Bind to HealthComponent events for RL reward integration
 	if (CachedHealthComponent)
 	{
@@ -218,6 +221,9 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 				CurrentStrategy = NewStrategy;
 			}
+
+			// Update timestamp (moved here to avoid const violation in ShouldUpdateStrategy)
+			const_cast<UFollowerAgentComponent*>(this)->LastStrategyUpdateTime = FPlatformTime::Seconds();
 		}
 		else
 		{
@@ -248,6 +254,9 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 						break;
 				}
 			}
+
+			// Update timestamp for fallback path as well
+			const_cast<UFollowerAgentComponent*>(this)->LastStrategyUpdateTime = FPlatformTime::Seconds();
 		}
 
 		// Cache state for next event check (using cached components - v6.0 Phase 11 optimization)
@@ -840,19 +849,10 @@ void UFollowerAgentComponent::ResetEpisode()
 		SharedContext.VisibleEnemies.Empty();
 		SharedContext.PrimaryTarget = nullptr;
 		SharedContext.DistanceToPrimaryTarget = 99999.0f;
-
-		UE_LOG(LogTemp, Warning, TEXT("[EPISODE RESET] '%s': Cleared VisibleEnemies (%d enemies forgotten)"),
-			*GetOwner()->GetName(), SharedContext.VisibleEnemies.Num());
 	}
 
 	// Also clear perception component's tracked enemies
 	UAgentPerceptionComponent* PerceptionComp = GetOwner()->FindComponentByClass<UAgentPerceptionComponent>();
-	if (PerceptionComp)
-	{
-		// Perception component will rebuild enemy list on next tick via ScanForEnemies
-		UE_LOG(LogTemp, Warning, TEXT("[EPISODE RESET] '%s': Perception will rebuild enemy list on next scan"),
-			*GetOwner()->GetName());
-	}
 
 	// FIX (Issue #4): Clear team leader's known enemies (team-based enemy sharing)
 	// Only one follower needs to do this (avoid duplicate clears), so check if we're the first follower
@@ -863,8 +863,6 @@ void UFollowerAgentComponent::ResetEpisode()
 		{
 			// First follower clears team knowledge
 			TeamLeader->ClearKnownEnemies();
-			UE_LOG(LogTemp, Warning, TEXT("[EPISODE RESET] '%s': Cleared team knowledge (first follower)"),
-				*GetOwner()->GetName());
 		}
 	}
 
@@ -1192,6 +1190,13 @@ void UFollowerAgentComponent::OnDeathEvent(const FDeathEventData& DeathEvent)
 
 bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 {
+	// RATE LIMIT: Prevent oscillation by enforcing minimum update interval
+	double CurrentTime = FPlatformTime::Seconds();
+	if (CurrentTime - LastStrategyUpdateTime < MinStrategyUpdateInterval)
+	{
+		return false;  // Too soon since last update
+	}
+
 	// Get current health (using cached component - v6.0 Phase 11 optimization)
 	float CurrentHealth = 1.0f;
 	if (CachedHealthComponent)

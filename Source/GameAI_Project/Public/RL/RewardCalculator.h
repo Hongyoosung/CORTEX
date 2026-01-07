@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "RL/RLTypes.h"  // v6.0: EStrategyType, EObjectiveType, FObjectiveContext
+#include "Observation/ObservationElement.h"
 #include "RewardCalculator.generated.h"
 
 class UFollowerAgentComponent;
@@ -274,4 +275,11 @@ private:
 
 	/** Was agent on objective last tick? (for Defend strategy) */
 	bool bWasOnObjective = false;
+
+	//--------------------------------------------------------------------------
+	// HYBRID REWARD TRACKING (v6.0 Fix)
+	//--------------------------------------------------------------------------
+
+	/** Previous observation for calculating reward deltas */
+	FObservationElement PreviousObservation;
 };

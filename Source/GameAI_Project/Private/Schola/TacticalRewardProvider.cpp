@@ -16,9 +16,6 @@ void UTacticalRewardProvider::Initialize()
 
 	if (FollowerAgent)
 	{
-		// CRITICAL FIX: Do NOT set bTerminated based on current bIsAlive
-		// bTerminated should only be set in Reset() (false) and GetReward() (based on death during episode)
-		// Setting it here creates race condition with Schola's ComputeStatus() query timing
 		LastRewardValue = FollowerAgent->GetAccumulatedReward();
 
 		UE_LOG(LogTemp, Log, TEXT("[TacticalRewardProvider] Initialized with FollowerAgent %s"),
@@ -41,16 +38,12 @@ float UTacticalRewardProvider::GetReward()
 	float DeltaReward = CurrentReward - LastRewardValue;
 	LastRewardValue = CurrentReward;
 
-	// Update termination state based on current alive status
-	bTerminated = !FollowerAgent->bIsAlive;
-
 	return DeltaReward;
 }
 
 void UTacticalRewardProvider::Reset()
 {
 	LastRewardValue = 0.0f;
-	bTerminated = false;
 
 	if (FollowerAgent)
 	{
