@@ -1,6 +1,6 @@
 # AUTO-GENERATED FROM C++ RL/RLTypes.h - DO NOT EDIT MANUALLY
 # Run: python tools/sync_config_from_cpp.py
-# Last synced: 2026-01-07T09:47:26.784290
+# Last synced: 2026-01-07T11:40:49.490069
 
 class RLConfig:
     """RL training configuration (synced from C++)

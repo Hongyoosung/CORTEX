@@ -192,24 +192,46 @@ class RLConfig:
 python tools/sync_config_from_cpp.py
 
 # Step 2: Start training
-python train.py \
-    --config config/ppo_cortex_v6.yaml \
-    --num-workers 4 \
-    --num-gpus 0 \
-    --checkpoint-freq 100
+python train_rllib.py --iterations 100 --checkpoint-freq 10
 
 # Step 3: Monitor training (separate terminal)
-tensorboard --logdir=runs/cortex_v6_0
+tensorboard --logdir=training_results/
 ```
 
 ### Training Configuration
 
-**File:** `CORTEX_Training/config/ppo_cortex_v6.yaml`
+**File:** `CORTEX_Training/train_rllib.py` (configuration is in SBDAPMConfig class)
 
-```yaml
-# v6.0 PPO Configuration
-env_config:
-  observation_space_size: 68  # 64 base + 4 objective context
+```python
+# v6.0 PPO Configuration (class SBDAPMConfig)
+class SBDAPMConfig:
+    # Environment
+    HOST = "localhost"
+    PORT = 50051
+    MAX_EPISODE_STEPS = 1000
+
+    # Network architecture
+    HIDDEN_LAYERS = [128, 128, 64]
+
+    # PPO hyperparameters
+    LEARNING_RATE = 3e-4
+    TRAIN_BATCH_SIZE = 4000
+    SGD_MINIBATCH_SIZE = 256
+    NUM_SGD_ITER = 10
+    GAMMA = 0.99
+    GAE_LAMBDA = 0.95
+    CLIP_PARAM = 0.2
+    ENTROPY_COEFF = 0.5
+    VF_LOSS_COEFF = 0.5
+
+    # Training
+    NUM_WORKERS = 0  # 4 parallel UE instances
+    NUM_ENVS_PER_WORKER = 1
+    NUM_ITERATIONS = 100
+    CHECKPOINT_FREQ = 10
+
+# Observation size from RLConfig (synced from C++)
+# observation_space_size: 68  # 64 base + 4 objective context
   action_space_size: 4        # Assault, Defend, Support, Retreat
   max_episode_steps: 1000
   num_agents: 4
@@ -252,7 +274,9 @@ evaluation:
 **Training Phases:**
 
 ```python
-# CORTEX_Training/train.py
+# CORTEX_Training/train_rllib.py
+# Note: Curriculum learning is optional in v6.0
+# The core training uses fixed scenarios with progressive difficulty
 
 class CurriculumScheduler:
     """Progressive difficulty increase"""
@@ -500,12 +524,12 @@ Fix: Check EQS query configuration, add fallback position
 **Run Evaluation Episodes (Deterministic):**
 
 ```python
-# CORTEX_Training/evaluate.py
+# CORTEX_Training/evaluate_agents.py
 
-python evaluate.py \
-    --checkpoint checkpoints/cortex_v6_episode_5000.pt \
-    --num-episodes 100 \
-    --render  # Optional: show UE5 visualization
+python evaluate_agents.py \
+    --data ./evaluation_data \
+    --baseline v5.0 \
+    --trained v6.0
 
 # Expected output:
 # ✅ Average Reward: 85.3 (±5.2)
@@ -568,12 +592,12 @@ Conclusion: All components contribute to performance
 
 ### Step 1: Export Trained Model to ONNX
 
-**File:** `CORTEX_Training/export_onnx.py`
+**Export is automatic after training completes!**
+
+The ONNX export is integrated into `train_rllib.py`. After training completes, the export_onnx() function is automatically called:
 
 ```python
-import torch
-import torch.onnx
-from models.cortex_policy_v6 import CortexPolicyNetwork
+# From train_rllib.py - export_onnx() function
 
 # Load trained checkpoint
 checkpoint = torch.load('checkpoints/cortex_v6_episode_5000.pt')
@@ -605,13 +629,16 @@ print(f'Output 0: {onnx_model.graph.output[0]}')  # [batch, 4] policy logits
 print(f'Output 1: {onnx_model.graph.output[1]}')  # [batch, 1] value
 ```
 
-**Run Export:**
+**Export is automatic after training:**
 
 ```bash
-python export_onnx.py
+# Training automatically exports ONNX at completion
+python train_rllib.py --iterations 100
 
 # Expected output:
-# ✅ ONNX model exported: cortex_policy_v6.onnx
+# ...
+# [v6.0 EXPORT COMPLETE]
+# [SUCCESS] Policy exported to: training_results/<timestamp>/cortex_policy_v6.onnx
 # Input: name: "observation" type { tensor_type { elem_type: 1 shape { dim { dim_param: "batch_size" } dim { dim_value: 68 } } } }
 # Output 0: name: "policy_logits" type { tensor_type { elem_type: 1 shape { dim { dim_param: "batch_size" } dim { dim_value: 4 } } } }
 # Output 1: name: "value" type { tensor_type { elem_type: 1 shape { dim { dim_param: "batch_size" } dim { dim_value: 1 } } } }
@@ -1079,13 +1106,10 @@ CORTEX/
 │   │   └── RLPolicyNetwork.cpp
 │   └── ...
 ├── CORTEX_Training/
-│   ├── train.py  # Main training script
-│   ├── evaluate.py  # Evaluation script
-│   ├── export_onnx.py  # ONNX export
-│   ├── config/
-│   │   └── ppo_cortex_v6.yaml  # Training config
-│   ├── models/
-│   │   └── cortex_policy_v6.py  # Network architecture
+│   ├── train_rllib.py  # Main training script (includes network, config, ONNX export)
+│   ├── sbdapm_env.py  # Multi-agent environment
+│   ├── evaluate_agents.py  # Evaluation script
+│   ├── test_v6_architecture.py  # Architecture validation tests
 │   ├── tools/
 │   │   └── sync_config_from_cpp.py  # Sim2Real sync
 │   ├── training_env/
@@ -1108,20 +1132,17 @@ CORTEX/
 # Sync configuration
 python tools/sync_config_from_cpp.py
 
-# Train model
-python train.py --config config/ppo_cortex_v6.yaml --num-workers 4
+# Train model (ONNX export is automatic at completion)
+python train_rllib.py --iterations 100 --checkpoint-freq 10
 
 # Monitor training
-tensorboard --logdir=runs/cortex_v6_0
+tensorboard --logdir=training_results/
 
 # Evaluate model
-python evaluate.py --checkpoint checkpoints/cortex_v6_episode_5000.pt --num-episodes 100
+python evaluate_agents.py --data ./evaluation_data --baseline v5.0 --trained v6.0
 
-# Export to ONNX
-python export_onnx.py
-
-# Validate ONNX
-python test_onnx.py
+# Validate v6.0 architecture
+python test_v6_architecture.py
 
 # Deploy to UE5
 cp cortex_policy_v6.onnx ../Content/Models/

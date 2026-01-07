@@ -68,8 +68,19 @@ void FSTTask_ExecuteFire::ExecuteFire(FStateTreeExecutionContext& Context) const
 		return;
 	}
 
-	// v6.0: Get current strategy from RL policy
-	EStrategyType CurrentStrategy = SharedContext.FollowerComponent->GetCurrentStrategy();
+	// v6.0: Get current strategy from appropriate source
+	// CRITICAL FIX: Read strategy from correct source based on training mode
+	EStrategyType CurrentStrategy;
+	if (SharedContext.bScholaActionReceived)
+	{
+		// Schola training mode: Actions come from Python via TacticalActuator
+		CurrentStrategy = SharedContext.CurrentAction.Strategy;
+	}
+	else
+	{
+		// Normal/Inference mode: Actions come from RL policy or fallback heuristic
+		CurrentStrategy = SharedContext.FollowerComponent->GetCurrentStrategy();
+	}
 
 	// Retreat strategy = hold fire
 	if (CurrentStrategy == EStrategyType::Retreat)

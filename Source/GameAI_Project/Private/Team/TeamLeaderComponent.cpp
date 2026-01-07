@@ -36,14 +36,21 @@ void UTeamLeaderComponent::BeginPlay()
 	// Initialize MCTS
 	InitializeMCTS();
 
-
-	// Initialize objective manager (v3.0 Combat Refactoring)
 	if (!ObjectiveManager)
 	{
-		ObjectiveManager = NewObject<UObjectiveManager>(GetOwner());
+		AActor* Owner = GetOwner();
+		if (Owner)
+		{
+			ObjectiveManager = Owner->FindComponentByClass<UObjectiveManager>();
+		}
+
 		if (ObjectiveManager)
 		{
-			ObjectiveManager->RegisterComponent();
+			UE_LOG(LogTemp, Log, TEXT("✅ TeamLeader '%s': Found ObjectiveManager on Owner."), *TeamName);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': Failed to find UObjectiveManager on Owner!"), *TeamName);
 		}
 	}
 
@@ -273,98 +280,44 @@ void UTeamLeaderComponent::DiscoverWorldObjectives()
 {
 	if (!ObjectiveManager)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Cannot discover objectives - ObjectiveManager not initialized"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': ObjectiveManager not initialized"), *TeamName);
 		return;
 	}
 
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
+	if (!GetWorld()) return;
 
-	int32 ObjectivesDiscovered = 0;
+	int32 TotalObjectives = 0;
 
-	//==========================================================================
-	// CAPTURE ZONES
-	//==========================================================================
-	TArray<AActor*> CaptureZones;
-	UGameplayStatics::GetAllActorsWithTag(World, FName("CaptureZone"), CaptureZones);
-
-	for (AActor* Zone : CaptureZones)
-	{
-		if (Zone && IsValid(Zone))
+	// 1. CAPTURE ZONES (Priority: 8)
+	// 람다를 통해 구체적인 생성 로직만 전달합니다.
+	TotalObjectives += FindAndRegisterObjectives(FName("CaptureZone"), [&](AActor* Actor)
 		{
-			UObjective* CaptureObj = ObjectiveManager->CreateCaptureObjective(
-				Zone->GetActorLocation(),
-				8  // High priority
-			);
+			return ObjectiveManager->CreateCaptureObjective(Actor->GetActorLocation(), 8);
+		});
 
-			if (CaptureObj)
-			{
-				ObjectivesDiscovered++;
-				UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Discovered CaptureZone at %s"),
-					*TeamName, *Zone->GetActorLocation().ToString());
-			}
-		}
-	}
-
-	//==========================================================================
-	// RESCUE ZONES (wounded allies marked with "RescueTarget" tag)
-	//==========================================================================
-	TArray<AActor*> RescueTargets;
-	UGameplayStatics::GetAllActorsWithTag(World, FName("RescueTarget"), RescueTargets);
-
-	for (AActor* Target : RescueTargets)
-	{
-		if (Target && IsValid(Target))
+	// 2. RESCUE ZONES (Priority: 7)
+	// 체력 검사 로직을 람다 안에 포함시킵니다.
+	TotalObjectives += FindAndRegisterObjectives(FName("RescueTarget"), [&](AActor* Actor)
 		{
-			// Check if target is actually wounded (health < 50%)
-			UHealthComponent* HealthComp = Target->FindComponentByClass<UHealthComponent>();
+			UHealthComponent* HealthComp = Actor->FindComponentByClass<UHealthComponent>();
+			// 체력이 50% 미만인 경우에만 목표 생성, 아니면 nullptr 반환
 			if (HealthComp && HealthComp->GetCurrentHealth() < HealthComp->GetMaxHealth() * 0.5f)
 			{
-				UObjective* RescueObj = ObjectiveManager->CreateRescueObjective(
-					Target,
-					7  // Medium-high priority
-				);
+				// 상세 로그가 필요하다면 여기서 출력하거나, 공통 로그로 만족할 수 있습니다.
+				UE_LOG(LogTemp, Log, TEXT("Found Wounded Ally: %s (Health: %.1f)"), *Actor->GetName(), HealthComp->GetCurrentHealth());
 
-				if (RescueObj)
-				{
-					ObjectivesDiscovered++;
-					UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Discovered RescueTarget '%s' at %s (Health: %.1f)"),
-						*TeamName, *Target->GetName(), *Target->GetActorLocation().ToString(),
-						HealthComp->GetCurrentHealth());
-				}
+				return ObjectiveManager->CreateRescueObjective(Actor, 7);
 			}
-		}
-	}
+			return (UObjective*)nullptr;
+		});
 
-	//==========================================================================
-	// DEFEND ZONES
-	//==========================================================================
-	TArray<AActor*> DefendZones;
-	UGameplayStatics::GetAllActorsWithTag(World, FName("DefendZone"), DefendZones);
-
-	for (AActor* Zone : DefendZones)
-	{
-		if (Zone && IsValid(Zone))
+	// 3. DEFEND ZONES (Priority: 7)
+	TotalObjectives += FindAndRegisterObjectives(FName("DefendZone"), [&](AActor* Actor)
 		{
-			UObjective* DefendObj = ObjectiveManager->CreateDefendObjective(
-				Zone->GetActorLocation(),
-				7  // Medium-high priority
-			);
+			return ObjectiveManager->CreateDefendObjective(Actor->GetActorLocation(), 7);
+		});
 
-			if (DefendObj)
-			{
-				ObjectivesDiscovered++;
-				UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Discovered DefendZone at %s"),
-					*TeamName, *Zone->GetActorLocation().ToString());
-			}
-		}
-	}
-
-	UE_LOG(LogTemp, Display, TEXT("✅ TeamLeader '%s': Auto-discovered %d world objectives (MCTS will now consider these)"),
-		*TeamName, ObjectivesDiscovered);
+	UE_LOG(LogTemp, Display, TEXT("✅ TeamLeader '%s': Auto-discovered %d world objectives"), *TeamName, TotalObjectives);
 }
 
 //------------------------------------------------------------------------------
@@ -627,6 +580,38 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 	}
 
 	return false;
+}
+
+int32 UTeamLeaderComponent::FindAndRegisterObjectives(FName TagName, TFunctionRef<UObjective* (AActor*)> ObjectiveCreator)
+{
+	if (!GetWorld()) return 0;
+
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsWithTag(GetWorld(), TagName, FoundActors);
+
+	int32 Count = 0;
+
+	for (AActor* Actor : FoundActors)
+	{
+		if (IsValid(Actor))
+		{
+			// 람다 함수를 실행하여 목표 생성 시도
+			UObjective* NewObjective = ObjectiveCreator(Actor);
+
+			// 유효한 목표가 생성되었다면 등록 절차 진행
+			if (NewObjective)
+			{
+				ObjectiveManager->ActivateObjective(NewObjective);
+				Count++;
+
+				// 공통 로그 포맷 사용
+				UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Discovered %s at %s"),
+					*TeamName, *TagName.ToString(), *Actor->GetActorLocation().ToString());
+			}
+		}
+	}
+
+	return Count;
 }
 
 void UTeamLeaderComponent::ProcessPendingEvents()

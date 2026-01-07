@@ -223,6 +223,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Debug")
 	bool IsRunningMCTS() const { return bMCTSRunning; }
 
+	/**
+	 * 태그를 기반으로 액터를 찾고 목표를 등록하는 공용 헬퍼 함수
+	 * @param TagName 검색할 액터의 태그
+	 * @param ObjectiveCreator 각 액터에 대해 목표를 생성하는 로직을 담은 람다 함수 (nullptr 반환 시 스킵)
+	 * @return 발견 및 등록된 목표의 수
+	 */
+	int32 FindAndRegisterObjectives(FName TagName, TFunctionRef<UObjective* (AActor*)> ObjectiveCreator);
+
 
 private:
 	/** Process pending events */

@@ -97,6 +97,13 @@ FObjectiveAssignment UMCTS::RunObjectiveAssignment(
         // Selection: Traverse tree to most promising node
         TSharedPtr<FTeamMCTSNode> Node = Selection(Root);
 
+        // Safety check: Selection can return invalid node if SelectBestChild returns nullptr
+        if (!Node.IsValid())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MCTS v6.0] Selection returned invalid node at iteration %d, using root"), i);
+            Node = Root;
+        }
+
         // Expansion: Add new child node
         if (!Node->IsFullyExpanded() && Node->UntriedActions.Num() > 0)
         {
@@ -154,6 +161,7 @@ TSharedPtr<FTeamMCTSNode> UMCTS::Selection(TSharedPtr<FTeamMCTSNode> Root)
     SCOPE_CYCLE_COUNTER(STAT_MCTSSelection);  // v6.0: Profile selection phase
 
     TSharedPtr<FTeamMCTSNode> Node = Root;
+    TSharedPtr<FTeamMCTSNode> LastValidNode = Root;
 
     while (Node.IsValid() && !Node->IsTerminal())
     {
@@ -163,7 +171,15 @@ TSharedPtr<FTeamMCTSNode> UMCTS::Selection(TSharedPtr<FTeamMCTSNode> Root)
         }
         else
         {
+            LastValidNode = Node;  // Save last valid node before calling SelectBestChild
             Node = Node->SelectBestChild(ExplorationParameter);
+
+            // If SelectBestChild returns nullptr (no children), return the last valid node
+            if (!Node.IsValid())
+            {
+                UE_LOG(LogTemp, Verbose, TEXT("[MCTS v6.0] SelectBestChild returned nullptr, using last valid node"));
+                return LastValidNode;
+            }
         }
     }
 

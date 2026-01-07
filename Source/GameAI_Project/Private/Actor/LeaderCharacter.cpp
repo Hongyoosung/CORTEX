@@ -2,6 +2,7 @@
 
 #include "Actor/LeaderCharacter.h"
 #include "Team/TeamLeaderComponent.h"
+#include "Team/ObjectiveManager.h"
 
 ALeaderCharacter::ALeaderCharacter()
 {
@@ -9,6 +10,9 @@ ALeaderCharacter::ALeaderCharacter()
 
 	// Create team leader component
 	TeamLeaderComponent = CreateDefaultSubobject<UTeamLeaderComponent>(TEXT("TeamLeaderComponent"));
+
+	// Create objective manager component
+	ObjectiveManager = CreateDefaultSubobject<UObjectiveManager>(TEXT("ObjectiveManagerComponent"));
 }
 
 void ALeaderCharacter::BeginPlay()

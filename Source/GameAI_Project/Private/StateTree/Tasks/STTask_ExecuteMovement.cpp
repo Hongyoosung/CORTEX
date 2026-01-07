@@ -60,13 +60,27 @@ EStateTreeRunStatus FSTTask_ExecuteMovement::Tick(FStateTreeExecutionContext& Co
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// v6.0: Get current strategy from RL policy (via FollowerComponent)
+	// v6.0: Get current strategy from appropriate source
 	if (!SharedContext.FollowerComponent)
 	{
 		return EStateTreeRunStatus::Failed;
 	}
 
-	EStrategyType CurrentStrategy = SharedContext.FollowerComponent->GetCurrentStrategy();
+	// CRITICAL FIX: Read strategy from correct source based on training mode
+	// - Schola training: Read from SharedContext.CurrentAction (Python-driven)
+	// - Normal/Inference: Read from FollowerComponent (RL policy or fallback heuristic)
+	EStrategyType CurrentStrategy;
+	if (SharedContext.bScholaActionReceived)
+	{
+		// Schola training mode: Actions come from Python via TacticalActuator
+		CurrentStrategy = SharedContext.CurrentAction.Strategy;
+	}
+	else
+	{
+		// Normal/Inference mode: Actions come from RL policy or fallback heuristic
+		CurrentStrategy = SharedContext.FollowerComponent->GetCurrentStrategy();
+	}
+
 	EStrategyType PreviousStrategy = InstanceData.PreviousMacroAction.Strategy;
 
 	// Detect strategy change
@@ -80,6 +94,11 @@ EStateTreeRunStatus FSTTask_ExecuteMovement::Tick(FStateTreeExecutionContext& Co
 
 		// Update previous strategy
 		InstanceData.PreviousMacroAction.Strategy = CurrentStrategy;
+
+		UE_LOG(LogTemp, Display, TEXT("✅ [MOVEMENT v6.0] '%s': Strategy updated to %s (Schola=%d)"),
+			*GetNameSafe(SharedContext.FollowerComponent->GetOwner()),
+			*UEnum::GetValueAsString(CurrentStrategy),
+			SharedContext.bScholaActionReceived ? 1 : 0);
 	}
 
 	return EStateTreeRunStatus::Running;
