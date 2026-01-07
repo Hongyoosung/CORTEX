@@ -176,11 +176,15 @@ private:
     UPROPERTY()
     FTeamObservation CachedTeamObservation;
 
+public:
     /** RL Policy Network for heuristic action priors (v5.0 - DEPRECATED)
      * v6.0: Now used for GetStateValue() queries (actual RL value estimates)
+     * Public for debug visualization access (v6.0 Phase 13)
      */
     UPROPERTY()
     TObjectPtr<class URLPolicyNetwork> RLPolicyNetwork;
+
+private:
 
     //--------------------------------------------------------------------------
     // v6.0: ASSIGNMENT STATE

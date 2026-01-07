@@ -6,6 +6,7 @@
 #include "AI/MCTS/MCTSAsyncTask.h"
 #include "RL/CurriculumManager.h"
 #include "RL/RLTypes.h"  // v5.0: EStrategyType
+#include "RL/RLPolicyNetwork.h"  // v6.0 Phase 13: For debug visualization value estimates
 #include "Core/SimulationManagerGameMode.h"
 #include "DrawDebugHelpers.h"
 #include "Async/Async.h"
@@ -1007,7 +1008,7 @@ FTeamMetrics UTeamLeaderComponent::GetTeamMetrics() const
 }
 
 //------------------------------------------------------------------------------
-// DEBUG VISUALIZATION
+// DEBUG VISUALIZATION (v6.0 Phase 13)
 //------------------------------------------------------------------------------
 
 void UTeamLeaderComponent::DrawDebugInfo()
@@ -1026,7 +1027,80 @@ void UTeamLeaderComponent::DrawDebugInfo()
 			TeamColor.ToFColor(true), false, 0.5f, 0, 3.0f);
 	}
 
-	// Draw lines to each follower
+	// ============================================
+	// v6.0 Phase 13: MCTS Assignment Visualization
+	// ============================================
+	if (bEnableDebugDrawing)
+	{
+		for (const auto& Pair : CurrentObjectives)
+		{
+			AActor* Agent = Pair.Key;
+			UObjective* Objective = Pair.Value;
+
+			if (!Agent || !Objective) continue;
+
+			FVector AgentPos = Agent->GetActorLocation();
+			FVector ObjectivePos = Objective->TargetLocation;
+
+			// If objective has target actor, use its location
+			if (Objective->TargetActor && IsValid(Objective->TargetActor))
+			{
+				ObjectivePos = Objective->TargetActor->GetActorLocation();
+			}
+
+			// Draw MCTS assignment arrow (yellow arrow: Agent → Objective)
+			DrawDebugDirectionalArrow(
+				World,
+				AgentPos,
+				ObjectivePos,
+				100.0f,  // Arrow size
+				FColor::Yellow,
+				false, 0.0f, 0, 3.0f  // Thickness
+			);
+
+			// Draw RL value estimate (green text above agent)
+			if (StrategicMCTS && StrategicMCTS->RLPolicyNetwork)
+			{
+				// Get follower component to build observation and objective context
+				UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
+				if (FollowerComp)
+				{
+					FObservationElement Obs = FollowerComp->BuildLocalObservation();
+					FObjectiveContext ObjCtx = FollowerComp->BuildObjectiveContext(Objective);
+
+					// Get RL value estimate for this assignment
+					float Value = StrategicMCTS->RLPolicyNetwork->GetStateValue(Obs, ObjCtx);
+
+					DrawDebugString(
+						World,
+						AgentPos + FVector(0, 0, 150),
+						FString::Printf(TEXT("V=%.2f"), Value),
+						nullptr,
+						FColor::Green,
+						0.0f,
+						true  // Draw shadow
+					);
+				}
+			}
+
+			// Draw objective type (cyan text above objective)
+			FString ObjTypeStr = UEnum::GetValueAsString(Objective->Type);
+			DrawDebugString(
+				World,
+				ObjectivePos + FVector(0, 0, 100),
+				ObjTypeStr,
+				nullptr,
+				FColor::Cyan,
+				0.0f,
+				true  // Draw shadow
+			);
+		}
+	}
+	// ============================================
+	// End v6.0 MCTS Visualization
+	// ============================================
+
+	// Draw lines to each follower (legacy)
 	for (AActor* Follower : GetAliveFollowers())
 	{
 		if (!Follower) continue;
@@ -1034,13 +1108,16 @@ void UTeamLeaderComponent::DrawDebugInfo()
 		FVector FollowerPos = Follower->GetActorLocation();
 		DrawDebugLine(World, LeaderPos, FollowerPos, TeamColor.ToFColor(true), false, 0.5f, 0, 2.0f);
 
-		// Draw objective type above follower (v3.0)
-		if (UObjective* const* ObjectivePtr = CurrentObjectives.Find(Follower))
+		// Draw objective type above follower (v3.0 legacy - redundant with v6.0 visualization)
+		if (!bEnableDebugDrawing)
 		{
-			if (*ObjectivePtr)
+			if (UObjective* const* ObjectivePtr = CurrentObjectives.Find(Follower))
 			{
-				FString ObjectiveText = UEnum::GetValueAsString((*ObjectivePtr)->Type);
-				DrawDebugString(World, FollowerPos + FVector(0, 0, 150), ObjectiveText, nullptr, FColor::White, 0.5f, true);
+				if (*ObjectivePtr)
+				{
+					FString ObjectiveText = UEnum::GetValueAsString((*ObjectivePtr)->Type);
+					DrawDebugString(World, FollowerPos + FVector(0, 0, 150), ObjectiveText, nullptr, FColor::White, 0.5f, true);
+				}
 			}
 		}
 	}

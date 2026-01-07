@@ -896,7 +896,7 @@ bool UFollowerAgentComponent::IsRegisteredWithLeader() const
 
 
 //------------------------------------------------------------------------------
-// DEBUG VISUALIZATION
+// DEBUG VISUALIZATION (v6.0 Phase 13)
 //------------------------------------------------------------------------------
 
 void UFollowerAgentComponent::DrawDebugInfo()
@@ -908,16 +908,118 @@ void UFollowerAgentComponent::DrawDebugInfo()
 
 	FVector FollowerPos = GetOwner()->GetActorLocation();
 
-	// Draw objective info above follower (v3.0)
-	FString ObjectiveStr = CurrentObjective ? UEnum::GetValueAsString(CurrentObjective->Type) : TEXT("None");
-	float Progress = CurrentObjective ? CurrentObjective->GetProgress() : 0.0f;
+	// ============================================
+	// v6.0 Phase 13: RL Strategy State Visualization
+	// ============================================
+	if (bEnableDebugDrawing)
+	{
+		// Strategy color coding
+		FColor StrategyColor;
+		switch (CurrentStrategy)
+		{
+			case EStrategyType::Assault:
+				StrategyColor = FColor::Red;
+				break;
+			case EStrategyType::Defend:
+				StrategyColor = FColor::Blue;
+				break;
+			case EStrategyType::Support:
+				StrategyColor = FColor::Green;
+				break;
+			case EStrategyType::Retreat:
+				StrategyColor = FColor::Yellow;
+				break;
+			default:
+				StrategyColor = FColor::White;
+				break;
+		}
 
-	FString StateText = FString::Printf(TEXT("Alive: %s\nObjective: %s\nProgress: %.1f%%"),
-		bIsAlive ? TEXT("Yes") : TEXT("Dead"),
-		*ObjectiveStr,
-		Progress * 100.0f);
+		// Draw strategy sphere around agent
+		DrawDebugSphere(
+			World,
+			FollowerPos,
+			100.0f,  // Radius
+			12,      // Segments
+			StrategyColor,
+			false, 0.0f, 0, 2.0f  // Thickness
+		);
 
-	DrawDebugString(World, FollowerPos + FVector(0, 0, 120), StateText, nullptr, FColor::Cyan, 0.1f, true);
+		// Draw strategy text above agent
+		FString StrategyStr = UEnum::GetValueAsString(CurrentStrategy);
+		DrawDebugString(
+			World,
+			FollowerPos + FVector(0, 0, 200),
+			StrategyStr,
+			nullptr,
+			StrategyColor,
+			0.0f,
+			true  // Draw shadow
+		);
+
+		// Draw health bar
+		if (CachedHealthComponent)
+		{
+			float HealthPct = CachedHealthComponent->GetCurrentHealth() / CachedHealthComponent->GetMaxHealth();
+
+			// Interpolate color from Red to Green based on health percentage
+			FLinearColor HealthLinearColor = FLinearColor::LerpUsingHSV(
+				FLinearColor(FColor::Red),
+				FLinearColor(FColor::Green),
+				HealthPct
+			);
+			FColor HealthColor = HealthLinearColor.ToFColor(true);
+
+			FVector BarStart = FollowerPos + FVector(-50, 0, 250);
+			FVector BarEnd = FollowerPos + FVector(-50 + HealthPct * 100, 0, 250);
+
+			// Draw health bar background
+			DrawDebugLine(
+				World,
+				BarStart,
+				BarStart + FVector(100, 0, 0),
+				FColor::Black,
+				false, 0.0f, 0, 7.0f
+			);
+
+			// Draw health bar foreground
+			DrawDebugLine(
+				World,
+				BarStart,
+				BarEnd,
+				HealthColor,
+				false, 0.0f, 0, 5.0f
+			);
+
+			// Draw health percentage
+			FString HealthText = FString::Printf(TEXT("%.0f%%"), HealthPct * 100.0f);
+			DrawDebugString(
+				World,
+				FollowerPos + FVector(60, 0, 245),
+				HealthText,
+				nullptr,
+				HealthColor,
+				0.0f,
+				true
+			);
+		}
+	}
+	// ============================================
+	// End v6.0 RL Strategy Visualization
+	// ============================================
+
+	// Draw objective info above follower (v3.0 legacy)
+	if (!bEnableDebugDrawing)
+	{
+		FString ObjectiveStr = CurrentObjective ? UEnum::GetValueAsString(CurrentObjective->Type) : TEXT("None");
+		float Progress = CurrentObjective ? CurrentObjective->GetProgress() : 0.0f;
+
+		FString StateText = FString::Printf(TEXT("Alive: %s\nObjective: %s\nProgress: %.1f%%"),
+			bIsAlive ? TEXT("Yes") : TEXT("Dead"),
+			*ObjectiveStr,
+			Progress * 100.0f);
+
+		DrawDebugString(World, FollowerPos + FVector(0, 0, 120), StateText, nullptr, FColor::Cyan, 0.1f, true);
+	}
 
 	// Draw line to objective target (actor or location)
 	if (HasActiveObjective())

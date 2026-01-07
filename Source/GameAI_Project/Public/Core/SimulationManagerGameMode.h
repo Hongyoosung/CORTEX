@@ -415,6 +415,31 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Objective")
 	AActor* FindObjectiveActor();
 
+	//--------------------------------------------------------------------------
+	// v6.0 Phase 13: Debug Console Commands
+	//--------------------------------------------------------------------------
+
+	/**
+	 * Toggle MCTS debug visualization (yellow arrows, value estimates, objective labels)
+	 * Console: ToggleMCTSDebug
+	 */
+	UFUNCTION(Exec)
+	void ToggleMCTSDebug();
+
+	/**
+	 * Toggle RL strategy debug visualization (colored spheres, strategy text, health bars)
+	 * Console: ToggleRLDebug
+	 */
+	UFUNCTION(Exec)
+	void ToggleRLDebug();
+
+	/**
+	 * Print MCTS statistics to console (assignments, iterations, values)
+	 * Console: PrintMCTSStats
+	 */
+	UFUNCTION(Exec)
+	void PrintMCTSStats();
+
 	/** Delegate broadcast when episode ends */
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEpisodeEnded, const FEpisodeResult&, Result);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")

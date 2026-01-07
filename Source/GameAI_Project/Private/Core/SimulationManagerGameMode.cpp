@@ -1106,3 +1106,107 @@ AActor* ASimulationManagerGameMode::FindObjectiveActor()
 
 	return nullptr;
 }
+
+//==============================================================================
+// v6.0 Phase 13: Debug Console Commands
+//==============================================================================
+
+void ASimulationManagerGameMode::ToggleMCTSDebug()
+{
+	int32 ToggledCount = 0;
+
+	for (const auto& Pair : RegisteredTeams)
+	{
+		UTeamLeaderComponent* Leader = Pair.Value.TeamLeader;
+		if (Leader)
+		{
+			Leader->bEnableDebugDrawing = !Leader->bEnableDebugDrawing;
+			ToggledCount++;
+
+			UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Team '%s' MCTS Debug: %s"),
+				*Pair.Value.TeamName,
+				Leader->bEnableDebugDrawing ? TEXT("ON") : TEXT("OFF"));
+		}
+	}
+
+	if (ToggledCount > 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Toggled MCTS visualization for %d teams"), ToggledCount);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[v6.0 Debug] No teams found to toggle MCTS visualization"));
+	}
+}
+
+void ASimulationManagerGameMode::ToggleRLDebug()
+{
+	int32 ToggledCount = 0;
+
+	for (const auto& Pair : RegisteredTeams)
+	{
+		const FTeamInfo& TeamInfo = Pair.Value;
+
+		for (AActor* Agent : TeamInfo.TeamMembers)
+		{
+			if (!Agent) continue;
+
+			UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
+			if (FollowerComp)
+			{
+				FollowerComp->bEnableDebugDrawing = !FollowerComp->bEnableDebugDrawing;
+				ToggledCount++;
+			}
+		}
+	}
+
+	if (ToggledCount > 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Toggled RL Strategy visualization for %d agents"), ToggledCount);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[v6.0 Debug] No agents found to toggle RL visualization"));
+	}
+}
+
+void ASimulationManagerGameMode::PrintMCTSStats()
+{
+	UE_LOG(LogTemp, Display, TEXT("=== v6.0 MCTS Statistics ==="));
+
+	for (const auto& Pair : RegisteredTeams)
+	{
+		const FTeamInfo& TeamInfo = Pair.Value;
+		UTeamLeaderComponent* Leader = TeamInfo.TeamLeader;
+
+		if (!Leader) continue;
+
+		UE_LOG(LogTemp, Display, TEXT(""));
+		UE_LOG(LogTemp, Display, TEXT("Team: %s (ID: %d)"), *TeamInfo.TeamName, Pair.Key);
+		UE_LOG(LogTemp, Display, TEXT("  Followers: %d alive / %d total"),
+			Leader->GetAliveFollowers().Num(),
+			Leader->GetFollowerCount());
+		UE_LOG(LogTemp, Display, TEXT("  MCTS Running: %s"), Leader->IsMCTSRunning() ? TEXT("Yes") : TEXT("No"));
+		UE_LOG(LogTemp, Display, TEXT("  Last MCTS Time: %.2f seconds ago"),
+			GetWorld()->GetTimeSeconds() - Leader->GetLastMCTSDecisionTime());
+		UE_LOG(LogTemp, Display, TEXT("  Current Assignments:"));
+
+		for (const auto& Assignment : Leader->CurrentObjectives)
+		{
+			AActor* Agent = Assignment.Key;
+			UObjective* Objective = Assignment.Value;
+
+			if (Agent && Objective)
+			{
+				FString ObjectiveType = UEnum::GetValueAsString(Objective->Type);
+				UE_LOG(LogTemp, Display, TEXT("    - %s → %s (Priority: %d)"),
+					*Agent->GetName(),
+					*ObjectiveType,
+					Objective->Priority);
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Display, TEXT(""));
+	UE_LOG(LogTemp, Display, TEXT("=== End MCTS Statistics ==="));
+}
