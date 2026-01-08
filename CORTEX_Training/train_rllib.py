@@ -104,19 +104,25 @@ class SingleHeadStrategyPolicy(TorchModelV2, nn.Module):
         # v6.0: Observation size from RLConfig (synced from C++)
         obs_dim = RLConfig.OBSERVATION_SIZE  # 68 features (64 base + 4 objective context)
 
+        # Get hidden layers from config (default: [256, 256, 128])
+        hidden_layers = model_config.get("custom_model_config", {}).get("hidden_layers", [256, 256, 128])
+
         # Shared trunk: learns common features (perception, tactical context)
-        self.shared_trunk = nn.Sequential(
-            SlimFC(obs_dim, 128, activation_fn=nn.ReLU),
-            SlimFC(128, 128, activation_fn=nn.ReLU),
-            SlimFC(128, 64, activation_fn=nn.ReLU)
-        )
+        layers = []
+        prev_size = obs_dim
+        for hidden_size in hidden_layers:
+            layers.append(SlimFC(prev_size, hidden_size, activation_fn=nn.ReLU))
+            prev_size = hidden_size
+
+        self.shared_trunk = nn.Sequential(*layers)
+        final_hidden_size = hidden_layers[-1]  # Last layer size
 
         # Single policy head: 4 strategy logits (v6.0)
         # Outputs probability distribution over [Assault, Defend, Support, Retreat]
-        self.policy_head = SlimFC(64, num_outputs, activation_fn=None)
+        self.policy_head = SlimFC(final_hidden_size, num_outputs, activation_fn=None)
 
         # Value head: state value estimate (used by MCTS + PPO)
-        self.value_head = SlimFC(64, 1, activation_fn=None)
+        self.value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
 
         # Store last features for value function
         self._last_features = None
@@ -163,22 +169,22 @@ class SBDAPMConfig:
     PORT = 50051
     MAX_EPISODE_STEPS = 2000  # MUST match UE5's MaxStepsPerEpisode (SimulationManagerGameMode.h:514)
 
-    # Network architecture (matches train_tactical_policy.py)
-    HIDDEN_LAYERS = [128, 128, 64]
+    # Network architecture (increased capacity for value learning)
+    HIDDEN_LAYERS = [256, 256, 128]  # Increased from [128, 128, 64]
 
     # PPO hyperparameters
-    LEARNING_RATE = 3e-4
-    TRAIN_BATCH_SIZE = 4000  
+    LEARNING_RATE = 1e-4  # Reduced from 3e-4 for stability with sparse rewards
+    TRAIN_BATCH_SIZE = 4000
     SGD_MINIBATCH_SIZE = 256  # Doubled to match batch size increase
     NUM_SGD_ITER = 10
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.5  # Increased from 0.1 to encourage exploration (large action space)
-    VF_LOSS_COEFF = 0.5
+    ENTROPY_COEFF = 0.5  # Will decay during training (see get_entropy_coeff)
+    VF_LOSS_COEFF = 1.5  # Increased from 0.5 to 1.5 - critical for value learning
 
     # Training
-    NUM_WORKERS = 0  # 4 parallel UE instances (ports 50051-50054)
+    NUM_WORKERS = 0  # CRITICAL FIX: Enable parallel data collection (3 total envs)
     NUM_ENVS_PER_WORKER = 1
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
@@ -412,6 +418,27 @@ def export_onnx(algo, output_dir):
         return False
 
 
+def get_entropy_coeff(iteration):
+    """
+    Entropy coefficient decay schedule.
+
+    Strategy:
+    - Iterations 0-30: 0.5 (high exploration)
+    - Iterations 31-80: 0.5 → 0.05 (linear decay)
+    - Iterations 81+: 0.05 (low exploitation)
+
+    This allows initial exploration, then gradual policy convergence.
+    """
+    if iteration <= 30:
+        return 0.5
+    elif iteration <= 80:
+        # Linear decay from 0.5 to 0.05
+        progress = (iteration - 30) / 50  # 0.0 to 1.0
+        return 0.5 - (0.45 * progress)
+    else:
+        return 0.05
+
+
 def train(args):
     """Main training loop."""
     print("=" * 60)
@@ -457,9 +484,11 @@ def train(args):
             loggers=[JsonLogger, CSVLogger, TBXLogger]  # Explicitly include TensorBoard
         )
 
+
+    # Initial entropy coefficient (will be updated dynamically in training loop)
+    config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
+
     algo = config.build(logger_creator=logger_creator)
-
-
 
     # Training loop
     best_reward = float("-inf")
@@ -474,7 +503,7 @@ def train(args):
         episode_reward_mean = env_runner_results.get("episode_reward_mean", 0)
         episode_len_mean = env_runner_results.get("episode_len_mean", 0)
         episodes_this_iter = env_runner_results.get("episodes_this_iter", 0)
-        
+
         # Track UE episodes
         total_ue_episodes += episodes_this_iter
 
@@ -482,11 +511,19 @@ def train(args):
         num_agent_steps = result.get("num_agent_steps_sampled", 0)
         num_env_steps = result.get("num_env_steps_sampled", 0)
 
+        # Extract value function metrics
+        vf_explained_var = result.get("info", {}).get("learner", {}).get("default_policy", {}).get("learner_stats", {}).get("vf_explained_var", 0.0)
+        entropy = result.get("info", {}).get("learner", {}).get("default_policy", {}).get("learner_stats", {}).get("entropy", 0.0)
+
+        # Calculate current entropy coefficient based on iteration (for display only)
+        current_entropy_coeff = get_entropy_coeff(i)
+
         print(f"Iteration {i+1:4d} (UE Episodes: ~{total_ue_episodes}): "
               f"reward={episode_reward_mean:8.2f}, "
               f"len={episode_len_mean:6.1f}, "
-              f"agent_steps={num_agent_steps}, "
-              f"env_steps={num_env_steps}")
+              f"vf_var={vf_explained_var:.4f}, "
+              f"entropy={entropy:.3f}, "
+              f"agent_steps={num_agent_steps}")
 
         # Save checkpoint
         if (i + 1) % args.checkpoint_freq == 0:

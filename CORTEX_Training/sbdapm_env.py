@@ -250,6 +250,93 @@ if SCHOLA_AVAILABLE:
             # No context-dependent masking needed
             return np.array([1, 1, 1, 1], dtype=np.int8)  # [Assault, Defend, Support, Retreat]
 
+        def _shape_reward(self, base_reward, obs, flat_id):
+            """
+            Dense reward shaping to provide learning signal in long episodes.
+
+            Observation structure (68 dims):
+            [0-2]: position
+            [3-5]: velocity
+            [6]: health (0-1)
+            [7]: enemy_dist
+            [8-23]: raycasts (16)
+            [24-39]: hit_types (16)
+            [40-55]: enemy info (count + nearby)
+            [56-59]: tactical (cover)
+            [60-63]: support context (ally info)
+            [64]: objective_type_encoded
+            [65]: objective_distance
+            [66-67]: objective_direction
+
+            Args:
+                base_reward: Raw reward from UE5
+                obs: Observation array (68 dims)
+                flat_id: Agent ID
+
+            Returns:
+                Shaped reward combining base + dense signals
+            """
+            shaped_reward = base_reward
+
+            # Extract key features
+            health = obs[6] if len(obs) > 6 else 0.5
+            enemy_dist = obs[7] if len(obs) > 7 else 100.0
+            obj_distance = obs[65] if len(obs) > 65 else 100.0
+
+            # 1. SURVIVAL BONUS: Small reward for staying alive
+            # Mitigates excessive negative rewards from time penalties
+            survival_bonus = 0.001
+            shaped_reward += survival_bonus
+
+            # 2. OBJECTIVE PROXIMITY: Reward getting closer to objective
+            # This is the PRIMARY learning signal for navigation
+            if obj_distance < 100.0:  # Valid objective distance
+                # Inverse distance reward: closer = better
+                # At 1m: +0.05, at 5m: +0.01, at 50m: +0.001
+                proximity_reward = 0.05 / max(obj_distance, 1.0)
+                shaped_reward += proximity_reward
+
+                # Extra bonus for being very close (within 5m)
+                if obj_distance < 5.0:
+                    shaped_reward += 0.02
+
+            # 3. HEALTH PRESERVATION: Penalize damage, reward high health
+            # Encourages defensive behavior and survival
+            if health < 0.5:
+                # Low health penalty (escalating)
+                health_penalty = -0.01 * (0.5 - health)
+                shaped_reward += health_penalty
+            elif health > 0.8:
+                # High health bonus (surviving well)
+                shaped_reward += 0.005
+
+            # 4. COMBAT ENGAGEMENT: Reward appropriate enemy distance
+            # Not too far (disengaged), not too close (dangerous)
+            if enemy_dist < 100.0:  # Enemy detected
+                if 10.0 < enemy_dist < 30.0:
+                    # Optimal combat range
+                    shaped_reward += 0.01
+                elif enemy_dist < 5.0:
+                    # Too close - dangerous!
+                    shaped_reward -= 0.005
+
+            # Store previous objective distance for progress tracking
+            if not hasattr(self, '_prev_obj_dist'):
+                self._prev_obj_dist = {}
+
+            # 5. PROGRESS REWARD: Bonus for getting closer to objective
+            if flat_id in self._prev_obj_dist:
+                prev_dist = self._prev_obj_dist[flat_id]
+                if obj_distance < 100.0 and prev_dist < 100.0:
+                    distance_delta = prev_dist - obj_distance
+                    # Reward progress toward objective
+                    if distance_delta > 0:
+                        shaped_reward += 0.01 * distance_delta
+
+            self._prev_obj_dist[flat_id] = obj_distance
+
+            return shaped_reward
+
         def reset(self, *, seed=None, options=None):
             # v7.4 & v7.7: Step rate and reward diagnostics
             if hasattr(self, '_episode_start_time') and self.episode_steps > 0:
@@ -271,6 +358,10 @@ if SCHOLA_AVAILABLE:
             self.episode_steps = 0
             self._episode_start_time = time.time()
             self._episode_rewards.clear()  # Reset reward tracking
+
+            # Clear reward shaping state
+            if hasattr(self, '_prev_obj_dist'):
+                self._prev_obj_dist.clear()
 
             # v7.3: Clear rate limiting state on reset
             self.last_action_time.clear()
@@ -474,13 +565,17 @@ if SCHOLA_AVAILABLE:
                         else:
                             obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 objective context
 
-                        reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
-                        reward_dict[flat_id] = reward
+                        # Get base reward from UE5
+                        base_reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
+
+                        # Apply reward shaping for dense learning signals
+                        shaped_reward = self._shape_reward(base_reward, obs_dict[flat_id], flat_id)
+                        reward_dict[flat_id] = shaped_reward
 
                         # v7.7: Accumulate episode rewards
                         if flat_id not in self._episode_rewards:
                             self._episode_rewards[flat_id] = 0.0
-                        self._episode_rewards[flat_id] += reward
+                        self._episode_rewards[flat_id] += shaped_reward
 
                         # Mid-episode: never set terminated/truncated for live agents
                         terminated_dict[flat_id] = False
@@ -574,3 +669,46 @@ if SCHOLA_AVAILABLE:
         def close(self):
             if hasattr(self.schola_env, 'close'):
                 self.schola_env.close()
+
+
+# Fallback dummy environment for testing without Schola
+class SBDAPMEnv:
+    """
+    Dummy single-agent environment for testing without Schola.
+    Returns random observations and zero rewards.
+    """
+    def __init__(self, **kwargs):
+        print("[SBDAPMEnv] WARNING: Using dummy environment (Schola not available)")
+        self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
+        self._action_space = spaces.Discrete(RLConfig.NUM_STRATEGIES)
+        self.max_episode_steps = kwargs.get("max_episode_steps", 1000)
+        self.episode_steps = 0
+
+    @property
+    def observation_space(self):
+        return self._obs_space
+
+    @property
+    def action_space(self):
+        return self._action_space
+
+    def reset(self, *, seed=None, options=None):
+        self.episode_steps = 0
+        obs = np.random.randn(RLConfig.OBSERVATION_SIZE).astype(np.float32)
+        info = {"action_mask": np.ones(RLConfig.NUM_STRATEGIES, dtype=np.int8)}
+        return obs, info
+
+    def step(self, action):
+        self.episode_steps += 1
+        obs = np.random.randn(RLConfig.OBSERVATION_SIZE).astype(np.float32)
+        reward = 0.0
+        terminated = False
+        truncated = self.episode_steps >= self.max_episode_steps
+        info = {"action_mask": np.ones(RLConfig.NUM_STRATEGIES, dtype=np.int8)}
+        return obs, reward, terminated, truncated, info
+
+    def render(self):
+        return None
+
+    def close(self):
+        pass

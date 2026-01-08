@@ -282,7 +282,7 @@ struct GAMEAI_PROJECT_API FRLPolicyConfig
 
 	/** Hidden layer sizes */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
-	TArray<int32> HiddenLayers = {128, 128, 64};
+	TArray<int32> HiddenLayers = {256, 256, 128};
 
 	/** Use ONNX model (vs fallback heuristic) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
