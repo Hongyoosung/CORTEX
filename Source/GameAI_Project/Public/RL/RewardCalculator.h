@@ -2,37 +2,37 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "RL/RLTypes.h"  // v6.0: EStrategyType, EObjectiveType, FObjectiveContext
+#include "RL/RLTypes.h"  // v6.0: EStrategyType, EMissionType, FMissionContext
 #include "Observation/ObservationElement.h"
 #include "RewardCalculator.generated.h"
 
 class UFollowerAgentComponent;
 class UHealthComponent;
-class UObjective;
+class UMission;
 
 /**
  * v6.0 Reward Configuration
- * CRITICAL: Objective completion MUST be highest priority
- * If death penalty > objective reward, RL learns to hide instead of completing objectives
+ * CRITICAL: Mission completion MUST be highest priority
+ * If death penalty > Mission reward, RL learns to hide instead of completing Missions
  * This ensures MCTS-RL value alignment for proper coordination
  */
 namespace RewardConfig {
-	// === PRIORITY 0: Objective Completion (Dominant Term) ===
+	// === PRIORITY 0: Mission Completion (Dominant Term) ===
 	constexpr float OBJECTIVE_CAPTURE_REWARD = 100.0f;   // Mission success
 	constexpr float OBJECTIVE_DEFEND_REWARD = 80.0f;     // Hold for duration
-	constexpr float OBJECTIVE_SUPPORT_REWARD = 90.0f;    // Protected ally survives
-	constexpr float OBJECTIVE_RETREAT_REWARD = 70.0f;    // Reach safe zone
+	constexpr float SUPPORT_REWARD = 90.0f;    // Protected ally survives
+	constexpr float RETREAT_REWARD = 70.0f;    // Reach safe zone
 
-	// === PRIORITY 1: Objective Progress ===
+	// === PRIORITY 1: Mission Progress ===
 	constexpr float PROGRESS_PER_METER = 0.5f;           // Incremental progress
 
 	// === PRIORITY 2: Combat Efficiency ===
 	constexpr float KILL_REWARD = 15.0f;                 // Enemy eliminated
 
-	// === PRIORITY 3: Survival (MUST be < Objective rewards) ===
-	constexpr float DEATH_PENALTY = -10.0f;              // Acceptable loss if objective achieved
+	// === PRIORITY 3: Survival (MUST be < Mission rewards) ===
+	constexpr float DEATH_PENALTY = -10.0f;              // Acceptable loss if Mission achieved
 
-	// CRITICAL INVARIANT: Objective Completion > Death Penalty
+	// CRITICAL INVARIANT: Mission Completion > Death Penalty
 	// 100.0 > 10.0 ✅ (dying to capture objective = net +90 reward)
 	static_assert(OBJECTIVE_CAPTURE_REWARD > -DEATH_PENALTY,
 		"Objective reward must exceed death penalty for proper MCTS-RL alignment");
@@ -54,17 +54,17 @@ struct FCombinedFireRecord
 };
 
 /**
- * v6.0 Objective-Aware Reward System
+ * v6.0 Mission-Aware Reward System
  *
- * Calculates rewards based on objective completion and progress, with proper MCTS-RL alignment.
- * The reward structure ensures objective completion is the dominant term, preventing agents
+ * Calculates rewards based on Mission completion and progress, with proper MCTS-RL alignment.
+ * The reward structure ensures Mission completion is the dominant term, preventing agents
  * from learning to prioritize survival over mission success.
  *
  * Key Features:
- * - Objective-aware rewards (rewards vary based on assigned objective type)
- * - Strategy-objective alignment bonuses
- * - Progress tracking (rewards for moving toward objective)
- * - Proper value alignment with MCTS (objective reward > death penalty)
+ * - Mission-aware rewards (rewards vary based on assigned Mission type)
+ * - Strategy-Mission alignment bonuses
+ * - Progress tracking (rewards for moving toward Mission)
+ * - Proper value alignment with MCTS (Mission reward > death penalty)
  */
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API URewardCalculator : public UActorComponent
@@ -82,9 +82,9 @@ public:
 	//--------------------------------------------------------------------------
 
 	/**
-	 * Calculate total reward (v6.0 - Objective-aware)
+	 * Calculate total reward (v6.0 - Mission-aware)
 	 * @param PrevObs - Previous observation
-	 * @param CurrentObs - Current observation (includes objective context)
+	 * @param CurrentObs - Current observation (includes Mission context)
 	 * @param Action - Action taken (strategy selection)
 	 * @return Total reward for this step
 	 */
@@ -107,24 +107,24 @@ public:
 	);
 
 	/**
-	 * Calculate objective progress rewards (v6.0 - CRITICAL)
-	 * Rewards for making progress toward assigned objective
+	 * Calculate Mission progress rewards (v6.0 - CRITICAL)
+	 * Rewards for making progress toward assigned Mission
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateObjectiveProgressReward(
-		EObjectiveType Objective,
+	float CalculateMissionProgressReward(
+		EMissionType Mission,
 		const FObservationElement& PrevObs,
 		const FObservationElement& CurrentObs
 	);
 
 	/**
 	 * Calculate alignment bonus (v6.0)
-	 * Bonus for strategy matching objective intent
+	 * Bonus for strategy matching Mission intent
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	float CalculateAlignmentBonus(
 		EStrategyType Strategy,
-		EObjectiveType Objective
+		EMissionType Mission
 	);
 
 	
@@ -149,17 +149,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void OnDeath();
 
-	/** Track objective completion */
+	/** Track Mission completion */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
-	void OnObjectiveComplete(UObjective* Objective);
+	void OnMissionComplete(UMission* Mission);
 
-	/** Track objective failure */
+	/** Track Mission failure */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
-	void OnObjectiveFailed(UObjective* Objective);
+	void OnMissionFailed(UMission* Mission);
 
-	/** Set current objective for reward tracking */
+	/** Set current Mission for reward tracking */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
-	void SetCurrentObjective(UObjective* Objective);
+	void SetCurrentMission(UMission* Mission);
 
 	/** Set current strategy for reward calculation (v5.0) */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
@@ -173,9 +173,9 @@ public:
 	// COORDINATION TRACKING
 	//--------------------------------------------------------------------------
 
-	/** Check if agent is currently on objective */
+	/** Check if agent is currently on Mission */
 	UFUNCTION(BlueprintPure, Category = "Reward")
-	bool IsOnObjective() const;
+	bool IsOnMission() const;
 
 	/** Check if agent is in formation with teammates */
 	UFUNCTION(BlueprintPure, Category = "Reward")
@@ -189,9 +189,9 @@ public:
 	// CONFIGURATION (v6.0 - Simplified)
 	//--------------------------------------------------------------------------
 
-	/** Radius to consider "on objective" (cm) */
+	/** Radius to consider "on Mission" (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
-	float ObjectiveRadiusThreshold = 1000.0f;
+	float MissionRadiusThreshold = 1000.0f;
 
 	/** Time window for combined fire detection (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
@@ -213,7 +213,7 @@ private:
 	UHealthComponent* HealthComponent = nullptr;
 
 	UPROPERTY()
-	UObjective* CurrentObjective = nullptr;
+	UMission* CurrentMission = nullptr;
 
 	/** Current strategy (v5.0) - affects reward calculation */
 	EStrategyType CurrentStrategy = EStrategyType::Assault;
@@ -224,7 +224,7 @@ private:
 
 	float AccumulatedIndividualReward = 0.0f;
 	float AccumulatedCoordinationReward = 0.0f;
-	float AccumulatedObjectiveReward = 0.0f;
+	float AccumulatedMissionReward = 0.0f;
 
 	//--------------------------------------------------------------------------
 	// EVENT TRACKERS
@@ -233,9 +233,9 @@ private:
 	int32 KillsSinceLastUpdate = 0;
 	float DamageSinceLastUpdate = 0.0f;
 	float DamageTakenSinceLastUpdate = 0.0f;
-	float LastObjectiveProgress = 0.0f;
+	float LastMissionProgress = 0.0f;
 
-	bool bDisobeyedObjective = false;
+	bool bDisobeyedMission = false;
 
 	/** Recent combined fire records */
 	TArray<FCombinedFireRecord> RecentCombinedFires;
@@ -257,8 +257,8 @@ private:
 	// STRATEGY-SPECIFIC TRACKING (v5.0)
 	//--------------------------------------------------------------------------
 
-	/** Last distance to objective (for advance tracking) */
-	float LastDistanceToObjective = 0.0f;
+	/** Last distance to Mission (for advance tracking) */
+	float LastDistanceToMission = 0.0f;
 
 	/** Last distance to nearest enemy (for retreat tracking) */
 	float LastDistanceToEnemy = 0.0f;
@@ -273,8 +273,8 @@ private:
 	/** Was agent in safe zone last tick? (for Retreat strategy) */
 	bool bWasInSafeZone = false;
 
-	/** Was agent on objective last tick? (for Defend strategy) */
-	bool bWasOnObjective = false;
+	/** Was agent on Mission last tick? (for Defend strategy) */
+	bool bWasOnMission = false;
 
 	//--------------------------------------------------------------------------
 	// HYBRID REWARD TRACKING (v6.0 Fix)

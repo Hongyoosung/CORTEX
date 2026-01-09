@@ -1,8 +1,8 @@
 #include "AI/MCTS/MCTS.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Team/TeamTypes.h"
-#include "Team/ObjectiveManager.h"
-#include "Team/Objective.h"
+#include "Team/MissionManager.h"
+#include "Team/Mission.h"
 #include "Team/FollowerAgentComponent.h"
 #include "RL/RLPolicyNetwork.h"
 #include "RL/RLTypes.h"  // v5.0: FAssignmentScoreConfig for individual scoring
@@ -33,60 +33,62 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
     // v6.0: Initialize RL Policy Network for value estimates (actual neural network)
     RLPolicyNetwork = NewObject<URLPolicyNetwork>(this);
 
-    UE_LOG(LogTemp, Log, TEXT("✅ [MCTS v6.0] Initialized for objective assignment (Simulations: %d, Exploration: %.2f)"),
+    UE_LOG(LogTemp, Log, TEXT("✅ [MCTS v7.0] Initialized for mission assignment (Simulations: %d, Exploration: %.2f)"),
         MaxSimulations, ExplorationParameter);
-    UE_LOG(LogTemp, Log, TEXT("✅ [MCTS v6.0] Using RL value estimates + coordination heuristics"));
+    UE_LOG(LogTemp, Log, TEXT("✅ [MCTS v7.0] Using RL value estimates + coordination heuristics"));
 }
 
 //==============================================================================
-// v6.0: OBJECTIVE ASSIGNMENT API
+// v7.0: MISSION ASSIGNMENT API
 //==============================================================================
 
-FObjectiveAssignment UMCTS::RunObjectiveAssignment(
+FMissionAssignment UMCTS::RunMissionAssignment(
     const TArray<AActor*>& Agents,
-    const TArray<UObjective*>& Objectives,
-    int32 Simulations)
+    const TArray<UMission*>& Missions,
+    int32 Simulations,
+    const TMap<AActor*, FObservationElement>& InCachedObservations)
 {
-    SCOPE_CYCLE_COUNTER(STAT_MCTSAssignment);  // v6.0: Profile total assignment time (target: <50ms)
+    SCOPE_CYCLE_COUNTER(STAT_MCTSAssignment);  // v7.0: Profile total assignment time (target: <50ms)
 
     AvailableAgents = Agents;
-    AvailableObjectives = Objectives;
+    AvailableMissions = Missions;
+    CachedObservations = InCachedObservations; // v6.0 fix: Store observations for thread-safe async execution
 
     // Create root node (current assignment)
     TSharedPtr<FTeamMCTSNode> Root = MakeShared<FTeamMCTSNode>();
 
     // Build initial assignment (empty or current assignment)
-    TMap<AActor*, UObjective*> InitialMapping;
+    TMap<AActor*, UMission*> InitialMapping;
     for (AActor* Agent : Agents)
     {
-        // Assign to first objective as default (will be explored by MCTS)
-        if (Objectives.Num() > 0)
+        // Assign to first mission as default (will be explored by MCTS)
+        if (Missions.Num() > 0)
         {
-            InitialMapping.Add(Agent, Objectives[0]);
+            InitialMapping.Add(Agent, Missions[0]);
         }
     }
 
     Root->Initialize(nullptr, InitialMapping);
 
     // Generate possible assignments and extract maps for UntriedActions
-    FObjectiveAssignment InitialAssignment;
+    FMissionAssignment InitialAssignment;
 
-    InitialAssignment.AgentToObjective.Empty(InitialMapping.Num());
-    for( const auto& [Agent, Objective] : InitialMapping)
+    InitialAssignment.AgentToMission.Empty(InitialMapping.Num());
+    for( const auto& [Agent, Mission] : InitialMapping)
     {
-        InitialAssignment.AgentToObjective.Add(Agent, Objective);
+        InitialAssignment.AgentToMission.Add(Agent, Mission);
 	}
 
-    TArray<FObjectiveAssignment> PossibleAssignments = GeneratePossibleAssignments(InitialAssignment);
+    TArray<FMissionAssignment> PossibleAssignments = GeneratePossibleAssignments(InitialAssignment);
 
-    // Convert FObjectiveAssignment array to TMap array for UntriedActions
+    // Convert FMissionAssignment array to TMap array for UntriedActions
     Root->UntriedActions.Empty();
-    for (const FObjectiveAssignment& Assignment : PossibleAssignments)
+    for (const FMissionAssignment& Assignment : PossibleAssignments)
     {
-        TMap<AActor*, UObjective*> MapForNode;
-        for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+        TMap<AActor*, UMission*> MapForNode;
+        for (const auto& [Agent, Mission] : Assignment.AgentToMission)
         {
-            MapForNode.Add(Agent.Get(), Objective.Get());
+            MapForNode.Add(Agent.Get(), Mission.Get());
         }
         Root->UntriedActions.Add(MapForNode);
     }
@@ -131,8 +133,8 @@ FObjectiveAssignment UMCTS::RunObjectiveAssignment(
 
     if (BestChild.IsValid())
     {
-        FObjectiveAssignment Result;
-        Result.AgentToObjective = BestChild->GetObjectives();
+        FMissionAssignment Result;
+        Result.AgentToMission = BestChild->GetMissions();
         Result.ExpectedValue = BestChild->TotalReward / FMath::Max(BestChild->VisitCount, 1);
         Result.VisitCount = BestChild->VisitCount;
         Result.Timestamp = FPlatformTime::Seconds();
@@ -144,8 +146,8 @@ FObjectiveAssignment UMCTS::RunObjectiveAssignment(
     }
 
     // Fallback: Return root assignment
-    FObjectiveAssignment FallbackResult;
-    FallbackResult.AgentToObjective = Root->GetObjectives();
+    FMissionAssignment FallbackResult;
+    FallbackResult.AgentToMission = Root->GetMissions();
     FallbackResult.ExpectedValue = 0.0f;
     FallbackResult.VisitCount = 0;
     FallbackResult.Timestamp = FPlatformTime::Seconds();
@@ -207,8 +209,8 @@ float UMCTS::Simulation(TSharedPtr<FTeamMCTSNode> Node)
         return 0.0f;
     }
 
-    FObjectiveAssignment Assignment;
-    Assignment.AgentToObjective = Node->GetObjectives();
+    FMissionAssignment Assignment;
+    Assignment.AgentToMission = Node->GetMissions();
 
     return EvaluateAssignment(Assignment);
 }
@@ -228,7 +230,7 @@ void UMCTS::Backpropagation(TSharedPtr<FTeamMCTSNode> Node, float Value)
 // v6.0: ASSIGNMENT EVALUATION (RL-GUIDED)
 //==============================================================================
 
-float UMCTS::EvaluateAssignment(const FObjectiveAssignment& Assignment)
+float UMCTS::EvaluateAssignment(const FMissionAssignment& Assignment)
 {
     SCOPE_CYCLE_COUNTER(STAT_MCTSEvaluate);  // v6.0: Profile assignment evaluation
 
@@ -242,19 +244,26 @@ float UMCTS::EvaluateAssignment(const FObjectiveAssignment& Assignment)
     int32 AgentCount = 0;
 
     // Query RL value for each agent
-    for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+    for (const auto& [Agent, Mission] : Assignment.AgentToMission)
     {
-        if (!Agent || !Objective) continue;
+        if (!Agent || !Mission) continue;
 
-        // Build observation for agent
+        // v6.0 fix: Use cached observation for thread safety
+        const FObservationElement* CachedObs = CachedObservations.Find(Agent);
+        if (!CachedObs)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MCTS v6.0] No cached observation for agent %s, skipping"), *Agent->GetName());
+            continue;
+        }
+
+        // Build Mission context (thread-safe - no GetWorld() calls)
         UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
         if (!FollowerComp) continue;
 
-        FObservationElement Obs = FollowerComp->BuildLocalObservation();
-        FObjectiveContext ObjCtx = FollowerComp->BuildObjectiveContext(Objective);
+        FMissionContext ObjCtx = FollowerComp->BuildMissionContext(Mission);
 
-        // Get RL value estimate
-        float AgentValue = RLPolicyNetwork->GetStateValue(Obs, ObjCtx);
+        // Get RL value estimate using cached observation
+        float AgentValue = RLPolicyNetwork->GetStateValue(*CachedObs, ObjCtx);
         TotalValue += AgentValue;
         AgentCount++;
     }
@@ -264,7 +273,7 @@ float UMCTS::EvaluateAssignment(const FObjectiveAssignment& Assignment)
 
     // Add coordination heuristics
     float Cohesion = TeamCohesionScore(Assignment);
-    float Coverage = ObjectiveCoverageScore(Assignment);
+    float Coverage = MissionCoverageScore(Assignment);
     float Capability = CapabilityMatchScore(Assignment);
 
     // Weighted combination (RL = 60%, Coordination = 40%)
@@ -273,19 +282,19 @@ float UMCTS::EvaluateAssignment(const FObjectiveAssignment& Assignment)
     return FMath::Clamp(FinalValue, -1.0f, 1.0f);
 }
 
-TArray<FObjectiveAssignment> UMCTS::GeneratePossibleAssignments(const FObjectiveAssignment& CurrentAssignment)
+TArray<FMissionAssignment> UMCTS::GeneratePossibleAssignments(const FMissionAssignment& CurrentAssignment)
 {
-    TArray<FObjectiveAssignment> Assignments;
+    TArray<FMissionAssignment> Assignments;
 
-    // Generate simple permutations: For each agent, try assigning to each objective
+    // Generate simple permutations: For each agent, try assigning to each Mission
     for (AActor* Agent : AvailableAgents)
     {
-        for (UObjective* Objective : AvailableObjectives)
+        for (UMission* Mission : AvailableMissions)
         {
-            FObjectiveAssignment NewAssignment = CurrentAssignment;
+            FMissionAssignment NewAssignment = CurrentAssignment;
 
             // Update this agent's assignment
-            NewAssignment.AgentToObjective.Add(Agent, Objective);
+            NewAssignment.AgentToMission.Add(Agent, Mission);
 
             Assignments.Add(NewAssignment);
         }
@@ -304,19 +313,19 @@ TArray<FObjectiveAssignment> UMCTS::GeneratePossibleAssignments(const FObjective
 // v6.0: COORDINATION HEURISTICS
 //==============================================================================
 
-float UMCTS::TeamCohesionScore(const FObjectiveAssignment& Assignment) const
+float UMCTS::TeamCohesionScore(const FMissionAssignment& Assignment) const
 {
-    // Higher score if agents on same objective are near each other
+    // Higher score if agents on same Mission are near each other
     float CohesionScore = 0.0f;
     int32 PairCount = 0;
 
-    TMap<UObjective*, TArray<AActor*>> ObjectiveToAgents;
-    for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+    TMap<UMission*, TArray<AActor*>> MissionToAgents;
+    for (const auto& [Agent, Mission] : Assignment.AgentToMission)
     {
-        ObjectiveToAgents.FindOrAdd(Objective).Add(Agent);
+        MissionToAgents.FindOrAdd(Mission).Add(Agent);
     }
 
-    for (const auto& [Objective, Agents] : ObjectiveToAgents)
+    for (const auto& [Mission, Agents] : MissionToAgents)
     {
         if (Agents.Num() < 2) continue;
 
@@ -336,20 +345,20 @@ float UMCTS::TeamCohesionScore(const FObjectiveAssignment& Assignment) const
     return PairCount > 0 ? CohesionScore / PairCount : 0.5f;
 }
 
-float UMCTS::ObjectiveCoverageScore(const FObjectiveAssignment& Assignment) const
+float UMCTS::MissionCoverageScore(const FMissionAssignment& Assignment) const
 {
-    // Higher score if all high-priority objectives have agents
+    // Higher score if all high-priority Missions have agents
     int32 CoveredHighPriority = 0;
     int32 TotalHighPriority = 0;
 
-    for (UObjective* Obj : AvailableObjectives)
+    for (UMission* Obj : AvailableMissions)
     {
         if (Obj->Priority >= 7) // High priority threshold
         {
             TotalHighPriority++;
 
-            // Check if any agent is assigned to this objective
-            for (const auto& [Agent, AssignedObj] : Assignment.AgentToObjective)
+            // Check if any agent is assigned to this Mission
+            for (const auto& [Agent, AssignedObj] : Assignment.AgentToMission)
             {
                 if (AssignedObj == Obj)
                 {
@@ -363,31 +372,31 @@ float UMCTS::ObjectiveCoverageScore(const FObjectiveAssignment& Assignment) cons
     return TotalHighPriority > 0 ? static_cast<float>(CoveredHighPriority) / TotalHighPriority : 0.5f;
 }
 
-float UMCTS::CapabilityMatchScore(const FObjectiveAssignment& Assignment) const
+float UMCTS::CapabilityMatchScore(const FMissionAssignment& Assignment) const
 {
-    // Higher score if healthy agents assigned to offensive objectives, etc.
+    // Higher score if healthy agents assigned to offensive Missions, etc.
     float MatchScore = 0.0f;
     int32 AssignmentCount = 0;
 
-    for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+    for (const auto& [Agent, Mission] : Assignment.AgentToMission)
     {
-        if (!Agent || !Objective) continue;
+        if (!Agent || !Mission) continue;
 
         UHealthComponent* HealthComp = Agent->FindComponentByClass<UHealthComponent>();
         if (!HealthComp) continue;
 
         float Health = HealthComp->GetCurrentHealth() / HealthComp->GetMaxHealth();
 
-        // Heuristic: Healthy agents for offensive, damaged agents for defensive
-        if (Objective->Type == EObjectiveType::Capture && Health > 0.7f)
+        // Heuristic: Healthy agents for offensive, damaged agents for defensive (v7.0: Capture → Assault)
+        if (Mission->Type == EMissionType::Assault && Health > 0.7f)
         {
             MatchScore += 1.0f; // Good match
         }
-        else if (Objective->Type == EObjectiveType::Defend && Health < 0.5f)
+        else if (Mission->Type == EMissionType::Defend && Health < 0.5f)
         {
             MatchScore += 0.8f; // Reasonable (defend while healing)
         }
-        else if (Objective->Type == EObjectiveType::Retreat && Health < 0.3f)
+        else if (Mission->Type == EMissionType::Retreat && Health < 0.3f)
         {
             MatchScore += 1.0f; // Good match
         }

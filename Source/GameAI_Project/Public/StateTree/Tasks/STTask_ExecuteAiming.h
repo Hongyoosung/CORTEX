@@ -17,12 +17,11 @@ class AAIController;
  * State Tree Task: Execute Aiming (v4.0 Macro Actions)
  *
  * Handles targeting using engine auto-aim (SetFocus).
- * Extracted from STTask_ExecuteObjective for better modularity.
  *
  * Execution:
  * - Uses SetFocus for engine-driven aiming
  * - Manually sets controller rotation for immediate response
- * - Faces objective when no enemies visible
+ * - Faces Mission when no enemies visible
  */
 
 USTRUCT()

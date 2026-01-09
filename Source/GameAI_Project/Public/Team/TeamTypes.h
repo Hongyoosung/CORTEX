@@ -10,30 +10,15 @@ UENUM(BlueprintType)
 enum class EStrategicEvent : uint8
 {
 	// Combat events
-	EnemyEncounter      UMETA(DisplayName = "Enemy Encountered"),
 	AllyKilled          UMETA(DisplayName = "Ally Killed"),
 	EnemyEliminated     UMETA(DisplayName = "Enemy Eliminated"),
-	AllyRescueSignal    UMETA(DisplayName = "Ally Rescue Signal"),
-	AllyUnderFire       UMETA(DisplayName = "Ally Under Heavy Fire"),
 	EnemySpotted		UMETA(DisplayName = "Enemy Spotted"),
 	UnderFire			UMETA(DisplayName = "Under Heavy Fire"),
 	EnemyKilled			UMETA(DisplayName = "Enemy Killed"),
 
-	// Environmental events
-	EnteredDangerZone   UMETA(DisplayName = "Entered Suspected Enemy Zone"),
-	ObjectiveSpotted    UMETA(DisplayName = "Objective Spotted"),
-	AmbushDetected      UMETA(DisplayName = "Ambush Detected"),
-	CoverCompromised    UMETA(DisplayName = "Cover Compromised"),
-
-	// Team status events
-	LowTeamHealth       UMETA(DisplayName = "Low Team Health"),
-	LowTeamAmmo         UMETA(DisplayName = "Low Team Ammunition"),
-	FormationBroken     UMETA(DisplayName = "Formation Broken"),
-	TeamRegrouped       UMETA(DisplayName = "Team Regrouped"),
-
 	// Mission events
-	ObjectiveComplete   UMETA(DisplayName = "Objective Completed"),
-	ObjectiveFailed     UMETA(DisplayName = "Objective Failed"),
+	MissionComplete   UMETA(DisplayName = "Mission Completed"),
+	MissionFailed     UMETA(DisplayName = "Mission Failed"),
 	ReinforcementsArrived UMETA(DisplayName = "Reinforcements Arrived"),
 	TimeRunningOut      UMETA(DisplayName = "Time Running Out"),
 
@@ -127,6 +112,3 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Metrics")
 	float MCTSExecutionTime = 0.0f;
 };
-
-// REMOVED: EFollowerState enum (legacy FSM, replaced by StateTree in v3.0)
-// StateTree uses condition-based transitions (IsAlive, HasObjective) instead of explicit states

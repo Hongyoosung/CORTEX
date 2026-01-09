@@ -57,8 +57,9 @@ def parse_result_json(json_path):
                 # Extract learner stats
                 info = result.get("info", {})
                 learner = info.get("learner", {})
-                default_policy = learner.get("default_policy", {})
-                learner_stats = default_policy.get("learner_stats", {})
+                # Try shared_policy first (multi-agent), fallback to default_policy
+                policy_stats = learner.get("shared_policy", {}) or learner.get("default_policy", {})
+                learner_stats = policy_stats.get("learner_stats", {})
 
                 vf_explained_var = learner_stats.get("vf_explained_var", 0.0)
                 entropy = learner_stats.get("entropy", 0.0)

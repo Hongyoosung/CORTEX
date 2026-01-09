@@ -34,7 +34,7 @@ DEFINE_STAT(STAT_ObservationBuild);
 DEFINE_STAT(STAT_ObservationRaycasts);
 DEFINE_STAT(STAT_ObservationEnemyInfo);
 DEFINE_STAT(STAT_ObservationTactical);
-DEFINE_STAT(STAT_ObservationObjectiveContext);
+DEFINE_STAT(STAT_ObservationMissionContext);
 
 // Team Coordination Stats
 DEFINE_STAT(STAT_TeamLeaderCoordination);
@@ -44,7 +44,7 @@ DEFINE_STAT(STAT_FollowerExecuteStrategy);
 
 // Reward Stats
 DEFINE_STAT(STAT_RewardCalculate);
-DEFINE_STAT(STAT_RewardObjectiveProgress);
+DEFINE_STAT(STAT_RewardMissionProgress);
 DEFINE_STAT(STAT_RewardStrategy);
 
 // Memory Stats

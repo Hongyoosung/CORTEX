@@ -98,13 +98,13 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(FMath::Clamp(AllyDirectionAngle, -1.0f, 1.0f));
 
     // ========================================
-    // OBJECTIVE CONTEXT (4 features) - v6.0 NEW
-    // Informs RL about MCTS-assigned objective
+    // Mission CONTEXT (4 features) - v6.0 NEW
+    // Informs RL about MCTS-assigned Mission
     // ========================================
 
-    TArray<float> ObjectiveFeatures = ObjectiveContext.ToFeatureVector();
-    check(ObjectiveFeatures.Num() == 4);
-    Features.Append(ObjectiveFeatures);
+    TArray<float> MissionFeatures = MissionContext.ToFeatureVector();
+    check(MissionFeatures.Num() == 4);
+    Features.Append(MissionFeatures);
 
     check(Features.Num() == 68);
     return Features;

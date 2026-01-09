@@ -8,7 +8,7 @@
 
 UTacticalObserver::UTacticalObserver()
 {
-	// Build observation space (68 continuous features, v6.0: 64 base + 4 objective context)
+	// Build observation space (68 continuous features, v6.0: 64 base + 4 Mission context)
 	TArray<FBoxSpaceDimension> Dimensions;
 	Dimensions.Reserve(68);
 
@@ -62,8 +62,7 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 	static int32 CallCount = 0;
 	CallCount++;
 
-	OutObservations.Values.SetNum(68);  // v6.0: 68 features (64 base + 4 objective context)
-
+	OutObservations.Values.SetNum(68);  // v6.0: 68 features (64 base + 4 Mission
 	// CRITICAL: Add safety checks to prevent crash during initialization
 	if (!FollowerAgent || !FollowerAgent->IsValidLowLevel() || !FollowerAgent->GetOwner())
 	{
@@ -85,13 +84,13 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			CallCount, *FollowerAgent->GetOwner()->GetName());
 	}
 
-	// v6.0: Get observation from follower (now includes objective context automatically)
+	// v6.0: Get observation from follower (now includes Mission context automatically)
 	// Includes: Agent State(7) + Combat(1) + Perception(32) + Enemies(16) +
-	//           Tactical(4) + Support Context(4) + Objective Context(4) = 68 features
+	//           Tactical(4) + Support Context(4) + Mission Context(4) = 68 features
 	const FObservationElement& Obs = FollowerAgent->GetLocalObservation();
 	TArray<float> Features = Obs.ToFeatureVector();
 
-	// Copy all 68 features (v6.0: ToFeatureVector now includes objective context)
+	// Copy all 68 features (v6.0: ToFeatureVector now includes Mission context)
 	check(Features.Num() == 68);
 	for (int32 i = 0; i < 68; ++i)
 	{

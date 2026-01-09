@@ -9,7 +9,7 @@
 #include "NNEModelData.h"
 #include "NNERuntimeCPU.h"
 #include "Misc/Paths.h"
-#include "Team/Objective.h"
+#include "Team/Mission.h"
 #include "Observation/TeamObservation.h"
 #include "Core/ProfilingMacros.h"  // v6.0: Performance profiling
 
@@ -24,7 +24,7 @@ URLPolicyNetwork::URLPolicyNetwork()
 // v6.0: Strategy Selection
 // ========================================
 
-EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext)
+EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observation, const FMissionContext& MissionContext)
 {
 	SCOPE_CYCLE_COUNTER(STAT_RLSingleInference);  // v6.0: Profile single inference (target: <2ms)
 
@@ -33,13 +33,13 @@ EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observati
 		// Fallback heuristic
 		if (Observation.AgentHealth < 0.3f)
 			return EStrategyType::Retreat;
-		if (ObjectiveContext.Type == EObjectiveType::Defend)
+		if (MissionContext.Type == EMissionType::Defend)
 			return EStrategyType::Defend;
 		return EStrategyType::Assault;
 	}
 
 	// Build 68-feature input
-	TArray<float> InputFeatures = BuildNetworkInput(Observation, ObjectiveContext);
+	TArray<float> InputFeatures = BuildNetworkInput(Observation, MissionContext);
 	check(InputFeatures.Num() == 68);
 
 	// Forward pass
@@ -48,15 +48,15 @@ EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observati
 	// Sample strategy
 	EStrategyType Strategy = SampleStrategy(Output.PolicyLogits);
 
-	UE_LOG(LogTemp, Verbose, TEXT("✅ [RL v6.0] Strategy=%s, Value=%.2f, Objective=%d"),
+	UE_LOG(LogTemp, Verbose, TEXT("✅ [RL v6.0] Strategy=%s, Value=%.2f, Mission=%d"),
 		*UEnum::GetValueAsString(Strategy),
 		Output.Value,
-		static_cast<int32>(ObjectiveContext.Type));
+		static_cast<int32>(MissionContext.Type));
 
 	return Strategy;
 }
 
-float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext)
+float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, const FMissionContext& MissionContext)
 {
 	SCOPE_CYCLE_COUNTER(STAT_RLGetStateValue);  // v6.0: Profile value estimation
 
@@ -69,7 +69,7 @@ float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, co
 	}
 
 	// Build 68-feature input
-	TArray<float> InputFeatures = BuildNetworkInput(Observation, ObjectiveContext);
+	TArray<float> InputFeatures = BuildNetworkInput(Observation, MissionContext);
 
 	// Forward pass
 	FNetworkOutput Output = ForwardPassV6(InputFeatures);
@@ -83,13 +83,13 @@ float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, co
 
 TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
 	const TArray<FObservationElement>& Observations,
-	const TArray<FObjectiveContext>& ObjectiveContexts)
+	const TArray<FMissionContext>& MissionContexts)
 {
 	SCOPE_CYCLE_COUNTER(STAT_RLBatchedInference);  // v6.0: Profile batched inference (target: <4ms for 4 agents)
 
 	TArray<EStrategyType> Strategies;
 
-	if (Observations.Num() != ObjectiveContexts.Num())
+	if (Observations.Num() != MissionContexts.Num())
 	{
 		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Batch size mismatch"));
 		return Strategies;
@@ -103,7 +103,7 @@ TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
 	{
 		for (int32 i = 0; i < BatchSize; ++i)
 		{
-			Strategies.Add(GetStrategy(Observations[i], ObjectiveContexts[i]));
+			Strategies.Add(GetStrategy(Observations[i], MissionContexts[i]));
 		}
 		return Strategies;
 	}
@@ -114,7 +114,7 @@ TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
 
 	for (int32 i = 0; i < BatchSize; ++i)
 	{
-		TArray<float> Features = BuildNetworkInput(Observations[i], ObjectiveContexts[i]);
+		TArray<float> Features = BuildNetworkInput(Observations[i], MissionContexts[i]);
 		check(Features.Num() == 68);
 		BatchedInput.Append(Features);
 	}
@@ -162,7 +162,7 @@ TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
 		// Fallback to individual inference
 		for (int32 i = 0; i < BatchSize; ++i)
 		{
-			Strategies.Add(GetStrategy(Observations[i], ObjectiveContexts[i]));
+			Strategies.Add(GetStrategy(Observations[i], MissionContexts[i]));
 		}
 	}
 
@@ -171,11 +171,11 @@ TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
 
 TArray<float> URLPolicyNetwork::GetStateValuesBatched(
 	const TArray<FObservationElement>& Observations,
-	const TArray<FObjectiveContext>& ObjectiveContexts)
+	const TArray<FMissionContext>& MissionContexts)
 {
 	TArray<float> Values;
 
-	if (Observations.Num() != ObjectiveContexts.Num())
+	if (Observations.Num() != MissionContexts.Num())
 	{
 		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork: Batch size mismatch"));
 		return Values;
@@ -189,7 +189,7 @@ TArray<float> URLPolicyNetwork::GetStateValuesBatched(
 	{
 		for (int32 i = 0; i < BatchSize; ++i)
 		{
-			Values.Add(GetStateValue(Observations[i], ObjectiveContexts[i]));
+			Values.Add(GetStateValue(Observations[i], MissionContexts[i]));
 		}
 		return Values;
 	}
@@ -200,7 +200,7 @@ TArray<float> URLPolicyNetwork::GetStateValuesBatched(
 
 	for (int32 i = 0; i < BatchSize; ++i)
 	{
-		TArray<float> Features = BuildNetworkInput(Observations[i], ObjectiveContexts[i]);
+		TArray<float> Features = BuildNetworkInput(Observations[i], MissionContexts[i]);
 		BatchedInput.Append(Features);
 	}
 
@@ -234,7 +234,7 @@ TArray<float> URLPolicyNetwork::GetStateValuesBatched(
 		// Fallback
 		for (int32 i = 0; i < BatchSize; ++i)
 		{
-			Values.Add(GetStateValue(Observations[i], ObjectiveContexts[i]));
+			Values.Add(GetStateValue(Observations[i], MissionContexts[i]));
 		}
 	}
 
@@ -245,7 +245,7 @@ TArray<float> URLPolicyNetwork::GetStateValuesBatched(
 // v6.0: Helper Methods
 // ========================================
 
-TArray<float> URLPolicyNetwork::BuildNetworkInput(const FObservationElement& Observation, const FObjectiveContext& ObjectiveContext) const
+TArray<float> URLPolicyNetwork::BuildNetworkInput(const FObservationElement& Observation, const FMissionContext& MissionContext) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_RLBuildInput);  // v6.0: Profile input preparation
 
@@ -257,10 +257,10 @@ TArray<float> URLPolicyNetwork::BuildNetworkInput(const FObservationElement& Obs
 	check(BaseFeatures.Num() == 64);
 	Input.Append(BaseFeatures);
 
-	// Objective context (4 features)
-	TArray<float> ObjectiveFeatures = ObjectiveContext.ToFeatureVector();
-	check(ObjectiveFeatures.Num() == 4);
-	Input.Append(ObjectiveFeatures);
+	// Mission context (4 features)
+	TArray<float> MissionFeatures = MissionContext.ToFeatureVector();
+	check(MissionFeatures.Num() == 4);
+	Input.Append(MissionFeatures);
 
 	return Input;
 }

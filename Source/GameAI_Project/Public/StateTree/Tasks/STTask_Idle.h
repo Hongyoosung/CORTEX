@@ -13,12 +13,12 @@ class UFollowerStateTreeComponent;
 /**
  * State Tree Task: Idle
  *
- * Fallback task that keeps the StateTree running when no objective is active.
+ * Fallback task that keeps the StateTree running when no Mission is active.
  * Continuously returns Running status to prevent StateTree termination.
  *
  * Purpose:
  * - Prevents StateTree from stopping when agents await commands
- * - Allows agents to remain responsive to new objectives
+ * - Allows agents to remain responsive to new Missions
  * - Provides a stable "waiting" state
  */
 
@@ -32,7 +32,7 @@ struct GAMEAI_PROJECT_API FSTTask_IdleInstanceData
 	TObjectPtr<UFollowerStateTreeComponent> StateTreeComp;
 };
 
-USTRUCT(meta = (DisplayName = "Idle (Wait for Objective)"))
+USTRUCT(meta = (DisplayName = "Idle (Wait for Mission)"))
 struct GAMEAI_PROJECT_API FSTTask_Idle : public FStateTreeTaskBase
 {
 	GENERATED_BODY()

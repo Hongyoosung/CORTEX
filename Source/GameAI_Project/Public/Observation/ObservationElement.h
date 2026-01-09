@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "ObservationTypes.h"
-#include "RL/RLTypes.h"  // v6.0: For FObjectiveContext
+#include "RL/RLTypes.h"  // v6.0: For FMissionContext
 #include "ObservationElement.generated.h"
 
 /**
@@ -10,8 +10,8 @@
  * 68 total features, fully normalized for neural network input
  *
  * v6.0 Changes (from v5.0):
- * - Added: Objective context(4) - type, distance, direction to assigned objective
- * - Total features: 64 base + 4 objective context = 68
+ * - Added: Mission context(4) - type, distance, direction to assigned Mission
+ * - Total features: 64 base + 4 Mission context = 68
  *
  * v5.0 Changes (from v4.0):
  * - Removed: rotation(3), shield(1), cooldown(1), ammo(1), weapon(1), terrain(1), temporal(2)
@@ -108,12 +108,12 @@ struct GAMEAI_PROJECT_API FObservationElement
     float AllyDirectionAngle = 0.0f;  // 1 feature
 
     //--------------------------------------------------------------------------
-    // OBJECTIVE CONTEXT (4 features) - v6.0 NEW
+    // Mission CONTEXT (4 features) - v6.0 NEW
     //--------------------------------------------------------------------------
 
-    /** Objective context from MCTS assignment (v6.0) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
-    FObjectiveContext ObjectiveContext;  // 4 features (type, distance, direction)
+    /** Mission context from MCTS assignment (v6.0) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Mission")
+    FMissionContext MissionContext;  // 4 features (type, distance, direction)
 
     //--------------------------------------------------------------------------
     // CONSTRUCTOR & UTILITY FUNCTIONS
@@ -135,7 +135,7 @@ struct GAMEAI_PROJECT_API FObservationElement
     /** Convert observation to normalized feature vector (68 elements) - v6.0 */
     TArray<float> ToFeatureVector() const;
 
-    /** Get feature count (v6.0: 68 features = 64 base + 4 objective context) */
+    /** Get feature count (v6.0: 68 features = 64 base + 4 Mission context) */
     static int32 GetFeatureCount() { return 68; }
 
     /** Reset to default values */

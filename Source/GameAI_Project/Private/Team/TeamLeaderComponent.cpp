@@ -1,9 +1,10 @@
 #include "Team/TeamLeaderComponent.h"
 #include "Team/FollowerAgentComponent.h"
-#include "Team/ObjectiveManager.h"
-#include "Team/Objective.h"
+#include "Team/MissionManager.h"
+#include "Team/Mission.h"
 #include "AI/MCTS/MCTS.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
+#include "Observation/ObservationElement.h"
 #include "RL/CurriculumManager.h"
 #include "RL/RLTypes.h"  // v5.0: EStrategyType
 #include "RL/RLPolicyNetwork.h"  // v6.0 Phase 13: For debug visualization value estimates
@@ -19,7 +20,7 @@
 
 //==============================================================================
 // v6.0: TEAM LEADER COMPONENT
-// MCTS assigns objectives → RL selects strategies → Rules execute
+// MCTS assigns Missions → RL selects strategies → Rules execute
 //==============================================================================
 
 UTeamLeaderComponent::UTeamLeaderComponent()
@@ -36,21 +37,21 @@ void UTeamLeaderComponent::BeginPlay()
 	// Initialize MCTS
 	InitializeMCTS();
 
-	if (!ObjectiveManager)
+	if (!MissionManager)
 	{
 		AActor* Owner = GetOwner();
 		if (Owner)
 		{
-			ObjectiveManager = Owner->FindComponentByClass<UObjectiveManager>();
+			MissionManager = Owner->FindComponentByClass<UMissionManager>();
 		}
 
-		if (ObjectiveManager)
+		if (MissionManager)
 		{
-			UE_LOG(LogTemp, Log, TEXT("✅ TeamLeader '%s': Found ObjectiveManager on Owner."), *TeamName);
+			UE_LOG(LogTemp, Log, TEXT("✅ TeamLeader '%s': Found MissionManager on Owner."), *TeamName);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': Failed to find UObjectiveManager on Owner!"), *TeamName);
+			UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': Failed to find UMissionManager on Owner!"), *TeamName);
 		}
 	}
 
@@ -88,8 +89,8 @@ void UTeamLeaderComponent::BeginPlay()
 		}
 	}
 
-	// Auto-discover objectives from level (v3.0 - Capture/Rescue support)
-	DiscoverWorldObjectives();
+	// Auto-discover Missions from level (v3.0 - Capture/Rescue support)
+	DiscoverWorldMissions();
 
 	UE_LOG(LogTemp, Log, TEXT("TeamLeaderComponent: Initialized team '%s'"), *TeamName);
 }
@@ -131,11 +132,11 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 			if (bAsyncMCTS)
 			{
-				RunObjectiveDecisionMakingAsync();
+				RunMissionDecisionMakingAsync();
 			}
 			else
 			{
-				RunObjectiveDecisionMaking();
+				RunMissionDecisionMaking();
 			}
 		}
 	}
@@ -144,7 +145,7 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	if (AsyncMCTSTask != nullptr && AsyncMCTSTask->IsDone())
 	{
 		// Get results from completed task (v6.0 API)
-		FObjectiveAssignment Assignment = AsyncMCTSTask->GetTask().GetResults();
+		FMissionAssignment Assignment = AsyncMCTSTask->GetTask().GetResults();
 		float ExecutionTime = AsyncMCTSTask->GetTask().GetExecutionTime();
 
 		UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v6.0] '%s': Async task completed in %.2fms - Value=%.2f, Visits=%d"),
@@ -172,7 +173,7 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		AsyncMCTSTask = nullptr;
 
 		// Process results on game thread (v6.0)
-		ApplyObjectiveAssignment(Assignment);
+		ApplyMissionAssignment(Assignment);
 	}
 
 	// Process pending events (can interrupt if critical and bAllowEventInterrupts=true)
@@ -276,48 +277,48 @@ void UTeamLeaderComponent::InitializeMCTS()
 	}
 }
 
-void UTeamLeaderComponent::DiscoverWorldObjectives()
+void UTeamLeaderComponent::DiscoverWorldMissions()
 {
-	if (!ObjectiveManager)
+	if (!MissionManager)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': ObjectiveManager not initialized"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': MissionManager not initialized"), *TeamName);
 		return;
 	}
 
 	if (!GetWorld()) return;
 
-	int32 TotalObjectives = 0;
+	int32 TotalMissions = 0;
 
 	// 1. CAPTURE ZONES (Priority: 8)
 	// 람다를 통해 구체적인 생성 로직만 전달합니다.
-	TotalObjectives += FindAndRegisterObjectives(FName("CaptureZone"), [&](AActor* Actor)
+	TotalMissions += FindAndRegisterMissions(FName("CaptureZone"), [&](AActor* Actor)
 		{
-			return ObjectiveManager->CreateCaptureObjective(Actor->GetActorLocation(), 8);
+			return MissionManager->CreateCaptureMission(Actor->GetActorLocation(), 8);
 		});
 
 	// 2. RESCUE ZONES (Priority: 7)
 	// 체력 검사 로직을 람다 안에 포함시킵니다.
-	TotalObjectives += FindAndRegisterObjectives(FName("RescueTarget"), [&](AActor* Actor)
+	TotalMissions += FindAndRegisterMissions(FName("RescueTarget"), [&](AActor* Actor)
 		{
 			UHealthComponent* HealthComp = Actor->FindComponentByClass<UHealthComponent>();
-			// 체력이 50% 미만인 경우에만 목표 생성, 아니면 nullptr 반환
+			// 체력이 50% 미만인 경우에만 미션 생성, 아니면 nullptr 반환
 			if (HealthComp && HealthComp->GetCurrentHealth() < HealthComp->GetMaxHealth() * 0.5f)
 			{
 				// 상세 로그가 필요하다면 여기서 출력하거나, 공통 로그로 만족할 수 있습니다.
 				UE_LOG(LogTemp, Log, TEXT("Found Wounded Ally: %s (Health: %.1f)"), *Actor->GetName(), HealthComp->GetCurrentHealth());
 
-				return ObjectiveManager->CreateRescueObjective(Actor, 7);
+				return MissionManager->CreateRescueMission(Actor, 7);
 			}
-			return (UObjective*)nullptr;
+			return (UMission*)nullptr;
 		});
 
 	// 3. DEFEND ZONES (Priority: 7)
-	TotalObjectives += FindAndRegisterObjectives(FName("DefendZone"), [&](AActor* Actor)
+	TotalMissions += FindAndRegisterMissions(FName("DefendZone"), [&](AActor* Actor)
 		{
-			return ObjectiveManager->CreateDefendObjective(Actor->GetActorLocation(), 7);
+			return MissionManager->CreateDefendMission(Actor->GetActorLocation(), 7);
 		});
 
-	UE_LOG(LogTemp, Display, TEXT("✅ TeamLeader '%s': Auto-discovered %d world objectives"), *TeamName, TotalObjectives);
+	UE_LOG(LogTemp, Display, TEXT("✅ TeamLeader '%s': Auto-discovered %d world Missions"), *TeamName, TotalMissions);
 }
 
 //------------------------------------------------------------------------------
@@ -387,7 +388,7 @@ void UTeamLeaderComponent::UnregisterFollower(AActor* Follower)
 	}
 
 	Followers.Remove(Follower);
-	CurrentObjectives.Remove(Follower);
+	CurrentMissions.Remove(Follower);
 
 	// Unregister from SimulationManager (fix for team ID detection)
 	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
@@ -487,11 +488,11 @@ void UTeamLeaderComponent::ProcessStrategicEventWithContext(
 
 		if (bAsyncMCTS)
 		{
-			RunObjectiveDecisionMakingAsync();
+			RunMissionDecisionMakingAsync();
 		}
 		else
 		{
-			RunObjectiveDecisionMaking();
+			RunMissionDecisionMaking();
 		}
 	}
 	else
@@ -529,10 +530,8 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 		switch (Context.EventType)
 		{
 			case EStrategicEvent::AllyKilled:
-			case EStrategicEvent::AmbushDetected:
-			case EStrategicEvent::LowTeamHealth:
-			case EStrategicEvent::ObjectiveComplete:
-			case EStrategicEvent::ObjectiveFailed:
+			case EStrategicEvent::MissionComplete:
+			case EStrategicEvent::MissionFailed:
 				bIsCritical = true;
 				break;
 			default:
@@ -569,10 +568,8 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 	switch (Context.EventType)
 	{
 		case EStrategicEvent::AllyKilled:
-		case EStrategicEvent::AmbushDetected:
-		case EStrategicEvent::LowTeamHealth:
-		case EStrategicEvent::ObjectiveComplete:
-		case EStrategicEvent::ObjectiveFailed:
+		case EStrategicEvent::MissionComplete:
+		case EStrategicEvent::MissionFailed:
 			UE_LOG(LogTemp, Verbose, TEXT("TeamLeader '%s': Critical event type, triggering MCTS"), *TeamName);
 			return true;
 		default:
@@ -582,7 +579,7 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 	return false;
 }
 
-int32 UTeamLeaderComponent::FindAndRegisterObjectives(FName TagName, TFunctionRef<UObjective* (AActor*)> ObjectiveCreator)
+int32 UTeamLeaderComponent::FindAndRegisterMissions(FName TagName, TFunctionRef<UMission* (AActor*)> MissionCreator)
 {
 	if (!GetWorld()) return 0;
 
@@ -595,13 +592,13 @@ int32 UTeamLeaderComponent::FindAndRegisterObjectives(FName TagName, TFunctionRe
 	{
 		if (IsValid(Actor))
 		{
-			// 람다 함수를 실행하여 목표 생성 시도
-			UObjective* NewObjective = ObjectiveCreator(Actor);
+			// 람다 함수를 실행하여 미션 생성 시도
+			UMission* NewMission = MissionCreator(Actor);
 
 			// 유효한 목표가 생성되었다면 등록 절차 진행
-			if (NewObjective)
+			if (NewMission)
 			{
-				ObjectiveManager->ActivateObjective(NewObjective);
+				MissionManager->ActivateMission(NewMission);
 				Count++;
 
 				// 공통 로그 포맷 사용
@@ -639,11 +636,11 @@ void UTeamLeaderComponent::ProcessPendingEvents()
 	{
 		if (bAsyncMCTS)
 		{
-			RunObjectiveDecisionMakingAsync();
+			RunMissionDecisionMakingAsync();
 		}
 		else
 		{
-			RunObjectiveDecisionMaking();
+			RunMissionDecisionMaking();
 		}
 	}
 }
@@ -674,18 +671,11 @@ FTeamObservation UTeamLeaderComponent::BuildTeamObservation()
 }
 
 
-
-
-
 //==============================================================================
-// v3.0 COMBAT REFACTORING: OBJECTIVE-BASED DECISION MAKING
+// v6.0: Mission ASSIGNMENT (SYNC)
 //==============================================================================
 
-//==============================================================================
-// v6.0: OBJECTIVE ASSIGNMENT (SYNC)
-//==============================================================================
-
-void UTeamLeaderComponent::RunObjectiveDecisionMaking()
+void UTeamLeaderComponent::RunMissionDecisionMaking()
 {
 	if (bMCTSRunning)
 	{
@@ -693,14 +683,14 @@ void UTeamLeaderComponent::RunObjectiveDecisionMaking()
 		return;
 	}
 
-	if (!StrategicMCTS || !ObjectiveManager)
+	if (!StrategicMCTS || !MissionManager)
 	{
-		UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Missing MCTS or ObjectiveManager"), *TeamName);
+		UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Missing MCTS or MissionManager"), *TeamName);
 		return;
 	}
 
 	TArray<AActor*> AliveAgents = GetAliveFollowers();
-	TArray<UObjective*> ActiveObjectives = ObjectiveManager->GetActiveObjectives();
+	TArray<UMission*> ActiveMissions = MissionManager->GetActiveMissions();
 
 	if (AliveAgents.Num() == 0)
 	{
@@ -708,9 +698,9 @@ void UTeamLeaderComponent::RunObjectiveDecisionMaking()
 		return;
 	}
 
-	if (ActiveObjectives.Num() == 0)
+	if (ActiveMissions.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': No active objectives, skipping MCTS"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': No active Missions, skipping MCTS"), *TeamName);
 		return;
 	}
 
@@ -718,16 +708,31 @@ void UTeamLeaderComponent::RunObjectiveDecisionMaking()
 	float StartTime = FPlatformTime::Seconds();
 	LastMCTSTime = StartTime;
 
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v6.0] '%s': STARTED (SYNC) - %d agents, %d objectives"),
+	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v6.0] '%s': STARTED (SYNC) - %d agents, %d Missions"),
 		*TeamName,
 		AliveAgents.Num(),
-		ActiveObjectives.Num());
+		ActiveMissions.Num());
 
-	// Run MCTS to find best agent-to-objective assignment (v6.0)
-	FObjectiveAssignment Assignment = StrategicMCTS->RunObjectiveAssignment(
+	// v6.0 FIX: Pre-cache observations for thread safety (even for sync calls)
+	TMap<AActor*, FObservationElement> CachedObservations;
+	for (AActor* Agent : AliveAgents)
+	{
+		if (!Agent) continue;
+
+		UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
+		if (FollowerComp)
+		{
+			FObservationElement Obs = FollowerComp->BuildLocalObservation();
+			CachedObservations.Add(Agent, Obs);
+		}
+	}
+
+	// Run MCTS to find best agent-to-Mission assignment (v6.0 + thread safety fix)
+	FMissionAssignment Assignment = StrategicMCTS->RunMissionAssignment(
 		AliveAgents,
-		ActiveObjectives,
-		MCTSSimulations
+		ActiveMissions,
+		MCTSSimulations,
+		CachedObservations
 	);
 
 	float ExecutionTime = (FPlatformTime::Seconds() - StartTime) * 1000.0f; // ms
@@ -763,15 +768,15 @@ void UTeamLeaderComponent::RunObjectiveDecisionMaking()
 		Assignment.VisitCount);
 
 	// Apply assignment (v6.0)
-	ApplyObjectiveAssignment(Assignment);
+	ApplyMissionAssignment(Assignment);
 }
 
 
 //==============================================================================
-// v6.0: OBJECTIVE ASSIGNMENT (ASYNC)
+// v6.0: Mission ASSIGNMENT (ASYNC)
 //==============================================================================
 
-void UTeamLeaderComponent::RunObjectiveDecisionMakingAsync()
+void UTeamLeaderComponent::RunMissionDecisionMakingAsync()
 {
 	if (bMCTSRunning)
 	{
@@ -779,14 +784,14 @@ void UTeamLeaderComponent::RunObjectiveDecisionMakingAsync()
 		return;
 	}
 
-	if (!StrategicMCTS || !ObjectiveManager)
+	if (!StrategicMCTS || !MissionManager)
 	{
-		UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Missing MCTS or ObjectiveManager"), *TeamName);
+		UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Missing MCTS or MissionManager"), *TeamName);
 		return;
 	}
 
 	TArray<AActor*> AliveAgents = GetAliveFollowers();
-	TArray<UObjective*> ActiveObjectives = ObjectiveManager->GetActiveObjectives();
+	TArray<UMission*> ActiveMissions = MissionManager->GetActiveMissions();
 
 	if (AliveAgents.Num() == 0)
 	{
@@ -794,26 +799,46 @@ void UTeamLeaderComponent::RunObjectiveDecisionMakingAsync()
 		return;
 	}
 
-	if (ActiveObjectives.Num() == 0)
+	if (ActiveMissions.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': No active objectives, skipping MCTS"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': No active Missions, skipping MCTS"), *TeamName);
 		return;
 	}
 
 	bMCTSRunning = true;
 	LastMCTSTime = FPlatformTime::Seconds();
 
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v6.0] '%s': STARTED (ASYNC) - %d agents, %d objectives"),
+	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v6.0] '%s': STARTED (ASYNC) - %d agents, %d Missions"),
 		*TeamName,
 		AliveAgents.Num(),
-		ActiveObjectives.Num());
+		ActiveMissions.Num());
 
-	// Create async task (v6.0 API)
+	// v6.0 FIX: Pre-cache observations on game thread for thread-safe async execution
+	TMap<AActor*, FObservationElement> CachedObservations;
+	for (AActor* Agent : AliveAgents)
+	{
+		if (!Agent) continue;
+
+		UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
+		if (FollowerComp)
+		{
+			// Build observation NOW on the game thread (safe to call GetWorld() here)
+			FObservationElement Obs = FollowerComp->BuildLocalObservation();
+			CachedObservations.Add(Agent, Obs);
+		}
+	}
+
+	UE_LOG(LogTemp, Verbose, TEXT("🎯 [MCTS v6.0] '%s': Cached %d observations for async execution"),
+		*TeamName,
+		CachedObservations.Num());
+
+	// Create async task (v6.0 API + thread safety fix)
 	AsyncMCTSTask = new FAsyncTask<FMCTSAsyncTask>(
 		StrategicMCTS,
 		AliveAgents,
-		ActiveObjectives,
-		MCTSSimulations
+		ActiveMissions,
+		MCTSSimulations,
+		CachedObservations // Pass cached observations for thread safety
 	);
 
 	// Start background execution
@@ -825,30 +850,30 @@ void UTeamLeaderComponent::RunObjectiveDecisionMakingAsync()
 
 
 //==============================================================================
-// v6.0: APPLY OBJECTIVE ASSIGNMENT
+// v6.0: APPLY Mission ASSIGNMENT
 //==============================================================================
 
-void UTeamLeaderComponent::ApplyObjectiveAssignment(const FObjectiveAssignment& Assignment)
+void UTeamLeaderComponent::ApplyMissionAssignment(const FMissionAssignment& Assignment)
 {
 	UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v6.0] '%s': Applying assignment - %d agents, Value=%.2f, Visits=%d"),
 		*TeamName,
-		Assignment.AgentToObjective.Num(),
+		Assignment.AgentToMission.Num(),
 		Assignment.ExpectedValue,
 		Assignment.VisitCount);
 
-	// Log objective summary
-	TMap<EObjectiveType, int32> ObjectiveCounts;
-	for (const auto& Pair : Assignment.AgentToObjective)
+	// Log Mission summary
+	TMap<EMissionType, int32> MissionCounts;
+	for (const auto& Pair : Assignment.AgentToMission)
 	{
 		if (Pair.Value)
 		{
-			ObjectiveCounts.FindOrAdd(Pair.Value->Type, 0)++;
+			MissionCounts.FindOrAdd(Pair.Value->Type, 0)++;
 		}
 	}
 
-	UE_LOG(LogTemp, Display, TEXT("🎯 [ASSIGNMENT v6.0] '%s': Objective breakdown:"),
+	UE_LOG(LogTemp, Display, TEXT("🎯 [ASSIGNMENT v6.0] '%s': Mission breakdown:"),
 		*TeamName);
-	for (const auto& CountPair : ObjectiveCounts)
+	for (const auto& CountPair : MissionCounts)
 	{
 		UE_LOG(LogTemp, Display, TEXT("   - %s: %d agents"),
 			*UEnum::GetValueAsString(CountPair.Key),
@@ -856,44 +881,44 @@ void UTeamLeaderComponent::ApplyObjectiveAssignment(const FObjectiveAssignment& 
 	}
 
 	// Apply assignments to followers
-	for (const auto& Pair : Assignment.AgentToObjective)
+	for (const auto& Pair : Assignment.AgentToMission)
 	{
 		AActor* Agent = Pair.Key;
-		UObjective* Objective = Pair.Value;
+		UMission* Mission = Pair.Value;
 
-		if (!Agent || !Objective)
+		if (!Agent || !Mission)
 		{
-			UE_LOG(LogTemp, Error, TEXT("🎯 [ASSIGNMENT v6.0] Skipping invalid pair: Agent=%s, Objective=%s"),
+			UE_LOG(LogTemp, Error, TEXT("🎯 [ASSIGNMENT v6.0] Skipping invalid pair: Agent=%s, Mission=%s"),
 				Agent ? *Agent->GetName() : TEXT("NULL"),
-				Objective ? TEXT("Valid") : TEXT("NULL"));
+				Mission ? TEXT("Valid") : TEXT("NULL"));
 			continue;
 		}
 
 		// Update current assignments
-		CurrentObjectives.Add(Agent, Objective);
+		CurrentMissions.Add(Agent, Mission);
 
 		// Notify follower
 		UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
 		if (FollowerComp)
 		{
-			FollowerComp->SetCurrentObjective(Objective);
+			FollowerComp->SetCurrentMission(Mission);
 
-			// v6.0: Build objective description from type and target
-			FString ObjectiveDesc = FString::Printf(TEXT("%s"), *UEnum::GetValueAsString(Objective->Type));
-			if (Objective->TargetActor)
+			// v6.0: Build oMission description from type and target
+			FString MissionDesc = FString::Printf(TEXT("%s"), *UEnum::GetValueAsString(Mission->Type));
+			if (Mission->TargetActor)
 			{
-				ObjectiveDesc += FString::Printf(TEXT(" (%s)"), *Objective->TargetActor->GetName());
+				MissionDesc += FString::Printf(TEXT(" (%s)"), *Mission->TargetActor->GetName());
 			}
-			else if (!Objective->TargetLocation.IsZero())
+			else if (!Mission->TargetLocation.IsZero())
 			{
-				ObjectiveDesc += FString::Printf(TEXT(" at (%.0f,%.0f,%.0f)"),
-					Objective->TargetLocation.X, Objective->TargetLocation.Y, Objective->TargetLocation.Z);
+				MissionDesc += FString::Printf(TEXT(" at (%.0f,%.0f,%.0f)"),
+					Mission->TargetLocation.X, Mission->TargetLocation.Y, Mission->TargetLocation.Z);
 			}
 
-			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v6.0] Agent '%s' → Objective '%s' (Priority=%d)"),
+			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v6.0] Agent '%s' → Mission '%s' (Priority=%d)"),
 				*Agent->GetName(),
-				*ObjectiveDesc,
-				Objective->Priority);
+				*MissionDesc,
+				Mission->Priority);
 		}
 		else
 		{
@@ -903,10 +928,10 @@ void UTeamLeaderComponent::ApplyObjectiveAssignment(const FObjectiveAssignment& 
 	}
 
 	// Broadcast event (v6.0: Convert TObjectPtr to raw pointers)
-	FObjectiveAssignmentMap AssignmentMap;
-	for (const auto& Pair : Assignment.AgentToObjective)
+	FMissionAssignmentMap AssignmentMap;
+	for (const auto& Pair : Assignment.AgentToMission)
 	{
-		AssignmentMap.Objectives.Add(Pair.Key.Get(), Pair.Value.Get());
+		AssignmentMap.Missions.Add(Pair.Key.Get(), Pair.Value.Get());
 	}
 	OnStrategicDecisionMade.Broadcast(AssignmentMap);
 
@@ -1017,27 +1042,27 @@ void UTeamLeaderComponent::DrawDebugInfo()
 	// ============================================
 	if (bEnableDebugDrawing)
 	{
-		for (const auto& Pair : CurrentObjectives)
+		for (const auto& Pair : CurrentMissions)
 		{
 			AActor* Agent = Pair.Key;
-			UObjective* Objective = Pair.Value;
+			UMission* Mission = Pair.Value;
 
-			if (!Agent || !Objective) continue;
+			if (!Agent || !Mission) continue;
 
 			FVector AgentPos = Agent->GetActorLocation();
-			FVector ObjectivePos = Objective->TargetLocation;
+			FVector MissionPos = Mission->TargetLocation;
 
-			// If objective has target actor, use its location
-			if (Objective->TargetActor && IsValid(Objective->TargetActor))
+			// If Mission has target actor, use its location
+			if (Mission->TargetActor && IsValid(Mission->TargetActor))
 			{
-				ObjectivePos = Objective->TargetActor->GetActorLocation();
+				MissionPos = Mission->TargetActor->GetActorLocation();
 			}
 
-			// Draw MCTS assignment arrow (yellow arrow: Agent → Objective)
+			// Draw MCTS assignment arrow (yellow arrow: Agent → Mission)
 			DrawDebugDirectionalArrow(
 				World,
 				AgentPos,
-				ObjectivePos,
+				MissionPos,
 				100.0f,  // Arrow size
 				FColor::Yellow,
 				false, 0.0f, 0, 3.0f  // Thickness
@@ -1046,12 +1071,12 @@ void UTeamLeaderComponent::DrawDebugInfo()
 			// Draw RL value estimate (green text above agent)
 			if (StrategicMCTS && StrategicMCTS->RLPolicyNetwork)
 			{
-				// Get follower component to build observation and objective context
+				// Get follower component to build observation and Mission context
 				UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
 				if (FollowerComp)
 				{
 					FObservationElement Obs = FollowerComp->BuildLocalObservation();
-					FObjectiveContext ObjCtx = FollowerComp->BuildObjectiveContext(Objective);
+					FMissionContext ObjCtx = FollowerComp->BuildMissionContext(Mission);
 
 					// Get RL value estimate for this assignment
 					float Value = StrategicMCTS->RLPolicyNetwork->GetStateValue(Obs, ObjCtx);
@@ -1068,11 +1093,11 @@ void UTeamLeaderComponent::DrawDebugInfo()
 				}
 			}
 
-			// Draw objective type (cyan text above objective)
-			FString ObjTypeStr = UEnum::GetValueAsString(Objective->Type);
+			// Draw Mission type (cyan text above Mission)
+			FString ObjTypeStr = UEnum::GetValueAsString(Mission->Type);
 			DrawDebugString(
 				World,
-				ObjectivePos + FVector(0, 0, 100),
+				MissionPos + FVector(0, 0, 100),
 				ObjTypeStr,
 				nullptr,
 				FColor::Cyan,
@@ -1093,15 +1118,15 @@ void UTeamLeaderComponent::DrawDebugInfo()
 		FVector FollowerPos = Follower->GetActorLocation();
 		DrawDebugLine(World, LeaderPos, FollowerPos, TeamColor.ToFColor(true), false, 0.5f, 0, 2.0f);
 
-		// Draw objective type above follower (v3.0 legacy - redundant with v6.0 visualization)
+		// Draw Mission type above follower (v3.0 legacy - redundant with v6.0 visualization)
 		if (!bEnableDebugDrawing)
 		{
-			if (UObjective* const* ObjectivePtr = CurrentObjectives.Find(Follower))
+			if (UMission* const* MissionPtr = CurrentMissions.Find(Follower))
 			{
-				if (*ObjectivePtr)
+				if (*MissionPtr)
 				{
-					FString ObjectiveText = UEnum::GetValueAsString((*ObjectivePtr)->Type);
-					DrawDebugString(World, FollowerPos + FVector(0, 0, 150), ObjectiveText, nullptr, FColor::White, 0.5f, true);
+					FString MissionText = UEnum::GetValueAsString((*MissionPtr)->Type);
+					DrawDebugString(World, FollowerPos + FVector(0, 0, 150), MissionText, nullptr, FColor::White, 0.5f, true);
 				}
 			}
 		}

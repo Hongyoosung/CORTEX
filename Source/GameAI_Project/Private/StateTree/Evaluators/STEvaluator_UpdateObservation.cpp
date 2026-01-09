@@ -212,20 +212,20 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 	}
 
 
-	// Set primary target - PRIORITIZE objective target over perception target
-	AActor* ObjectiveTarget = SharedContext.CurrentObjective ? SharedContext.CurrentObjective->TargetActor : nullptr;
+	// Set primary target - PRIORITIZE Mission target over perception target
+	AActor* MissionTarget = SharedContext.CurrentMission ? SharedContext.CurrentMission->TargetActor : nullptr;
 
-	if (ObjectiveTarget && ObjectiveTarget->IsValidLowLevel() && !ObjectiveTarget->IsPendingKillPending())
+	if (MissionTarget && MissionTarget->IsValidLowLevel() && !MissionTarget->IsPendingKillPending())
 	{
-		// Use objective-specified target if valid
-		SharedContext.PrimaryTarget = ObjectiveTarget;
-		float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), ObjectiveTarget->GetActorLocation());
+		// Use Mission-specified target if valid
+		SharedContext.PrimaryTarget = MissionTarget;
+		float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), MissionTarget->GetActorLocation());
 
 		if (InstanceData.bDrawDebugInfo)
 		{
-			FVector TargetLocation = ObjectiveTarget->GetActorLocation();
+			FVector TargetLocation = MissionTarget->GetActorLocation();
 			DrawDebugLine(World, ControlledPawn->GetActorLocation(), TargetLocation,
-				FColor::Orange, false, 0.2f, 0, 3.0f); // Orange for objective target
+				FColor::Orange, false, 0.2f, 0, 3.0f); // Orange for Mission target
 			DrawDebugSphere(World, TargetLocation, 50.0f, 12, FColor::Orange, false, 0.2f);
 		}
 	}

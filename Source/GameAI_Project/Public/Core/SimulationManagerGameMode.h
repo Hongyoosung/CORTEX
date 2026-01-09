@@ -444,7 +444,7 @@ public:
 	//--------------------------------------------------------------------------
 
 	/**
-	 * Toggle MCTS debug visualization (yellow arrows, value estimates, objective labels)
+	 * Toggle MCTS debug visualization (yellow arrows, value estimates, Mission labels)
 	 * Console: ToggleMCTSDebug
 	 */
 	UFUNCTION(Exec)

@@ -8,7 +8,7 @@
 #include "LeaderCharacter.generated.h"
 
 class UTeamLeaderComponent;
-class UObjectiveManager;
+class UMissionManager;
 
 /**
  * Leader Character
@@ -86,7 +86,7 @@ public:
 	UTeamLeaderComponent* TeamLeaderComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components")
-	UObjectiveManager* ObjectiveManager;
+	UMissionManager* MissionManager;
 
 	//--------------------------------------------------------------------------
 	// COMBAT PROPERTIES

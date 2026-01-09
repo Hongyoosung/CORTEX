@@ -4,7 +4,7 @@ RLlib Training Script for SBDAPM (v6.0 - Single-Head Strategy Selection)
 Trains PPO agents via Schola gRPC connection to Unreal Engine.
 
 v6.0 Architecture:
-    - MCTS assigns objectives → RL selects strategies (4-action space)
+    - MCTS assigns Missions → RL selects strategies (4-action space)
     - Single-head network: 68 input → [128, 128, 64] → 4 policy logits + 1 value
     - Exports to: cortex_policy_v6.onnx
 
@@ -37,6 +37,11 @@ except ImportError:
         NUM_STRATEGIES = 4
 
 import torch  # Fix for Windows DLL error (must be imported before ray)
+
+# Windows DLL fix: Disable CUDA if not using GPU (prevents c10.dll conflicts)
+# Uncomment the line below if training on CPU only:
+# os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import argparse
 from datetime import datetime
 
@@ -82,15 +87,15 @@ class SingleHeadStrategyPolicy(TorchModelV2, nn.Module):
     Single-Head PPO Network for Strategy Selection (v6.0)
 
     Architecture:
-        - Input: 68 features (64 base + 4 objective context)
+        - Input: 68 features (64 base + 4 Mission context)
         - Shared Trunk: [128 → 128 → 64] ReLU (learns common features)
         - Policy Head: 4 strategy logits (Assault, Defend, Support, Retreat)
         - Value Head: 1-dim value estimate (for MCTS + PPO)
 
     v6.0 Changes:
-        - MCTS assigns objectives, RL selects strategies (not micro-actions)
+        - MCTS assigns Missions, RL selects strategies (not micro-actions)
         - Simplified from 13-output multi-head to 4-output single-head
-        - Objective context included in observation (replaces strategy index)
+        - Mission context included in observation (replaces strategy index)
 
     Outputs:
         - Policy logits: 4-dim [Assault, Defend, Support, Retreat]
@@ -102,7 +107,7 @@ class SingleHeadStrategyPolicy(TorchModelV2, nn.Module):
         nn.Module.__init__(self)
 
         # v6.0: Observation size from RLConfig (synced from C++)
-        obs_dim = RLConfig.OBSERVATION_SIZE  # 68 features (64 base + 4 objective context)
+        obs_dim = RLConfig.OBSERVATION_SIZE  # 68 features (64 base + 4 Mission context)
 
         # Get hidden layers from config (default: [256, 256, 128])
         hidden_layers = model_config.get("custom_model_config", {}).get("hidden_layers", [256, 256, 128])
@@ -133,14 +138,14 @@ class SingleHeadStrategyPolicy(TorchModelV2, nn.Module):
         Forward pass (v6.0 - Single Head)
 
         Args:
-            input_dict: Contains 'obs' with shape [batch, 68] (64 base + 4 objective context)
+            input_dict: Contains 'obs' with shape [batch, 68] (64 base + 4 Mission context)
 
         Returns:
             (policy_logits, state): 4-dim strategy logits, unchanged state
         """
         obs = input_dict["obs"]
 
-        # Run shared trunk (learns from full observation including objective context)
+        # Run shared trunk (learns from full observation including Mission context)
         features = self.shared_trunk(obs)  # [batch, 64]
         self._last_features = features
 
@@ -184,7 +189,7 @@ class SBDAPMConfig:
     VF_LOSS_COEFF = 1.5  # Increased from 0.5 to 1.5 - critical for value learning
 
     # Training
-    NUM_WORKERS = 0  # CRITICAL FIX: Enable parallel data collection (3 total envs)
+    NUM_WORKERS = 0  # Windows fix: 0 = single process (no DLL conflicts)
     NUM_ENVS_PER_WORKER = 1
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
@@ -326,7 +331,7 @@ def export_onnx(algo, output_dir):
     - cortex_policy_v6.onnx
 
     Model structure:
-        Input: 68 features (64 base + 4 objective context)
+        Input: 68 features (64 base + 4 Mission context)
         Output 1: 4-dim policy logits [Assault, Defend, Support, Retreat]
         Output 2: 1-dim state value (for MCTS value estimation)
     """
@@ -362,7 +367,7 @@ def export_onnx(algo, output_dir):
             def forward(self, obs):
                 """
                 Args:
-                    obs: [batch, 68] (64 base + 4 objective context)
+                    obs: [batch, 68] (64 base + 4 Mission context)
 
                 Returns:
                     policy_logits: [batch, 4] strategy probabilities
@@ -401,7 +406,7 @@ def export_onnx(algo, output_dir):
         print(f"\n[v6.0 EXPORT COMPLETE]")
         print(f"[SUCCESS] Policy exported to: {model_path}")
         print(f"\nModel structure:")
-        print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (64 base + 4 objective context)")
+        print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (64 base + 4 Mission context)")
         print(f"  - Output 1 (Policy): {RLConfig.NUM_STRATEGIES} dims [Assault, Defend, Support, Retreat]")
         print(f"  - Output 2 (Value): 1 dim (state value for MCTS)")
         print(f"\nReady for UE5:")
@@ -450,9 +455,53 @@ def train(args):
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
     print()
 
-    # Initialize Ray
-    # include_dashboard=False is often required on Windows to prevent timeouts
-    ray.init(ignore_reinit_error=True, include_dashboard=False)
+    # Windows fix: Ensure no stale Ray processes
+    try:
+        ray.shutdown()
+        print("Cleaned up existing Ray processes")
+    except:
+        pass  # No existing Ray instance
+
+    # Windows multiprocessing fix: Use 'spawn' to avoid DLL conflicts
+    import multiprocessing
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass  # Already set
+
+    # Windows Ray fix: Create temp directory and configure Ray
+    import tempfile
+    ray_temp_dir = os.path.join(tempfile.gettempdir(), "ray_cortex")
+    os.makedirs(ray_temp_dir, exist_ok=True)
+
+    print(f"Initializing Ray with temp directory: {ray_temp_dir}")
+    print("This may take 10-30 seconds on first run...")
+
+    # Initialize Ray with Windows-specific settings
+    try:
+        ray.init(
+            ignore_reinit_error=True,
+            include_dashboard=False,  # Disable dashboard to avoid GCS timeout
+            _temp_dir=ray_temp_dir,   # Explicit temp directory
+            num_cpus=4,               # Limit CPU detection issues on Windows
+            object_store_memory=1 * 1024**3,  # 1GB object store (prevent memory issues)
+            _system_config={
+                "gcs_rpc_server_reconnect_timeout_s": 300,  # Increase GCS timeout
+            },
+            logging_level="ERROR",  # Reduce log spam
+        )
+        print("✅ Ray initialized successfully!")
+    except Exception as e:
+        print(f"⚠️  Standard Ray init failed: {e}")
+        print("Falling back to Ray local mode (single machine, no GCS)...")
+        ray.init(
+            local_mode=True,  # Fallback: single-process mode (no GCS, no workers)
+            ignore_reinit_error=True,
+        )
+        print("✅ Ray local mode initialized (NUM_WORKERS will be ignored)")
+        if SBDAPMConfig.NUM_WORKERS > 0:
+            print(f"⚠️  Note: NUM_WORKERS={SBDAPMConfig.NUM_WORKERS} ignored in local mode")
+            SBDAPMConfig.NUM_WORKERS = 0  # Force single worker in local mode
 
     # Register environment and custom model (v5.0)
     register_env()

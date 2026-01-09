@@ -12,7 +12,7 @@
 class UTeamLeaderComponent;
 class URLPolicyNetwork;
 class URewardCalculator;
-class UObjective;
+class UMission;
 class UAgentPerceptionComponent;
 class UHealthComponent;
 struct FDamageEventData;
@@ -22,8 +22,8 @@ struct FDeathEventData;
  * Delegate for follower events (v3.0)
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
-	FOnObjectiveReceived,
-	UObjective*, Objective
+	FOnMissionReceived,
+	UMission*, Mission
 );
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
@@ -87,16 +87,16 @@ public:
 
 
 	//--------------------------------------------------------------------------
-	// OBJECTIVE EXECUTION (v3.0)
+	// MISSION EXECUTION (v3.0)
 	//--------------------------------------------------------------------------
 
-	/** Get current objective assigned by leader */
-	UFUNCTION(BlueprintPure, Category = "Follower|Objective")
-	UObjective* GetCurrentObjective() const { return CurrentObjective; }
+	/** Get current mission assigned by leader */
+	UFUNCTION(BlueprintPure, Category = "Follower|Mission")
+	UMission* GetCurrentMission() const { return CurrentMission; }
 
-	/** Has active objective? */
-	UFUNCTION(BlueprintPure, Category = "Follower|Objective")
-	bool HasActiveObjective() const;
+	/** Has active mission? */
+	UFUNCTION(BlueprintPure, Category = "Follower|Mission")
+	bool HasActiveMission() const;
 
 	//--------------------------------------------------------------------------
 	// INDIVIDUAL STRATEGY (v5.0)
@@ -138,9 +138,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|Observation")
 	FObservationElement BuildLocalObservation();
 
-	/** Build objective context from assigned objective (v6.0) */
+	/** Build mission context from assigned mission (v6.0) */
 	UFUNCTION(BlueprintCallable, Category = "Follower|Observation")
-	FObjectiveContext BuildObjectiveContext(UObjective* Objective);
+	FMissionContext BuildMissionContext(UMission* Mission);
 
 	/** Find nearest cover position relative to enemies */
 	UFUNCTION(BlueprintCallable, Category = "Follower|Tactical")
@@ -178,9 +178,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Follower|RL")
 	URLPolicyNetwork* GetTacticalPolicy() const { return TacticalPolicy; }
 
-	/** Set current objective for reward calculation (Sprint 4) */
+	/** Set current mission for reward calculation (Sprint 4) */
 	UFUNCTION(BlueprintCallable, Category = "Follower|RL")
-	void SetCurrentObjective(UObjective* Objective);
+	void SetCurrentMission(UMission* Mission);
 
 
 	//--------------------------------------------------------------------------
@@ -190,6 +190,10 @@ public:
 	/** Get team leader */
 	UFUNCTION(BlueprintPure, Category = "Follower|Team")
 	UTeamLeaderComponent* GetTeamLeader() const { return TeamLeader; }
+
+	/** Get Team ID */
+	UFUNCTION(BlueprintPure, Category = "Follower|Team")
+	int32 GetTeamID() const;
 
 	/** Get reward calculator (Sprint 5) */
 	UFUNCTION(BlueprintPure, Category = "Follower|RL")
@@ -301,9 +305,9 @@ public:
 	// STATE
 	//--------------------------------------------------------------------------
 
-	/** Current objective from leader (v3.0) */
+	/** Current mission from leader (v3.0) */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
-	TObjectPtr<UObjective> CurrentObjective = nullptr;
+	TObjectPtr<UMission> CurrentMission = nullptr;
 
 	/** Current strategy from leader (v5.0) - determines which policy head to use */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
@@ -341,9 +345,9 @@ public:
 	// EVENTS
 	//--------------------------------------------------------------------------
 
-	/** Fired when objective is received from leader */
+	/** Fired when mission is received from leader */
 	UPROPERTY(BlueprintAssignable, Category = "Follower|Events")
-	FOnObjectiveReceived OnObjectiveReceived;
+	FOnMissionReceived OnMissionReceived;
 
 	/** Fired when event is signaled to leader */
 	UPROPERTY(BlueprintAssignable, Category = "Follower|Events")
@@ -391,9 +395,9 @@ private:
 	/** Enemy count at last strategy update */
 	int32 LastEnemyCount = 0;
 
-	/** Objective at last strategy update */
+	/** Mission at last strategy update */
 	UPROPERTY()
-	UObjective* LastObjective = nullptr;
+	UMission* LastMission = nullptr;
 
 	/** Ticks since last strategy update (for timeout fallback) */
 	int32 TicksSinceLastUpdate = 0;
@@ -406,7 +410,7 @@ private:
 	/**
 	 * Check if strategy should be recomputed (v6.0)
 	 * Only updates on significant events to reduce inference cost by 75-83%
-	 * @return true if significant event occurred (health change >20%, new enemy, objective change, or timeout)
+	 * @return true if significant event occurred (health change >20%, new enemy, Mission change, or timeout)
 	 */
 	bool ShouldUpdateStrategy() const;
 };

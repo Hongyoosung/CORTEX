@@ -65,7 +65,7 @@ TArray<float> FTeamObservation::ToFeatureVector() const
     // ========================================
 
     Features.Add(FMath::Clamp(DistanceToObjective / 10000.0f, 0.0f, 1.0f));
-    Features.Add(static_cast<float>(ObjectiveType) / 6.0f);
+    Features.Add(static_cast<float>(MissionType) / 6.0f);
     Features.Add(FMath::Clamp(MissionTimeRemaining / 600.0f, 0.0f, 1.0f));
     Features.Add(static_cast<float>(MissionPhase) / 5.0f);
     Features.Add(EstimatedDifficulty / 10.0f);
@@ -122,7 +122,7 @@ void FTeamObservation::Reset()
 
     // Mission Context
     DistanceToObjective = 0.0f;
-    ObjectiveType = EObjectiveType::None;
+    MissionType = EMissionType::None;
     MissionTimeRemaining = 0.0f;
     MissionPhase = EMissionPhase::Approach;
     EstimatedDifficulty = 5.0f;

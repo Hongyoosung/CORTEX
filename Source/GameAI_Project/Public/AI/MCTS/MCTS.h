@@ -8,26 +8,28 @@
 #include "AI/MCTS/TeamMCTSNode.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
 #include "Observation/TeamObservation.h"
-#include "Team/Objective.h"
+#include "Team/Mission.h"
 #include "MCTS.generated.h"
 
 /**
- * Monte Carlo Tree Search (MCTS) for team-level objective assignment (v6.0)
+ * Monte Carlo Tree Search (MCTS) for team-level mission assignment (v7.0)
+ *
+ * v7.0 NAMING: Mission = strategic goal, Objective = physical base (AObjectiveActor)
  *
  * v6.0 Architecture Change:
- * - MCTS now solves OBJECTIVE ASSIGNMENT (which agents → which objectives)
- * - RL handles STRATEGY SELECTION (how to execute assigned objective)
+ * - MCTS now solves MISSION ASSIGNMENT (which agents → which missions)
+ * - RL handles STRATEGY SELECTION (how to execute assigned mission)
  * - Rules handle EXECUTION (deterministic position/target/fire logic)
  *
  * Key Differences from v5.0:
  * - v5.0: MCTS assigned strategies (Assault/Defend/Support/Retreat) to agents
- * - v6.0: MCTS assigns objectives (Capture A, Defend B, Support Agent3) to agents
- * - RL learns strategy adaptation based on objective + observation
- * - Smaller MCTS action space: 4 agents × 3 objectives vs. 4^4 strategy combinations
+ * - v6.0: MCTS assigns missions (Assault Base A, Defend Base B, Support Agent3) to agents
+ * - RL learns strategy adaptation based on mission + observation
+ * - Smaller MCTS action space: 4 agents × 3 missions vs. 4^4 strategy combinations
  *
  * Evaluation Function (v6.0):
- * - PRIMARY: RL value estimates (learned heuristic for each agent-objective pair)
- * - SECONDARY: Coordination heuristics (team cohesion, objective coverage, capability match)
+ * - PRIMARY: RL value estimates (learned heuristic for each agent-mission pair)
+ * - SECONDARY: Coordination heuristics (team cohesion, mission coverage, capability match)
  * - Replaces v5.0 hand-coded strategic heuristics with learned value function
  *
  * Performance:
@@ -56,21 +58,23 @@ public:
     void InitializeTeamMCTS(int32 InMaxSimulations = 500, float InExplorationParam = 1.41f);
 
     //--------------------------------------------------------------------------
-    // v6.0 API: OBJECTIVE ASSIGNMENT
+    // v7.0 API: MISSION ASSIGNMENT
     //--------------------------------------------------------------------------
 
     /**
-     * Run MCTS to find best agent-to-objective assignment (v6.0)
+     * Run MCTS to find best agent-to-mission assignment (v7.0)
      * @param Agents - Available agents
-     * @param Objectives - Available objectives
+     * @param Missions - Available missions (strategic goals, not physical objectives)
      * @param Simulations - Number of MCTS simulations (default: 500)
+     * @param CachedObservations - Pre-cached observations (for thread safety in async execution)
      * @return Best assignment found (with expected value and visit count)
      */
-    UFUNCTION(BlueprintCallable, Category = "MCTS|v6")
-    FObjectiveAssignment RunObjectiveAssignment(
+    UFUNCTION(BlueprintCallable, Category = "MCTS|v7")
+    FMissionAssignment RunMissionAssignment(
         const TArray<AActor*>& Agents,
-        const TArray<UObjective*>& Objectives,
-        int32 Simulations = 500
+        const TArray<UMission*>& Missions,
+        int32 Simulations,
+        const TMap<AActor*, FObservationElement>& InCachedObservations
     );
 
 private:
@@ -99,42 +103,42 @@ private:
     void Backpropagation(TSharedPtr<FTeamMCTSNode> Node, float Value);
 
     //--------------------------------------------------------------------------
-    // v6.0: ASSIGNMENT EVALUATION (RL-GUIDED)
+    // v7.0: ASSIGNMENT EVALUATION (RL-GUIDED)
     //--------------------------------------------------------------------------
 
     /**
-     * Evaluate assignment using RL value estimates + heuristics (v6.0)
-     * @param Assignment - Agent-to-objective mapping
+     * Evaluate assignment using RL value estimates + heuristics (v7.0)
+     * @param Assignment - Agent-to-mission mapping
      * @return Value estimate [-1, 1]
      */
-    float EvaluateAssignment(const FObjectiveAssignment& Assignment);
+    float EvaluateAssignment(const FMissionAssignment& Assignment);
 
     /**
-     * Generate possible assignments from current node (v6.0)
+     * Generate possible assignments from current node (v7.0)
      */
-    TArray<FObjectiveAssignment> GeneratePossibleAssignments(const FObjectiveAssignment& CurrentAssignment);
+    TArray<FMissionAssignment> GeneratePossibleAssignments(const FMissionAssignment& CurrentAssignment);
 
     //--------------------------------------------------------------------------
-    // v6.0: COORDINATION HEURISTICS
+    // v7.0: COORDINATION HEURISTICS
     //--------------------------------------------------------------------------
 
     /**
-     * Team cohesion score: Agents on same objective should be near each other (v6.0)
+     * Team cohesion score: Agents on same mission should be near each other (v7.0)
      * @return Score [0, 1] - Higher = better cohesion
      */
-    float TeamCohesionScore(const FObjectiveAssignment& Assignment) const;
+    float TeamCohesionScore(const FMissionAssignment& Assignment) const;
 
     /**
-     * Objective coverage score: All high-priority objectives have agents (v6.0)
+     * Mission coverage score: All high-priority missions have agents (v7.0)
      * @return Score [0, 1] - Higher = better coverage
      */
-    float ObjectiveCoverageScore(const FObjectiveAssignment& Assignment) const;
+    float MissionCoverageScore(const FMissionAssignment& Assignment) const;
 
     /**
-     * Capability match score: Right agents for the job (v6.0)
+     * Capability match score: Right agents for the job (v7.0)
      * @return Score [0, 1] - Higher = better match
      */
-    float CapabilityMatchScore(const FObjectiveAssignment& Assignment) const;
+    float CapabilityMatchScore(const FMissionAssignment& Assignment) const;
 
 public:
     //--------------------------------------------------------------------------
@@ -187,12 +191,15 @@ public:
 private:
 
     //--------------------------------------------------------------------------
-    // v6.0: ASSIGNMENT STATE
+    // v7.0: ASSIGNMENT STATE
     //--------------------------------------------------------------------------
 
-    /** Current agents available for assignment (v6.0) */
+    /** Current agents available for assignment (v7.0) */
     TArray<AActor*> AvailableAgents;
 
-    /** Current objectives available for assignment (v6.0) */
-    TArray<UObjective*> AvailableObjectives;
+    /** Current missions available for assignment (v7.0) */
+    TArray<UMission*> AvailableMissions;
+
+    /** Pre-cached observations for thread-safe async execution (v6.0 fix) */
+    TMap<AActor*, FObservationElement> CachedObservations;
 };

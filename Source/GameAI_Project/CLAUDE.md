@@ -1,6 +1,6 @@
 # CORTEX: Real-Time Multi-Agent Combat AI with MCTS-RL Coordination
 
-**Engine:** UE5.6 | **Language:** C++17 | **Platform:** Windows | **Version:** v6.0 (MCTS Coordination + RL Adaptation)
+**Engine:** UE5.6 | **Language:** C++17 | **Platform:** Windows | **Version:** v7.0 (Durability-Based Objectives + MCTS-RL Coordination)
 
 ---
 
@@ -18,14 +18,14 @@ Task Type?
 ### Critical Constraints
 | Component | Max Latency | Memory | Notes |
 |-----------|-------------|--------|-------|
-| MCTS | 30-50ms | 1MB | Objective assignment (async, 1.5s intervals) |
+| MCTS | 30-50ms | 1MB | Mission assignment (async, 1.5s intervals) |
 | RL Inference | 2-4ms | 400KB | **Batched inference** (4 agents → single forward pass) |
 | StateTree | <0.5ms/agent | 100KB | Rule-based execution |
 | **Total (4 agents)** | **5-10ms** | **4MB** | Real-time requirement |
 
 **Performance Optimization Strategies:**
 - **Batched Inference:** All 4 agents processed in single network call → 2-4ms total (not 4×1-3ms)
-- **Event-Driven Updates:** Only recompute strategy on significant events (health delta >20%, new enemy, objective change)
+- **Event-Driven Updates:** Only recompute strategy on significant events (health delta >20%, new enemy, Mission change)
 - **Async MCTS:** Runs on separate thread, doesn't block RL execution
 - **Fallback Strategy:** Use last valid strategy if inference delayed
 
@@ -34,9 +34,9 @@ Task Type?
 |---------|------|-------------|
 | MCTS | `AI/MCTS/MCTS.cpp` | `RunMCTS():71`, `EvaluateAssignment():180` |
 | RL Policy | `RL/RLPolicyNetwork.cpp` | `GetStrategy():320`, `GetStateValue():380` |
-| Team Leader | `Team/TeamLeaderComponent.cpp` | `RunObjectiveAssignment():220` |
+| Team Leader | `Team/TeamLeaderComponent.cpp` | `RunMissionAssignment():220` |
 | Follower | `Team/FollowerAgentComponent.cpp` | `UpdateStrategy():150` |
-| Types & Config | `RL/RLTypes.h` | `EStrategyType`, `FObjectiveAssignment` |
+| Types & Config | `RL/RLTypes.h` | `EStrategyType`, `FMissionAssignment` |
 
 ### Search Terms (When Unfamiliar)
 - **Hierarchical RL:** "options framework Sutton", "hierarchical reinforcement learning"
@@ -52,16 +52,16 @@ Task Type?
 ### System Flow
 ```
 Team Leader (1 per team, async planning every 1.5s)
-  ├─ MCTS: Solves combinatorial objective assignment
-  │   ├─ Action Space: Which agents → which objectives?
+  ├─ MCTS: Solves combinatorial Mission assignment
+  │   ├─ Action Space: Which agents → which Missions?
   │   ├─ Evaluation: RL value estimates + coordination heuristics
-  │   └─ Output: Agent-to-Objective mapping
+  │   └─ Output: Agent-to-Mission mapping
   │
   └─ Broadcasts assignments to followers
                     ↓
 Followers (N agents, reactive strategy adaptation every tick)
   ├─ RL Policy: Decides current strategy (Assault/Defend/Support/Retreat)
-  │   ├─ Input: Observation (64) + Objective embedding (4) = 68 features
+  │   ├─ Input: Observation (64) + Mission embedding (4) = 68 features
   │   ├─ Output: EStrategyType (4 discrete actions)
   │   └─ Value: Provides state value to MCTS
   │
@@ -82,13 +82,13 @@ Followers (N agents, reactive strategy adaptation every tick)
 3. **Rules (Execution Layer)** - "Execute the approach" (every tick)
 
 **Clear Separation of Concerns:**
-- **MCTS owns:** Team composition, objective assignment, multi-agent coordination
+- **MCTS owns:** Team composition, Mission assignment, multi-agent coordination
 - **RL owns:** Strategy selection, dynamic adaptation, learned tactics
 - **Rules own:** Position generation (EQS), movement (NavMesh), targeting, firing
 
 **Synergy Mechanisms:**
 1. **RL guides MCTS:** Value estimates replace hand-coded heuristics
-2. **MCTS guides RL:** Provides objectives that shape RL observations
+2. **MCTS guides RL:** Provides Missions that shape RL observations
 3. **Rules execute cleanly:** No decisions, pure deterministic execution
 
 ---
@@ -96,23 +96,23 @@ Followers (N agents, reactive strategy adaptation every tick)
 ## Core Components
 
 ### 1. Team Leader (`Team/TeamLeaderComponent.cpp`)
-**Role:** MCTS-based objective assignment
+**Role:** MCTS-based Mission assignment
 
 **v6.0 Features:**
-- Runs MCTS to solve agent-to-objective assignment problem
+- Runs MCTS to solve agent-to-Mission assignment problem
 - Uses RL value function for leaf evaluation
-- Considers team cohesion, objective coverage, agent capabilities
+- Considers team cohesion, Mission coverage, agent capabilities
 - Async execution (doesn't block gameplay)
 - Continuous replanning (every 1.5s)
 
 **MCTS Action Space:**
 ```cpp
 // Each node in MCTS tree represents an assignment
-struct FObjectiveAssignment {
-    TMap<AActor*, UObjective*> AgentToObjective;
+struct FMissionAssignment {
+    TMap<AActor*, UMission*> AgentToMission;
     // Example:
     // Agent1 → CapturePointA
-    // Agent2 → CapturePointA  (2 agents on same objective)
+    // Agent2 → CapturePointA  (2 agents on same Mission)
     // Agent3 → DefendPointB
     // Agent4 → SupportAgent1
 };
@@ -120,18 +120,18 @@ struct FObjectiveAssignment {
 
 **Evaluation Function:**
 ```cpp
-float EvaluateAssignment(FObjectiveAssignment& Assignment) {
+float EvaluateAssignment(FMissionAssignment& Assignment) {
     float totalValue = 0;
 
     // 1. Query RL value for each agent
-    for (auto& [agent, objective] : Assignment.AgentToObjective) {
-        FObservation obs = BuildObservation(agent, objective);
+    for (auto& [agent, Mission] : Assignment.AgentToOMission) {
+        FObservation obs = BuildObservation(agent, Mission);
         totalValue += RLPolicy->GetStateValue(obs);
     }
 
     // 2. Add coordination heuristics
     totalValue += TeamCohesionScore(Assignment);     // Agents near each other?
-    totalValue += ObjectiveCoverageScore(Assignment); // All objectives covered?
+    totalValue += MissionCoverageScore(Assignment); // All Missions covered?
     totalValue += CapabilityMatchScore(Assignment);   // Right agent for job?
 
     return totalValue;
@@ -143,7 +143,7 @@ float EvaluateAssignment(FObjectiveAssignment& Assignment) {
 ---
 
 ### 2. RL Policy Network (`RL/RLPolicyNetwork.cpp`) ✅ v6.0
-**Purpose:** Strategy selection based on observation + objective
+**Purpose:** Strategy selection based on observation + Mission
 
 **Architecture:**
 ```
@@ -154,7 +154,7 @@ Input: 68 features
   ├─ Enemy Info (16): count(1), nearby(15)
   ├─ Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
   ├─ Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
-  └─ Objective Context (4): type(1), distance(1), direction(2)
+  └─ Mission Context (4): type(1), distance(1), direction(2)
                     ↓
 ┌──────────────────────────────────────────────────────────┐
 │  Network: [128 → 128 → 64] ReLU                          │
@@ -172,8 +172,8 @@ Input: 68 features
 
 **Strategy Selection:**
 ```cpp
-EStrategyType GetStrategy(Observation, Objective) {
-    Features = BuildFeatures(Observation, Objective);
+EStrategyType GetStrategy(Observation, Mission) {
+    Features = BuildFeatures(Observation, Mission);
     Logits = RunNetwork(Features);  // [4 logits]
     return SampleFromLogits(Logits); // Assault/Defend/Support/Retreat
 }
@@ -181,8 +181,8 @@ EStrategyType GetStrategy(Observation, Objective) {
 
 **Value Function (for MCTS):**
 ```cpp
-float GetStateValue(Observation, Objective) {
-    Features = BuildFeatures(Observation, Objective);
+float GetStateValue(Observation, Mission) {
+    Features = BuildFeatures(Observation, Mission);
     return RunCriticHead(Features);  // [-1, 1] value estimate
 }
 ```
@@ -240,53 +240,13 @@ Perception (32): raycasts(16), hit_types(16)
 Enemy Info (16): count(1), nearby(15)
 Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
 Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
-Objective Context (4):
+Mission Context (4):
   - type(1): Encoded as [0=None, 0.33=Capture, 0.66=Defend, 1.0=Support]
-  - distance(1): Normalized distance to objective
-  - direction(2): Normalized 2D direction vector to objective
+  - distance(1): Normalized distance to Mission
+  - direction(2): Normalized 2D direction vector to Mission
 ```
 
-**Key Change from v5.0:**
-- Added Objective Context (4 features) - informs RL about assigned objective
-- Removed redundant features (rotation, ammo, cooldown)
-
 ---
-
-### 5. Strategy-Specific Rewards (`RL/RewardCalculator.cpp`)
-
-**Rewards are now context-dependent on both strategy AND objective:**
-
-**Assault Strategy (assigned to Capture objective):**
-| Event | Reward | Rationale |
-|-------|--------|-----------|
-| Kill enemy near objective | +15.0 | Clearing path |
-| Advance toward objective | +0.5/sec | Progress |
-| Reach objective | +20.0 | Mission success |
-| Death | -8.0 | Acceptable risk |
-
-**Defend Strategy (assigned to Defend objective):**
-| Event | Reward | Rationale |
-|-------|--------|-----------|
-| Hold position near objective | +0.3/sec | Primary goal |
-| Enemy enters objective zone | -5.0 | Failure warning |
-| Objective captured by enemy | -25.0 | Mission failed |
-| Death while defending | -12.0 | Anchor lost |
-
-**Support Strategy (assigned to Support objective):**
-| Event | Reward | Rationale |
-|-------|--------|-----------|
-| Protected ally survives | +15.0 | Mission success |
-| Kill threat to ally | +12.0 | Direct protection |
-| Ally dies | -20.0 | Mission failed |
-| Draw aggro from ally | +5.0 | Tactical sacrifice |
-
-**Retreat Strategy (assigned to Retreat objective):**
-| Event | Reward | Rationale |
-|-------|--------|-----------|
-| Increase distance from danger | +0.3/sec | Progress |
-| Reach safe zone | +10.0 | Mission success |
-| Death | -15.0 | Failed retreat |
-| Heal/regroup | +5.0 | Preparation for return |
 
 **Files:** `RL/RewardCalculator.h/cpp`
 
@@ -298,14 +258,14 @@ Objective Context (4):
 ```cpp
 // Strategy types (RL output)
 enum class EStrategyType : uint8 {
-    Assault,   // Push toward objective aggressively
+    Assault,   // Push toward Mission aggressively
     Defend,    // Hold position, suppress threats
     Support,   // Protect ally, draw aggro
     Retreat    // Disengage, survive, regroup
 };
 
-// Objective types (MCTS assigns these)
-enum class EObjectiveType : uint8 {
+// Mission types (MCTS assigns these)
+enum class EMissionType : uint8 {
     None,
     Capture,   // Offensive: Capture a point/zone
     Defend,    // Defensive: Hold a point/zone
@@ -315,19 +275,19 @@ enum class EObjectiveType : uint8 {
 };
 
 // MCTS assignment result
-struct FObjectiveAssignment {
-    TMap<AActor*, UObjective*> AgentToObjective;
+struct FMissionAssignment {
+    TMap<AActor*, UMission*> AgentToMission;
     float ExpectedValue;  // MCTS-estimated value
     int32 VisitCount;     // MCTS confidence
 };
 
-// Objective context for RL observation
-struct FObjectiveContext {
-    EObjectiveType Type;
+// Mission context for RL observation
+struct FOMissionContext {
+    EMissionType Type;
     float Distance;           // Normalized [0,1]
     FVector2D Direction;      // Normalized 2D direction
     AActor* TargetActor;      // Target (e.g., enemy, capture point, ally)
-    int32 Priority;           // Objective priority [0-10]
+    int32 Priority;           // Mission priority [0-10]
 
     TArray<float> ToFeatureVector() const {
         float typeEncoded = static_cast<float>(Type) / 4.0f; // [0, 0.25, 0.5, 0.75, 1.0]
@@ -356,12 +316,12 @@ struct FObjectiveContext {
 ```cpp
 // MCTS → RL (value query)
 interface IValueEstimator {
-    float GetStateValue(Observation, Objective);
+    float GetStateValue(Observation, Mission);
 };
 
 // Leader → Follower (command)
 interface ICommandReceiver {
-    void ReceiveObjective(Objective);
+    void ReceiveMission(Mission);
 };
 
 // Follower → Rules (execution)
@@ -378,7 +338,154 @@ interface IStrategyExecutor {
 
 ---
 
-## Architecture Rules (Invariants - v6.0)
+## 7. Objective System (v7.0 - Durability-Based Capture)
+
+### Overview
+
+v7.0 introduces a **unified durability-based objective system** that replaces the previous type-based (Defend/Capture) distinction. Both teams now have identical objective mechanics: defend your base, capture the enemy's base.
+
+**Key Innovation:**
+- Objectives are physical actors in the world with durability (health) that declines when hostile agents are present
+- Team ownership determines friendly vs hostile (no more explicit Defend/Capture types)
+- Volume-based rewards incentivize correct behavior (stay in capture zone)
+- Symmetric gameplay with clear win conditions
+
+### ObjectiveActor Class
+
+**File:** `Team/ObjectiveActor.h/cpp`
+
+```cpp
+// Core properties
+int32 OwnerTeamID;              // Team that owns this objective (0 or 1)
+float MaxDurability = 100.0f;    // Maximum durability
+float CurrentDurability;         // Current durability (0.0 to 100.0)
+
+// Components
+UStaticMeshComponent* PillarMesh;         // Visual pillar representation
+USphereComponent* CaptureVolume;          // Trigger volume for agent tracking
+
+// Team association helpers
+bool IsFriendlyTo(int32 AgentTeamID);    // OwnerTeamID == AgentTeamID
+bool IsHostileTo(int32 AgentTeamID);     // OwnerTeamID != AgentTeamID
+bool IsAgentInVolume(AActor* Agent);     // Check if agent in capture zone
+```
+
+### Durability Mechanics
+
+**Decline Logic (Timer-based, 10Hz):**
+```cpp
+if (HostileAgentsInVolume.Num() > 0)
+{
+    float DeclineRate = HostileAgentsInVolume.Num() * DamagePerAgentPerSecond;
+    CurrentDurability -= DeclineRate * DeltaTime;
+
+    // Default: 2.0 damage/sec per hostile agent
+    // Example: 3 hostiles = 6.0 durability/sec decline
+}
+```
+
+**Recovery Logic:**
+```cpp
+if (HostileAgentsInVolume.Num() == 0 && CurrentDurability < MaxDurability)
+{
+    CurrentDurability += RecoveryPerSecond * DeltaTime;
+
+    // Default: 1.0 durability/sec recovery
+}
+```
+
+**Defeat Condition:**
+```cpp
+if (CurrentDurability <= 0.0f)
+{
+    OnDefeat(); // Broadcast to GameMode → Episode reset
+}
+```
+
+### Capture Volume
+
+**Overlap Detection:**
+- Spherical trigger volume (default radius: 1000cm = 10m)
+- Automatically tracks hostile agents via `OnComponentBeginOverlap` / `EndOverlap`
+- Maintains `TSet<AActor*> HostileAgentsInVolume` for efficient counting
+- Only hostile agents contribute to durability decline (friendly agents ignored)
+
+**Visual Feedback:**
+- Translucent green sphere in editor/debug mode
+- Team color material (Blue = Team 0, Red = Team 1)
+- Emission strength pulses as durability drops
+- Debug text shows durability %, hostile count
+
+### Volume-Based Rewards (v7.0)
+
+**Replaced distance-based rewards with volume presence rewards:**
+
+**Defense Role (Friendly Objective):**
+```cpp
+// Continuous retention reward
+if (AgentInFriendlyVolume)
+{
+    Reward += 0.05f;  // +0.05 per step (~0.5/sec at 10Hz)
+}
+
+// Kill bonus
+if (KilledEnemy && AgentInFriendlyVolume)
+{
+    Reward += 5.0f;   // +5.0 for defending kills
+}
+```
+
+**Assault Role (Hostile Objective):**
+```cpp
+// Continuous retention reward
+if (AgentInEnemyVolume)
+{
+    Reward += 0.1f;   // +0.1 per step (~1.0/sec at 10Hz)
+}
+
+// Base destruction reward
+if (EnemyObjective.IsDefeated())
+{
+    Reward += 100.0f; // +100.0 for mission success
+}
+```
+
+**Why Volume-Based Rewards?**
+- **Clear incentives:** "Stay in the zone" is unambiguous
+- **No distance ambiguity:** Either inside (rewarded) or outside (not rewarded)
+- **Encourages commitment:** Agents must enter dangerous zones to progress
+- **Symmetric design:** Both teams use identical reward structure
+
+### ObjectiveManager Integration
+
+**File:** `Team/ObjectiveManager.h/cpp`
+
+```cpp
+// Find all objective actors in the world
+TArray<AObjectiveActor*> FindAllObjectiveActors();
+
+// Find friendly objective (OwnerTeamID matches team)
+AObjectiveActor* FindFriendlyObjective(int32 TeamID);
+
+// Find hostile objective (OwnerTeamID doesn't match)
+AObjectiveActor* FindHostileObjective(int32 TeamID);
+```
+
+**Usage in MCTS Assignment:**
+```cpp
+// TeamLeaderComponent assigns agents to objectives
+AObjectiveActor* FriendlyBase = ObjectiveManager->FindFriendlyObjective(TeamID);
+AObjectiveActor* EnemyBase = ObjectiveManager->FindHostileObjective(TeamID);
+
+// MCTS explores:
+// - All agents attack EnemyBase (full assault)
+// - Split: 2 attack, 2 defend (balanced)
+// - Split: 3 attack, 1 defend (aggressive)
+
+// Assignment based on RL value estimates + coordination heuristics
+```
+
+## Architecture Rules (Invariants - v7.0)
 
 1. **ONLY Leaders run MCTS** (followers NEVER touch MCTS)
 2. **MCTS solves assignment problem** (agent-to-objective mapping)
@@ -387,81 +494,12 @@ interface IStrategyExecutor {
 5. **Rules are deterministic** (no learning, no randomness in execution)
 6. **MCTS uses RL value estimates** (learned heuristics for leaf evaluation)
 7. **Async MCTS, sync RL** (MCTS doesn't block RL execution)
-8. **Objective types ≠ Strategy types** (Capture objective might trigger Retreat strategy if low health)
+8. **Objective types ≠ Strategy types** (Hostile objective might trigger Retreat strategy if low health)
 9. **Single-head RL network** (simpler, faster than multi-head)
 10. **EQS handles spatial reasoning** (RL focuses on when/what, not where)
-
----
-
-## Training & Value Alignment (v6.0 Critical Design)
-
-### 🎯 Core Principle: MCTS and RL Must Optimize the Same Goal
-
-**The Problem:**
-If MCTS optimizes "objective completion" but RL learns to prioritize "survival," the value function will mislead MCTS, causing broken agent behavior.
-
-**The Solution:**
-Reward structure MUST make objective completion the dominant term.
-
----
-
-### Reward Structure (Aligned with MCTS Objectives)
-
-**Priority Hierarchy:**
-
-| Priority | Component | Weight | Rationale |
-|----------|-----------|--------|-----------|
-| **P0** | Objective completion | +100.0 | MCTS optimizes this → RL must too |
-| **P1** | Objective progress | +0.5/sec | Guides toward goal |
-| **P2** | Combat efficiency | +15.0 (kill) | Secondary benefit |
-| **P3** | Survival penalty | -10.0 (death) | Important but < objective reward |
-
-**Critical Invariant:**
-```
-Objective Completion Reward > Death Penalty
-100.0 > 10.0 ✅
-
-If inverted (death penalty = -150.0), RL learns to hide → MCTS gets bad values ❌
-```
-
-**Objective-Conditioned Rewards:**
-
-```cpp
-float CalculateReward(FObservation obs, FObjectiveContext objective) {
-    float reward = 0;
-
-    // PRIMARY: Objective completion (dominates all other terms)
-    if (objective.Type == Capture && ObjectiveCaptured) {
-        reward += 100.0f;  // Mission success
-    }
-    if (objective.Type == Defend && ObjectiveHeldFor(30.0f)) {
-        reward += 80.0f;   // Defense success
-    }
-    if (objective.Type == Support && ProtectedAllyAlive) {
-        reward += 90.0f;   // Protection success
-    }
-
-    // SECONDARY: Progress toward objective
-    reward += ObjectiveProgressDelta * 0.5f;
-
-    // TERTIARY: Combat (only if contributes to objective)
-    if (KilledEnemy && EnemyThreatenedObjective) {
-        reward += 15.0f;
-    }
-
-    // QUATERNARY: Survival (but weighted lower than objective)
-    if (AgentDied) {
-        reward -= 10.0f;  // Acceptable loss if objective achieved
-    }
-
-    return reward;
-}
-```
-
-**Why This Works:**
-- RL learns "dying to capture objective = net +90 reward" → Will sacrifice when needed
-- MCTS queries RL value → Gets accurate "objective value" estimates
-- Both systems aligned on same goal
+11. **Objectives are physical actors** (v7.0: AObjectiveActor with durability, not abstract UObjects)
+12. **Team ownership determines role** (v7.0: Friendly vs hostile by OwnerTeamID, not type enum)
+13. **Volume-based rewards only** (v7.0: No distance-based rewards, only capture zone presence)
 
 ---
 
@@ -474,20 +512,20 @@ float CalculateReward(FObservation obs, FObjectiveContext objective) {
                     ↓
 ┌─────────────────────────────────────────────────────────┐
 │  1. MCTS Assignment                                      │
-│     - Queries RL value for each agent-objective pair    │
+│     - Queries RL value for each agent-Mission pair    │
 │     - Selects best assignment: Agent1→Capture A, etc.   │
 └─────────────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────────────┐
 │  2. RL Execution                                         │
-│     - Receives objective embedding in observation       │
+│     - Receives Mission embedding in observation       │
 │     - Selects strategies (Assault/Defend/Support/...)   │
-│     - Collects rewards (objective-conditioned)          │
+│     - Collects rewards (Mission-conditioned)          │
 └─────────────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────────────┐
 │  3. PPO Training                                         │
-│     - Updates policy to maximize objective returns      │
+│     - Updates policy to maximize Mission returns      │
 │     - Updates value function to predict better          │
 └─────────────────────────────────────────────────────────┘
                     ↓
@@ -503,7 +541,7 @@ float CalculateReward(FObservation obs, FObjectiveContext objective) {
 **Curriculum Progression:**
 ```
 Early Training (Episodes 0-1000):
-  - Simple assignments (all agents → same objective)
+  - Simple assignments (all agents → same Mission)
   - RL learns basic strategies
   - MCTS gets coarse value estimates
 
@@ -532,21 +570,21 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const {
     // Check significant state changes
     bool healthChanged = FMath::Abs(CurrentHealth - LastStrategyHealth) > 0.2f;
     bool newEnemyDetected = PerceivedEnemies.Num() > LastEnemyCount;
-    bool objectiveChanged = CurrentObjective != LastObjective;
+    bool MissionChanged = CurrentMission != LastMission;
     bool timeout = TicksSinceLastUpdate > 10;  // Fallback every 10 ticks
 
-    return healthChanged || newEnemyDetected || objectiveChanged || timeout;
+    return healthChanged || newEnemyDetected || MissionChanged || timeout;
 }
 
 void UFollowerAgentComponent::TickComponent(float DeltaTime, ...) {
     if (ShouldUpdateStrategy()) {
         // Run RL inference (2-4ms batched)
-        CurrentStrategy = RLPolicy->GetStrategy(Observation, Objective);
+        CurrentStrategy = RLPolicy->GetStrategy(Observation, Mission);
 
         // Cache for next check
         LastStrategyHealth = CurrentHealth;
         LastEnemyCount = PerceivedEnemies.Num();
-        LastObjective = CurrentObjective;
+        LastMission = CurrentMission;
         TicksSinceLastUpdate = 0;
     }
 
@@ -572,60 +610,8 @@ Reduction: 75-83% lower inference cost
 
 **Solution:** Batch all agents into single forward pass
 
-```cpp
-// TeamLeaderComponent: Batched inference for all followers
-void ATeamLeaderComponent::UpdateAllFollowerStrategies() {
-    TArray<FObservation> observations;
-    TArray<FObjectiveContext> objectives;
-
-    // 1. Collect all agent observations
-    for (auto* follower : Followers) {
-        observations.Add(follower->GetObservation());
-        objectives.Add(follower->GetCurrentObjective());
-    }
-
-    // 2. Single batched network call
-    TArray<EStrategyType> strategies = RLPolicy->GetStrategiesBatched(
-        observations,  // [4, 68] tensor
-        objectives     // [4, 4] tensor
-    );
-
-    // 3. Distribute results
-    for (int32 i = 0; i < Followers.Num(); ++i) {
-        Followers[i]->SetStrategy(strategies[i]);
-    }
-}
-```
 
 **ONNX Runtime Optimization:**
-```cpp
-// RLPolicyNetwork: Batched forward pass
-TArray<EStrategyType> URLPolicyNetwork::GetStrategiesBatched(
-    const TArray<FObservation>& observations,
-    const TArray<FObjectiveContext>& objectives
-) {
-    // Build batched input tensor [BatchSize=4, Features=68]
-    TArray<float> inputTensor;
-    inputTensor.Reserve(observations.Num() * 68);
-
-    for (int32 i = 0; i < observations.Num(); ++i) {
-        TArray<float> features = BuildFeatures(observations[i], objectives[i]);
-        inputTensor.Append(features);  // 68 features per agent
-    }
-
-    // Single ONNX inference call
-    TArray<float> outputLogits = ONNXRuntime->Run(inputTensor);  // [4, 4] logits
-
-    // Decode strategies
-    TArray<EStrategyType> strategies;
-    for (int32 i = 0; i < observations.Num(); ++i) {
-        int32 offset = i * 4;
-        strategies.Add(SampleFromLogits(&outputLogits[offset]));
-    }
-
-    return strategies;
-}
-```
 
 **Performance:**
 ```
@@ -680,60 +666,12 @@ namespace RLConfig {
 # GENERATED FROM C++ RL/RLTypes.h - DO NOT EDIT MANUALLY
 # Run: python tools/sync_config_from_cpp.py
 
-class RLConfig:
-    # Movement (must match UE5 CharacterMovement)
-    AGENT_WALK_SPEED = 600.0
-    AGENT_RUN_SPEED = 900.0
-    AGENT_SPRINT_SPEED = 1200.0
-
-    # Perception (must match UE5 AIPerception)
-    PERCEPTION_RADIUS = 3000.0
-    RAYCAST_COUNT = 16
-    RAYCAST_LENGTH = 2000.0
-    RAYCAST_ANGLE_SPREAD = 180.0
-
-    # Combat (must match UE5 damage system)
-    BASE_DAMAGE = 10.0
-    MAX_HEALTH = 100.0
-    FIRE_RATE = 0.1
-
-    # Observation Normalization
-    MAX_DISTANCE_NORMALIZATION = 5000.0
-    MAX_VELOCITY_NORMALIZATION = 1200.0
-
-    # Action Space
-    NUM_STRATEGIES = 4
-    NUM_TARGETS = 11
-```
 
 **Sync Script (tools/sync_config_from_cpp.py):**
-```python
-# Parses RL/RLTypes.h and generates Python config
-# Run before training to ensure consistency
-import re
 
-def parse_cpp_constants(header_path):
-    with open(header_path) as f:
-        content = f.read()
-
-    # Extract constexpr values
-    pattern = r'constexpr\s+(\w+)\s+(\w+)\s*=\s*([^;]+);'
-    constants = re.findall(pattern, content)
-
-    # Generate Python config
-    with open('training_env/config.py', 'w') as f:
-        f.write('# AUTO-GENERATED - DO NOT EDIT\n\n')
-        f.write('class RLConfig:\n')
-        for type_, name, value in constants:
-            f.write(f'    {name} = {value}\n')
-
-if __name__ == '__main__':
-    parse_cpp_constants('Source/GameAI_Project/Public/RL/RLTypes.h')
-    print('Config synchronized!')
-```
 
 **Validation:**
-```cpp
+
 // Unit test to catch drift
 TEST(RLConfigTest, PythonCppConsistency) {
     // Load exported ONNX model metadata
@@ -754,97 +692,12 @@ TEST(RLConfigTest, PythonCppConsistency) {
 
 ```cpp
 void ATeamLeaderComponent::DebugDrawMCTSAssignments() {
-    if (!bShowDebugVisualization) return;
-
-    for (auto& [agent, objective] : CurrentAssignment.AgentToObjective) {
-        FVector agentPos = agent->GetActorLocation();
-        FVector objPos = objective->GetActorLocation();
-
-        // Draw assignment edge
-        DrawDebugDirectionalArrow(
-            GetWorld(),
-            agentPos,
-            objPos,
-            100.0f,
-            FColor::Yellow,
-            false, 0.0f, 0, 3.0f
-        );
-
-        // Draw RL value estimate
-        float value = RLPolicy->GetStateValue(agent, objective);
-        DrawDebugString(
-            GetWorld(),
-            agentPos + FVector(0, 0, 150),
-            FString::Printf(TEXT("V=%.2f"), value),
-            nullptr,
-            FColor::Green,
-            0.0f
-        );
-
-        // Draw objective type
-        FString objTypeStr = UEnum::GetValueAsString(objective->Type);
-        DrawDebugString(
-            GetWorld(),
-            objPos + FVector(0, 0, 100),
-            objTypeStr,
-            nullptr,
-            FColor::Cyan,
-            0.0f
-        );
-    }
-}
 ```
 
 **Strategy State Visualization:**
 
 ```cpp
 void UFollowerAgentComponent::DebugDrawStrategyState() {
-    if (!bShowDebugVisualization) return;
-
-    FVector agentPos = GetOwner()->GetActorLocation();
-
-    // Strategy color coding
-    FColor strategyColor;
-    switch (CurrentStrategy) {
-        case EStrategyType::Assault:  strategyColor = FColor::Red; break;
-        case EStrategyType::Defend:   strategyColor = FColor::Blue; break;
-        case EStrategyType::Support:  strategyColor = FColor::Green; break;
-        case EStrategyType::Retreat:  strategyColor = FColor::Yellow; break;
-    }
-
-    // Draw strategy sphere
-    DrawDebugSphere(
-        GetWorld(),
-        agentPos,
-        100.0f,
-        12,
-        strategyColor,
-        false, 0.0f, 0, 2.0f
-    );
-
-    // Draw strategy text
-    FString strategyStr = UEnum::GetValueAsString(CurrentStrategy);
-    DrawDebugString(
-        GetWorld(),
-        agentPos + FVector(0, 0, 200),
-        strategyStr,
-        nullptr,
-        strategyColor,
-        0.0f,
-        true
-    );
-
-    // Draw health bar
-    float healthPct = CurrentHealth / MaxHealth;
-    FColor healthColor = FMath::Lerp(FColor::Red, FColor::Green, healthPct);
-    DrawDebugLine(
-        GetWorld(),
-        agentPos + FVector(-50, 0, 250),
-        agentPos + FVector(-50 + healthPct * 100, 0, 250),
-        healthColor,
-        false, 0.0f, 0, 5.0f
-    );
-}
 ```
 
 **Console Commands:**
@@ -877,11 +730,11 @@ void PrintMCTSStats() {
 **Visual Result:**
 ```
 In-Game View:
-  - Yellow arrows: MCTS assignments (Agent → Objective)
+  - Yellow arrows: MCTS assignments (Agent → Mission)
   - Green text: RL value estimates ("V=0.73")
   - Colored spheres: Current strategy (Red=Assault, Blue=Defend, etc.)
   - Health bars: Agent health visualization
-  - Cyan text: Objective types ("Capture", "Defend")
+  - Cyan text: Mission types ("Capture", "Defend")
 ```
 
 ---
@@ -927,14 +780,14 @@ Acceptable for 4v4
 **Scaling Challenge (50v50):**
 ```
 1 TeamLeader × MCTS(?) + 50 Agents × RL(batched ?ms) = ???ms
-MCTS action space explodes: 50 agents × 10 objectives = 500^10 combinations
+MCTS action space explodes: 50 agents × 10 Missions = 500^10 combinations
 ```
 
 **Proposed Solution: Hierarchical MCTS**
 
 ```
 Commander (1)
-  ├─ MCTS assigns squads to objectives (5 squads × 5 objectives = 5^5 = 3125 combinations)
+  ├─ MCTS assigns squads to Missions (5 squads × 5 Missions = 5^5 = 3125 combinations)
   │  └─ Latency: ~100ms (async, every 5s)
   │
 Squad Leaders (5)
@@ -962,7 +815,6 @@ Agents (50)
 ## v6.0 Core Innovation: MCTS-RL Synergy
 
 ### Problem Solved
-v5.0 had redundant strategy layers (MCTS assigned strategies, RL re-selected strategies).
 v6.0 separates: **MCTS = coordination, RL = adaptation, Rules = execution**.
 
 ### Synergy Mechanisms
@@ -979,202 +831,52 @@ float EvaluateNode(Assignment) {
 **2. MCTS as RL Curriculum:**
 ```cpp
 // MCTS explores different team compositions
-Early training:  Simple (all agents → same objective)
+Early training:  Simple (all agents → same Mission)
 Mid training:    Splits (2-2, 3-1)
 Late training:   Complex (individual assignments, dynamic)
 ```
 
-**3. Dynamic Strategy Switching:**
-```cpp
-// Assigned objective: Capture Point A
-// RL learns to switch strategies based on state:
-Health > 0.7: Assault  (push forward)
-Health < 0.3: Retreat  (disengage, heal)
-Ally critical: Support (protect teammate)
-Objective near: Defend (hold captured point)
-```
+## Implementation Status (v7.0 Objective System Complete)
 
-**4. Emergent Coordination:**
-```cpp
-// Without explicit communication, agents coordinate:
-MCTS: "Agent1, Agent2 → Capture A; Agent3 → Defend B"
-Agent1: "I'll Assault (healthy, good position)"
-Agent2: "I'll Support Agent1 (they're exposed)"
-Agent3: "I'll Defend B (alone, must hold)"
-→ Natural 2-agent coordination on Capture A
-```
+### 🎯 CURRENT STATUS: v7.0 Durability-Based Objectives Implemented
 
----
+**v7.0 COMPLETED (2026-01-09):**
+- ✅ **ObjectiveActor System** - Durability-based capture with physical actors
+- ✅ **Capture Volume** - Spherical trigger with automatic hostile tracking
+- ✅ **Volume-Based Rewards** - Replaced distance-based with retention rewards
+- ✅ **ObjectiveManager Integration** - Team-objective mapping helpers
+- ✅ **Legacy Code Removal** - Removed Capture enum, deprecated CheckObjectiveType
+- ✅ **Reward Calculator Update** - Unified volume-based reward logic
+- ✅ **Type Cleanup** - All Capture references replaced with Assault
 
-## Implementation Status (v6.0 Planning Phase)
-
-### 🎯 CURRENT STATUS: v6.0 Design Complete, Production-Ready Architecture
-
-**Design Complete:**
+**v6.0 Design Complete:**
 - ✅ Architecture redesign (MCTS coordination + RL adaptation)
 - ✅ Clear separation of concerns (3-layer hierarchy)
 - ✅ Synergy mechanisms identified
 - ✅ Academic merit validated
-- ✅ **NEW:** Performance optimization strategies (batching, event-driven)
-- ✅ **NEW:** Training & value alignment framework
-- ✅ **NEW:** Sim2Real synchronization process
-- ✅ **NEW:** Debug visualization system
-- ✅ **NEW:** Profiling requirements & scalability roadmap
+- ✅ Performance optimization strategies (batching, event-driven)
+- ✅ Training & value alignment framework
+- ✅ Sim2Real synchronization process
+- ✅ Debug visualization system
+- ✅ Profiling requirements & scalability roadmap
 
-**Implementation Needed:**
+**Implementation Needed (v6.0 → v7.0 Transition):**
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| **MCTS Assignment** | 🔄 Refactor from strategy to objective | P0 | Core coordination layer |
-| **RL Network** | 🔄 Remove multi-head, add objective embedding | P0 | Single-head + 68 features |
-| **Batched Inference** | 🔄 Implement batched forward pass | P0 | Critical for <4ms target |
-| **Event-Driven Updates** | 🔄 Add ShouldUpdateStrategy() logic | P1 | Performance optimization |
-| **StateTree Rules** | 🔄 Deterministic strategy execution | P1 | Execution layer |
-| **Reward Calculator** | 🔄 Update for objective-aware rewards | P0 | **Critical: Value alignment** |
-| **Observations** | 🔄 Add objective context (4 features) | P0 | 64→68 features |
-| **Python Training** | 🔄 Update action space (Discrete(4)) | P1 | Training environment |
-| **Sim2Real Sync** | 🔄 Create RLConfig namespace + sync script | P1 | Prevent training drift |
-| **Debug Viz** | 🔄 Implement MCTS/RL visualization | P2 | Development tools |
-| **Profiling** | 🔄 Set up Unreal Insights benchmarks | P2 | Validation |
+| **ObjectiveActor** | ✅ COMPLETE | P0 | Durability system with capture volume |
+| **Reward Calculator** | ✅ COMPLETE | P0 | Volume-based rewards implemented |
+| **Legacy Cleanup** | ✅ COMPLETE | P1 | Removed Capture type, deprecated conditions |
+| **ObjectiveManager** | ✅ COMPLETE | P1 | Team-objective mapping methods added |
+| **MCTS Assignment** | 🔄 Needs integration | P0 | Update to use ObjectiveActor |
+|
 
-**Critical Path:**
-1. MCTS Assignment + RL Network + Observations (Core architecture)
-2. Reward Calculator (Value alignment - prevents broken behavior)
-3. Batched Inference (Performance requirement)
-4. Event-Driven Updates (Performance optimization)
-5. Sim2Real Sync (Training stability)
+**v7.0 Next Steps:**
+1. Place ObjectiveActors in level (Team 0 & Team 1 bases)
+2. Update MCTS assignment to use ObjectiveManager->FindFriendly/HostileObjective()
+3. Create material with TeamColor/EmissionStrength parameters
+4. Add GameMode::OnObjectiveDefeated() handler for episode reset
+5. Test 4v4 scenario with durability-based capture
 
-**See REFACTORING_PLAN_v6.0.md for detailed implementation steps.**
+**See next_step.md for detailed integration guide.**
 
 ---
-
-## Examples: v6.0 in Action
-
-### Scenario: 4v4 Capture the Flag
-
-**Initial State:**
-```
-Objectives:
-  A: Capture Enemy Flag (enemy territory)
-  B: Defend Home Flag (friendly territory)
-  C: Support Agent most in danger
-
-Team State:
-  Agent1: 100% health, forward position
-  Agent2: 100% health, mid position
-  Agent3: 60% health, rear position
-  Agent4: 80% health, home base
-```
-
-**MCTS Assignment (t=0s):**
-```
-MCTS explores:
-  Option 1: All → A (full assault)
-    Value: 0.5 (RL estimates low success, no defense)
-
-  Option 2: 2→A, 2→B (balanced)
-    Value: 0.7 (RL estimates good balance)
-
-  Option 3: 3→A, 1→B (aggressive)
-    Value: 0.85 (RL estimates high success, calculated risk)
-
-Selected: Option 3
-  Agent1 → Capture A (EObjectiveType::Capture)
-  Agent2 → Capture A (EObjectiveType::Capture)
-  Agent3 → Capture A (EObjectiveType::Capture)
-  Agent4 → Defend B (EObjectiveType::Defend)
-```
-
-**RL Execution (t=0s, first tick):**
-```
-Agent1 (Objective: Capture A):
-  Obs: 100% health, 50m from A, 2 enemies ahead
-  Strategy: Assault (learned healthy + offensive objective = push)
-  Position: ForwardCover (EQS toward A)
-  Target: Enemy_0 (closest threat)
-
-Agent2 (Objective: Capture A):
-  Obs: 100% health, 80m from A, sees Agent1 exposed
-  Strategy: Support (learned ally exposed = protect, even with Capture objective)
-  Position: ForwardCover (toward Agent1)
-  Target: Enemy_1 (threatening Agent1)
-
-Agent3 (Objective: Capture A):
-  Obs: 60% health, 100m from A, 3 enemies visible
-  Strategy: Retreat (learned low health = disengage, even with Capture objective)
-  Position: Retreat (away from danger)
-  Target: -1 (hold fire)
-
-Agent4 (Objective: Defend B):
-  Obs: 80% health, at B, no enemies
-  Strategy: Defend (learned Defend objective + no threats = hold)
-  Position: Hold (at B)
-  Target: -1 (no enemies)
-```
-
-**Key Insight:** Agent2 and Agent3 **deviate from their Capture objective** based on learned tactics:
-- Agent2 prioritizes protecting Agent1 (Support > Assault)
-- Agent3 prioritizes survival (Retreat > Assault)
-- **RL learned these adaptations**, not hand-coded rules
-
-**t=5s: Agent3 heals, MCTS replans:**
-```
-MCTS reassignment:
-  Agent3 now 90% health → keep on Capture A
-  Agent1,2 making progress → keep on Capture A
-  Agent4 sees enemy → keep on Defend B
-
-Agent3 (Objective: Capture A):
-  Obs: 90% health, healed, allies ahead
-  Strategy: Assault (learned healthy + allies pushing = rejoin)
-  Position: ForwardCover (catch up to Agent1,2)
-  Target: Enemy_2
-```
-
-**t=10s: Agent1,2 capture A, MCTS replans:**
-```
-MCTS reassignment:
-  A now captured → new objective: Defend A
-  B under attack → need reinforcement
-
-New assignment:
-  Agent1 → Defend A (hold captured flag)
-  Agent2 → Defend B (reinforce Agent4)
-  Agent3 → Defend B (reinforce Agent4)
-  Agent4 → Defend B (continue defending)
-
-Emergent: 3 agents converge on B (MCTS coordination)
-```
-
-**Emergent Behaviors:**
-1. **Dynamic role switching** - Agent3 Retreat → Assault when healed
-2. **Tactical deviation** - Agent2 Supports despite Capture objective
-3. **Adaptive coordination** - 3 agents converge on defense without explicit comm
-4. **Learned prioritization** - Health < Objective when critical
-
----
-
-## References
-
-### Papers
-- **PPO:** "Proximal Policy Optimization Algorithms" (Schulman et al., 2017)
-- **MCTS:** "Finite-time Analysis of the Multiarmed Bandit Problem" (Auer et al., 2002)
-- **Hierarchical RL:** "Between MDPs and semi-MDPs: A framework for temporal abstraction in RL" (Sutton et al., 1999)
-- **Multi-Agent Coordination:** "Learning to Communicate with Deep Multi-Agent RL" (Foerster et al., 2016)
-- **AlphaGo:** "Mastering the game of Go with deep neural networks and tree search" (Silver et al., 2016)
-
-### UE5 Documentation
-- **NNE ONNX Runtime:** Search "UE5.6 Neural Network Engine ONNX"
-- **StateTree:** Search "UE5 StateTree plugin documentation"
-- **EQS:** Search "UE5 Environment Query System cover generation"
-- **Async Tasks:** Search "UE5 FAsyncTask multithreading"
-
----
-
-**Last Updated:** v6.0 Design Phase + Production Review (2026-01-06)
-**Key Changes:**
-- MCTS objective assignment, Single-head RL, Rule-based execution, Objective-aware observations
-- **Production Updates:** Batched inference, Event-driven updates, Value alignment framework, Sim2Real sync, Debug visualization, Profiling requirements, Scalability roadmap
-
-**Academic Contribution:** Hierarchical MCTS-RL coordination for real-time multi-agent combat with learned heuristics and dynamic strategy adaptation.
-
-**Production Readiness:** Architecture validated against performance constraints, training stability, and scalability requirements. Includes concrete optimization strategies and debug tooling.

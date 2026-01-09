@@ -14,7 +14,7 @@ class URLPolicyNetwork;
 class AAIController;
 class APawn;
 class UTeamLeaderComponent;
-class UObjective;
+class UMission;
 
 /**
  * State Tree Shared Context for Follower Agents (v3.0)
@@ -22,8 +22,8 @@ class UObjective;
  * Contains all data shared between State Tree states, tasks, evaluators, and conditions.
  * Replaces both Blackboard and component polling for better performance.
  *
- * This schema is optimized for objective-driven tactical execution:
- * 1. Leader assigns objective to follower
+ * This schema is optimized for Mission-driven tactical execution:
+ * 1. Leader assigns Mission to follower
  * 2. State Tree transitions to appropriate state
  * 3. RL policy selects atomic tactical actions (move, aim, fire, crouch)
  * 4. State executes actions using observation data
@@ -73,16 +73,16 @@ struct GAMEAI_PROJECT_API FFollowerStateTreeContext
 	float ActionProgress = 0.0f;
 
 	//--------------------------------------------------------------------------
-	// OBJECTIVE & SPATIAL CONTEXT (v3.0 - Objective-based execution)
+	// Mission & SPATIAL CONTEXT (v3.0 - Mission-based execution)
 	//--------------------------------------------------------------------------
 
-	/** Current objective assigned to this agent */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Objective")
-	TObjectPtr<UObjective> CurrentObjective = nullptr;
+	/** Current Mission assigned to this agent */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mission")
+	TObjectPtr<UMission> CurrentMission = nullptr;
 
-	/** Does agent have an active objective? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Objective")
-	bool bHasActiveObjective = false;
+	/** Does agent have an active Mission? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mission")
+	bool bHasActiveMission = false;
 
 
 	//--------------------------------------------------------------------------

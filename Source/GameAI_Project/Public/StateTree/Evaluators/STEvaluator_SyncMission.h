@@ -5,23 +5,23 @@
 #include "CoreMinimal.h"
 #include "StateTreeEvaluatorBase.h"
 #include "StateTree/FollowerStateTreeSchema.h"
-#include "Team/Objective.h"
-#include "STEvaluator_SyncObjective.generated.h"
+#include "Team/Mission.h"
+#include "STEvaluator_SyncMission.generated.h"
 
 /**
- * State Tree Evaluator: Sync Objective
+ * State Tree Evaluator: Sync Mission
  *
- * Syncs assigned objective from FollowerAgentComponent to State Tree context.
- * Runs every tick to detect objective changes from team leader.
+ * Syncs assigned Mission from FollowerAgentComponent to State Tree context.
+ * Runs every tick to detect Mission changes from team leader.
  *
- * When objective changes, this can trigger state transitions via conditions.
+ * When Mission changes, this can trigger state transitions via conditions.
  *
  * Replaces: STEvaluator_SyncCommand (v2.0)
  */
 
 
 USTRUCT()
-struct GAMEAI_PROJECT_API FSTEvaluator_SyncObjectiveInstanceData
+struct GAMEAI_PROJECT_API FSTEvaluator_SyncMissionInstanceData
 {
 	GENERATED_BODY()
 
@@ -40,31 +40,31 @@ struct GAMEAI_PROJECT_API FSTEvaluator_SyncObjectiveInstanceData
 	// CONFIGURATION
 	//--------------------------------------------------------------------------
 
-	/** Log objective changes */
+	/** Log Mission changes */
 	UPROPERTY(EditAnywhere, Category = "Parameter")
-	bool bLogObjectiveChanges = true;
+	bool bLogMissionChanges = true;
 
 	//--------------------------------------------------------------------------
 	// RUNTIME STATE
 	//--------------------------------------------------------------------------
 
-	/** Last objective type (for change detection) */
+	/** Last Mission type (for change detection) */
 	UPROPERTY()
-	EObjectiveType LastObjectiveType = EObjectiveType::None;
+	EMissionType LastMissionType = EMissionType::None;
 
-	/** Last objective pointer (for change detection) */
+	/** Last Mission pointer (for change detection) */
 	UPROPERTY()
-	TObjectPtr<UObjective> LastObjective = nullptr;
+	TObjectPtr<UMission> LastMission = nullptr;
 };
 
-USTRUCT(meta = (DisplayName = "Sync Objective", BlueprintType))
-struct GAMEAI_PROJECT_API FSTEvaluator_SyncObjective : public FStateTreeEvaluatorBase
+USTRUCT(meta = (DisplayName = "Sync Mission", BlueprintType))
+struct GAMEAI_PROJECT_API FSTEvaluator_SyncMission : public FStateTreeEvaluatorBase
 {
 	GENERATED_BODY()
 
-	using FInstanceDataType = FSTEvaluator_SyncObjectiveInstanceData;
+	using FInstanceDataType = FSTEvaluator_SyncMissionInstanceData;
 
-	FSTEvaluator_SyncObjective() = default;
+	FSTEvaluator_SyncMission() = default;
 
 	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
 

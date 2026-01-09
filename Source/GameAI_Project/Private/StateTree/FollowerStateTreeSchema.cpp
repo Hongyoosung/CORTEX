@@ -10,13 +10,13 @@
 #include "Team/TeamLeaderComponent.h"
 #include "RL/RLPolicyNetwork.h"
 #include "StateTree/Conditions/STCondition_IsAlive.h"
-#include "StateTree/Conditions/STCondition_CheckObjectiveType.h"
+#include "StateTree/Conditions/STCondition_HasMission.h"
 #include "StateTree/Tasks/STTask_ExecuteMovement.h"
 #include "StateTree/Tasks/STTask_ExecuteAiming.h"
 #include "StateTree/Tasks/STTask_ExecuteFire.h"
 #include "StateTree/Tasks/STTask_Dead.h"
 #include "StateTree/Tasks/STTask_Idle.h"
-#include "StateTree/Evaluators/STEvaluator_SyncObjective.h"
+#include "StateTree/Evaluators/STEvaluator_SyncMission.h"
 #include "StateTree/Evaluators/STEvaluator_UpdateObservation.h"
 
 
@@ -184,11 +184,10 @@ bool UFollowerStateTreeSchema::IsStructAllowed(const UScriptStruct* InScriptStru
 	// Allow project-specific structs
 	if (InScriptStruct)
 	{
-		// Allow all StateTree node types (v3.0)
-		if (InScriptStruct->IsChildOf(FSTEvaluator_SyncObjective::StaticStruct()) ||
+		if (InScriptStruct->IsChildOf(FSTEvaluator_SyncMission::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTEvaluator_UpdateObservation::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTCondition_IsAlive::StaticStruct()) ||
-			InScriptStruct->IsChildOf(FSTCondition_CheckObjectiveType::StaticStruct()) ||
+			InScriptStruct->IsChildOf(FSTCondition_HasMission::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_Dead::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_Idle::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_ExecuteMovement::StaticStruct()) ||

@@ -1,0 +1,51 @@
+CORTEX Objective→Mission Refactoring - Remaining Tasks
+
+## Completed:
+✅ FollowerAgentComponent.h/cpp - Fully refactored
+✅ TeamLeaderComponent.h - Fully refactored  
+✅ TeamLeaderComponent.cpp - Includes updated
+
+## Critical Remaining Work:
+
+### 1. TeamLeaderComponent.cpp (HIGH PRIORITY)
+Search and replace (use your IDE's find/replace with whole word matching):
+- ObjectiveManager → MissionManager
+- CurrentObjectives → CurrentMissions
+- RunObjectiveDecisionMaking → RunMissionDecisionMaking
+- RunObjectiveDecisionMakingAsync → RunMissionDecisionMakingAsync
+- ApplyObjectiveAssignment → ApplyMissionAssignment  
+- DiscoverWorldObjectives → DiscoverWorldMissions
+- FindAndRegisterObjectives → FindAndRegisterMissions
+- UObjective* → UMission* (in local variables)
+- TArray<UObjective*> → TArray<UMission*>
+- "objective" → "mission" in log messages (context-aware)
+
+### 2. RewardCalculator.h/cpp (MEDIUM PRIORITY)
+- SetCurrentObjective() → SetCurrentMission()
+- UObjective* CurrentObjective → UMission* CurrentMission
+- Update #include "Team/Objective.h" → #include "Team/Mission.h"
+- Update method parameter names
+
+### 3. Test Files (LOW PRIORITY)
+- TestMCTSAssignment.cpp: Update UObjective* → UMission*, EObjectiveType → EMissionType
+
+### 4. Additional Files (CHECK MANUALLY)
+- RLPolicyNetwork.cpp - FObjectiveContext → FMissionContext
+- MCTSAsyncTask.h/cpp - FObjectiveAssignment references  
+- MCTS.h/cpp - Already uses FMissionAssignment based on RLTypes.h
+- SimulationManagerGameMode.cpp - Check for any objective/mission references
+
+## Verification Steps:
+1. Search entire solution for "UObjective" (should only appear in old Objective.h/cpp)
+2. Search for "FObjectiveContext" (should only be in old files)
+3. Search for "FObjectiveAssignment" (should be replaced with FMissionAssignment)
+4. Search for "ObjectiveManager" (should be MissionManager)
+5. Compile and fix any remaining errors
+
+## File Deletion (AFTER VERIFICATION):
+⚠️ Only delete after confirming no references remain:
+- Source/GameAI_Project/Public/Team/Objective.h
+- Source/GameAI_Project/Private/Team/Objective.cpp
+- Source/GameAI_Project/Public/Team/ObjectiveManager.h
+- Source/GameAI_Project/Private/Team/ObjectiveManager.cpp
+

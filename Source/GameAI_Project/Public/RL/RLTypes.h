@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Team/Objective.h"
+#include "Team/Mission.h"
 #include "RLTypes.generated.h"
 
 // Forward declarations (v6.0 - avoid circular dependency)
@@ -43,7 +43,7 @@ namespace RLConfig {
 	constexpr int32 NUM_TARGETS = 11;    // 10 enemies + 1 no-target
 
 	// Observation Space
-	constexpr int32 OBSERVATION_SIZE = 68;  // 64 base + 4 objective context
+	constexpr int32 OBSERVATION_SIZE = 68;  // 64 base + 4 mission context
 
 	// === END CRITICAL SECTION ===
 }
@@ -119,46 +119,47 @@ struct FAllyContext
 };
 
 // ============================================
-// v6.0: Objective Context for RL Observation
+// v7.0: Mission Context for RL Observation
+// v7.0 NAMING: Mission = strategic goal, Objective = physical base (AObjectiveActor)
 // ============================================
 
-// Forward declare UObjective (defined in Team/Objective.h)
-class UObjective;
+// Forward declare UMission (defined in Team/Mission.h)
+class UMission;
 
 /**
- * Objective context provided to RL policy (v6.0)
- * Informs agent about their assigned objective from MCTS
+ * Mission context provided to RL policy (v7.0)
+ * Informs agent about their assigned mission from MCTS
  */
 USTRUCT(BlueprintType)
-struct GAMEAI_PROJECT_API FObjectiveContext
+struct GAMEAI_PROJECT_API FMissionContext
 {
 	GENERATED_BODY()
 
-	/** Assigned objective type */
-	UPROPERTY(BlueprintReadWrite, Category = "Objective")
-	EObjectiveType Type = EObjectiveType::None;
+	/** Assigned mission type */
+	UPROPERTY(BlueprintReadWrite, Category = "Mission")
+	EMissionType Type = EMissionType::None;
 
-	/** Normalized distance to objective [0,1] */
-	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	/** Normalized distance to mission target [0,1] */
+	UPROPERTY(BlueprintReadWrite, Category = "Mission")
 	float Distance = 0.0f;
 
-	/** Normalized 2D direction to objective */
-	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	/** Normalized 2D direction to mission target */
+	UPROPERTY(BlueprintReadWrite, Category = "Mission")
 	FVector2D Direction = FVector2D::ZeroVector;
 
 	/** Target actor (enemy, capture point, ally, etc.) */
-	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	UPROPERTY(BlueprintReadWrite, Category = "Mission")
 	TObjectPtr<AActor> TargetActor = nullptr;
 
-	/** Objective priority [0-10] */
-	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	/** Mission priority [0-10] */
+	UPROPERTY(BlueprintReadWrite, Category = "Mission")
 	int32 Priority = 5;
 
 	/** Convert to feature array for neural network (4 features) */
 	TArray<float> ToFeatureVector() const
 	{
 		// Encode type as normalized value [0, 0.25, 0.5, 0.75, 1.0]
-		float TypeEncoded = static_cast<float>(Type) / static_cast<float>(EObjectiveType::Retreat);
+		float TypeEncoded = static_cast<float>(Type) / static_cast<float>(EMissionType::Retreat);
 
 		return {
 			TypeEncoded,
@@ -170,21 +171,23 @@ struct GAMEAI_PROJECT_API FObjectiveContext
 };
 
 // ============================================
-// v6.0: MCTS Assignment Result
+// v7.0: MCTS Assignment Result
+// v7.0 NAMING: Mission = strategic goal assigned by MCTS
 // ============================================
 
 /**
- * Result of MCTS objective assignment (v6.0)
- * Maps agents to objectives with confidence metrics
+ * Result of MCTS mission assignment (v7.0)
+ * Maps agents to missions with confidence metrics
+ * v7.0: Renamed from FMissionAssignment to match UMission terminology
  */
 USTRUCT(BlueprintType)
-struct GAMEAI_PROJECT_API FObjectiveAssignment
+struct GAMEAI_PROJECT_API FMissionAssignment
 {
 	GENERATED_BODY()
 
-	/** Agent-to-objective mapping */
+	/** Agent-to-mission mapping */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
-	TMap<TObjectPtr<AActor>, TObjectPtr<UObjective>> AgentToObjective;
+	TMap<TObjectPtr<AActor>, TObjectPtr<UMission>> AgentToMission;
 
 	/** MCTS-estimated value of this assignment [-1, 1] */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
@@ -207,7 +210,7 @@ struct FMacroAction
 {
 	GENERATED_BODY()
 
-	/** Strategy: High-level approach to current objective */
+	/** Strategy: High-level approach to current Mission */
 	UPROPERTY(BlueprintReadWrite, Category = "Action")
 	EStrategyType Strategy = EStrategyType::Assault;
 
@@ -274,7 +277,7 @@ struct GAMEAI_PROJECT_API FRLPolicyConfig
 
 	/** Input size (observation features) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
-	int32 InputSize = 68;  // v6.0: 64 base + 4 objective context
+	int32 InputSize = 68;  // v7.0: 64 base + 4 mission context
 
 	/** Policy output size (strategy logits) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")

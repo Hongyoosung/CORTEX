@@ -28,7 +28,7 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  UE5 Simulation (C++)                                    │
-│  ├─ MCTS: Assigns objectives to agents                  │
+│  ├─ MCTS: Assigns Missions to agents                  │
 │  ├─ RL Policy: Selects strategies (Assault/Defend/...)  │
 │  └─ StateTree: Executes strategies deterministically    │
 └─────────────────────────────────────────────────────────┘
@@ -50,18 +50,18 @@
 
 ### Key Training Principles (v6.0)
 
-1. **Objective-Conditioned RL:**
-   - Input: Observation (64) + Objective Context (4) = 68 features
+1. **Mission-Conditioned RL:**
+   - Input: Observation (64) + Mission Context (4) = 68 features
    - Output: Strategy logits (4) + Value (1)
-   - Learns to adapt strategy based on MCTS-assigned objective
+   - Learns to adapt strategy based on MCTS-assigned Mission
 
 2. **Value Alignment (CRITICAL):**
-   - Objective completion reward (100) > Death penalty (10)
+   - Mission completion reward (100) > Death penalty (10)
    - Ensures RL and MCTS optimize same goal
    - Prevents "hiding" behavior (RL avoiding risk)
 
 3. **Curriculum Learning:**
-   - Early: Simple assignments (all agents → same objective)
+   - Early: Simple assignments (all agents → same Mission)
    - Mid: Mixed assignments (2-2 splits, 3-1 splits)
    - Late: Complex assignments (individual, dynamic)
 

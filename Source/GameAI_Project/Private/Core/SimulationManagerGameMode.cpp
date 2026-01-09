@@ -1191,18 +1191,18 @@ void ASimulationManagerGameMode::PrintMCTSStats()
 			GetWorld()->GetTimeSeconds() - Leader->GetLastMCTSDecisionTime());
 		UE_LOG(LogTemp, Display, TEXT("  Current Assignments:"));
 
-		for (const auto& Assignment : Leader->CurrentObjectives)
+		for (const auto& Assignment : Leader->CurrentMissions)
 		{
 			AActor* Agent = Assignment.Key;
-			UObjective* Objective = Assignment.Value;
+			UMission* Mission = Assignment.Value;
 
-			if (Agent && Objective)
+			if (Agent && Mission)
 			{
-				FString ObjectiveType = UEnum::GetValueAsString(Objective->Type);
+				FString MissionType = UEnum::GetValueAsString(Mission->Type);
 				UE_LOG(LogTemp, Display, TEXT("    - %s → %s (Priority: %d)"),
 					*Agent->GetName(),
-					*ObjectiveType,
-					Objective->Priority);
+					*MissionType,
+					Mission->Priority);
 			}
 		}
 	}

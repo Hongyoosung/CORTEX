@@ -10,15 +10,15 @@ FTeamMCTSNode::FTeamMCTSNode()
 {
 }
 
-void FTeamMCTSNode::Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, UObjective*>& InObjectives)
+void FTeamMCTSNode::Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, UMission*>& InMissions)
 {
 	Parent = InParent;
-	Objectives.Empty(InObjectives.Num());
-	for (const auto& Pair : InObjectives)
+	Missions.Empty(InMissions.Num());
+	for (const auto& Pair : InMissions)
 	{
-		// Pair.Key(AActor*) -> TObjectPtr<AActor> (ÀÚµ¿ º¯È¯)
-		// Pair.Value(UObjective*) -> TObjectPtr<UObjective> (ÀÚµ¿ º¯È¯)
-		Objectives.Add(Pair.Key, Pair.Value);
+		// Pair.Key(AActor*) -> TObjectPtr<AActor> (ï¿½Úµï¿½ ï¿½ï¿½È¯)
+		// Pair.Value(UMission*) -> TObjectPtr<UOMission> (ï¿½Úµï¿½ ï¿½ï¿½È¯)
+		Missions.Add(Pair.Key, Pair.Value);
 	}
 	TotalReward = 0.0f;
 	VisitCount = 0;
@@ -148,7 +148,7 @@ TSharedPtr<FTeamMCTSNode> FTeamMCTSNode::Expand(const TArray<AActor*>& Followers
 			SelectedIndex, UntriedActions.Num());
 	}
 
-	TMap<AActor*, UObjective*> NewObjectives = UntriedActions[SelectedIndex];
+	TMap<AActor*, UMission*> NewMissions = UntriedActions[SelectedIndex];
 	UntriedActions.RemoveAt(SelectedIndex);
 
 	// Also remove the corresponding prior
@@ -158,7 +158,7 @@ TSharedPtr<FTeamMCTSNode> FTeamMCTSNode::Expand(const TArray<AActor*>& Followers
 	}
 
 	TSharedPtr<FTeamMCTSNode> Child = MakeShared<FTeamMCTSNode>();
-	Child->Initialize(AsShared(), NewObjectives);
+	Child->Initialize(AsShared(), NewMissions);
 	Children.Add(Child);
 
 	return Child;

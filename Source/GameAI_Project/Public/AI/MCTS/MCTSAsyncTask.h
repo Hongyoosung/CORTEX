@@ -5,14 +5,15 @@
 #include "CoreMinimal.h"
 #include "Async/AsyncWork.h"
 #include "Observation/TeamObservation.h"
+#include "Observation/ObservationElement.h"
 
 // Forward declarations
 class UMCTS;
-class UObjective;
-class UObjectiveManager;
+class UMission;
+class UMissionManager;
 
 /**
- * Async task for running MCTS objective assignment in background thread (v6.0)
+ * Async task for running MCTS Mission assignment in background thread (v6.0)
  *
  * Provides better lifecycle management than raw AsyncTask lambdas:
  * - Integrated UE5 stat tracking (Insights profiler)
@@ -21,19 +22,19 @@ class UObjectiveManager;
  * - Manual cleanup control
  *
  * v6.0 Updates:
- * - Now runs RunObjectiveAssignment() instead of RunTeamMCTSWithObjectives()
- * - Returns FObjectiveAssignment instead of TMap
- * - Takes agents and objectives directly (no TeamObservation or ObjectiveManager)
+ * - Now runs RunMissionAssignment() instead of RunTeamMCTSWithMissions()
+ * - Returns FMissionAssignment instead of TMap
+ * - Takes agents and Missions directly (no TeamObservation or MissionManager)
  *
  * Usage:
  *   auto* Task = new FAsyncTask<FMCTSAsyncTask>(
- *       MCTS, Agents, Objectives
+ *       MCTS, Agents, Missions
  *   );
  *   Task->StartBackgroundTask();
  *
  *   // Later (e.g., in Tick):
  *   if (Task->IsDone()) {
- *       FObjectiveAssignment Assignment = Task->GetTask().GetResults();
+ *       FMissionAssignment Assignment = Task->GetTask().GetResults();
  *       ExecutionTime = Task->GetTask().GetExecutionTime();
  *       delete Task;  // Manual cleanup required
  *   }
@@ -48,19 +49,22 @@ public:
      *
      * @param InMCTS - MCTS instance to run
      * @param InAgents - Available agents for assignment
-     * @param InObjectives - Available objectives for assignment
+     * @param InMissions - Available Missions for assignment
      * @param InSimulations - Number of MCTS simulations (default: 500)
+     * @param InCachedObservations - Pre-cached observations for thread safety
      */
     FMCTSAsyncTask(
         UMCTS* InMCTS,
         const TArray<AActor*>& InAgents,
-        const TArray<UObjective*>& InObjectives,
-        int32 InSimulations = 500
+        const TArray<UMission*>& InMissions,
+        int32 InSimulations = 500,
+        const TMap<AActor*, FObservationElement>& InCachedObservations = TMap<AActor*, FObservationElement>()
     )
         : MCTS(InMCTS)
         , Agents(InAgents)
-        , Objectives(InObjectives)
+        , Missions(InMissions)
         , Simulations(InSimulations)
+        , CachedObservations(InCachedObservations)
         , bCompleted(false)
         , ExecutionTime(0.0f)
     {
@@ -83,9 +87,9 @@ public:
 
     /**
      * Get results (call after IsComplete() returns true) - v6.0
-     * @return Objective assignment with value estimates
+     * @return Mission assignment with value estimates
      */
-    FObjectiveAssignment GetResults() const { return ResultAssignment; }
+    FMissionAssignment GetResults() const { return ResultAssignment; }
 
     /**
      * Get execution time in milliseconds
@@ -107,14 +111,17 @@ private:
     /** Agents available for assignment (v6.0) */
     TArray<AActor*> Agents;
 
-    /** Objectives available for assignment (v6.0) */
-    TArray<UObjective*> Objectives;
+    /** Missions available for assignment (v6.0) */
+    TArray<UMission*> Missions;
 
     /** Number of MCTS simulations (v6.0) */
     int32 Simulations;
 
+    /** Pre-cached observations for thread-safe async execution (v6.0 fix) */
+    TMap<AActor*, FObservationElement> CachedObservations;
+
     /** Results from MCTS execution (v6.0) */
-    FObjectiveAssignment ResultAssignment;
+    FMissionAssignment ResultAssignment;
 
     /** Thread-safe completion flag */
     FThreadSafeBool bCompleted;

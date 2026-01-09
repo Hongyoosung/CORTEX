@@ -2,9 +2,10 @@
 
 #include "Misc/AutomationTest.h"
 #include "AI/MCTS/MCTS.h"
-#include "Team/Objective.h"
+#include "Team/Mission.h"
 #include "Team/FollowerAgentComponent.h"
 #include "RL/RLPolicyNetwork.h"
+#include "Observation/ObservationElement.h"
 #include "Tests/AutomationCommon.h"
 
 /**
@@ -39,28 +40,30 @@ bool FMCTSAssignmentTest::RunTest(const FString& Parameters)
 		TestAgents.Add(nullptr);
 	}
 
-	// Setup: Create test objectives
-	TArray<UObjective*> TestObjectives;
+	// Setup: Create test Missions
+	TArray<UMission*> TestObjectives;
 	for (int32 i = 0; i < 3; ++i)
 	{
-		UObjective* Obj = NewObject<UObjective>();
-		Obj->Type = (i == 0) ? EObjectiveType::Capture :
-		            (i == 1) ? EObjectiveType::Defend :
-		                       EObjectiveType::Support;
+		UMission* Obj = NewObject<UMission>();
+		Obj->Type = EMissionType::Assault;
+
 		Obj->Priority = 5 + i;
 		Obj->TargetLocation = FVector(i * 1000.0f, 0.0f, 0.0f);
 		TestObjectives.Add(Obj);
 	}
 
 	// Execute: Run MCTS assignment (100 simulations for fast test)
-	FObjectiveAssignment Assignment = MCTS->RunObjectiveAssignment(
+	// v6.0: Pass empty cached observations (tests don't have real world)
+	TMap<AActor*, FObservationElement> EmptyCachedObs;
+	FMissionAssignment Assignment = MCTS->RunMissionAssignment(
 		TestAgents,
 		TestObjectives,
-		100  // Reduced simulation count for unit test
+		100,  // Reduced simulation count for unit test
+		EmptyCachedObs
 	);
 
 	// Verify: All agents assigned
-	TestTrue("All agents assigned", Assignment.AgentToObjective.Num() == TestAgents.Num());
+	TestTrue("All agents assigned", Assignment.AgentToMission.Num() == TestAgents.Num());
 
 	// Verify: Value in valid range
 	TestTrue("Value in range [-1, 1]",
@@ -74,7 +77,7 @@ bool FMCTSAssignmentTest::RunTest(const FString& Parameters)
 
 	// Verify: No null assignments
 	bool bHasNullAssignment = false;
-	for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+	for (const auto& [Agent, Objective] : Assignment.AgentToMission)
 	{
 		if (!Agent || !Objective)
 		{
@@ -91,9 +94,9 @@ bool FMCTSAssignmentTest::RunTest(const FString& Parameters)
  * Unit Test: MCTS Assignment Quality
  *
  * Validates that MCTS makes reasonable assignments:
- * - High-priority objectives get assigned first
- * - Multiple agents can be assigned to same objective
- * - No agent assigned to multiple objectives
+ * - High-priority Missions get assigned first
+ * - Multiple agents can be assigned to same Mission
+ * - No agent assigned to multiple Missions
  */
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCTSAssignmentQualityTest, "CORTEX.MCTS.AssignmentQuality",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
@@ -103,40 +106,41 @@ bool FMCTSAssignmentQualityTest::RunTest(const FString& Parameters)
 	// Setup
 	UMCTS* MCTS = NewObject<UMCTS>();
 	TArray<AActor*> TestAgents;  // 4 agents
-	TArray<UObjective*> TestObjectives;  // 2 objectives (1 high-priority, 1 low)
+	TArray<UMission*> TestMissions;  // 2 Missions (1 high-priority, 1 low)
 
-	// Create objectives with different priorities
-	UObjective* HighPriorityObj = NewObject<UObjective>();
-	HighPriorityObj->Type = EObjectiveType::Capture;
+	// Create Missions with different priorities
+	UMission* HighPriorityObj = NewObject<UMission>();
+	HighPriorityObj->Type = EMissionType::Defend;
 	HighPriorityObj->Priority = 10;  // Very high
-	TestObjectives.Add(HighPriorityObj);
+	TestMissions.Add(HighPriorityObj);
 
-	UObjective* LowPriorityObj = NewObject<UObjective>();
-	LowPriorityObj->Type = EObjectiveType::Defend;
+	UMission* LowPriorityObj = NewObject<UMission>();
+	LowPriorityObj->Type = EMissionType::Defend;
 	LowPriorityObj->Priority = 3;  // Low
-	TestObjectives.Add(LowPriorityObj);
+	TestMissions.Add(LowPriorityObj);
 
 	// Execute
-	FObjectiveAssignment Assignment = MCTS->RunObjectiveAssignment(TestAgents, TestObjectives, 100);
+	TMap<AActor*, FObservationElement> EmptyCachedObs;
+	FMissionAssignment Assignment = MCTS->RunMissionAssignment(TestAgents, TestMissions, 100, EmptyCachedObs);
 
-	// Verify: High-priority objective gets at least 2 agents
+	// Verify: High-priority Mission gets at least 2 agents
 	int32 HighPriorityAgentCount = 0;
-	for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+	for (const auto& [Agent, Mission] : Assignment.AgentToMission)
 	{
-		if (Objective == HighPriorityObj)
+		if (Mission == HighPriorityObj)
 		{
 			HighPriorityAgentCount++;
 		}
 	}
-	TestTrue("High-priority objective gets multiple agents", HighPriorityAgentCount >= 2);
+	TestTrue("High-priority Mission gets multiple agents", HighPriorityAgentCount >= 2);
 
-	// Verify: Each agent assigned to exactly one objective
+	// Verify: Each agent assigned to exactly one Mission
 	TSet<AActor*> AssignedAgents;
-	for (const auto& [Agent, Objective] : Assignment.AgentToObjective)
+	for (const auto& [Agent, Mission] : Assignment.AgentToMission)
 	{
 		bool bAlreadyAssigned = false;
 		AssignedAgents.Add(Agent, &bAlreadyAssigned);
-		TestFalse("Agent not assigned to multiple objectives", bAlreadyAssigned);
+		TestFalse("Agent not assigned to multiple Missions", bAlreadyAssigned);
 	}
 
 	return true;
@@ -181,14 +185,16 @@ bool FMCTSAssignmentLatencyTest::RunTest(const FString& Parameters)
 	// Setup
 	UMCTS* MCTS = NewObject<UMCTS>();
 	TArray<AActor*> TestAgents;  // 4 agents
-	TArray<UObjective*> TestObjectives;  // 3 objectives
+	TArray<UMission*> TestMissions;  // 3 Missions
 
 	// Execute with timing
+	TMap<AActor*, FObservationElement> EmptyCachedObs;
 	double StartTime = FPlatformTime::Seconds();
-	FObjectiveAssignment Assignment = MCTS->RunObjectiveAssignment(
+	FMissionAssignment Assignment = MCTS->RunMissionAssignment(
 		TestAgents,
-		TestObjectives,
-		500  // Full simulation count for realistic test
+		TestMissions,
+		500,  // Full simulation count for realistic test
+		EmptyCachedObs
 	);
 	double EndTime = FPlatformTime::Seconds();
 	double ElapsedMs = (EndTime - StartTime) * 1000.0;

@@ -99,7 +99,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
  * 2. FollowerAgentComponent uses SendEventToLeader()
  * 3. Messages are delivered immediately or queued based on priority
  *
- * Note: v3.0 uses ObjectiveManager for objective assignment (not CommunicationManager)
+ * Note: v3.0 uses MissionManager for Mission assignment (not CommunicationManager)
  */
 UCLASS(BlueprintType)
 class GAMEAI_PROJECT_API UTeamCommunicationManager : public UObject

@@ -3,7 +3,7 @@
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeContext.h"
-#include "Team/Objective.h"
+#include "Team/Mission.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -21,29 +21,23 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 	UFollowerStateTreeComponent* StateTreeComp = QueryOwner->FindComponentByClass<UFollowerStateTreeComponent>();
 	if (StateTreeComp)
 	{
-		// Access CurrentObjective from shared context
+		// Access CurrentMission from shared context
 		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-		if (SharedContext.CurrentObjective)
+		if (SharedContext.CurrentMission)
 		{
 			// Get objective target location
-			ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
+			ObjectiveLocation = SharedContext.CurrentMission->TargetLocation;
 
 			// Fallback: If TargetLocation is zero, try TargetActor location
-			if (ObjectiveLocation.IsNearlyZero() && SharedContext.CurrentObjective->TargetActor)
+			if (ObjectiveLocation.IsNearlyZero() && SharedContext.CurrentMission->TargetActor)
 			{
-				ObjectiveLocation = SharedContext.CurrentObjective->TargetActor->GetActorLocation();
+				ObjectiveLocation = SharedContext.CurrentMission->TargetActor->GetActorLocation();
 			}
 		}
 	}
 	else
 	{
-		// Testing mode: Fallback to finding actor by tag (for EQS Testing Pawn)
-		TArray<AActor*> FoundObjectives;
-		UGameplayStatics::GetAllActorsWithTag(QueryOwner->GetWorld(), FName("Objective"), FoundObjectives);
-		if (FoundObjectives.Num() > 0 && IsValid(FoundObjectives[0]))
-		{
-			ObjectiveLocation = FoundObjectives[0]->GetActorLocation();
-		}
+		UE_LOG(LogTemp, Error, TEXT("Failed StateTreeComp check"))
 	}
 
 	// Set objective location as context data

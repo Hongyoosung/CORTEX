@@ -6,30 +6,11 @@ fill_proto() iterates through ALL sub-spaces and expects action data for each ke
 Each agent's action is duplicated across all its component keys.
 
 v6.0 Changes (MCTS-RL Coordination Architecture):
-- ARCHITECTURE: MCTS assigns objectives → RL selects strategies (4-action space)
-- Observation: 68 features (64 base + 4 objective context)
+- ARCHITECTURE: MCTS assigns Missions → RL selects strategies (4-action space)
+- Observation: 68 features (64 base + 4 Mission context)
 - Action: Discrete(4) - Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
 - Removed multi-discrete action space (Position/Target/Fire now handled by rules)
 - Simplified action masking (all strategies always valid)
-
-v8.0 Changes (Continuous Training):
-- FEATURE: Team elimination no longer ends episodes
-- UE5 respawns eliminated teams after 5 seconds (configurable)
-- Winning teams earn objective proximity rewards (+0.5/sec within 5m)
-- Episodes only end on timeout (10 minutes default), not team wipe
-- This enables continuous attack/defend role switching for richer training
-
-v7.6 Changes:
-- FIXED: "Batches sent to postprocessing must only contain steps from a single trajectory"
-- Root cause: Individual agents dying mid-episode were marked terminated=True, but
-  episode continued for other agents. RLlib saw mixed trajectories in same batch.
-- Solution: Track alive/dead agents separately. Dead agents get zero obs/rewards but
-  terminated=False until the ENTIRE episode ends. All agents terminate/truncate together.
-- Added _alive_agents and _dead_agents sets to track agent lifecycle
-
-v7.5 Changes:
-- UE5's ScholaAgentComponent::Think() is the rate limiter (not Python)
-- Python's poll() blocks until UE5 sends new observations
 
 Architecture:
 1. UE5's Think() has time-based throttle (DecisionInterval = 1.0s default)
@@ -124,7 +105,7 @@ if SCHOLA_AVAILABLE:
             if hasattr(self.schola_env, 'ids'):
                 self._update_agent_map()
 
-            # Space 정의 (v6.0: 64 core observation + 4 objective context = 68 features)
+            # Space 정의 (v6.0: 64 core observation + 4 Mission context = 68 features)
             # Observation breakdown:
             # - Agent State (7): pos(3), vel(3), health(1)
             # - Combat (1): enemy_dist(1)
@@ -132,7 +113,7 @@ if SCHOLA_AVAILABLE:
             # - Enemy Info (16): count(1), nearby(15)
             # - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
             # - Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
-            # - Objective Context (4): type_encoded(1), distance(1), direction(2)
+            # - Mission Context (4): type_encoded(1), distance(1), direction(2)
             # v6.0: Using RLConfig for consistency with C++ runtime
             self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
             self._action_space = spaces.Discrete(RLConfig.NUM_STRATEGIES)  # v6.0: Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
@@ -246,7 +227,7 @@ if SCHOLA_AVAILABLE:
             Returns:
                 np.array: [1, 1, 1, 1] - All strategies valid
             """
-            # v6.0: All strategies always valid (MCTS assigns objectives, RL selects strategy)
+            # v6.0: All strategies always valid (MCTS assigns Missions, RL selects strategy)
             # No context-dependent masking needed
             return np.array([1, 1, 1, 1], dtype=np.int8)  # [Assault, Defend, Support, Retreat]
 
@@ -264,9 +245,9 @@ if SCHOLA_AVAILABLE:
             [40-55]: enemy info (count + nearby)
             [56-59]: tactical (cover)
             [60-63]: support context (ally info)
-            [64]: objective_type_encoded
-            [65]: objective_distance
-            [66-67]: objective_direction
+            [64]: Mission_type_encoded
+            [65]: Mission_distance
+            [66-67]: Mission_direction
 
             Args:
                 base_reward: Raw reward from UE5
@@ -544,7 +525,7 @@ if SCHOLA_AVAILABLE:
                     if flat_id in self._dead_agents:
                         # Dead agents get zero obs/rewards but NOT terminated (yet)
                         # They'll be terminated when the whole episode ends
-                        obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 objective context
+                        obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
                         reward_dict[flat_id] = 0.0
                         terminated_dict[flat_id] = False  # Will be set True when episode ends
                         truncated_dict[flat_id] = False
@@ -563,7 +544,7 @@ if SCHOLA_AVAILABLE:
                                 obs_val = agent_obs_data
                             obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                         else:
-                            obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 objective context
+                            obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
 
                         # Get base reward from UE5
                         base_reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
@@ -571,6 +552,9 @@ if SCHOLA_AVAILABLE:
                         # Apply reward shaping for dense learning signals
                         shaped_reward = self._shape_reward(base_reward, obs_dict[flat_id], flat_id)
                         reward_dict[flat_id] = shaped_reward
+
+                        # In sbdapm_env.py step() function around line 569, add logging:
+                        print(f"[REWARD DEBUG] Agent {flat_id}: base_reward={base_reward:.2f}, shaped={shaped_reward:.2f}")
 
                         # v7.7: Accumulate episode rewards
                         if flat_id not in self._episode_rewards:
@@ -629,7 +613,7 @@ if SCHOLA_AVAILABLE:
                 traceback.print_exc()
 
                 return (
-                    {aid: np.zeros(68, dtype=np.float32) for aid in self._agent_ids},  # v6.0: 64 obs + 4 objective context
+                    {aid: np.zeros(68, dtype=np.float32) for aid in self._agent_ids},  # v6.0: 64 obs + 4 Mission context
                     {aid: 0.0 for aid in self._agent_ids},
                     {aid: True for aid in self._agent_ids} | {"__all__": True},
                     {aid: False for aid in self._agent_ids} | {"__all__": True},
@@ -655,7 +639,7 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 objective context
+                    obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
 
                 # v6.0: Add action masking on reset (all strategies valid)
                 action_mask = self._get_action_mask(obs_dict[flat_id])

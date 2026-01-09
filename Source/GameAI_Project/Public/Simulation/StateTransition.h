@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Team/Objective.h"
+#include "Team/Mission.h"
 #include "RL/RLTypes.h"
 #include "StateTransition.generated.h"
 
@@ -97,16 +97,16 @@ struct FTeamStateDelta
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Transition")
 	float PredictedDamageTaken = 0.0f;
 
-	// Objective progress delta
+	// Mission progress delta
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Transition")
-	float ObjectiveProgressDelta = 0.0f;
+	float MissionProgressDelta = 0.0f;
 
 	// Tactical outcome predictions
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Transition")
 	float EngagementOutcome = 0.0f;  // Win probability [-1, 1]
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Transition")
-	float ObjectiveProgress = 0.0f;  // Objective completion estimate [0, 1]
+	float MissionProgress = 0.0f;  // Mission completion estimate [0, 1]
 
 	// Time elapsed for this transition (seconds)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Transition")
@@ -124,9 +124,9 @@ struct FTeamStateDelta
 		, PredictedDeaths(0)
 		, PredictedDamageDealt(0.0f)
 		, PredictedDamageTaken(0.0f)
-		, ObjectiveProgressDelta(0.0f)
+		, MissionProgressDelta(0.0f)
 		, EngagementOutcome(0.0f)
-		, ObjectiveProgress(0.0f)
+		, MissionProgress(0.0f)
 		, DeltaTime(1.0f)
 		, Confidence(1.0f)
 	{}
@@ -141,9 +141,9 @@ struct FTeamStateDelta
 		PredictedDeaths = 0;
 		PredictedDamageDealt = 0.0f;
 		PredictedDamageTaken = 0.0f;
-		ObjectiveProgressDelta = 0.0f;
+		MissionProgressDelta = 0.0f;
 		EngagementOutcome = 0.0f;
-		ObjectiveProgress = 0.0f;
+		MissionProgress = 0.0f;
 		DeltaTime = 1.0f;
 		Confidence = 1.0f;
 	}
@@ -195,11 +195,11 @@ struct FActionEncoding
 {
 	GENERATED_BODY()
 
-	// Objective type (one-hot encoded)
+	// Mission type (one-hot encoded)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encoding")
-	TArray<float> ObjectiveTypeOneHot;
+	TArray<float> MissionTypeOneHot;
 
-	// Objective parameters (normalized)
+	// Mission parameters (normalized)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Encoding")
 	FVector TargetLocationNormalized = FVector::ZeroVector;
 
@@ -215,8 +215,8 @@ struct FActionEncoding
 		, bHasTargetActor(false)
 	{}
 
-	// Encode objective to feature vector
-	static FActionEncoding EncodeObjective(const UObjective* Objective);
+	// Encode Mission to feature vector
+	static FActionEncoding EncodeMission(const UMission* Mission);
 
 	/** v6.0: Encode strategy action (simplified from 8D to 1D discrete) */
 	static TArray<float> EncodeAction(const FMacroAction& Action);

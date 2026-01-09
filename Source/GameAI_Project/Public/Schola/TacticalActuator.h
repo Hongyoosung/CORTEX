@@ -23,7 +23,6 @@ class UFollowerStateTreeComponent;
  * Integration:
  * - Python RLlib environment → Schola gRPC → TacticalActuator::TakeAction()
  * - Parses discrete indices into FMacroAction struct
- * - Stores in FollowerStateTreeContext for STTask_ExecuteObjective
  */
 UCLASS(BlueprintType, meta = (DisplayName = "Tactical Actuator"))
 class GAMEAI_PROJECT_API UTacticalActuator : public UDiscreteActuator

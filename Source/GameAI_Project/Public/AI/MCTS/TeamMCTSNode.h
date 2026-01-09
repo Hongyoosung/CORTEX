@@ -6,7 +6,7 @@
 #include "Team/TeamTypes.h"
 
 class FTeamMCTSNode;
-class UObjective;
+class UMission;
 
 /**
  * Team-level MCTS Node for strategic command search
@@ -20,8 +20,8 @@ class GAMEAI_PROJECT_API FTeamMCTSNode : public TSharedFromThis<FTeamMCTSNode>
 public:
 	FTeamMCTSNode();
 
-	/** Initialize node with parent and objective assignment (v3.0) */
-	void Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, UObjective*>& InObjectives);
+	/** Initialize node with parent and Mission assignment (v3.0) */
+	void Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, UMission*>& InMissions);
 
 	/** Check if this node is fully expanded (all actions tried) */
 	bool IsFullyExpanded() const;
@@ -38,8 +38,8 @@ public:
 	/** Backpropagate reward from simulation */
 	void Backpropagate(float Reward);
 
-	/** Get the objective assignment for this node (v3.0) */
-	TMap<TObjectPtr<AActor>, TObjectPtr<UObjective>> GetObjectives() const { return Objectives; }
+	/** Get the Mission assignment for this node (v3.0) */
+	TMap<TObjectPtr<AActor>, TObjectPtr<UMission>> GetMissions() const { return Missions; }
 
 	/** Calculate UCT value for this node */
 	float CalculateUCTValue(float ExplorationParam) const;
@@ -63,8 +63,8 @@ public:
 	/** Critical section for thread-safe updates (parallel MCTS) */
 	mutable FCriticalSection NodeMutex;
 
-	/** Objective assignment for this node (follower -> objective) (v3.0) */
-	TMap<TObjectPtr<AActor>, TObjectPtr<UObjective>> Objectives;
+	/** Mission assignment for this node (follower -> Mission) (v3.0) */
+	TMap<TObjectPtr<AActor>, TObjectPtr<UMission>> Missions;
 
 	/** Total reward accumulated from simulations */
 	float TotalReward;
@@ -75,8 +75,8 @@ public:
 	/** Depth of this node in the tree (0 = root) */
 	int32 Depth;
 
-	/** List of untried objective combinations (v3.0) */
-	TArray<TMap<AActor*, UObjective*>> UntriedActions;
+	/** List of untried Mission combinations (v3.0) */
+	TArray<TMap<AActor*, UMission*>> UntriedActions;
 
 	/** Action priors from RL policy (v3.0 Sprint 4)
 	 * Parallel array to UntriedActions - guides MCTS exploration

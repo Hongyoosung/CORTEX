@@ -67,7 +67,7 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, f
 	}
 
 	// v6.0: Simplified aiming - aim at PrimaryTarget if set (by STTask_ExecuteFire)
-	// or face objective direction if no target
+	// or face Mission direction if no target
 
 	// Configure character movement based on whether we have a target
 	UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
@@ -102,13 +102,13 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, f
 		InstanceData.AIController->SetControlRotation(DesiredRotation);
 		InstanceData.AIController->SetFocus(SharedContext.PrimaryTarget);
 	}
-	// Otherwise face objective direction
-	else if (InstanceData.AIController && SharedContext.CurrentObjective && !SharedContext.CurrentObjective->TargetLocation.IsNearlyZero())
+	// Otherwise face Mission direction
+	else if (InstanceData.AIController && SharedContext.CurrentMission && !SharedContext.CurrentMission->TargetLocation.IsNearlyZero())
 	{
-		FVector ObjectiveLocation = SharedContext.CurrentObjective->TargetLocation;
+		FVector MissionLocation = SharedContext.CurrentMission->TargetLocation;
 		FVector PawnLocation = Pawn->GetActorLocation();
-		FVector DirectionToObjective = (ObjectiveLocation - PawnLocation).GetSafeNormal();
-		FRotator DesiredRotation = DirectionToObjective.Rotation();
+		FVector DirectionToMission = (MissionLocation - PawnLocation).GetSafeNormal();
+		FRotator DesiredRotation = DirectionToMission.Rotation();
 
 		InstanceData.AIController->SetControlRotation(DesiredRotation);
 		InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);

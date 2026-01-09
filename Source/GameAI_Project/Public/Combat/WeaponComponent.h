@@ -95,7 +95,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnWeaponOutOfAmmo);
  * 4. Call FireAtTarget() or FireInDirection() from StateTree/BehaviorTree
  *
  * Integration:
- * - Used by STTask_ExecuteObjective for combat
+ * - Used by STTask_ExecuteMission for combat
  * - Spawns AProjectileBase actors
  * - Integrates with HealthComponent for damage dealing
  */

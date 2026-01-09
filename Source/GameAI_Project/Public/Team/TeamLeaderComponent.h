@@ -9,24 +9,24 @@
 // Forward declarations
 class UTeamCommunicationManager;
 class UMCTS;
-class UObjectiveManager;
-class UObjective;
+class UMissionManager;
+class UMission;
 
 /**
  * Delegate for strategic decision events (v3.0)
  */
 USTRUCT(BlueprintType)
-struct FObjectiveAssignmentMap
+struct FMissionAssignmentMap
 {
 	GENERATED_BODY()
 
 	UPROPERTY(BlueprintReadWrite)
-	TMap<AActor*, UObjective*> Objectives;
+	TMap<AActor*, UMission*> Missions;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnStrategicDecisionMade,
-	FObjectiveAssignmentMap, Objectives
+	FMissionAssignmentMap, Missions
 );
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -165,16 +165,16 @@ public:
 	FTeamObservation BuildTeamObservation();
 
 
-	/** Run objective-based decision-making (sync) - v6.0 MCTS Coordination */
+	/** Run mission-based decision-making (sync) - v6.0 MCTS Coordination */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
-	void RunObjectiveDecisionMaking();
+	void RunMissionDecisionMaking();
 
-	/** Run objective-based decision-making (async) - v6.0 MCTS Coordination */
+	/** Run mission-based decision-making (async) - v6.0 MCTS Coordination */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
-	void RunObjectiveDecisionMakingAsync();
+	void RunMissionDecisionMakingAsync();
 
-	/** Apply objective assignment to followers (v6.0) */
-	void ApplyObjectiveAssignment(const FObjectiveAssignment& Assignment);
+	/** Apply mission assignment to followers (v6.0) */
+	void ApplyMissionAssignment(const FMissionAssignment& Assignment);
 
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
 	bool IsMCTSRunning() const { return bMCTSRunning; }
@@ -224,12 +224,12 @@ public:
 	bool IsRunningMCTS() const { return bMCTSRunning; }
 
 	/**
-	 * ÅÂ±×¸¦ ±â¹ÝÀ¸·Î ¾×ÅÍ¸¦ Ã£°í ¸ñÇ¥¸¦ µî·ÏÇÏ´Â °ø¿ë ÇïÆÛ ÇÔ¼ö
-	 * @param TagName °Ë»öÇÒ ¾×ÅÍÀÇ ÅÂ±×
-	 * @param ObjectiveCreator °¢ ¾×ÅÍ¿¡ ´ëÇØ ¸ñÇ¥¸¦ »ý¼ºÇÏ´Â ·ÎÁ÷À» ´ãÀº ¶÷´Ù ÇÔ¼ö (nullptr ¹ÝÈ¯ ½Ã ½ºÅµ)
-	 * @return ¹ß°ß ¹× µî·ÏµÈ ¸ñÇ¥ÀÇ ¼ö
+	 * ï¿½Â±×¸ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Í¸ï¿½ Ã£ï¿½ï¿½ ï¿½ï¿½Ç¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ô¼ï¿½
+	 * @param TagName ï¿½Ë»ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Â±ï¿½
+	 * @param MissionCreator ï¿½ï¿½ ï¿½ï¿½ï¿½Í¿ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ç¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ô¼ï¿½ (nullptr ï¿½ï¿½È¯ ï¿½ï¿½ ï¿½ï¿½Åµ)
+	 * @return ï¿½ß°ï¿½ ï¿½ï¿½ ï¿½ï¿½Ïµï¿½ ï¿½ï¿½Ç¥ï¿½ï¿½ ï¿½ï¿½
 	 */
-	int32 FindAndRegisterObjectives(FName TagName, TFunctionRef<UObjective* (AActor*)> ObjectiveCreator);
+	int32 FindAndRegisterMissions(FName TagName, TFunctionRef<UMission* (AActor*)> MissionCreator);
 
 
 private:
@@ -242,8 +242,8 @@ private:
 	/** Initialize MCTS engine */
 	void InitializeMCTS();
 
-	/** Discover objectives from tagged actors in the level (v3.0) */
-	void DiscoverWorldObjectives();
+	/** Discover missions from tagged actors in the level (v3.0) */
+	void DiscoverWorldMissions();
 
 
 public:
@@ -319,9 +319,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
 	TArray<AActor*> Followers;
 
-	/** Current objectives for each follower (v3.0) */
+	/** Current missions for each follower (v3.0) */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
-	TMap<AActor*, UObjective*> CurrentObjectives;
+	TMap<AActor*, UMission*> CurrentMissions;
 
 	/** Is MCTS currently running? */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
@@ -351,9 +351,9 @@ public:
 	UPROPERTY()
 	UMCTS* StrategicMCTS;
 
-	/** Objective manager (v3.0 Combat Refactoring) */
+	/** Mission manager (v3.0 Combat Refactoring) */
 	UPROPERTY(BlueprintReadWrite, Category = "Team Leader|Components")
-	UObjectiveManager* ObjectiveManager;
+	UMissionManager* MissionManager;
 
 	/** Curriculum manager for MCTS-guided RL training (v3.0 Sprint 3) */
 	UPROPERTY(BlueprintReadWrite, Category = "Team Leader|Components")

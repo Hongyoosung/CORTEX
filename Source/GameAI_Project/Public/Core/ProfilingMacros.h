@@ -31,8 +31,8 @@ DECLARE_STATS_GROUP(TEXT("AI"), STATGROUP_CORTEXAI, STATCAT_Advanced);
 // MCTS Performance Stats
 // ========================================
 
-/** MCTS: Complete objective assignment process */
-DECLARE_CYCLE_STAT_EXTERN(TEXT("MCTS: Objective Assignment"), STAT_MCTSAssignment, STATGROUP_AI, );
+/** MCTS: Complete Mission assignment process */
+DECLARE_CYCLE_STAT_EXTERN(TEXT("MCTS: Mission Assignment"), STAT_MCTSAssignment, STATGROUP_AI, );
 
 /** MCTS: Selection phase (traverse tree to leaf) */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("MCTS: Selection"), STAT_MCTSSelection, STATGROUP_AI, );
@@ -59,7 +59,7 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Batched Inference"), STAT_RLBatchedInference
 /** RL: Single agent inference (fallback) */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Single Inference"), STAT_RLSingleInference, STATGROUP_AI, );
 
-/** RL: Build network input (observation + objective context) */
+/** RL: Build network input (observation + Mission context) */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Build Network Input"), STAT_RLBuildInput, STATGROUP_AI, );
 
 /** RL: Forward pass through network */
@@ -106,8 +106,8 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Observation: Enemy Info"), STAT_ObservationEnemy
 /** Observation: Tactical analysis (cover, threats) */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Observation: Tactical Analysis"), STAT_ObservationTactical, STATGROUP_AI, );
 
-/** Observation: Objective context building (v6.0) */
-DECLARE_CYCLE_STAT_EXTERN(TEXT("Observation: Objective Context"), STAT_ObservationObjectiveContext, STATGROUP_AI, );
+/** Observation: Mission context building (v6.0) */
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Observation: Mission Context"), STAT_ObservationMissionContext, STATGROUP_AI, );
 
 // ========================================
 // Team Coordination Performance Stats
@@ -132,8 +132,8 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Follower: Execute Strategy"), STAT_FollowerExecu
 /** Reward: Complete reward calculation */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Calculate"), STAT_RewardCalculate, STATGROUP_AI, );
 
-/** Reward: Objective progress reward (v6.0) */
-DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Objective Progress"), STAT_RewardObjectiveProgress, STATGROUP_AI, );
+/** Reward: Mission progress reward (v6.0) */
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Mission Progress"), STAT_RewardMissionProgress, STATGROUP_AI, );
 
 /** Reward: Strategy-specific reward */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Strategy Reward"), STAT_RewardStrategy, STATGROUP_AI, );

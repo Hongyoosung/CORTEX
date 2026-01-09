@@ -8,7 +8,7 @@
  * EQS Context that provides the current objective's target location
  * Used by tactical queries (ForwardCover, Advance, etc.) to orient toward strategic goals
  *
- * Production Mode: Reads CurrentObjective.TargetLocation from FollowerStateTreeContext
+ * Production Mode: Reads CurrentMission.TargetLocation from FollowerStateTreeContext
  * Testing Mode: Fallback to searching actors with tag "Objective" (for EQS Testing Pawn)
  */
 UCLASS()

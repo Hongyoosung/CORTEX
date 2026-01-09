@@ -27,11 +27,11 @@ class UFollowerAgentComponent;
  * 3. Set FollowerComponent reference (auto-found if on same actor)
  * 4. Component auto-starts State Tree on BeginPlay
  *
- * State Tree Asset Structure (Sprint 3 - Objective-Driven):
+ * State Tree Asset Structure (Sprint 3 - Mission-Driven):
  * Root (Selector)
  * ├─ [IsAlive == false] DeadState
- * ├─ [CurrentObjective != null] ExecuteObjectiveState
- * │  └─ ExecuteObjective (universal task, handles all objective types)
+ * ├─ [CurrentMission != null] ExecuteMissionState
+ * │  └─ ExecuteMission (universal task, handles all Mission types)
  * └─ IdleState
  *
  * Evaluators (Global):
@@ -110,9 +110,9 @@ protected:
 	/** Bind to follower component events */
 	void BindToFollowerEvents();
 
-	/** Handle objective received from leader (v3.0) */
+	/** Handle Mission received from leader (v3.0) */
 	UFUNCTION()
-	void OnObjectiveReceived(UObjective* Objective);
+	void OnMissionReceived(UMission* Mission);
 
 	/** Handle controller changed (for Schola Trainer possession) */
 	UFUNCTION()
@@ -156,8 +156,8 @@ public:
 	// STATE TREE EVENTS (for event-driven transitions)
 	//--------------------------------------------------------------------------
 
-	/** Event tag: Objective received */
-	static const FGameplayTag Event_ObjectiveReceived;
+	/** Event tag: Mission received */
+	static const FGameplayTag Event_MissionReceived;
 
 	/** Event tag: Follower died */
 	static const FGameplayTag Event_FollowerDied;

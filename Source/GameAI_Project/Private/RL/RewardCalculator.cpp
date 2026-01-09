@@ -4,7 +4,8 @@
 #include "Team/FollowerAgentComponent.h"
 #include "Team/TeamLeaderComponent.h"
 #include "Combat/HealthComponent.h"
-#include "Team/Objective.h"
+#include "Team/Mission.h"
+#include "Team/ObjectiveActor.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -40,8 +41,8 @@ void URewardCalculator::BeginPlay()
 	// Reset state
 	AccumulatedIndividualReward = 0.0f;
 	AccumulatedCoordinationReward = 0.0f;
-	AccumulatedObjectiveReward = 0.0f;
-	LastObjectiveProgress = 0.0f;
+	AccumulatedMissionReward = 0.0f;
+	LastMissionProgress = 0.0f;
 }
 
 void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -60,26 +61,26 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	// Build current observation
 	FObservationElement CurrentObs = FollowerComponent->BuildLocalObservation();
 
-	// Add objective context to observation
-	if (CurrentObjective)
+	// Add Mission context to observation
+	if (CurrentMission)
 	{
-		CurrentObs.ObjectiveContext = FollowerComponent->BuildObjectiveContext(CurrentObjective);
+		CurrentObs.MissionContext = FollowerComponent->BuildMissionContext(CurrentMission);
 	}
 
 	float StepReward = 0.0f;
 
 	// === CONTINUOUS REWARDS (positioning, progress, strategy bonuses) ===
-	if (CurrentObjective && CurrentObjective->IsActive())
+	if (CurrentMission && CurrentMission->IsActive())
 	{
-		// Objective progress rewards (moving closer, holding position, etc.)
-		StepReward += CalculateObjectiveProgressReward(
-			CurrentObs.ObjectiveContext.Type,
+		// Mission progress rewards (moving closer, holding position, etc.)
+		StepReward += CalculateMissionProgressReward(
+			CurrentObs.MissionContext.Type,
 			PreviousObservation,
 			CurrentObs
 		);
 
-		// Alignment bonus (strategy matches objective)
-		StepReward += CalculateAlignmentBonus(CurrentStrategy, CurrentObs.ObjectiveContext.Type);
+		// Alignment bonus (strategy matches Mission)
+		StepReward += CalculateAlignmentBonus(CurrentStrategy, CurrentObs.MissionContext.Type);
 	}
 
 	// Strategy-specific continuous rewards (position holding, health recovery, etc.)
@@ -87,7 +88,7 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	StepReward += strategyReward;
 
 	// === EVENT-BASED REWARDS (kills, damage, death accumulated since last tick) ===
-	float eventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward + AccumulatedObjectiveReward;
+	float eventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward + AccumulatedMissionReward;
 	StepReward += eventRewards;
 
 	// Forward total reward to FollowerComponent (CRITICAL FIX)
@@ -106,7 +107,7 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	// Reset event accumulators (events are one-time, continuous rewards recalculate every tick)
 	AccumulatedIndividualReward = 0.0f;
 	AccumulatedCoordinationReward = 0.0f;
-	AccumulatedObjectiveReward = 0.0f;
+	AccumulatedMissionReward = 0.0f;
 	KillsSinceLastUpdate = 0;
 	DamageSinceLastUpdate = 0.0f;
 	DamageTakenSinceLastUpdate = 0.0f;
@@ -122,7 +123,7 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 } 
 
 //--------------------------------------------------------------------------
-// v6.0: OBJECTIVE-AWARE REWARD CALCULATION
+// v6.0: Mission-AWARE REWARD CALCULATION
 //--------------------------------------------------------------------------
 
 float URewardCalculator::CalculateReward(
@@ -133,24 +134,24 @@ float URewardCalculator::CalculateReward(
 	float Reward = 0.0f;
 
 	EStrategyType Strategy = Action.Strategy;
-	EObjectiveType Objective = CurrentObs.ObjectiveContext.Type;
+	EMissionType Mission = CurrentObs.MissionContext.Type;
 
 	// Strategy-specific rewards (base combat rewards)
 	Reward += CalculateStrategyReward(Strategy, PrevObs, CurrentObs);
 
-	// Objective-aware modifiers (CRITICAL for MCTS-RL alignment)
-	Reward += CalculateObjectiveProgressReward(Objective, PrevObs, CurrentObs);
+	// Mission-aware modifiers (CRITICAL for MCTS-RL alignment)
+	Reward += CalculateMissionProgressReward(Mission, PrevObs, CurrentObs);
 
-	// Alignment bonus: Strategy matches objective
-	Reward += CalculateAlignmentBonus(Strategy, Objective);
+	// Alignment bonus: Strategy matches Mission
+	Reward += CalculateAlignmentBonus(Strategy, Mission);
 
-	// Add accumulated global events (objective completion, death)
+	// Add accumulated global events (Mission completion, death)
 	Reward += AccumulatedIndividualReward;
-	Reward += AccumulatedObjectiveReward;
+	Reward += AccumulatedMissionReward;
 
 	// Reset accumulators
 	AccumulatedIndividualReward = 0.0f;
-	AccumulatedObjectiveReward = 0.0f;
+	AccumulatedMissionReward = 0.0f;
 	KillsSinceLastUpdate = 0;
 	DamageSinceLastUpdate = 0.0f;
 	DamageTakenSinceLastUpdate = 0.0f;
@@ -182,7 +183,7 @@ float URewardCalculator::CalculateStrategyReward(
 
 		case EStrategyType::Defend:
 			// Holding position bonus
-			if (IsOnObjective())
+			if (IsOnMission())
 			{
 				Reward += 2.0f; // Reward for maintaining defensive position
 			}
@@ -211,100 +212,79 @@ float URewardCalculator::CalculateStrategyReward(
 	return Reward;
 }
 
-float URewardCalculator::CalculateObjectiveProgressReward(
-	EObjectiveType Objective,
+float URewardCalculator::CalculateMissionProgressReward(
+	EMissionType Mission,
 	const FObservationElement& PrevObs,
 	const FObservationElement& CurrentObs)
 {
 	float Reward = 0.0f;
 
-	// Get objective context from observations
-	const FObjectiveContext& PrevCtx = PrevObs.ObjectiveContext;
-	const FObjectiveContext& CurrentCtx = CurrentObs.ObjectiveContext;
+	// v7.0: Volume-based rewards for durability system
+	// Remove distance-based logic, use capture volume presence
 
-	float DistancePrev = PrevCtx.Distance;
-	float DistanceCurrent = CurrentCtx.Distance;
-	float DistanceDelta = DistancePrev - DistanceCurrent; // Positive = moving closer
+	// Get Mission context from observations
+	const FMissionContext& CurrentCtx = CurrentObs.MissionContext;
 
-	switch (Objective)
+	// Check if we have a valid objective actor
+	AObjectiveActor* ObjectiveActor = Cast<AObjectiveActor>(CurrentCtx.TargetActor);
+	if (!ObjectiveActor)
 	{
-		case EObjectiveType::Capture:
-		{
-			// Reward for getting closer to objective
-			if (DistanceDelta > 0.0f)
-			{
-				Reward += DistanceDelta * RewardConfig::PROGRESS_PER_METER;
-			}
+		UE_LOG(LogTemp, Error, TEXT("No Objective Avtor!"));
+		return 0.0f;
+	}
 
-			// Bonus for reaching objective
-			if (DistanceCurrent < 0.2f) // Within normalized threshold
-			{
-				Reward += 10.0f;
-			}
-			break;
+	// v7.0: Volume-based rewards for ObjectiveActor
+	AActor* OwnerAgent = GetOwner();
+	if (!OwnerAgent)
+	{
+		return 0.0f;
+	}
+
+	// Check if agent is in capture volume
+	bool bIsInVolume = ObjectiveActor->IsAgentInVolume(OwnerAgent);
+
+	// Determine if this is friendly or hostile objective
+	UFollowerAgentComponent* Follower = OwnerAgent->FindComponentByClass<UFollowerAgentComponent>();
+	if (!Follower)
+	{
+		return 0.0f;
+	}
+
+	bool bIsFriendlyObjective = ObjectiveActor->IsFriendlyTo(Follower->GetTeamID());
+
+	if (bIsFriendlyObjective)
+	{
+		// === DEFENSE ROLE ===
+
+		// Defense Volume Retention Reward: Continuous reward while inside friendly volume
+		if (bIsInVolume)
+		{
+			Reward += 0.05f; // +0.05 per step (~0.5/sec at 10Hz)
 		}
 
-		case EObjectiveType::Defend:
+		// Defense Kill Reward: Bonus for killing enemy within friendly volume
+		if (KillsSinceLastUpdate > 0 && bIsInVolume)
 		{
-			// Reward for staying near objective
-			if (DistanceCurrent < 0.2f) // Within 10m (normalized)
-			{
-				Reward += 3.0f; // Continuous holding bonus
-			}
-			else
-			{
-				// Small penalty for leaving position
-				Reward -= 1.0f;
-			}
-			break;
+			Reward += 5.0f; // +2.0 to +5.0 bonus per spec
+		}
+	}
+	else
+	{
+		// === ASSAULT ROLE ===
+
+		// Assault Volume Retention Reward: Continuous reward while inside enemy volume
+		if (bIsInVolume)
+		{
+			Reward += 0.1f; // +0.1 per step (~1.0/sec at 10Hz)
 		}
 
-		case EObjectiveType::Support:
+		// Base Destruction Reward: Large reward for defeating enemy objective
+		if (ObjectiveActor->IsDefeated())
 		{
-			// Reward for being near protected ally
-			if (DistanceCurrent < 0.3f) // Within support range
-			{
-				Reward += 2.0f;
-			}
-
-			// Check if protected ally health improved
-			if (CurrentCtx.TargetActor && PrevCtx.TargetActor)
-			{
-				UHealthComponent* AllyHealth = CurrentCtx.TargetActor->FindComponentByClass<UHealthComponent>();
-				if (AllyHealth)
-				{
-					float currentAllyHealth = AllyHealth->GetCurrentHealth() / AllyHealth->GetMaxHealth();
-					// If ally survived and maintained health, bonus
-					if (currentAllyHealth >= ProtectedAllyLastHealth && currentAllyHealth > 0.0f)
-					{
-						Reward += 5.0f;
-					}
-					ProtectedAllyLastHealth = currentAllyHealth;
-				}
-			}
-			break;
+			Reward += 100.0f; // +50.0 to +100.0 per spec
+			UE_LOG(LogTemp, Warning, TEXT("[REWARD] '%s': ENEMY BASE DESTROYED → +100.0"),
+				*OwnerAgent->GetName());
 		}
-
-		case EObjectiveType::Retreat:
-		{
-			// Reward for increasing distance from danger
-			if (DistanceDelta < 0.0f) // Moving away (distance increasing)
-			{
-				Reward += -DistanceDelta * RewardConfig::PROGRESS_PER_METER;
-			}
-
-			// Bonus for reaching safe distance
-			if (DistanceCurrent > 0.8f) // Far from danger
-			{
-				Reward += 10.0f;
-			}
-			break;
-		}
-
-		case EObjectiveType::None:
-		default:
-			// No objective-specific rewards
-			break;
 	}
 
 	return Reward;
@@ -312,13 +292,14 @@ float URewardCalculator::CalculateObjectiveProgressReward(
 
 float URewardCalculator::CalculateAlignmentBonus(
 	EStrategyType Strategy,
-	EObjectiveType Objective)
+	EMissionType Mission)
 {
-	// Bonus for strategy matching objective intent
-	if ((Strategy == EStrategyType::Assault && Objective == EObjectiveType::Capture) ||
-		(Strategy == EStrategyType::Defend && Objective == EObjectiveType::Defend) ||
-		(Strategy == EStrategyType::Support && Objective == EObjectiveType::Support) ||
-		(Strategy == EStrategyType::Retreat && Objective == EObjectiveType::Retreat))
+	// v7.0: Removed Capture type - now Assault/Defend Missions determined by team ownership
+	// Bonus for strategy matching Mission intent
+	if ((Strategy == EStrategyType::Assault && Mission == EMissionType::Assault) ||
+		(Strategy == EStrategyType::Defend && Mission == EMissionType::Defend) ||
+		(Strategy == EStrategyType::Support && Mission == EMissionType::Support) ||
+		(Strategy == EStrategyType::Retreat && Mission == EMissionType::Retreat))
 	{
 		return 1.0f; // Small bonus for perfect alignment
 	}
@@ -338,11 +319,11 @@ void URewardCalculator::OnKillEnemy(AActor* Enemy)
 	// Base kill reward (will be added in CalculateStrategyReward during tick)
 	float killReward = RewardConfig::KILL_REWARD; // +15.0
 
-	// Bonus for kill while on objective
-	if (IsOnObjective())
+	// Bonus for kill while on Mission
+	if (IsOnMission())
 	{
-		AccumulatedCoordinationReward += 15.0f; // +15 for objective kill
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Kill on objective → +15.0 coordination bonus (base +15.0 kill)"),
+		AccumulatedCoordinationReward += 15.0f; // +15 for Mission kill
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Kill on Mission → +15.0 coordination bonus (base +15.0 kill)"),
 			*GetOwner()->GetName());
 	}
 	else
@@ -373,73 +354,73 @@ void URewardCalculator::OnTakeDamage(float Damage)
 
 void URewardCalculator::OnDeath()
 {
-	// v6.0: Unified death penalty (CRITICAL: Must be < objective rewards)
-	// This ensures agents will sacrifice themselves to complete objectives
+	// v6.0: Unified death penalty (CRITICAL: Must be < Mission rewards)
+	// This ensures agents will sacrifice themselves to complete Missions
 	AccumulatedIndividualReward += RewardConfig::DEATH_PENALTY;
 
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Death penalty %.1f (acceptable if objective achieved)"),
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Death penalty %.1f (acceptable if Mission achieved)"),
 		*GetOwner()->GetName(), RewardConfig::DEATH_PENALTY);
 }
 
-void URewardCalculator::OnObjectiveComplete(UObjective* Objective)
+void URewardCalculator::OnMissionComplete(UMission* Mission)
 {
-	if (!Objective)
+	if (!Mission)
 	{
 		return;
 	}
 
-	// v6.0: Objective-specific completion rewards
+	// v7.0: Mission-specific completion rewards (Capture replaced with Assault)
 	float CompletionReward = 0.0f;
 
-	switch (Objective->Type)
+	switch (Mission->Type)
 	{
-		case EObjectiveType::Capture:
-			CompletionReward = RewardConfig::OBJECTIVE_CAPTURE_REWARD;
+		case EMissionType::Assault:
+			CompletionReward = RewardConfig::OBJECTIVE_CAPTURE_REWARD; // Reuse capture reward for assault
 			break;
-		case EObjectiveType::Defend:
+		case EMissionType::Defend:
 			CompletionReward = RewardConfig::OBJECTIVE_DEFEND_REWARD;
 			break;
-		case EObjectiveType::Support:
-			CompletionReward = RewardConfig::OBJECTIVE_SUPPORT_REWARD;
+		case EMissionType::Support:
+			CompletionReward = RewardConfig::SUPPORT_REWARD;
 			break;
-		case EObjectiveType::Retreat:
-			CompletionReward = RewardConfig::OBJECTIVE_RETREAT_REWARD;
+		case EMissionType::Retreat:
+			CompletionReward = RewardConfig::RETREAT_REWARD;
 			break;
 		default:
 			CompletionReward = 50.0f; // Legacy default
 			break;
 	}
 
-	AccumulatedObjectiveReward += CompletionReward;
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Objective complete (%s) → +%.1f"),
-		*GetOwner()->GetName(), *UEnum::GetValueAsString(Objective->Type), CompletionReward);
+	AccumulatedMissionReward += CompletionReward;
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Mission complete (%s) → +%.1f"),
+		*GetOwner()->GetName(), *UEnum::GetValueAsString(Mission->Type), CompletionReward);
 }
 
-void URewardCalculator::OnObjectiveFailed(UObjective* Objective)
+void URewardCalculator::OnMissionFailed(UMission* Mission)
 {
-	// v6.0: Objective failure penalty (but still less than completion reward)
-	AccumulatedObjectiveReward -= 30.0f;
+	// v6.0: Mission failure penalty (but still less than completion reward)
+	AccumulatedMissionReward -= 30.0f;
 
-	if (Objective)
+	if (Mission)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Objective failed (%s) → -30.0"),
-			*GetOwner()->GetName(), *UEnum::GetValueAsString(Objective->Type));
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Mission failed (%s) → -30.0"),
+			*GetOwner()->GetName(), *UEnum::GetValueAsString(Mission->Type));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Objective failed → -30.0"),
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Mission failed → -30.0"),
 			*GetOwner()->GetName());
 	}
 }
 
-void URewardCalculator::SetCurrentObjective(UObjective* Objective)
+void URewardCalculator::SetCurrentMission(UMission* Mission)
 {
-	if (CurrentObjective != Objective)
+	if (CurrentMission != Mission)
 	{
-		CurrentObjective = Objective;
-		LastObjectiveProgress = Objective ? Objective->GetProgress() : 0.0f;
-		UE_LOG(LogTemp, Log, TEXT("[REWARD] Objective updated: %s"),
-			Objective ? *UEnum::GetValueAsString(Objective->Type) : TEXT("None"));
+		CurrentMission = Mission;
+		LastMissionProgress = Mission ? Mission->GetProgress() : 0.0f;
+		UE_LOG(LogTemp, Log, TEXT("[REWARD] Mission updated: %s"),
+			Mission ? *UEnum::GetValueAsString(Mission->Type) : TEXT("None"));
 	}
 }
 
@@ -460,9 +441,9 @@ void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
 // COORDINATION TRACKING
 //--------------------------------------------------------------------------
 
-bool URewardCalculator::IsOnObjective() const
+bool URewardCalculator::IsOnMission() const
 {
-	if (!CurrentObjective || !CurrentObjective->IsActive())
+	if (!CurrentMission || !CurrentMission->IsActive())
 	{
 		return false;
 	}
@@ -473,12 +454,12 @@ bool URewardCalculator::IsOnObjective() const
 		return false;
 	}
 
-	// Check distance to objective location
+	// Check distance to Mission location
 	FVector OwnerLocation = Owner->GetActorLocation();
-	FVector ObjectiveLocation = CurrentObjective->TargetLocation;
-	float Distance = FVector::Dist(OwnerLocation, ObjectiveLocation);
+	FVector MissionLocation = CurrentMission->TargetLocation;
+	float Distance = FVector::Dist(OwnerLocation, MissionLocation);
 
-	return Distance <= ObjectiveRadiusThreshold;
+	return Distance <= MissionRadiusThreshold;
 }
 
 bool URewardCalculator::IsInFormation() const

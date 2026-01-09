@@ -1,47 +1,48 @@
-// Objective.cpp - Base class for strategic objectives
+// Mission.cpp - Base class for strategic missions
+// v7.0: Renamed from Objective.cpp to distinguish from AObjectiveActor
 
-#include "Team/Objective.h"
+#include "Team/Mission.h"
 #include "GameFramework/Actor.h"
 
-UObjective::UObjective()
+UMission::UMission()
 {
-    Type = EObjectiveType::Assault;
+    Type = EMissionType::Assault;
     Priority = 5;
     TimeLimit = 0.0f;
-    Status = EObjectiveStatus::Inactive;
+    Status = EMissionStatus::Inactive;
     Progress = 0.0f;
     TimeActive = 0.0f;
     TimeRemaining = 0.0f;
 }
 
-void UObjective::Activate()
+void UMission::Activate()
 {
-    if (Status == EObjectiveStatus::Inactive)
+    if (Status == EMissionStatus::Inactive)
     {
-        Status = EObjectiveStatus::Active;
+        Status = EMissionStatus::Active;
         TimeActive = 0.0f;
         TimeRemaining = TimeLimit;
         Progress = 0.0f;
     }
 }
 
-void UObjective::Deactivate()
+void UMission::Deactivate()
 {
-    if (Status == EObjectiveStatus::Active)
+    if (Status == EMissionStatus::Active)
     {
-        Status = EObjectiveStatus::Inactive;
+        Status = EMissionStatus::Inactive;
     }
 }
 
-void UObjective::Cancel()
+void UMission::Cancel()
 {
-    Status = EObjectiveStatus::Cancelled;
+    Status = EMissionStatus::Cancelled;
     Progress = 0.0f;
 }
 
-void UObjective::Tick(float DeltaTime)
+void UMission::Tick(float DeltaTime)
 {
-    if (Status != EObjectiveStatus::Active)
+    if (Status != EMissionStatus::Active)
     {
         return;
     }
@@ -56,7 +57,7 @@ void UObjective::Tick(float DeltaTime)
     // Check for timeout
     if (HasTimedOut())
     {
-        Status = EObjectiveStatus::Failed;
+        Status = EMissionStatus::Failed;
         return;
     }
 
@@ -66,26 +67,26 @@ void UObjective::Tick(float DeltaTime)
     // Check completion/failure conditions
     if (CheckCompletion())
     {
-        Status = EObjectiveStatus::Completed;
+        Status = EMissionStatus::Completed;
         Progress = 1.0f;
     }
     else if (CheckFailure())
     {
-        Status = EObjectiveStatus::Failed;
+        Status = EMissionStatus::Failed;
     }
 }
 
-float UObjective::CalculateStrategicReward() const
+float UMission::CalculateStrategicReward() const
 {
     // Base reward calculation
     // Subclasses should override for specific reward logic
 
-    if (Status == EObjectiveStatus::Completed)
+    if (Status == EMissionStatus::Completed)
     {
         return 50.0f;  // Base completion reward
     }
 
-    if (Status == EObjectiveStatus::Failed)
+    if (Status == EMissionStatus::Failed)
     {
         return -25.0f;  // Failure penalty
     }
@@ -94,30 +95,30 @@ float UObjective::CalculateStrategicReward() const
     return Progress * 25.0f;
 }
 
-bool UObjective::CheckCompletion()
+bool UMission::CheckCompletion()
 {
     // Override in subclasses
     return false;
 }
 
-bool UObjective::CheckFailure()
+bool UMission::CheckFailure()
 {
     // Override in subclasses
     // Base implementation: timeout is only failure condition
     return HasTimedOut();
 }
 
-void UObjective::UpdateProgress(float DeltaTime)
+void UMission::UpdateProgress(float DeltaTime)
 {
     // Override in subclasses to calculate actual progress
 }
 
-bool UObjective::IsTargetValid() const
+bool UMission::IsTargetValid() const
 {
     return TargetActor != nullptr && IsValid(TargetActor);
 }
 
-bool UObjective::HasTimedOut() const
+bool UMission::HasTimedOut() const
 {
     return TimeLimit > 0.0f && TimeRemaining <= 0.0f;
 }
