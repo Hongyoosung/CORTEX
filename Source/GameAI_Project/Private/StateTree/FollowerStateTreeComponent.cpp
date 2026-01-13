@@ -714,6 +714,14 @@ void UFollowerStateTreeComponent::SendStateTreeEvent(const FGameplayTag& EventTa
 		return;
 	}
 
+	// UE 5.6: Validate tag before sending to prevent "invalid tag and payload" errors
+	if (!EventTag.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("UFollowerStateTreeComponent: Cannot send event - Invalid GameplayTag! Tag='%s'"),
+			*EventTag.ToString());
+		return;
+	}
+
 	FStateTreeEvent Event(EventTag, Payload, FName(TEXT("FollowerComponent")));
 
 	// 부모 클래스(UStateTreeComponent)의 SendStateTreeEvent 호출

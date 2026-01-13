@@ -2,6 +2,7 @@
 #include "Team/FollowerAgentComponent.h"
 #include "Team/MissionManager.h"
 #include "Team/Mission.h"
+#include "Team/ObjectiveActor.h"  // v7.0: For durability-based objectives
 #include "AI/MCTS/MCTS.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
 #include "Observation/ObservationElement.h"
@@ -289,36 +290,98 @@ void UTeamLeaderComponent::DiscoverWorldMissions()
 
 	int32 TotalMissions = 0;
 
-	// 1. CAPTURE ZONES (Priority: 8)
-	// 람다를 통해 구체적인 생성 로직만 전달합니다.
-	TotalMissions += FindAndRegisterMissions(FName("CaptureZone"), [&](AActor* Actor)
-		{
-			return MissionManager->CreateCaptureMission(Actor->GetActorLocation(), 8);
-		});
+	//==========================================================================
+	// v7.0: ObjectiveActor-Based Mission Discovery
+	// Replaces legacy tag-based system with explicit ObjectiveActor targeting
+	//==========================================================================
 
-	// 2. RESCUE ZONES (Priority: 7)
-	// 체력 검사 로직을 람다 안에 포함시킵니다.
+	// Find friendly objective (defend our base)
+	AObjectiveActor* FriendlyObjective = MissionManager->FindFriendlyObjective(TeamID);
+	if (FriendlyObjective)
+	{
+		UE_LOG(LogTemp, Display, TEXT("✅ [v7.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): Found friendly ObjectiveActor '%s' (OwnerTeamID=%d) at %s"),
+			*TeamName, TeamID,
+			*FriendlyObjective->GetName(),
+			FriendlyObjective->OwnerTeamID,
+			*FriendlyObjective->GetActorLocation().ToString());
+
+		// Create defend mission targeting friendly base
+		UMission* DefendMission = MissionManager->CreateMission(
+			EMissionType::Defend,
+			FriendlyObjective, // v7.0: Pass ObjectiveActor as TargetActor
+			FriendlyObjective->GetActorLocation(),
+			7 // Priority
+		);
+
+		if (DefendMission)
+		{
+			MissionManager->ActivateMission(DefendMission);
+			TotalMissions++;
+
+			// v7.0: Verify TargetActor is correctly set
+			UE_LOG(LogTemp, Display, TEXT("✅ [v7.0 MISSION] TeamLeader '%s': Created DEFEND mission - TargetActor=%s (IsObjectiveActor=%d)"),
+				*TeamName,
+				DefendMission->TargetActor ? *DefendMission->TargetActor->GetName() : TEXT("NULL"),
+				Cast<AObjectiveActor>(DefendMission->TargetActor) != nullptr);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [v7.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): No friendly ObjectiveActor found! Check level has ObjectiveActor with OwnerTeamID=%d"),
+			*TeamName, TeamID, TeamID);
+	}
+
+	// Find hostile objective (assault enemy base)
+	AObjectiveActor* HostileObjective = MissionManager->FindHostileObjective(TeamID);
+	if (HostileObjective)
+	{
+		UE_LOG(LogTemp, Display, TEXT("✅ [v7.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): Found hostile ObjectiveActor '%s' (OwnerTeamID=%d) at %s"),
+			*TeamName, TeamID,
+			*HostileObjective->GetName(),
+			HostileObjective->OwnerTeamID,
+			*HostileObjective->GetActorLocation().ToString());
+
+		// Create assault mission targeting enemy base
+		UMission* AssaultMission = MissionManager->CreateMission(
+			EMissionType::Assault,
+			HostileObjective, // v7.0: Pass ObjectiveActor as TargetActor
+			HostileObjective->GetActorLocation(),
+			8 // Priority
+		);
+
+		if (AssaultMission)
+		{
+			MissionManager->ActivateMission(AssaultMission);
+			TotalMissions++;
+
+			// v7.0: Verify TargetActor is correctly set
+			UE_LOG(LogTemp, Display, TEXT("✅ [v7.0 MISSION] TeamLeader '%s': Created ASSAULT mission - TargetActor=%s (IsObjectiveActor=%d)"),
+				*TeamName,
+				AssaultMission->TargetActor ? *AssaultMission->TargetActor->GetName() : TEXT("NULL"),
+				Cast<AObjectiveActor>(AssaultMission->TargetActor) != nullptr);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [v7.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): No hostile ObjectiveActor found! Check level has ObjectiveActor with OwnerTeamID!=%d"),
+			*TeamName, TeamID, TeamID);
+	}
+
+	//==========================================================================
+	// LEGACY: Rescue missions (keep for wounded allies)
+	//==========================================================================
 	TotalMissions += FindAndRegisterMissions(FName("RescueTarget"), [&](AActor* Actor)
 		{
 			UHealthComponent* HealthComp = Actor->FindComponentByClass<UHealthComponent>();
-			// 체력이 50% 미만인 경우에만 미션 생성, 아니면 nullptr 반환
 			if (HealthComp && HealthComp->GetCurrentHealth() < HealthComp->GetMaxHealth() * 0.5f)
 			{
-				// 상세 로그가 필요하다면 여기서 출력하거나, 공통 로그로 만족할 수 있습니다.
 				UE_LOG(LogTemp, Log, TEXT("Found Wounded Ally: %s (Health: %.1f)"), *Actor->GetName(), HealthComp->GetCurrentHealth());
-
 				return MissionManager->CreateRescueMission(Actor, 7);
 			}
 			return (UMission*)nullptr;
 		});
 
-	// 3. DEFEND ZONES (Priority: 7)
-	TotalMissions += FindAndRegisterMissions(FName("DefendZone"), [&](AActor* Actor)
-		{
-			return MissionManager->CreateDefendMission(Actor->GetActorLocation(), 7);
-		});
-
-	UE_LOG(LogTemp, Display, TEXT("✅ TeamLeader '%s': Auto-discovered %d world Missions"), *TeamName, TotalMissions);
+	UE_LOG(LogTemp, Display, TEXT("✅ TeamLeader '%s': Auto-discovered %d world Missions (v7.0 ObjectiveActor-based)"), *TeamName, TotalMissions);
 }
 
 //------------------------------------------------------------------------------
@@ -661,9 +724,16 @@ FTeamObservation UTeamLeaderComponent::BuildTeamObservation()
 	TArray<AActor*> AliveFollowers = GetAliveFollowers();
 	TArray<AActor*> Enemies = GetKnownEnemies();
 
+	// v7.0: Find friendly objective dynamically instead of using legacy property
+	AActor* FriendlyObjective = nullptr;
+	if (MissionManager)
+	{
+		FriendlyObjective = MissionManager->FindFriendlyObjective(TeamID);
+	}
+
 	FTeamObservation TeamObs = FTeamObservation::BuildFromTeam(
 		AliveFollowers,
-		ObjectiveActor,
+		FriendlyObjective,
 		Enemies
 	);
 
@@ -903,8 +973,10 @@ void UTeamLeaderComponent::ApplyMissionAssignment(const FMissionAssignment& Assi
 		{
 			FollowerComp->SetCurrentMission(Mission);
 
-			// v6.0: Build oMission description from type and target
+			// v7.0: Enhanced logging to verify ObjectiveActor propagation
 			FString MissionDesc = FString::Printf(TEXT("%s"), *UEnum::GetValueAsString(Mission->Type));
+			bool bHasObjectiveActor = Cast<AObjectiveActor>(Mission->TargetActor) != nullptr;
+
 			if (Mission->TargetActor)
 			{
 				MissionDesc += FString::Printf(TEXT(" (%s)"), *Mission->TargetActor->GetName());
@@ -915,14 +987,16 @@ void UTeamLeaderComponent::ApplyMissionAssignment(const FMissionAssignment& Assi
 					Mission->TargetLocation.X, Mission->TargetLocation.Y, Mission->TargetLocation.Z);
 			}
 
-			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v6.0] Agent '%s' → Mission '%s' (Priority=%d)"),
+			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v7.0] Agent '%s' → Mission '%s' (Priority=%d, TargetActor=%s, IsObjectiveActor=%d)"),
 				*Agent->GetName(),
 				*MissionDesc,
-				Mission->Priority);
+				Mission->Priority,
+				Mission->TargetActor ? *Mission->TargetActor->GetName() : TEXT("NULL"),
+				bHasObjectiveActor);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("🎯 [ASSIGNMENT v6.0] Agent '%s' has no FollowerAgentComponent!"),
+			UE_LOG(LogTemp, Error, TEXT("🎯 [ASSIGNMENT v7.0] Agent '%s' has no FollowerAgentComponent!"),
 				*Agent->GetName());
 		}
 	}

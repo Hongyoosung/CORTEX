@@ -229,8 +229,10 @@ float URewardCalculator::CalculateMissionProgressReward(
 	AObjectiveActor* ObjectiveActor = Cast<AObjectiveActor>(CurrentCtx.TargetActor);
 	if (!ObjectiveActor)
 	{
-		UE_LOG(LogTemp, Error, TEXT("No Objective Avtor!"));
-		return 0.0f;
+		// v7.0 INTEGRATION INCOMPLETE: TargetActor should be AObjectiveActor, but legacy missions pass nullptr
+		// TODO: Complete v7.0 integration - update mission creation to use ObjectiveManager
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD] No ObjectiveActor found in mission context - using fallback reward (v7.0 integration incomplete)"));
+		return 0.0f; // No objective-based rewards until v7.0 integration complete
 	}
 
 	// v7.0: Volume-based rewards for ObjectiveActor

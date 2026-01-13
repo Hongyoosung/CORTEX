@@ -307,9 +307,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team Leader|Config")
 	bool bAutoRegisterWithSimManager = true;
 
-	/** Objective actor for the team */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team Leader|Config")
-	AActor* ObjectiveActor = nullptr;
+	// v7.0: Legacy ObjectiveActor property removed - use MissionManager->FindFriendlyObjective(TeamID) instead
 
 	//--------------------------------------------------------------------------
 	// STATE

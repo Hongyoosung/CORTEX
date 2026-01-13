@@ -1,5 +1,6 @@
 #include "Team/FollowerAgentComponent.h"
 #include "Team/TeamLeaderComponent.h"
+#include "Team/ObjectiveActor.h"
 #include "RL/RLPolicyNetwork.h"
 #include "RL/RewardCalculator.h"
 #include "Perception/AgentPerceptionComponent.h"
@@ -193,8 +194,21 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	}
 
 	// ========================================
-	// v6.0 Phase 11: Event-Driven Strategy Updates
-	// Only update strategy on significant events (reduces inference cost by 75-83%)
+	// v7.0 HIERARCHICAL DECISION MAKING
+	//
+	// Layer 1 (Strategic - MCTS): Team Leader assigns MISSIONS to agents
+	//   - "Agent1 → Assault objective at Point A"
+	//   - "Agent2 → Defend objective at Point B"
+	//   - Runs async every 1.5s, doesn't block real-time execution
+	//
+	// Layer 2 (Tactical - RL): Follower selects STRATEGY based on mission + context
+	//   - Mission: Assault → Strategy: Assault (aggressive advance)
+	//   - BUT can deviate: Mission: Assault + Low Health → Strategy: Retreat
+	//   - Event-driven updates (reduces inference cost by 75-83%)
+	//
+	// Layer 3 (Execution - Rules): StateTree executes strategy via EQS + NavMesh
+	//   - Strategy: Assault → Position: ForwardCover → Movement: NavMesh path
+	//   - Deterministic, no learning
 	// ========================================
 	if (ShouldUpdateStrategy())
 	{
@@ -206,6 +220,8 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 		if (TacticalPolicy && bUseRLPolicy)
 		{
 			// Run RL inference (2-4ms if batched, otherwise 1-3ms)
+			// NOTE: RL can DEVIATE from mission type based on tactical situation
+			// Example: Assault mission + low health → Retreat strategy
 			EStrategyType NewStrategy = TacticalPolicy->GetStrategy(Obs, MissionCtx);
 
 			// Update strategy if changed
@@ -227,12 +243,11 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 		}
 		else
 		{
-			// Fallback heuristic if no RL policy (using cached component - v6.0 Phase 11 optimization)
-			if (CachedHealthComponent && CachedHealthComponent->GetHealthPercentage() < 0.3f)
-			{
-				CurrentStrategy = EStrategyType::Retreat;
-			}
-			else if (CurrentMission)
+			// v7.0 FIX: Fallback heuristic if no RL policy
+			// NOTE: Health-based retreat logic REMOVED - let RL network learn when to retreat
+			// Hardcoded retreat at 30% health conflicts with learned policy and removes agency
+			// The RLPolicyNetwork fallback (RLPolicyNetwork.cpp:34) handles bootstrap phase
+			if (CurrentMission)
 			{
 				// Match strategy to mission type (v7.0: Capture replaced with Assault)
 				switch (CurrentMission->Type)
@@ -254,17 +269,18 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 						break;
 				}
 			}
+			else
+			{
+				// No mission assigned - default to defensive strategy
+				CurrentStrategy = EStrategyType::Defend;
+			}
 
 			// Update timestamp for fallback path as well
 			const_cast<UFollowerAgentComponent*>(this)->LastStrategyUpdateTime = FPlatformTime::Seconds();
 		}
 
 		// Cache state for next event check (using cached components - v6.0 Phase 11 optimization)
-		if (CachedHealthComponent)
-		{
-			LastStrategyHealth = CachedHealthComponent->GetHealthPercentage();
-		}
-
+		// v7.0 FIX: Removed health caching (now handled by damage events)
 		if (CachedPerceptionComponent)
 		{
 			LastEnemyCount = CachedPerceptionComponent->GetDetectedEnemies().Num();
@@ -672,6 +688,8 @@ FMissionContext UFollowerAgentComponent::BuildMissionContext(UMission* Mission)
 	if (!Mission || !GetOwner())
 	{
 		// Return default (all zeros) if no mission or owner
+		UE_LOG(LogTemp, Verbose, TEXT("[BUILD CONTEXT] '%s': No mission or owner - returning empty context"),
+			GetOwner() ? *GetOwner()->GetName() : TEXT("Unknown"));
 		return Context;
 	}
 
@@ -679,6 +697,14 @@ FMissionContext UFollowerAgentComponent::BuildMissionContext(UMission* Mission)
 	Context.Type = Mission->Type;
 	Context.TargetActor = Mission->TargetActor;
 	Context.Priority = Mission->Priority;
+
+	// v7.0: Verify ObjectiveActor is preserved during context building
+	bool bHasObjectiveActor = Cast<AObjectiveActor>(Context.TargetActor) != nullptr;
+	UE_LOG(LogTemp, Verbose, TEXT("[BUILD CONTEXT v7.0] '%s': Mission %s - TargetActor=%s (IsObjectiveActor=%d)"),
+		*GetOwner()->GetName(),
+		*UEnum::GetValueAsString(Mission->Type),
+		Context.TargetActor ? *Context.TargetActor->GetName() : TEXT("NULL"),
+		bHasObjectiveActor);
 
 	// Calculate distance and direction to mission
 	FVector AgentLoc = GetOwner()->GetActorLocation();
@@ -834,7 +860,7 @@ void UFollowerAgentComponent::ResetEpisode()
 	CoverQueriesThisEpisode = 0;
 
 	// v6.0 Phase 11: Reset event-driven strategy tracking
-	LastStrategyHealth = 1.0f;
+	// v7.0 FIX: Removed LastStrategyHealth (now handled by damage events)
 	LastEnemyCount = 0;
 	LastMission = nullptr;
 	TicksSinceLastUpdate = 0;
@@ -1060,23 +1086,6 @@ void UFollowerAgentComponent::DrawDebugInfo()
 		}
 	}
 
-	// Draw cover information (Sprint 6)
-	if (bHasCachedCover)
-	{
-		// Draw line to cover
-		DrawDebugLine(World, FollowerPos, CachedCoverLocation, FColor::Green, false, 0.1f, 0, 3.0f);
-		DrawDebugSphere(World, CachedCoverLocation, 75.0f, 8, FColor::Green, false, 0.1f, 2.0f);
-
-		// Draw cover info text
-		FString CoverInfo = FString::Printf(TEXT("Cover: %.0fcm"), CachedCoverDistance);
-		DrawDebugString(World, CachedCoverLocation + FVector(0, 0, 100), CoverInfo, nullptr, FColor::Green, 0.1f, true);
-	}
-	else
-	{
-		// Draw "No Cover" indicator
-		DrawDebugString(World, FollowerPos + FVector(0, 0, 80), TEXT("No Cover"), nullptr, FColor::Red, 0.1f, true);
-	}
-
 	// Draw line to team leader
 	if (TeamLeader && TeamLeader->GetOwner())
 	{
@@ -1118,6 +1127,17 @@ void UFollowerAgentComponent::OnDamageTakenEvent(const FDamageEventData& DamageE
 		*GetOwner()->GetName(),
 		DamageEvent.DamageAmount,
 		DamageEvent.Instigator ? *DamageEvent.Instigator->GetName() : TEXT("Unknown"));
+
+	// v7.0 FIX: Force strategy re-evaluation on significant damage
+	// Damage is a critical event - agent should immediately reconsider its strategy
+	// Threshold: 5.0 damage avoids re-evaluation spam from minor hits
+	if (DamageEvent.DamageAmount >= 5.0f)
+	{
+		TicksSinceLastUpdate = 999;  // Exceed timeout threshold to force update on next tick
+
+		UE_LOG(LogTemp, Verbose, TEXT("🔄 [DAMAGE EVENT] '%s': Significant damage (%.1f) - forcing strategy re-evaluation"),
+			*GetOwner()->GetName(), DamageEvent.DamageAmount);
+	}
 
 	// Signal event to team leader if damage is significant
 	if (TeamLeader && DamageEvent.DamageAmount >= 10.0f)
@@ -1209,15 +1229,12 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 		return false;  // Too soon since last update
 	}
 
-	// Get current health (using cached component - v6.0 Phase 11 optimization)
-	float CurrentHealth = 1.0f;
-	if (CachedHealthComponent)
-	{
-		CurrentHealth = CachedHealthComponent->GetHealthPercentage();
-	}
-
-	// Check significant state changes
-	bool bHealthChanged = FMath::Abs(CurrentHealth - LastStrategyHealth) > 0.2f;
+	// v7.0 FIX: Health change check REMOVED
+	// Rationale:
+	// - No health regeneration → health only decreases
+	// - Damage events (OnDamageTakenEvent) now force strategy updates
+	// - Arbitrary 20% threshold was redundant and could miss critical moments
+	// - Damage-based updates provide more precise control
 
 	// Get current enemy count (using cached component - v6.0 Phase 11 optimization)
 	int32 CurrentEnemyCount = 0;
@@ -1230,28 +1247,26 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 	// Check mission change
 	bool bMissionChanged = CurrentMission != LastMission;
 
-	// Fallback: Force update every 10 ticks (~0.16s at 60 FPS)
-	bool bTimeout = TicksSinceLastUpdate > 10;
+	// Fallback: Force update every 30 ticks (~0.5s at 60 FPS)
+	// v7.0 FIX: Increased from 10 ticks to reduce oscillation
+	bool bTimeout = TicksSinceLastUpdate > 30;
 
 	// Debug log significant events
-	if (bHealthChanged || bNewEnemyDetected || bMissionChanged || bTimeout)
+	if (bNewEnemyDetected || bMissionChanged || bTimeout)
 	{
 		FString Reason = TEXT("");
-		if (bHealthChanged) Reason += TEXT("HealthChange ");
 		if (bNewEnemyDetected) Reason += TEXT("NewEnemy ");
 		if (bMissionChanged) Reason += TEXT("MissionChange ");
 		if (bTimeout) Reason += TEXT("Timeout");
 
-		UE_LOG(LogTemp, Verbose, TEXT("🔄 [EVENT-DRIVEN] '%s': Strategy update triggered - %s (Health: %.2f→%.2f, Enemies: %d→%d)"),
+		UE_LOG(LogTemp, Verbose, TEXT("🔄 [EVENT-DRIVEN v7.0] '%s': Strategy update triggered - %s (Enemies: %d→%d)"),
 			*GetOwner()->GetName(),
 			*Reason,
-			LastStrategyHealth,
-			CurrentHealth,
 			LastEnemyCount,
 			CurrentEnemyCount);
 	}
 
-	return bHealthChanged || bNewEnemyDetected || bMissionChanged || bTimeout;
+	return bNewEnemyDetected || bMissionChanged || bTimeout;
 }
 
 //------------------------------------------------------------------------------
@@ -1269,10 +1284,19 @@ void UFollowerAgentComponent::SetCurrentMission(UMission* Mission)
 		RewardCalculator->SetCurrentMission(Mission);
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER] '%s': Mission set to %s, Active=%d"),
+	// v7.0: Enhanced logging to verify ObjectiveActor propagation
+	bool bHasObjectiveActor = false;
+	if (Mission && Mission->TargetActor)
+	{
+		bHasObjectiveActor = Cast<AObjectiveActor>(Mission->TargetActor) != nullptr;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v7.0] '%s': Mission set to %s (Active=%d, TargetActor=%s, IsObjectiveActor=%d)"),
 		*GetOwner()->GetName(),
 		Mission ? *UEnum::GetValueAsString(Mission->Type) : TEXT("None"),
-		Mission ? Mission->IsActive() : false);
+		Mission ? Mission->IsActive() : false,
+		(Mission && Mission->TargetActor) ? *Mission->TargetActor->GetName() : TEXT("NULL"),
+		bHasObjectiveActor);
 
 	// Broadcast delegate for StateTree event binding
 	OnMissionReceived.Broadcast(Mission);

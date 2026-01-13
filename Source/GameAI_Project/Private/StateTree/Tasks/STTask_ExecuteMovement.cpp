@@ -51,6 +51,21 @@ EStateTreeRunStatus FSTTask_ExecuteMovement::EnterState(FStateTreeExecutionConte
 
 EStateTreeRunStatus FSTTask_ExecuteMovement::Tick(FStateTreeExecutionContext& Context, float DeltaTime) const
 {
+	// ========================================
+	// v7.0 EXECUTION LAYER (Layer 3 of Hierarchy)
+	//
+	// ROLE:
+	// - Reads strategy from RL policy (Layer 2)
+	// - Maps strategy to tactical position (deterministic rules)
+	// - Queries EQS for spatial positions
+	// - Issues NavMesh movement commands
+	//
+	// NO LEARNING: This layer is rule-based and deterministic
+	// - Assault strategy → Always maps to ForwardCover position
+	// - ForwardCover position → Always queries same EQS asset
+	// - EQS results may vary (enemies move), but mapping logic doesn't learn
+	// ========================================
+
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 

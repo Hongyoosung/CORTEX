@@ -21,7 +21,25 @@ URLPolicyNetwork::URLPolicyNetwork()
 
 
 // ========================================
-// v6.0: Strategy Selection
+// v7.0: Tactical Strategy Selection (Layer 2 of Hierarchy)
+//
+// ROLE IN v7.0 ARCHITECTURE:
+// - MCTS assigns MISSIONS (what to do)
+// - RL selects STRATEGIES (how to approach it)
+// - Rules execute strategies (deterministic movement)
+//
+// INPUT:
+// - Observation (68 features): agent state, enemies, cover, allies
+// - MissionContext (4 features): assigned mission from MCTS
+//
+// OUTPUT:
+// - EStrategyType: Assault, Defend, Support, or Retreat
+//
+// DESIGN NOTE:
+// Mission and Strategy types are similar but serve different purposes:
+// - Mission (MCTS): Team-level objective assignment
+// - Strategy (RL): Individual tactical approach
+// - RL can deviate from mission (e.g., Assault mission → Retreat strategy when low health)
 // ========================================
 
 EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observation, const FMissionContext& MissionContext)
@@ -30,7 +48,9 @@ EStrategyType URLPolicyNetwork::GetStrategy(const FObservationElement& Observati
 
 	if (!bUseONNXModel || !ModelInstance.IsValid())
 	{
-		// Fallback heuristic
+		// v7.0 BOOTSTRAP PHASE: Heuristic policy for initial training
+		// Used before first ONNX model is exported from Python training
+		// Generates initial trajectories for episodes 0-100
 		if (Observation.AgentHealth < 0.3f)
 			return EStrategyType::Retreat;
 		if (MissionContext.Type == EMissionType::Defend)

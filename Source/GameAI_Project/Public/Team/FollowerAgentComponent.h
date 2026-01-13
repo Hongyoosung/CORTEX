@@ -389,7 +389,8 @@ private:
 	// EVENT-DRIVEN STRATEGY UPDATES (v6.0 Phase 11 - Performance Optimization)
 	//--------------------------------------------------------------------------
 
-	/** Health at last strategy update (for change detection) */
+	/** v7.0 DEPRECATED: Health tracking removed - now handled by damage events */
+	// Kept for backward compatibility, not used in v7.0
 	float LastStrategyHealth = 1.0f;
 
 	/** Enemy count at last strategy update */
