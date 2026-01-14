@@ -131,19 +131,16 @@ float URewardCalculator::CalculateReward(
 	const FObservationElement& CurrentObs,
 	const FMacroAction& Action)
 {
+	// v8.0 NOTE: FMacroAction no longer contains Strategy field
+	// Strategy is assigned by MCTS via Mission type, RL outputs tactical parameters
+	// This function may be DEPRECATED in v8.0 - rewards are calculated per-component via CalculateStrategyReward()
+
 	float Reward = 0.0f;
 
-	EStrategyType Strategy = Action.Strategy;
 	EMissionType Mission = CurrentObs.MissionContext.Type;
-
-	// Strategy-specific rewards (base combat rewards)
-	Reward += CalculateStrategyReward(Strategy, PrevObs, CurrentObs);
 
 	// Mission-aware modifiers (CRITICAL for MCTS-RL alignment)
 	Reward += CalculateMissionProgressReward(Mission, PrevObs, CurrentObs);
-
-	// Alignment bonus: Strategy matches Mission
-	Reward += CalculateAlignmentBonus(Strategy, Mission);
 
 	// Add accumulated global events (Mission completion, death)
 	Reward += AccumulatedIndividualReward;

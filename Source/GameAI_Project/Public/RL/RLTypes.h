@@ -38,12 +38,13 @@ namespace RLConfig {
 	constexpr float MAX_DISTANCE_NORMALIZATION = 5000.0f;  // cm
 	constexpr float MAX_VELOCITY_NORMALIZATION = 1200.0f;
 
-	// Action Space
-	constexpr int32 NUM_STRATEGIES = 4;  // Assault, Defend, Support, Retreat
-	constexpr int32 NUM_TARGETS = 11;    // 10 enemies + 1 no-target
+	// Action Space (v8.0: Tactical Parameters + Combat Parameters)
+	constexpr int32 NUM_STRATEGIES = 4;  // Assault, Defend, Support, Retreat (MCTS-assigned, not RL)
+	constexpr int32 NUM_TACTICAL_PARAMS = 4;  // Aggression, CoverPreference, SpreadDistance, RiskTolerance
+	constexpr int32 NUM_COMBAT_CHOICES = 2;   // TargetPriority: Closest, LowestHP
 
 	// Observation Space
-	constexpr int32 OBSERVATION_SIZE = 68;  // 64 base + 4 mission context
+	constexpr int32 OBSERVATION_SIZE = 68;  // 64 base + 4 strategy context (one-hot from MCTS)
 
 	// === END CRITICAL SECTION ===
 }
@@ -202,20 +203,105 @@ struct GAMEAI_PROJECT_API FMissionAssignment
 	float Timestamp = 0.0f;
 };
 
+// ============================================
+// v8.0: Tactical Parameters (RL → EQS Modulation)
+// ============================================
+
 /**
- * Macro action space for v6.0 (Strategy only, execution is rules-based)
+ * Target priority for combat decisions (v8.0)
+ */
+UENUM(BlueprintType)
+enum class ETargetPriority : uint8
+{
+	Closest   UMETA(DisplayName = "Closest Enemy"),
+	LowestHP  UMETA(DisplayName = "Lowest HP Enemy"),
+	COUNT     UMETA(Hidden)
+};
+
+/**
+ * Tactical parameters for EQS weight modulation (v8.0)
+ * RL outputs these continuous values to control tactical positioning behavior
+ */
+USTRUCT(BlueprintType)
+struct GAMEAI_PROJECT_API FTacticalParameters
+{
+	GENERATED_BODY()
+
+	/** Aggression level [0,1]: 0=passive, 1=aggressive */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float Aggression = 0.5f;
+
+	/** Cover preference [0,1]: 0=ignore cover, 1=prioritize cover */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float CoverPreference = 0.5f;
+
+	/** Formation spread [0,1]: 0=tight formation, 1=spread out */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float SpreadDistance = 0.5f;
+
+	/** Risk tolerance [0,1]: 0=retreat early, 1=fight to death */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float RiskTolerance = 0.5f;
+
+	FTacticalParameters() = default;
+	FTacticalParameters(float InAggression, float InCover, float InSpread, float InRisk)
+		: Aggression(InAggression)
+		, CoverPreference(InCover)
+		, SpreadDistance(InSpread)
+		, RiskTolerance(InRisk)
+	{}
+
+	/** Clamp all values to [0,1] range */
+	void Clamp()
+	{
+		Aggression = FMath::Clamp(Aggression, 0.0f, 1.0f);
+		CoverPreference = FMath::Clamp(CoverPreference, 0.0f, 1.0f);
+		SpreadDistance = FMath::Clamp(SpreadDistance, 0.0f, 1.0f);
+		RiskTolerance = FMath::Clamp(RiskTolerance, 0.0f, 1.0f);
+	}
+};
+
+/**
+ * Combat parameters for target selection and engagement (v8.0)
+ * RL selects discrete combat actions (no learned aiming, only target priority)
+ */
+USTRUCT(BlueprintType)
+struct GAMEAI_PROJECT_API FCombatParameters
+{
+	GENERATED_BODY()
+
+	/** Target priority selection (2 discrete choices) */
+	UPROPERTY(BlueprintReadWrite, Category = "Combat")
+	ETargetPriority Priority = ETargetPriority::Closest;
+
+	FCombatParameters() = default;
+	explicit FCombatParameters(ETargetPriority InPriority)
+		: Priority(InPriority)
+	{}
+};
+
+/**
+ * Macro action space for v8.0 (Tactical Parameters + Combat Parameters)
+ * v8.0: MCTS assigns strategies, RL outputs tactical and combat parameters
  */
 USTRUCT(BlueprintType)
 struct FMacroAction
 {
 	GENERATED_BODY()
 
-	/** Strategy: High-level approach to current Mission */
+	/** v8.0: Tactical parameters for EQS weight modulation (4 continuous values) */
 	UPROPERTY(BlueprintReadWrite, Category = "Action")
-	EStrategyType Strategy = EStrategyType::Assault;
+	FTacticalParameters TacticalParams;
 
-	FMacroAction() : Strategy(EStrategyType::Assault) {}
-	explicit FMacroAction(EStrategyType InStrategy) : Strategy(InStrategy) {}
+	/** v8.0: Combat parameters for target selection (2 discrete choices) */
+	UPROPERTY(BlueprintReadWrite, Category = "Action")
+	FCombatParameters CombatParams;
+
+	FMacroAction() = default;
+	FMacroAction(FTacticalParameters InTactical, FCombatParameters InCombat)
+		: TacticalParams(InTactical)
+		, CombatParams(InCombat)
+	{}
 };
 
 /**

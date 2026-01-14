@@ -99,12 +99,20 @@ public:
 	bool HasActiveMission() const;
 
 	//--------------------------------------------------------------------------
-	// INDIVIDUAL STRATEGY (v5.0)
+	// INDIVIDUAL STRATEGY (v8.0: MCTS-Assigned, RL-Controlled Parameters)
 	//--------------------------------------------------------------------------
 
-	/** Get current strategy assigned by leader (determines which policy head to use) */
+	/** Get strategy assigned by MCTS (v8.0: No longer selected by RL) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
-	EStrategyType GetCurrentStrategy() const { return CurrentStrategy; }
+	EStrategyType GetAssignedStrategy() const;
+
+	/** v7.0 DEPRECATED: Get current strategy (v8.0: Use GetAssignedStrategy instead) */
+	UFUNCTION(BlueprintPure, Category = "Follower|Strategy", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Strategy is now assigned by MCTS, not RL. Use GetAssignedStrategy() instead."))
+	EStrategyType GetCurrentStrategy() const { return GetAssignedStrategy(); }
+
+	/** Get current macro action (tactical + combat parameters from RL) */
+	UFUNCTION(BlueprintPure, Category = "Follower|Action")
+	FMacroAction GetCurrentMacroAction() const { return CurrentMacroAction; }
 
 	/** Get ally context for support strategy (v5.0) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
@@ -211,6 +219,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|Debug")
 	void DrawDebugInfo();
 
+	//--------------------------------------------------------------------------
+	// COMBAT EXECUTION (v8.0)
+	//--------------------------------------------------------------------------
+
+	/** Execute combat actions using learned target priority and auto-aim */
+	UFUNCTION(BlueprintCallable, Category = "Follower|Combat")
+	void ExecuteCombat();
+
+	/** Get closest enemy from perception */
+	UFUNCTION(BlueprintPure, Category = "Follower|Combat")
+	AActor* GetClosestEnemy(const TArray<AActor*>& Enemies) const;
+
+	/** Get enemy with lowest HP from perception */
+	UFUNCTION(BlueprintPure, Category = "Follower|Combat")
+	AActor* GetLowestHPEnemy(const TArray<AActor*>& Enemies) const;
+
 
 
 private:
@@ -309,8 +333,12 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
 	TObjectPtr<UMission> CurrentMission = nullptr;
 
-	/** Current strategy from leader (v5.0) - determines which policy head to use */
+	/** v8.0: Current macro action (tactical parameters + combat parameters from RL) */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
+	FMacroAction CurrentMacroAction;
+
+	/** v7.0 DEPRECATED: Current strategy (v8.0: Strategy now assigned by MCTS, stored in Mission) */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|State", meta = (DeprecatedProperty, DeprecationMessage = "v8.0: Use CurrentMacroAction instead"))
 	EStrategyType CurrentStrategy = EStrategyType::Assault;
 
 	/** Cached ally context for support strategy observation (v5.0) */

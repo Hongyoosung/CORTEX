@@ -175,6 +175,37 @@ void UFollowerAgentComponent::BeginPlay()
 	UE_LOG(LogTemp, Log, TEXT("FollowerAgentComponent: Initialized on %s"), *GetOwner()->GetName());
 }
 
+// ========================================
+// v8.0: Strategy Assignment (from MCTS)
+// ========================================
+
+EStrategyType UFollowerAgentComponent::GetAssignedStrategy() const
+{
+	// v8.0: Strategy is assigned by MCTS via Mission type, NOT selected by RL
+	// RL now controls tactical parameters and combat choices, not strategy
+
+	if (!CurrentMission)
+	{
+		// No mission assigned - default to Defend
+		return EStrategyType::Defend;
+	}
+
+	// Map mission type to strategy (v8.0: 1-to-1 mapping)
+	switch (CurrentMission->Type)
+	{
+		case EMissionType::Assault:
+			return EStrategyType::Assault;
+		case EMissionType::Defend:
+			return EStrategyType::Defend;
+		case EMissionType::Support:
+			return EStrategyType::Support;
+		case EMissionType::Retreat:
+			return EStrategyType::Retreat;
+		default:
+			return EStrategyType::Assault;
+	}
+}
+
 void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	FActorComponentTickFunction* ThisTickFunction)
 {
@@ -194,88 +225,81 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	}
 
 	// ========================================
-	// v7.0 HIERARCHICAL DECISION MAKING
+	// v8.0 HIERARCHICAL DECISION MAKING
 	//
-	// Layer 1 (Strategic - MCTS): Team Leader assigns MISSIONS to agents
-	//   - "Agent1 → Assault objective at Point A"
-	//   - "Agent2 → Defend objective at Point B"
+	// Layer 1 (Strategic - MCTS): Team Leader assigns STRATEGIES to agents
+	//   - "Agent1 → Assault strategy targeting Point A"
+	//   - "Agent2 → Defend strategy at Point B"
 	//   - Runs async every 1.5s, doesn't block real-time execution
 	//
-	// Layer 2 (Tactical - RL): Follower selects STRATEGY based on mission + context
-	//   - Mission: Assault → Strategy: Assault (aggressive advance)
-	//   - BUT can deviate: Mission: Assault + Low Health → Strategy: Retreat
+	// Layer 2 (Tactical - RL): Follower outputs TACTICAL PARAMETERS + COMBAT CHOICES
+	//   - Strategy: Assault → Tactical Params: [Aggression=0.8, CoverPref=0.3, ...]
+	//   - Strategy: Defend → Tactical Params: [Aggression=0.2, CoverPref=0.9, ...]
+	//   - Combat: Target priority (Closest vs LowestHP)
 	//   - Event-driven updates (reduces inference cost by 75-83%)
+	//   - Separate strategy heads GUARANTEE behavioral differentiation
 	//
-	// Layer 3 (Execution - Rules): StateTree executes strategy via EQS + NavMesh
-	//   - Strategy: Assault → Position: ForwardCover → Movement: NavMesh path
-	//   - Deterministic, no learning
+	// Layer 3 (Execution - EQS): EQS uses tactical parameters as query weights
+	//   - Tactical Params → EQS weights → Position selection
+	//   - Example: High Aggression → MinDistance=200cm, Low CoverWeight
+	//
+	// Layer 4 (Execution - Rules): Combat execution with learned target priority
+	//   - Combat Params → Target selection (Closest vs LowestHP)
+	//   - Auto-aim and firing (no learned aiming in v8.0)
 	// ========================================
 	if (ShouldUpdateStrategy())
 	{
-		// Build observation and mission context
+		// Build observation
 		FObservationElement Obs = BuildLocalObservation();
-		FMissionContext MissionCtx = BuildMissionContext(CurrentMission);
 
-		// Query RL policy for strategy (v6.0 single-head network)
+		// Get assigned strategy from MCTS (via Mission type)
+		EStrategyType AssignedStrategy = GetAssignedStrategy();
+
+		// Query RL policy for tactical parameters + combat choices (v8.0 multi-head network)
 		if (TacticalPolicy && bUseRLPolicy)
 		{
 			// Run RL inference (2-4ms if batched, otherwise 1-3ms)
-			// NOTE: RL can DEVIATE from mission type based on tactical situation
-			// Example: Assault mission + low health → Retreat strategy
-			EStrategyType NewStrategy = TacticalPolicy->GetStrategy(Obs, MissionCtx);
+			// v8.0: RL outputs tactical parameters, NOT strategy selection
+			// Strategy is determined by MCTS assignment, RL controls HOW to execute it
+			FMacroAction NewAction = TacticalPolicy->GetMacroAction(Obs, AssignedStrategy);
 
-			// Update strategy if changed
-			if (NewStrategy != CurrentStrategy)
+			// Log if tactical parameters changed significantly
+			bool bParamsChanged = FMath::Abs(NewAction.TacticalParams.Aggression - CurrentMacroAction.TacticalParams.Aggression) > 0.1f ||
+			                      FMath::Abs(NewAction.TacticalParams.CoverPreference - CurrentMacroAction.TacticalParams.CoverPreference) > 0.1f;
+
+			if (bParamsChanged || NewAction.CombatParams.Priority != CurrentMacroAction.CombatParams.Priority)
 			{
-				UE_LOG(LogTemp, Display, TEXT("✅ [RL STRATEGY] '%s': Strategy changed %s → %s (Health: %.0f%%, Enemies: %d, Mission: %s)"),
+				UE_LOG(LogTemp, Display, TEXT("✅ [RL v8.0] '%s': Strategy=%s, Aggression=%.2f, Cover=%.2f, Spread=%.2f, Risk=%.2f, Combat=%s (Health: %.0f%%, Enemies: %d)"),
 					*GetOwner()->GetName(),
-					*UEnum::GetValueAsString(CurrentStrategy),
-					*UEnum::GetValueAsString(NewStrategy),
+					*UEnum::GetValueAsString(AssignedStrategy),
+					NewAction.TacticalParams.Aggression,
+					NewAction.TacticalParams.CoverPreference,
+					NewAction.TacticalParams.SpreadDistance,
+					NewAction.TacticalParams.RiskTolerance,
+					*UEnum::GetValueAsString(NewAction.CombatParams.Priority),
 					Obs.AgentHealth * 100.0f,
-					Obs.VisibleEnemyCount,
-					CurrentMission ? *UEnum::GetValueAsString(CurrentMission->Type) : TEXT("None"));
-
-				CurrentStrategy = NewStrategy;
+					Obs.VisibleEnemyCount);
 			}
 
-			// Update timestamp (moved here to avoid const violation in ShouldUpdateStrategy)
+			CurrentMacroAction = NewAction;
+
+			// v8.0 DEPRECATED: Update CurrentStrategy for backwards compatibility with v7.0 code
+			CurrentStrategy = AssignedStrategy;
+
+			// Update timestamp
 			const_cast<UFollowerAgentComponent*>(this)->LastStrategyUpdateTime = FPlatformTime::Seconds();
 		}
 		else
 		{
-			// v7.0 FIX: Fallback heuristic if no RL policy
-			// NOTE: Health-based retreat logic REMOVED - let RL network learn when to retreat
-			// Hardcoded retreat at 30% health conflicts with learned policy and removes agency
-			// The RLPolicyNetwork fallback (RLPolicyNetwork.cpp:34) handles bootstrap phase
-			if (CurrentMission)
-			{
-				// Match strategy to mission type (v7.0: Capture replaced with Assault)
-				switch (CurrentMission->Type)
-				{
-					case EMissionType::Assault:
-						CurrentStrategy = EStrategyType::Assault;
-						break;
-					case EMissionType::Defend:
-						CurrentStrategy = EStrategyType::Defend;
-						break;
-					case EMissionType::Support:
-						CurrentStrategy = EStrategyType::Support;
-						break;
-					case EMissionType::Retreat:
-						CurrentStrategy = EStrategyType::Retreat;
-						break;
-					default:
-						CurrentStrategy = EStrategyType::Assault;
-						break;
-				}
-			}
-			else
-			{
-				// No mission assigned - default to defensive strategy
-				CurrentStrategy = EStrategyType::Defend;
-			}
+			// v8.0 BOOTSTRAP: Fallback heuristic if no RL policy (uses strategy-specific defaults)
+			// The RLPolicyNetwork fallback (RLPolicyNetwork.cpp:GetMacroAction) provides strategy-specific params
+			CurrentMacroAction = TacticalPolicy ? TacticalPolicy->GetMacroAction(Obs, AssignedStrategy)
+			                                     : FMacroAction();  // Default constructor if no policy
 
-			// Update timestamp for fallback path as well
+			// v8.0 DEPRECATED: Update CurrentStrategy for backwards compatibility
+			CurrentStrategy = AssignedStrategy;
+
+			// Update timestamp
 			const_cast<UFollowerAgentComponent*>(this)->LastStrategyUpdateTime = FPlatformTime::Seconds();
 		}
 
@@ -292,6 +316,13 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 	// Always increment tick counter (for timeout fallback)
 	TicksSinceLastUpdate++;
+
+	// ========================================
+	// v8.0: Combat execution (every tick, 60 Hz)
+	// Tactical parameter updates run at 2-5 Hz
+	// Combat runs every tick for responsive targeting
+	// ========================================
+	ExecuteCombat();
 
 	// ========================================
 	// Strategy execution happens in StateTree (cheap, <0.5ms)
@@ -864,7 +895,8 @@ void UFollowerAgentComponent::ResetEpisode()
 	LastEnemyCount = 0;
 	LastMission = nullptr;
 	TicksSinceLastUpdate = 0;
-	CurrentStrategy = EStrategyType::Assault; // Reset to default
+	CurrentStrategy = EStrategyType::Assault; // v8.0 DEPRECATED: Reset to default (kept for v7.0 compatibility)
+	CurrentMacroAction = FMacroAction();  // v8.0: Reset macro action to defaults
 
 	// CRITICAL FIX (Issue #2): Clear visible enemies from StateTree context
 	// When episode resets, agents must forget previously detected enemies
@@ -1267,6 +1299,166 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 	}
 
 	return bNewEnemyDetected || bMissionChanged || bTimeout;
+}
+
+//------------------------------------------------------------------------------
+// COMBAT EXECUTION (v8.0)
+//------------------------------------------------------------------------------
+
+void UFollowerAgentComponent::ExecuteCombat()
+{
+	// ========================================
+	// v8.0 COMBAT SYSTEM (Layer 4 of Hierarchy)
+	//
+	// ARCHITECTURE:
+	// - RL selects target priority (Closest vs LowestHP)
+	// - Auto-aim handles targeting (no learned aiming)
+	// - Auto-fire when has LOS
+	//
+	// DESIGN DECISION:
+	// v8.0 focuses on tactical positioning + target selection
+	// Learned aiming deferred to v8.5 (reduces complexity)
+	// ========================================
+
+	if (!GetOwner() || !bIsAlive)
+	{
+		return;
+	}
+
+	// Get detected enemies from perception
+	if (!CachedPerceptionComponent)
+	{
+		return;
+	}
+
+	TArray<AActor*> Enemies = CachedPerceptionComponent->GetDetectedEnemies();
+	if (Enemies.Num() == 0)
+	{
+		// No enemies detected, clear focus
+		AAIController* AIController = Cast<AAIController>(GetOwner()->GetInstigatorController());
+		if (AIController)
+		{
+			AIController->ClearFocus(EAIFocusPriority::Gameplay);
+		}
+		return;
+	}
+
+	// ========================================
+	// v8.0: RL-controlled target selection
+	// Combat parameters determine priority
+	// ========================================
+
+	AActor* Target = nullptr;
+	FCombatParameters CombatParams = CurrentMacroAction.CombatParams;
+
+	switch (CombatParams.Priority)
+	{
+		case ETargetPriority::Closest:
+			Target = GetClosestEnemy(Enemies);
+			break;
+
+		case ETargetPriority::LowestHP:
+			Target = GetLowestHPEnemy(Enemies);
+			break;
+
+		default:
+			Target = GetClosestEnemy(Enemies); // Fallback
+			break;
+	}
+
+	if (!Target)
+	{
+		return;
+	}
+
+	// ========================================
+	// Auto-aim and auto-fire (v8.0)
+	// No learned aiming - engine handles targeting
+	// ========================================
+
+	AAIController* AIController = Cast<AAIController>(GetOwner()->GetInstigatorController());
+	if (AIController)
+	{
+		// Set focus for auto-aim
+		AIController->SetFocus(Target, EAIFocusPriority::Gameplay);
+
+		// Auto-fire is handled by STTask_ExecuteFire in StateTree
+		// This function only handles target selection
+		UE_LOG(LogTemp, Verbose, TEXT("[COMBAT v8.0] '%s': Targeting %s (Priority: %s)"),
+			*GetOwner()->GetName(),
+			*Target->GetName(),
+			*UEnum::GetValueAsString(CombatParams.Priority));
+	}
+}
+
+AActor* UFollowerAgentComponent::GetClosestEnemy(const TArray<AActor*>& Enemies) const
+{
+	if (Enemies.Num() == 0 || !GetOwner())
+	{
+		return nullptr;
+	}
+
+	FVector AgentLocation = GetOwner()->GetActorLocation();
+	AActor* ClosestEnemy = nullptr;
+	float ClosestDistance = MAX_FLT;
+
+	for (AActor* Enemy : Enemies)
+	{
+		if (!Enemy)
+		{
+			continue;
+		}
+
+		float Distance = FVector::Dist(AgentLocation, Enemy->GetActorLocation());
+		if (Distance < ClosestDistance)
+		{
+			ClosestDistance = Distance;
+			ClosestEnemy = Enemy;
+		}
+	}
+
+	return ClosestEnemy;
+}
+
+AActor* UFollowerAgentComponent::GetLowestHPEnemy(const TArray<AActor*>& Enemies) const
+{
+	if (Enemies.Num() == 0)
+	{
+		return nullptr;
+	}
+
+	AActor* LowestHPEnemy = nullptr;
+	float LowestHP = MAX_FLT;
+
+	for (AActor* Enemy : Enemies)
+	{
+		if (!Enemy)
+		{
+			continue;
+		}
+
+		// Get enemy health component
+		UHealthComponent* EnemyHealthComp = Enemy->FindComponentByClass<UHealthComponent>();
+		if (!EnemyHealthComp || !EnemyHealthComp->IsAlive())
+		{
+			continue;
+		}
+
+		float EnemyHP = EnemyHealthComp->GetCurrentHealth();
+		if (EnemyHP < LowestHP)
+		{
+			LowestHP = EnemyHP;
+			LowestHPEnemy = Enemy;
+		}
+	}
+
+	// Fallback: If no valid health components found, return closest enemy
+	if (!LowestHPEnemy)
+	{
+		return GetClosestEnemy(Enemies);
+	}
+
+	return LowestHPEnemy;
 }
 
 //------------------------------------------------------------------------------

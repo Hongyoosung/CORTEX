@@ -52,25 +52,64 @@ public:
 
 
 	// ========================================
-	// v6.0 API: Strategy Selection (Single Agent)
+	// v8.0 API: Tactical Parameters + Combat Control (Multi-Head)
 	// ========================================
 
 	/**
-	 * Get strategy for current observation + Mission (v6.0)
+	 * Get tactical parameters and combat parameters for current observation + assigned strategy (v8.0)
+	 * @param Observation - Agent's 64-feature observation
+	 * @param AssignedStrategy - Strategy assigned by MCTS (determines which head to use)
+	 * @return Macro action with tactical and combat parameters
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RL|v8")
+	FMacroAction GetMacroAction(const FObservationElement& Observation, EStrategyType AssignedStrategy);
+
+	/**
+	 * Get state value estimate (used by PPO training) (v8.0)
+	 * @param Observation - Agent's 64-feature observation
+	 * @param AssignedStrategy - Strategy assigned by MCTS
+	 * @return Value estimate [-1, 1]
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RL|v8")
+	float GetStateValueV8(const FObservationElement& Observation, EStrategyType AssignedStrategy);
+
+	// ========================================
+	// v8.0 API: Batched Inference (Performance Critical)
+	// ========================================
+
+	/**
+	 * Get macro actions for multiple agents in single network call (v8.0)
+	 * PERFORMANCE: Batched inference is 2-3× faster than sequential calls
+	 * @param Observations - Array of agent observations
+	 * @param AssignedStrategies - Array of strategies assigned by MCTS (same size as Observations)
+	 * @return Array of macro actions (same size as input)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RL|v8")
+	TArray<FMacroAction> GetMacroActionsBatched(
+		const TArray<FObservationElement>& Observations,
+		const TArray<EStrategyType>& AssignedStrategies
+	);
+
+	// ========================================
+	// v6.0 API: Strategy Selection (Single Agent) - DEPRECATED
+	// ========================================
+
+	/**
+	 * Get strategy for current observation + Mission (v6.0 DEPRECATED)
 	 * @param Observation - Agent's 64-feature observation
 	 * @param MissionContext - Assigned Mission context (4 features)
 	 * @return Selected strategy (Assault/Defend/Support/Retreat)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
+	UFUNCTION(BlueprintCallable, Category = "RL|v6", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Use GetMacroAction() instead. Strategy is now assigned by MCTS, not RL."))
 	EStrategyType GetStrategy(const FObservationElement& Observation, const FMissionContext& MissionContext);
 
 	/**
-	 * Get state value estimate (used by MCTS for leaf evaluation) (v6.0)
+	 * Get state value estimate (used by MCTS for leaf evaluation) (v6.0 DEPRECATED)
 	 * @param Observation - Agent's 64-feature observation
 	 * @param MissionContext - Assigned Mission context (4 features)
 	 * @return Value estimate [-1, 1]
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
+	UFUNCTION(BlueprintCallable, Category = "RL|v6", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Use GetStateValueV8() instead"))
 	float GetStateValue(const FObservationElement& Observation, const FMissionContext& MissionContext);
 
 	// ========================================
@@ -106,16 +145,62 @@ public:
 
 private:
 	// ========================================
-	// v6.0: Network Input/Output Helpers
+	// v8.0: Network Input/Output Helpers
 	// ========================================
 
 	/**
-	 * Build 68-feature input from observation + Mission context (v6.0)
+	 * Build 68-feature input from observation + assigned strategy (v8.0)
+	 * @param Observation - Agent's 64-feature observation
+	 * @param AssignedStrategy - Strategy assigned by MCTS (one-hot encoded)
+	 * @return 68-element vector (64 base + 4 strategy one-hot)
+	 */
+	TArray<float> BuildNetworkInputV8(const FObservationElement& Observation, EStrategyType AssignedStrategy) const;
+
+	/**
+	 * Network output structure (v8.0 Multi-Head)
+	 */
+	struct FNetworkOutputV8 {
+		TArray<float> AssaultTactical;   // [4] - Tactical params for Assault
+		TArray<float> DefendTactical;    // [4] - Tactical params for Defend
+		TArray<float> SupportTactical;   // [4] - Tactical params for Support
+		TArray<float> RetreatTactical;   // [4] - Tactical params for Retreat
+		TArray<float> CombatLogits;      // [2] - Combat priority logits [Closest, LowestHP]
+		float Value;                     // State value estimate
+	};
+
+	/**
+	 * Forward pass through multi-head network (v8.0)
+	 * @param InputFeatures - 68-element input vector
+	 * @return All strategy heads, combat head, and value head outputs
+	 */
+	FNetworkOutputV8 ForwardPassV8(const TArray<float>& InputFeatures);
+
+	/**
+	 * Select appropriate tactical parameters based on assigned strategy (v8.0)
+	 * @param NetworkOutput - Output from multi-head network
+	 * @param AssignedStrategy - Strategy assigned by MCTS
+	 * @return Tactical parameters from the appropriate strategy head
+	 */
+	FTacticalParameters SelectTacticalParameters(const FNetworkOutputV8& NetworkOutput, EStrategyType AssignedStrategy) const;
+
+	/**
+	 * Sample combat priority from logits (v8.0)
+	 * @param CombatLogits - 2-element logit vector [Closest, LowestHP]
+	 * @return Sampled combat priority
+	 */
+	ETargetPriority SampleCombatPriority(const TArray<float>& CombatLogits) const;
+
+	// ========================================
+	// v6.0: Network Input/Output Helpers (DEPRECATED)
+	// ========================================
+
+	/**
+	 * Build 68-feature input from observation + Mission context (v6.0 DEPRECATED)
 	 */
 	TArray<float> BuildNetworkInput(const FObservationElement& Observation, const FMissionContext& MissionContext) const;
 
 	/**
-	 * Network output structure (v6.0)
+	 * Network output structure (v6.0 DEPRECATED)
 	 */
 	struct FNetworkOutput {
 		TArray<float> PolicyLogits;  // [4] - Strategy logits
@@ -123,17 +208,16 @@ private:
 	};
 
 	/**
-	 * Forward pass through single-head network (v6.0)
+	 * Forward pass through single-head network (v6.0 DEPRECATED)
 	 * @param InputFeatures - 68-element input vector
 	 * @return Policy logits (4) and value (1)
 	 */
 	FNetworkOutput ForwardPassV6(const TArray<float>& InputFeatures);
 
 	/**
-	 * Sample strategy from logits (v6.0)
+	 * Sample strategy from logits (v6.0 DEPRECATED)
 	 */
 	EStrategyType SampleStrategy(const TArray<float>& Logits) const;
-
 
 	/**
 	 * Softmax activation function

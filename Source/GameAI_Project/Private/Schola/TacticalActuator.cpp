@@ -16,13 +16,16 @@ UTacticalActuator::UTacticalActuator()
 
 FDiscreteSpace UTacticalActuator::GetActionSpace()
 {
-	// v6.0: Discrete(4) - Strategy only (Assault, Defend, Support, Retreat)
-	// Position and targeting are now handled by rule-based StateTree execution
-	// This simplifies learning and aligns with MCTS-RL coordination architecture
+	// v8.0: DEPRECATED - This actuator is for v7.0 architecture
+	// v8.0 uses tactical parameters (continuous) + combat parameters (discrete)
+	// TODO: Implement BoxSpace for continuous tactical params + MultiDiscrete for combat
 
-	TArray<int32> Nvec = { 4 };  // 4 strategies
+	// Temporary: Return empty action space to prevent usage
+	// This file should be replaced with v8.0 TacticalActuator implementation
+	TArray<int32> Nvec = { 1 };  // Dummy placeholder
 	FDiscreteSpace ActionSpace = FDiscreteSpace(Nvec);
 
+	UE_LOG(LogTemp, Error, TEXT("[TacticalActuator v7.0 DEPRECATED] GetActionSpace() called - v8.0 requires new actuator implementation!"));
 	return ActionSpace;
 }
 
@@ -53,65 +56,16 @@ void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 		return;
 	}
 
-	// v6.0: Validate action dimensions: Discrete(4) - Strategy only
-	if (Action.Values.Num() < 1)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid action dimensions (expected 1, got %d)"),
-			*GetNameSafe(GetOuter()), Action.Values.Num());
-		return;
-	}
+	// v8.0: This v7.0 actuator is DEPRECATED
+	// v8.0 architecture: MCTS assigns strategies, RL outputs tactical parameters
+	// FMacroAction no longer has Strategy field - it only contains TacticalParams and CombatParams
 
-	// v6.0: Parse strategy index
-	int32 StrategyIdx = Action.Values[0];  // [0-3]: Strategy (Assault, Defend, Support, Retreat)
+	UE_LOG(LogTemp, Error, TEXT("[TacticalActuator v7.0 DEPRECATED] TakeAction() called - this file should not be used in v8.0!"));
+	UE_LOG(LogTemp, Error, TEXT("[TacticalActuator v7.0 DEPRECATED] v8.0 requires: Continuous tactical params + Discrete combat params"));
+	UE_LOG(LogTemp, Error, TEXT("[TacticalActuator v7.0 DEPRECATED] Strategies are now assigned by MCTS, not RL"));
 
-	// Validate index
-	if (StrategyIdx < 0 || StrategyIdx > 3)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] %s: Invalid strategy index %d (expected 0-3)"),
-			*GetNameSafe(GetOuter()), StrategyIdx);
-		return;
-	}
-
-	// Build macro action (v6.0 - strategy only)
-	FMacroAction MacroAction;
-	MacroAction.Strategy = static_cast<EStrategyType>(StrategyIdx);
-
-	// Store action in shared context for StateTree execution
-	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-	SharedContext.CurrentAction = MacroAction;
-	SharedContext.bScholaActionReceived = true; // Flag that action came from Schola
-
-	LastMacroAction = MacroAction;
-
-	// v7.3: Debug logging reduced to Verbose to prevent log spam during training
-	// Enable via console: Log LogTemp Verbose
-	#if !UE_BUILD_SHIPPING
-	AActor* Owner = GetTypedOuter<AActor>();
-	if (bDebugLogging)
-	{
-		// Only log when action actually CHANGES (to reduce spam during action persistence)
-		static TMap<FString, FMacroAction> LastLoggedActions;
-		FString OwnerName = GetNameSafe(Owner);
-		bool bActionChanged = true;
-
-		if (LastLoggedActions.Contains(OwnerName))
-		{
-			FMacroAction& LastAction = LastLoggedActions[OwnerName];
-			// v6.0: FMacroAction now only has Strategy field
-			bActionChanged = (LastAction.Strategy != MacroAction.Strategy);
-		}
-
-		if (bActionChanged)
-		{
-			// v6.0: Log only strategy (position/target removed from FMacroAction)
-			UE_LOG(LogTemp, Verbose, TEXT("[MACRO ACTION v6.0] '%s': Strategy=%s"),
-				*OwnerName,
-				*UEnum::GetValueAsString(MacroAction.Strategy));
-
-			LastLoggedActions.Add(OwnerName, MacroAction);
-		}
-	}
-	#endif
+	// Do nothing - prevent crashes but don't execute legacy logic
+	return;
 }
 
 void UTacticalActuator::InitializeActuator()
