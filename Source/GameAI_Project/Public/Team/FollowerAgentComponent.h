@@ -182,9 +182,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Follower|RL")
 	URLPolicyNetwork* GetTacticalPolicy() const { return TacticalPolicy; }
 
-	/** Set current mission for reward calculation (Sprint 4) */
-	UFUNCTION(BlueprintCallable, Category = "Follower|RL")
-	void SetCurrentMission(UMission* Mission);
 
 
 	//--------------------------------------------------------------------------
@@ -203,9 +200,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Follower|RL")
 	URewardCalculator* GetRewardCalculator() const { return RewardCalculator; }
 
-	/** v7.0 DEPRECATED: Use SetStrategyAssignment instead */
-	UFUNCTION(BlueprintCallable, Category = "Follower|RL", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Use SetStrategyAssignment() instead"))
-	void SetCurrentMission(class UMission* Mission);
 
 	/** Is follower alive? */
 	UFUNCTION(BlueprintPure, Category = "Follower|State")

@@ -2,21 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "ObservationTypes.h"
-#include "RL/RLTypes.h"  // v6.0: For FMissionContext
+#include "RL/RLTypes.h"  
 #include "ObservationElement.generated.h"
 
 /**
  * Enhanced observation structure for individual agents (v6.0)
- * 68 total features, fully normalized for neural network input
- *
- * v6.0 Changes (from v5.0):
- * - Added: Mission context(4) - type, distance, direction to assigned Mission
- * - Total features: 64 base + 4 Mission context = 68
- *
- * v5.0 Changes (from v4.0):
- * - Removed: rotation(3), shield(1), cooldown(1), ammo(1), weapon(1), terrain(1), temporal(2)
- * - Added: Support context(4) via FAllyContext
- * - Engine handles auto-aim, infinite ammo assumed, single weapon type
+ * 42 total features, fully normalized for neural network input
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FObservationElement
@@ -24,23 +15,19 @@ struct GAMEAI_PROJECT_API FObservationElement
     GENERATED_BODY()
 
     //--------------------------------------------------------------------------
-    // AGENT STATE (7 features) - v5.0 streamlined
+    // AGENT STATE (4 features)
     //--------------------------------------------------------------------------
 
     /** Agent position in world space */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
     FVector Position = FVector::ZeroVector;  // 3 features (X, Y, Z)
 
-    /** Agent velocity */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
-    FVector Velocity = FVector::ZeroVector;  // 3 features (VX, VY, VZ)
-
     /** Health percentage (0-1 normalized) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
     float AgentHealth = 1.0f;  // 1 feature
 
     //--------------------------------------------------------------------------
-    // COMBAT STATE (1 feature) - v5.0 streamlined
+    // COMBAT STATE (1 feature)
     //--------------------------------------------------------------------------
 
     /** Distance to nearest enemy (normalized) */
@@ -48,16 +35,21 @@ struct GAMEAI_PROJECT_API FObservationElement
     float DistanceToNearestEnemy = 1.0f;  // 1 feature (normalized by max range)
 
     //--------------------------------------------------------------------------
-    // ENVIRONMENT PERCEPTION (32 features)
+    // ENVIRONMENT PERCEPTION (16 features)
     //--------------------------------------------------------------------------
 
     /** Raycast distances (16 rays, 360° coverage), normalized by max range */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Perception")
     TArray<float> RaycastDistances;  // 16 features
 
-    /** Raycast hit types (what each ray detected) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Perception")
-    TArray<ERaycastHitType> RaycastHitTypes;  // 16 features (encoded as 0-7)
+
+    //--------------------------------------------------------------------------
+    // SUPPORT CONTEXT (1 features)
+    //--------------------------------------------------------------------------
+    /** Distance to ally in need (normalized by max range) [0, 1] */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    float AllyDistance = 0.0f;  // 1 feature
+
 
     //--------------------------------------------------------------------------
     // ENEMY INFORMATION (16 features)
@@ -72,7 +64,7 @@ struct GAMEAI_PROJECT_API FObservationElement
     TArray<FEnemyObservation> NearbyEnemies;  // 5×3 = 15 features
 
     //--------------------------------------------------------------------------
-    // TACTICAL CONTEXT (4 features) - v5.0 streamlined (removed terrain)
+    // TACTICAL CONTEXT (4 features)
     //--------------------------------------------------------------------------
 
     /** Is cover available nearby? */
@@ -88,34 +80,6 @@ struct GAMEAI_PROJECT_API FObservationElement
     FVector2D CoverDirection = FVector2D::ZeroVector;  // 2 features
 
     //--------------------------------------------------------------------------
-    // SUPPORT CONTEXT (4 features) - v5.0 NEW for Support strategy
-    //--------------------------------------------------------------------------
-
-    /** Whether any ally needs immediate help (health < 50% or surrounded) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    bool bAllyNeedsHelp = false;  // 1 feature
-
-    /** Normalized health of the ally most in need [0, 1] */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    float AllyHealth = 1.0f;  // 1 feature
-
-    /** Distance to ally in need (normalized by max range) [0, 1] */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    float AllyDistance = 0.0f;  // 1 feature
-
-    /** Direction to ally (normalized angle [-1, 1]) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    float AllyDirectionAngle = 0.0f;  // 1 feature
-
-    //--------------------------------------------------------------------------
-    // Mission CONTEXT (4 features) - v6.0 NEW
-    //--------------------------------------------------------------------------
-
-    /** Mission context from MCTS assignment (v6.0) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Mission")
-    FMissionContext MissionContext;  // 4 features (type, distance, direction)
-
-    //--------------------------------------------------------------------------
     // CONSTRUCTOR & UTILITY FUNCTIONS
     //--------------------------------------------------------------------------
 
@@ -126,7 +90,6 @@ struct GAMEAI_PROJECT_API FObservationElement
     {
         // Initialize raycast arrays with default values
         RaycastDistances.Init(1.0f, 16);  // 16 rays, max distance = 1.0 (normalized)
-        RaycastHitTypes.Init(ERaycastHitType::None, 16);
 
         // Initialize enemy array with empty observations
         NearbyEnemies.Init(FEnemyObservation(), 5);  // Track top 5 closest enemies
@@ -145,7 +108,6 @@ struct GAMEAI_PROJECT_API FObservationElement
     void InitializeRaycasts(int32 NumRays = 16)
     {
         RaycastDistances.Init(1.0f, NumRays);
-        RaycastHitTypes.Init(ERaycastHitType::None, NumRays);
     }
 
     /** Calculate observation similarity (for MCTS tree reuse) */

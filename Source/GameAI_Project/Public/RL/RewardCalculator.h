@@ -8,7 +8,6 @@
 
 class UFollowerAgentComponent;
 class UHealthComponent;
-class UMission;
 
 /**
  * v8.0 Unified Reward Configuration
@@ -281,10 +280,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void OnDeath();
 
-	/** Set current Mission for reward tracking */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	void SetCurrentMission(UMission* Mission);
-
 	/** Set current strategy for reward calculation (v5.0) */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void SetCurrentStrategy(EStrategyType Strategy);
@@ -297,10 +292,6 @@ public:
 	// COORDINATION TRACKING
 	//--------------------------------------------------------------------------
 
-	/** Check if agent is currently on Mission */
-	UFUNCTION(BlueprintPure, Category = "Reward")
-	bool IsOnMission() const;
-
 	/** Check if agent is in formation with teammates */
 	UFUNCTION(BlueprintPure, Category = "Reward")
 	bool IsInFormation() const;
@@ -312,10 +303,6 @@ public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION (v6.0 - Simplified)
 	//--------------------------------------------------------------------------
-
-	/** Radius to consider "on Mission" (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
-	float MissionRadiusThreshold = 1000.0f;
 
 	/** Time window for combined fire detection (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
@@ -336,9 +323,6 @@ private:
 	UPROPERTY()
 	UHealthComponent* HealthComponent = nullptr;
 
-	UPROPERTY()
-	UMission* CurrentMission = nullptr;
-
 	/** Current strategy (v5.0) - affects reward calculation */
 	EStrategyType CurrentStrategy = EStrategyType::Assault;
 
@@ -348,7 +332,6 @@ private:
 
 	float AccumulatedIndividualReward = 0.0f;
 	float AccumulatedCoordinationReward = 0.0f;
-	float AccumulatedMissionReward = 0.0f;
 
 	//--------------------------------------------------------------------------
 	// EVENT TRACKERS
@@ -357,9 +340,6 @@ private:
 	int32 KillsSinceLastUpdate = 0;
 	float DamageSinceLastUpdate = 0.0f;
 	float DamageTakenSinceLastUpdate = 0.0f;
-	float LastMissionProgress = 0.0f;
-
-	bool bDisobeyedMission = false;
 
 	/** Recent combined fire records */
 	TArray<FCombinedFireRecord> RecentCombinedFires;

@@ -33,7 +33,6 @@ public:
 	UTacticalActuator();
 
 	// UMultiDiscreteActuator interface
-	virtual FDiscreteSpace GetActionSpace() override;
 	virtual void TakeAction(const FDiscretePoint& Action) override;
 	virtual void InitializeActuator() override;
 

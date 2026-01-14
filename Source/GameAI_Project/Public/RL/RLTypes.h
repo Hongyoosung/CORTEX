@@ -161,6 +161,42 @@ struct GAMEAI_PROJECT_API FStrategyAssignment
 	float Timestamp = 0.0f;
 };
 
+/**
+ * Objective context for RL observation (v8.0)
+ * Provides information about the target objective for strategy execution
+ */
+USTRUCT(BlueprintType)
+struct GAMEAI_PROJECT_API FObjectiveContext
+{
+	GENERATED_BODY()
+
+	/** Target objective actor */
+	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	TObjectPtr<class AObjectiveActor> TargetObjective = nullptr;
+
+	/** Normalized distance to objective [0, 1] */
+	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	float Distance = 0.0f;
+
+	/** Normalized 2D direction to objective */
+	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	FVector2D Direction = FVector2D::ZeroVector;
+
+	/** Convert to feature vector for neural network (4 features total) */
+	TArray<float> ToFeatureVector() const
+	{
+		// For v8.0: Return objective context as 4 features
+		// [type_encoded, distance, direction.x, direction.y]
+		// Type encoding: 0.0 = friendly objective, 1.0 = hostile objective
+		return {
+			0.0f,  // Type encoding (to be set by caller based on team ownership)
+			Distance,
+			static_cast<float>(Direction.X),
+			static_cast<float>(Direction.Y)
+		};
+	}
+};
+
 // ============================================
 // v8.0: Tactical Parameters (RL → EQS Modulation)
 // ============================================

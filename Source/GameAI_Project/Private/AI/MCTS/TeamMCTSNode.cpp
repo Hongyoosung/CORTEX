@@ -10,16 +10,19 @@ FTeamMCTSNode::FTeamMCTSNode()
 {
 }
 
-void FTeamMCTSNode::Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, UMission*>& InMissions)
+void FTeamMCTSNode::Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, FStrategyAssignment>& InAssignments)
 {
 	Parent = InParent;
-	Missions.Empty(InMissions.Num());
-	for (const auto& Pair : InMissions)
+
+	// v8.0: Store strategy assignments instead of missions
+	StrategyAssignments.Empty(InAssignments.Num());
+	for (const auto& Pair : InAssignments)
 	{
-		// Pair.Key(AActor*) -> TObjectPtr<AActor> (�ڵ� ��ȯ)
-		// Pair.Value(UMission*) -> TObjectPtr<UOMission> (�ڵ� ��ȯ)
-		Missions.Add(Pair.Key, Pair.Value);
+		// Pair.Key(AActor*) -> TObjectPtr<AActor> (automatic conversion)
+		// Pair.Value(FStrategyAssignment) -> stored directly
+		StrategyAssignments.Add(Pair.Key, Pair.Value);
 	}
+
 	TotalReward = 0.0f;
 	VisitCount = 0;
 
@@ -137,18 +140,19 @@ TSharedPtr<FTeamMCTSNode> FTeamMCTSNode::Expand(const TArray<AActor*>& Followers
 			}
 		}
 
-		UE_LOG(LogTemp, VeryVerbose, TEXT("MCTS: Expanding action with prior %.3f (index %d/%d)"),
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[MCTS v8.0] Expanding action with prior %.3f (index %d/%d)"),
 			ActionPriors[SelectedIndex], SelectedIndex, ActionPriors.Num());
 	}
 	else
 	{
 		// Fallback to random selection if no priors available
 		SelectedIndex = FMath::RandRange(0, UntriedActions.Num() - 1);
-		UE_LOG(LogTemp, VeryVerbose, TEXT("MCTS: Expanding action randomly (no priors, index %d/%d)"),
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[MCTS v8.0] Expanding action randomly (no priors, index %d/%d)"),
 			SelectedIndex, UntriedActions.Num());
 	}
 
-	TMap<AActor*, UMission*> NewMissions = UntriedActions[SelectedIndex];
+	// v8.0: Get strategy assignment instead of mission assignment
+	TMap<AActor*, FStrategyAssignment> NewAssignments = UntriedActions[SelectedIndex];
 	UntriedActions.RemoveAt(SelectedIndex);
 
 	// Also remove the corresponding prior
@@ -158,7 +162,7 @@ TSharedPtr<FTeamMCTSNode> FTeamMCTSNode::Expand(const TArray<AActor*>& Followers
 	}
 
 	TSharedPtr<FTeamMCTSNode> Child = MakeShared<FTeamMCTSNode>();
-	Child->Initialize(AsShared(), NewMissions);
+	Child->Initialize(AsShared(), NewAssignments);
 	Children.Add(Child);
 
 	return Child;

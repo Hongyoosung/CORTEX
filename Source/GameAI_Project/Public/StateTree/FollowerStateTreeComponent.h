@@ -110,10 +110,6 @@ protected:
 	/** Bind to follower component events */
 	void BindToFollowerEvents();
 
-	/** Handle Mission received from leader (v3.0) */
-	UFUNCTION()
-	void OnMissionReceived(UMission* Mission);
-
 	/** Handle controller changed (for Schola Trainer possession) */
 	UFUNCTION()
 	void OnControllerChanged(APawn* InPawn, AController* OldController, AController* NewController);

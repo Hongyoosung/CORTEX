@@ -524,7 +524,6 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 
 	// v5.0: Streamlined Agent State (7 features)
 	Observation.Position = Owner->GetActorLocation();
-	Observation.Velocity = Owner->GetVelocity();
 
 	// v5.0: Health (normalized [0, 1])
 	UHealthComponent* HealthComp = Owner->FindComponentByClass<UHealthComponent>();
@@ -539,9 +538,6 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 	{
 		// Update enemy information from perception
 		PerceptionComp->UpdateObservationWithEnemies(Observation);
-
-		// Build raycast hit types (16 rays at 5000cm range)
-		Observation.RaycastHitTypes = PerceptionComp->BuildRaycastHitTypes(16, 5000.0f);
 
 		// Calculate raycast distances (normalized)
 		const FVector OwnerLocation = Owner->GetActorLocation();
@@ -659,9 +655,6 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 
 		if (AllyInNeed)
 		{
-			Observation.bAllyNeedsHelp = (WorstAllyHealth < AllyNeedsHelpThreshold);
-			Observation.AllyHealth = WorstAllyHealth;
-
 			// Calculate distance and direction to ally
 			FVector ToAlly = AllyLocation - Owner->GetActorLocation();
 			float Distance = ToAlly.Size();
@@ -674,15 +667,11 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 				FVector::CrossProduct(Forward, ToAlly).Z,
 				FVector::DotProduct(Forward, ToAlly)
 			);
-			Observation.AllyDirectionAngle = FMath::Clamp(Angle / PI, -1.0f, 1.0f);
+
 		}
 		else
 		{
-			// No ally in need
-			Observation.bAllyNeedsHelp = false;
-			Observation.AllyHealth = 1.0f;
 			Observation.AllyDistance = 0.0f;
-			Observation.AllyDirectionAngle = 0.0f;
 		}
 	}
 

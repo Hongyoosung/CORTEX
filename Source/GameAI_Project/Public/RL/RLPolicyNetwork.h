@@ -90,58 +90,6 @@ public:
 		const TArray<EStrategyType>& AssignedStrategies
 	);
 
-	// ========================================
-	// v6.0 API: Strategy Selection (Single Agent) - DEPRECATED
-	// ========================================
-
-	/**
-	 * Get strategy for current observation + Mission (v6.0 DEPRECATED)
-	 * @param Observation - Agent's 64-feature observation
-	 * @param MissionContext - Assigned Mission context (4 features)
-	 * @return Selected strategy (Assault/Defend/Support/Retreat)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Use GetMacroAction() instead. Strategy is now assigned by MCTS, not RL."))
-	EStrategyType GetStrategy(const FObservationElement& Observation, const FMissionContext& MissionContext);
-
-	/**
-	 * Get state value estimate (used by MCTS for leaf evaluation) (v6.0 DEPRECATED)
-	 * @param Observation - Agent's 64-feature observation
-	 * @param MissionContext - Assigned Mission context (4 features)
-	 * @return Value estimate [-1, 1]
-	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Use GetStateValueV8() instead"))
-	float GetStateValue(const FObservationElement& Observation, const FMissionContext& MissionContext);
-
-	// ========================================
-	// v6.0 API: Batched Inference (Performance Critical)
-	// ========================================
-
-	/**
-	 * Get strategies for multiple agents in single network call (v6.0)
-	 * PERFORMANCE: 2.6× faster than sequential calls (8ms → 3ms for 4 agents)
-	 * @param Observations - Array of agent observations
-	 * @param MissionContexts - Array of Mission contexts (same size as Observations)
-	 * @return Array of strategies (same size as input)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
-	TArray<EStrategyType> GetStrategiesBatched(
-		const TArray<FObservationElement>& Observations,
-		const TArray<FMissionContext>& MissionContexts
-	);
-
-	/**
-	 * Get state values for multiple agents in single network call (v6.0)
-	 * Used by MCTS for evaluating multiple agent-Mission assignments
-	 * @param Observations - Array of agent observations
-	 * @param MissionContexts - Array of Mission contexts
-	 * @return Array of value estimates [-1, 1]
-	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
-	TArray<float> GetStateValuesBatched(
-		const TArray<FObservationElement>& Observations,
-		const TArray<FMissionContext>& MissionContexts
-	);
-
 
 private:
 	// ========================================
@@ -189,35 +137,6 @@ private:
 	 * @return Sampled combat priority
 	 */
 	ETargetPriority SampleCombatPriority(const TArray<float>& CombatLogits) const;
-
-	// ========================================
-	// v6.0: Network Input/Output Helpers (DEPRECATED)
-	// ========================================
-
-	/**
-	 * Build 68-feature input from observation + Mission context (v6.0 DEPRECATED)
-	 */
-	TArray<float> BuildNetworkInput(const FObservationElement& Observation, const FMissionContext& MissionContext) const;
-
-	/**
-	 * Network output structure (v6.0 DEPRECATED)
-	 */
-	struct FNetworkOutput {
-		TArray<float> PolicyLogits;  // [4] - Strategy logits
-		float Value;                  // State value estimate
-	};
-
-	/**
-	 * Forward pass through single-head network (v6.0 DEPRECATED)
-	 * @param InputFeatures - 68-element input vector
-	 * @return Policy logits (4) and value (1)
-	 */
-	FNetworkOutput ForwardPassV6(const TArray<float>& InputFeatures);
-
-	/**
-	 * Sample strategy from logits (v6.0 DEPRECATED)
-	 */
-	EStrategyType SampleStrategy(const TArray<float>& Logits) const;
 
 	/**
 	 * Softmax activation function

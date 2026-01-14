@@ -107,15 +107,4 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, f
 		InstanceData.AIController->SetControlRotation(DesiredRotation);
 		InstanceData.AIController->SetFocus(SharedContext.PrimaryTarget);
 	}
-	// Otherwise face Mission direction
-	else if (InstanceData.AIController && SharedContext.CurrentMission && !SharedContext.CurrentMission->TargetLocation.IsNearlyZero())
-	{
-		FVector MissionLocation = SharedContext.CurrentMission->TargetLocation;
-		FVector PawnLocation = Pawn->GetActorLocation();
-		FVector DirectionToMission = (MissionLocation - PawnLocation).GetSafeNormal();
-		FRotator DesiredRotation = DirectionToMission.Rotation();
-
-		InstanceData.AIController->SetControlRotation(DesiredRotation);
-		InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
-	}
 }

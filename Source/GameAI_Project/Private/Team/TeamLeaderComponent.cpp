@@ -126,8 +126,15 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	if (AsyncMCTSTask != nullptr && AsyncMCTSTask->IsDone())
 	{
 		// Get results from completed task (v8.0 API)
-		TArray<FStrategyAssignment> Assignments = AsyncMCTSTask->GetTask().GetStrategyResults();
+		TMap<AActor*, FStrategyAssignment> AssignmentMap = AsyncMCTSTask->GetTask().GetResults();
 		float ExecutionTime = AsyncMCTSTask->GetTask().GetExecutionTime();
+
+		// Convert map to array for ApplyStrategyAssignment
+		TArray<FStrategyAssignment> Assignments;
+		for (const auto& Pair : AssignmentMap)
+		{
+			Assignments.Add(Pair.Value);
+		}
 
 		UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v8.0] '%s': Async task completed in %.2fms - %d assignments"),
 			*TeamName, ExecutionTime, Assignments.Num());
@@ -527,8 +534,10 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 		switch (Context.EventType)
 		{
 			case EStrategicEvent::AllyKilled:
-			case EStrategicEvent::MissionComplete:
-			case EStrategicEvent::MissionFailed:
+			case EStrategicEvent::EnemySpotted:
+			case EStrategicEvent::EnemyKilled:
+			case EStrategicEvent::UnderFire:
+
 				bIsCritical = true;
 				break;
 			default:
@@ -565,8 +574,8 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 	switch (Context.EventType)
 	{
 		case EStrategicEvent::AllyKilled:
-		case EStrategicEvent::MissionComplete:
-		case EStrategicEvent::MissionFailed:
+		case EStrategicEvent::EnemySpotted:
+
 			UE_LOG(LogTemp, Verbose, TEXT("TeamLeader '%s': Critical event type, triggering MCTS"), *TeamName);
 			return true;
 		default:
@@ -694,14 +703,25 @@ void UTeamLeaderComponent::RunStrategyAssignment()
 		}
 	}
 
+	// Build objectives array (v8.0)
+	TArray<AObjectiveActor*> Objectives;
+	if (FriendlyObjective) Objectives.Add(FriendlyObjective);
+	if (HostileObjective) Objectives.Add(HostileObjective);
+
 	// Run MCTS to find best strategy assignments (v8.0)
-	TArray<FStrategyAssignment> Assignments = StrategicMCTS->RunStrategyAssignment(
+	TMap<AActor*, FStrategyAssignment> AssignmentMap = StrategicMCTS->RunStrategyAssignment(
 		AliveAgents,
-		FriendlyObjective,
-		HostileObjective,
+		Objectives,
 		MCTSSimulations,
 		CachedObservations
 	);
+
+	// Convert map to array for ApplyStrategyAssignment
+	TArray<FStrategyAssignment> Assignments;
+	for (const auto& Pair : AssignmentMap)
+	{
+		Assignments.Add(Pair.Value);
+	}
 
 	float ExecutionTime = (FPlatformTime::Seconds() - StartTime) * 1000.0f; // ms
 
@@ -797,12 +817,16 @@ void UTeamLeaderComponent::RunStrategyAssignmentAsync()
 		*TeamName,
 		CachedObservations.Num());
 
+	// Build objectives array (v8.0)
+	TArray<AObjectiveActor*> Objectives;
+	if (FriendlyObjective) Objectives.Add(FriendlyObjective);
+	if (HostileObjective) Objectives.Add(HostileObjective);
+
 	// Create async task (v8.0 API)
 	AsyncMCTSTask = new FAsyncTask<FMCTSAsyncTask>(
 		StrategicMCTS,
 		AliveAgents,
-		FriendlyObjective,
-		HostileObjective,
+		Objectives,
 		MCTSSimulations,
 		CachedObservations // Pass cached observations for thread safety
 	);

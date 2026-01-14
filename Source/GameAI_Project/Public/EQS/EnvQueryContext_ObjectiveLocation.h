@@ -5,10 +5,10 @@
 #include "EnvQueryContext_ObjectiveLocation.generated.h"
 
 /**
- * EQS Context that provides the current objective's target location
+ * EQS Context that provides the current objective's target location (v8.0)
  * Used by tactical queries (ForwardCover, Advance, etc.) to orient toward strategic goals
  *
- * Production Mode: Reads CurrentMission.TargetLocation from FollowerStateTreeContext
+ * Production Mode: Reads TargetObjective from FollowerStateTreeContext (MCTS-assigned)
  * Testing Mode: Fallback to searching actors with tag "Objective" (for EQS Testing Pawn)
  */
 UCLASS()

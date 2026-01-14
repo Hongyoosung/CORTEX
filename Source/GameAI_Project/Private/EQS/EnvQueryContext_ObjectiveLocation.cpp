@@ -3,7 +3,7 @@
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeContext.h"
-#include "Team/Mission.h"
+#include "Team/ObjectiveActor.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -21,23 +21,17 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 	UFollowerStateTreeComponent* StateTreeComp = QueryOwner->FindComponentByClass<UFollowerStateTreeComponent>();
 	if (StateTreeComp)
 	{
-		// Access CurrentMission from shared context
+		// v8.0: Access TargetObjective from shared context (MCTS-assigned)
 		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-		if (SharedContext.CurrentMission)
+		if (SharedContext.TargetObjective)
 		{
-			// Get objective target location
-			ObjectiveLocation = SharedContext.CurrentMission->TargetLocation;
-
-			// Fallback: If TargetLocation is zero, try TargetActor location
-			if (ObjectiveLocation.IsNearlyZero() && SharedContext.CurrentMission->TargetActor)
-			{
-				ObjectiveLocation = SharedContext.CurrentMission->TargetActor->GetActorLocation();
-			}
+			// Get objective actor location
+			ObjectiveLocation = SharedContext.TargetObjective->GetActorLocation();
 		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("Failed StateTreeComp check"))
+		UE_LOG(LogTemp, Warning, TEXT("EnvQueryContext_ObjectiveLocation: No StateTreeComponent found on %s"), *QueryOwner->GetName());
 	}
 
 	// Set objective location as context data

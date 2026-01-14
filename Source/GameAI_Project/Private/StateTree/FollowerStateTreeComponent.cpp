@@ -11,7 +11,6 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "StateTreeModule\Public\StateTree.h"
-#include "Team/Mission.h"
 #include "GameplayTagsManager.h"
 #include "StateTreeEvents.h"
 
@@ -302,10 +301,6 @@ void UFollowerStateTreeComponent::InitializeContext()
 	Context.bIsAlive = FollowerComponent->bIsAlive;
 	Context.bUseRLPolicy = FollowerComponent->bUseRLPolicy;
 
-	// Initialize Mission (v3.0)
-	Context.CurrentMission = FollowerComponent->GetCurrentMission();
-	Context.bHasActiveMission = FollowerComponent->HasActiveMission();
-
 	// Initialize observation
 	Context.CurrentObservation = FollowerComponent->GetLocalObservation();
 
@@ -325,8 +320,6 @@ void UFollowerStateTreeComponent::UpdateContextFromFollower()
 	// Sync basic state from follower component (v3.0)
 	// (Detailed observation updates are handled by STEvaluator_UpdateObservation)
 	Context.bIsAlive = FollowerComponent->bIsAlive;
-	Context.CurrentMission = FollowerComponent->GetCurrentMission();
-	Context.bHasActiveMission = FollowerComponent->HasActiveMission();
 	Context.AccumulatedReward = FollowerComponent->GetAccumulatedReward();
 }
 
@@ -541,44 +534,8 @@ void UFollowerStateTreeComponent::BindToFollowerEvents()
 		return;
 	}
 
-	// Bind to Mission received event (v3.0)
-	FollowerComponent->OnMissionReceived.AddDynamic(this, &UFollowerStateTreeComponent::OnMissionReceived);
 
 	UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Bound to FollowerAgentComponent events"));
-}
-
-void UFollowerStateTreeComponent::OnMissionReceived(UMission* Mission)
-{
-	// Update context immediately when Mission changes (v3.0)
-	Context.CurrentMission = Mission;
-	Context.bHasActiveMission = Mission != nullptr && Mission->IsActive();
-
-	// CRITICAL: Immediately set primary target from Mission (don't wait for evaluator tick)
-	if (Mission && Mission->TargetActor && Mission->TargetActor->IsValidLowLevel() && !Mission->TargetActor->IsPendingKillPending())
-	{
-		Context.PrimaryTarget = Mission->TargetActor;
-
-		// Update distance if we have a pawn
-		if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
-		{
-			Context.DistanceToPrimaryTarget = FVector::Dist(
-				OwnerPawn->GetActorLocation(),
-				Context.PrimaryTarget->GetActorLocation()
-			);
-		}
-	}
-	else
-	{
-		Context.PrimaryTarget = nullptr;
-		Context.DistanceToPrimaryTarget = 0.0f;
-	}
-
-	FString MissionStr = Mission ? UEnum::GetValueAsString(Mission->Type) : TEXT("None");
-	UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Mission received - Type: %s"),
-		*MissionStr);
-
-	// Send StateTree event for event-driven transition
-	SendStateTreeEvent(Event_MissionReceived);
 }
 
 void UFollowerStateTreeComponent::OnFollowerDied()

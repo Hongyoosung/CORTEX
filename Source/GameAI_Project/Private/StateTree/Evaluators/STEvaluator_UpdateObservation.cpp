@@ -212,24 +212,7 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 	}
 
 
-	// Set primary target - PRIORITIZE Mission target over perception target
-	AActor* MissionTarget = SharedContext.CurrentMission ? SharedContext.CurrentMission->TargetActor : nullptr;
-
-	if (MissionTarget && MissionTarget->IsValidLowLevel() && !MissionTarget->IsPendingKillPending())
-	{
-		// Use Mission-specified target if valid
-		SharedContext.PrimaryTarget = MissionTarget;
-		float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), MissionTarget->GetActorLocation());
-
-		if (InstanceData.bDrawDebugInfo)
-		{
-			FVector TargetLocation = MissionTarget->GetActorLocation();
-			DrawDebugLine(World, ControlledPawn->GetActorLocation(), TargetLocation,
-				FColor::Orange, false, 0.2f, 0, 3.0f); // Orange for Mission target
-			DrawDebugSphere(World, TargetLocation, 50.0f, 12, FColor::Orange, false, 0.2f);
-		}
-	}
-	else if (SharedContext.VisibleEnemies.Num() > 0)
+	if (SharedContext.VisibleEnemies.Num() > 0)
 	{
 		// Fall back to nearest known enemy (team-shared or individually detected)
 		SharedContext.PrimaryTarget = SharedContext.VisibleEnemies[0]; // Already sorted by distance

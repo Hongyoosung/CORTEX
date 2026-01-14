@@ -4,7 +4,6 @@
 #include "Team/FollowerAgentComponent.h"
 #include "Team/TeamLeaderComponent.h"
 #include "Combat/HealthComponent.h"
-#include "Team/Mission.h"
 #include "Team/ObjectiveActor.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
@@ -41,8 +40,6 @@ void URewardCalculator::BeginPlay()
 	// Reset state
 	AccumulatedIndividualReward = 0.0f;
 	AccumulatedCoordinationReward = 0.0f;
-	AccumulatedMissionReward = 0.0f;
-	LastMissionProgress = 0.0f;
 }
 
 void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -61,12 +58,6 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	// Build current observation
 	FObservationElement CurrentObs = FollowerComponent->BuildLocalObservation();
 
-	// Add Mission context to observation
-	if (CurrentMission)
-	{
-		CurrentObs.MissionContext = FollowerComponent->BuildMissionContext(CurrentMission);
-	}
-
 	float StepReward = 0.0f;
 
 	// === v8.0 UNIFIED REWARD CALCULATION ===
@@ -83,7 +74,7 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	LastRewardBreakdown = Breakdown;
 
 	// === EVENT-BASED REWARDS (kills, damage, death accumulated since last tick) ===
-	float eventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward + AccumulatedMissionReward;
+	float eventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward;
 	StepReward += eventRewards;
 
 	// Forward total reward to FollowerComponent
@@ -104,7 +95,6 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	// Reset event accumulators (events are one-time, continuous rewards recalculate every tick)
 	AccumulatedIndividualReward = 0.0f;
 	AccumulatedCoordinationReward = 0.0f;
-	AccumulatedMissionReward = 0.0f;
 	KillsSinceLastUpdate = 0;
 	DamageSinceLastUpdate = 0.0f;
 	DamageTakenSinceLastUpdate = 0.0f;
@@ -138,12 +128,11 @@ float URewardCalculator::CalculateReward(
 		CurrentObs
 	);
 
-	// Add accumulated global events (Mission completion)
-	float TotalReward = Breakdown.Total + AccumulatedMissionReward;
+	// v8.0: Total reward from component breakdown
+	float TotalReward = Breakdown.Total;
 
 	// Reset accumulators
 	AccumulatedIndividualReward = 0.0f;
-	AccumulatedMissionReward = 0.0f;
 	KillsSinceLastUpdate = 0;
 	DamageSinceLastUpdate = 0.0f;
 	DamageTakenSinceLastUpdate = 0.0f;
@@ -210,10 +199,8 @@ float URewardCalculator::CalculateObjectiveProgressComponent(
 {
 	float Reward = 0.0f;
 
-	// Get objective actor from mission context
-	const FMissionContext& CurrentCtx = CurrentObs.MissionContext;
-	AObjectiveActor* ObjectiveActor = Cast<AObjectiveActor>(CurrentCtx.TargetActor);
-
+	AObjectiveActor* ObjectiveActor = FollowerComponent->GetTargetObjective();
+	
 	if (!ObjectiveActor || !GetOwner())
 	{
 		return 0.0f;
@@ -326,21 +313,10 @@ void URewardCalculator::OnKillEnemyWithPriority(AActor* Enemy, bool bWasLowestHP
 	// v8.0: Kill reward calculated in CalculateCombatEffectivenessComponent
 	// Base: +10.0, Efficient (lowest HP): +12.0
 
-	// Bonus for kill while on Mission
-	if (IsOnMission())
-	{
-		AccumulatedCoordinationReward += 15.0f; // +15 for Mission kill
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT v8.0] '%s': Kill on Mission (LowestHP=%s) → +15.0 coordination bonus"),
-			*GetOwner()->GetName(),
-			bWasLowestHP ? TEXT("true") : TEXT("false"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT v8.0] '%s': Kill (LowestHP=%s) → +%.1f in next tick"),
-			*GetOwner()->GetName(),
-			bWasLowestHP ? TEXT("true") : TEXT("false"),
-			bWasLowestHP ? RewardConfig::KILL_REWARD_EFFICIENT : RewardConfig::KILL_REWARD_BASE);
-	}
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT v8.0] '%s': Kill (LowestHP=%s) → +%.1f in next tick"),
+		*GetOwner()->GetName(),
+		bWasLowestHP ? TEXT("true") : TEXT("false"),
+		bWasLowestHP ? RewardConfig::KILL_REWARD_EFFICIENT : RewardConfig::KILL_REWARD_BASE);
 }
 
 void URewardCalculator::OnDealDamage(float Damage, AActor* Target)
@@ -373,17 +349,6 @@ void URewardCalculator::OnDeath()
 }
 
 
-void URewardCalculator::SetCurrentMission(UMission* Mission)
-{
-	if (CurrentMission != Mission)
-	{
-		CurrentMission = Mission;
-		LastMissionProgress = Mission ? Mission->GetProgress() : 0.0f;
-		UE_LOG(LogTemp, Log, TEXT("[REWARD] Mission updated: %s"),
-			Mission ? *UEnum::GetValueAsString(Mission->Type) : TEXT("None"));
-	}
-}
-
 void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
 {
 	if (CurrentStrategy != Strategy)
@@ -400,27 +365,6 @@ void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
 //--------------------------------------------------------------------------
 // COORDINATION TRACKING
 //--------------------------------------------------------------------------
-
-bool URewardCalculator::IsOnMission() const
-{
-	if (!CurrentMission || !CurrentMission->IsActive())
-	{
-		return false;
-	}
-
-	AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		return false;
-	}
-
-	// Check distance to Mission location
-	FVector OwnerLocation = Owner->GetActorLocation();
-	FVector MissionLocation = CurrentMission->TargetLocation;
-	float Distance = FVector::Dist(OwnerLocation, MissionLocation);
-
-	return Distance <= MissionRadiusThreshold;
-}
 
 bool URewardCalculator::IsInFormation() const
 {

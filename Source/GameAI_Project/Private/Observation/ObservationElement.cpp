@@ -18,11 +18,6 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(Position.Y / 10000.0f);
     Features.Add(Position.Z / 10000.0f);
 
-    // Velocity (3)
-    Features.Add(FMath::Clamp(Velocity.X / 1000.0f, -1.0f, 1.0f));
-    Features.Add(FMath::Clamp(Velocity.Y / 1000.0f, -1.0f, 1.0f));
-    Features.Add(FMath::Clamp(Velocity.Z / 1000.0f, -1.0f, 1.0f));
-
     // Health (1) - already normalized [0, 1]
     Features.Add(FMath::Clamp(AgentHealth, 0.0f, 1.0f));
 
@@ -42,15 +37,6 @@ TArray<float> FObservationElement::ToFeatureVector() const
     for (int32 i = 0; i < 16; ++i)
     {
         Features.Add(i < RaycastDistances.Num() ? RaycastDistances[i] : 1.0f);
-    }
-
-    // Raycast Hit Types (16)
-    for (int32 i = 0; i < 16; ++i)
-    {
-        ERaycastHitType HitType = (i < RaycastHitTypes.Num())
-            ? RaycastHitTypes[i]
-            : ERaycastHitType::None;
-        Features.Add(static_cast<float>(HitType) / 7.0f);  // 8 enum values (0-7)
     }
 
     // ========================================
@@ -88,23 +74,11 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(CoverDirection.Y);
 
     // ========================================
-    // SUPPORT CONTEXT (4 features) - v5.0 NEW
+    // SUPPORT CONTEXT (1 features) - v5.0 NEW
     // For Support strategy head selection
     // ========================================
-
-    Features.Add(bAllyNeedsHelp ? 1.0f : 0.0f);
-    Features.Add(FMath::Clamp(AllyHealth, 0.0f, 1.0f));
     Features.Add(FMath::Clamp(AllyDistance, 0.0f, 1.0f));
-    Features.Add(FMath::Clamp(AllyDirectionAngle, -1.0f, 1.0f));
 
-    // ========================================
-    // Mission CONTEXT (4 features) - v6.0 NEW
-    // Informs RL about MCTS-assigned Mission
-    // ========================================
-
-    TArray<float> MissionFeatures = MissionContext.ToFeatureVector();
-    check(MissionFeatures.Num() == 4);
-    Features.Append(MissionFeatures);
 
     check(Features.Num() == 68);
     return Features;
@@ -114,7 +88,6 @@ void FObservationElement::Reset()
 {
     // Agent State (v5.0: 7 features)
     Position = FVector::ZeroVector;
-    Velocity = FVector::ZeroVector;
     AgentHealth = 1.0f;  // Normalized [0, 1]
 
     // Combat State (v5.0: 1 feature)
@@ -122,7 +95,6 @@ void FObservationElement::Reset()
 
     // Environment Perception
     RaycastDistances.Init(1.0f, 16);
-    RaycastHitTypes.Init(ERaycastHitType::None, 16);
 
     // Enemy Information
     VisibleEnemyCount = 0;
@@ -133,11 +105,8 @@ void FObservationElement::Reset()
     NearestCoverDistance = 1.0f;  // Normalized [0, 1]
     CoverDirection = FVector2D::ZeroVector;
 
-    // Support Context (v5.0: 4 features - NEW)
-    bAllyNeedsHelp = false;
-    AllyHealth = 1.0f;
+    // Support Context (v5.0: 1 features - NEW)
     AllyDistance = 0.0f;
-    AllyDirectionAngle = 0.0f;
 }
 
 float FObservationElement::CalculateSimilarity(
@@ -152,16 +121,12 @@ float FObservationElement::CalculateSimilarity(
     // Position similarity (still needs normalization)
     float PositionDiff = FVector::Dist(A.Position, B.Position) / 10000.0f;
 
-    // Support context similarity (v5.0)
-    float AllyHealthDiff = FMath::Abs(A.AllyHealth - B.AllyHealth);
-
     // Weighted average
     float WeightedDiff =
         0.25f * HealthDiff +
         0.2f * DistanceDiff +
         0.2f * EnemyDiff +
-        0.2f * PositionDiff +
-        0.15f * AllyHealthDiff;
+        0.2f * PositionDiff;
 
     // Convert difference to similarity (exponential decay)
     return FMath::Exp(-WeightedDiff * 5.0f);  // [0, 1], higher = more similar
