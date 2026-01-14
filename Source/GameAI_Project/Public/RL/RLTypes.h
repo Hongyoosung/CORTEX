@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Team/Mission.h"
 #include "RLTypes.generated.h"
 
 // Forward declarations (v6.0 - avoid circular dependency)
@@ -120,75 +119,34 @@ struct FAllyContext
 };
 
 // ============================================
-// v7.0: Mission Context for RL Observation
-// v7.0 NAMING: Mission = strategic goal, Objective = physical base (AObjectiveActor)
-// ============================================
-
-// Forward declare UMission (defined in Team/Mission.h)
-class UMission;
-
-/**
- * Mission context provided to RL policy (v7.0)
- * Informs agent about their assigned mission from MCTS
- */
-USTRUCT(BlueprintType)
-struct GAMEAI_PROJECT_API FMissionContext
-{
-	GENERATED_BODY()
-
-	/** Assigned mission type */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	EMissionType Type = EMissionType::None;
-
-	/** Normalized distance to mission target [0,1] */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	float Distance = 0.0f;
-
-	/** Normalized 2D direction to mission target */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	FVector2D Direction = FVector2D::ZeroVector;
-
-	/** Target actor (enemy, capture point, ally, etc.) */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	TObjectPtr<AActor> TargetActor = nullptr;
-
-	/** Mission priority [0-10] */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	int32 Priority = 5;
-
-	/** Convert to feature array for neural network (4 features) */
-	TArray<float> ToFeatureVector() const
-	{
-		// Encode type as normalized value [0, 0.25, 0.5, 0.75, 1.0]
-		float TypeEncoded = static_cast<float>(Type) / static_cast<float>(EMissionType::Retreat);
-
-		return {
-			TypeEncoded,
-			Distance,
-			(float)Direction.X,
-			(float)Direction.Y
-		};
-	}
-};
-
-// ============================================
-// v7.0: MCTS Assignment Result
-// v7.0 NAMING: Mission = strategic goal assigned by MCTS
+// v8.0: Strategy Assignment (MCTS Output)
+// MCTS now assigns Strategies directly (not Missions)
 // ============================================
 
 /**
- * Result of MCTS mission assignment (v7.0)
- * Maps agents to missions with confidence metrics
- * v7.0: Renamed from FMissionAssignment to match UMission terminology
+ * Strategy assignment from MCTS (v8.0)
+ * MCTS assigns both the strategy and the target objective for each agent
  */
 USTRUCT(BlueprintType)
-struct GAMEAI_PROJECT_API FMissionAssignment
+struct GAMEAI_PROJECT_API FStrategyAssignment
 {
 	GENERATED_BODY()
 
-	/** Agent-to-mission mapping */
+	/** Assigned agent */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
-	TMap<TObjectPtr<AActor>, TObjectPtr<UMission>> AgentToMission;
+	TObjectPtr<AActor> Agent = nullptr;
+
+	/** Assigned strategy type */
+	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
+	EStrategyType Strategy = EStrategyType::Assault;
+
+	/** Target objective (which base to attack/defend) */
+	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
+	TObjectPtr<class AObjectiveActor> TargetObjective = nullptr;
+
+	/** Assignment priority [0-10] */
+	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
+	int32 Priority = 5;
 
 	/** MCTS-estimated value of this assignment [-1, 1] */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")

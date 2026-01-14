@@ -1,6 +1,28 @@
-# SBDAPM Docker Training Environment
+# CORTEX Training Environment
 
-Docker-based training environment for the SBDAPM Multi-Agent Combat AI system. Solves Windows multiprocessing issues with Ray RLlib.
+Docker-based training environment for the CORTEX Multi-Agent Combat AI system. Solves Windows multiprocessing issues with Ray RLlib.
+
+## Current Version: v8.0 (Tactical Parameters + Combat Control)
+
+**Architecture:**
+- MCTS assigns strategies → RL outputs tactical parameters + combat priority
+- Multi-head policy network (separate heads per strategy)
+- Hybrid action space: 4 continuous tactical params [0,1] + 2 discrete combat choices
+- Curriculum learning (3 phases: Single → Mixed → Dynamic)
+- Unified reward system with strategy-specific weights
+
+**Training:**
+- PPO with continuous action tuning (LR=5e-5, batch=8000)
+- Parameter monitoring (strategy differentiation tracking)
+- Exports to: `cortex_policy_v8.onnx`
+
+## Deprecated: v6.0 (2026-01-14)
+
+**v6.0 Architecture:**
+- Single-head strategy selection (4 discrete actions: Assault, Defend, Support, Retreat)
+- Exported to: `cortex_policy_v6.onnx`
+- Archived to: `Content/AI/Models/v7.0-archive/`
+- Rollback: Use branch `v6.0-stable`
 
 ## Problem Statement
 

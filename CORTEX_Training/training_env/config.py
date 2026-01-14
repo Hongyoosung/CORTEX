@@ -25,3 +25,8 @@ class RLConfig:
     NUM_TARGETS = 11
     OBSERVATION_SIZE = 68
 
+    # v8.0 Action Space Constants (Python training-specific)
+    NUM_TACTICAL_PARAMS = 4  # Aggression, CoverPref, Spread, Risk
+    NUM_COMBAT_CHOICES = 2   # Closest, LowestHP
+    NUM_TOTAL_OUTPUTS = 6    # 4 tactical + 2 combat logits
+

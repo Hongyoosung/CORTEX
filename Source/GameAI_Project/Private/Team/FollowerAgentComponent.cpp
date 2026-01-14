@@ -11,7 +11,6 @@
 #include "AIController.h"
 #include "Kismet/GameplayStatics.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Mission.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Simulation/StateTransition.h"
 #include "Misc/FileHelper.h"
@@ -142,68 +141,58 @@ void UFollowerAgentComponent::BeginPlay()
 			*GetOwner()->GetName());
 	}
 
-	// [SCHOLA FIX] Create dummy  Mission for Schola agents BEFORE StateTree starts
-	// This ensures the StateTree can enter ExecuteMission state immediately
-	bool bIsScholaAgent = GetOwner()->FindComponentByClass<UScholaAgentComponent>() != nullptr;
-	if (bIsScholaAgent && !CurrentMission)
-	{
-		// v4.0: Use base UMission class (no subclasses)
-		UMission* DummyMission = NewObject<UMission>(this);
-		if (DummyMission)
-		{
-			DummyMission->Type = EMissionType::Support; // v4.0: FormationMove → Support
-			DummyMission->Status = EMissionStatus::Active;
-			DummyMission->Priority = 10;
-			DummyMission->TimeLimit = 0.0f; // Infinite
+	// v8.0: Initialize with default strategy assignment
+	// Schola agents and regular agents both start with Assault strategy
+	CurrentAssignment.Agent = GetOwner();
+	CurrentAssignment.Strategy = EStrategyType::Assault;
+	CurrentAssignment.TargetObjective = nullptr;  // Will be assigned by MCTS
+	CurrentAssignment.Priority = 5;
+	CurrentAssignment.ExpectedValue = 0.0f;
+	CurrentAssignment.VisitCount = 0;
+	CurrentAssignment.Timestamp = GetWorld()->GetTimeSeconds();
 
-			// CRITICAL: Set unreachable target to prevent completion
-			// Dummy mission remains active until replaced by MCTS
-			// Setting target 100km away ensures it NEVER completes during training
-			DummyMission->TargetLocation = GetOwner()->GetActorLocation() + FVector(10000000.0f, 10000000.0f, 0.0f);
-
-			// Add self to AssignedAgents to prevent edge-case completion
-			// (CheckCompletion returns true when AssignedAgents.Num() == 0)
-			DummyMission->AssignedAgents.Add(GetOwner());
-
-			SetCurrentMission(DummyMission);
-
-			UE_LOG(LogTemp, Warning, TEXT("🎮 [SCHOLA INIT] '%s': Created dummy FormationMove mission (infinite, never completes)"),
-				*GetOwner()->GetName());
-		}
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("FollowerAgentComponent: Initialized on %s"), *GetOwner()->GetName());
+	UE_LOG(LogTemp, Log, TEXT("FollowerAgentComponent v8.0: Initialized on %s (Default Strategy: Assault)"), *GetOwner()->GetName());
 }
 
 // ========================================
 // v8.0: Strategy Assignment (from MCTS)
 // ========================================
 
-EStrategyType UFollowerAgentComponent::GetAssignedStrategy() const
+void UFollowerAgentComponent::SetStrategyAssignment(const FStrategyAssignment& Assignment)
 {
-	// v8.0: Strategy is assigned by MCTS via Mission type, NOT selected by RL
-	// RL now controls tactical parameters and combat choices, not strategy
+	// Store previous assignment for change detection
+	LastAssignment = CurrentAssignment;
 
-	if (!CurrentMission)
+	// Set new assignment
+	CurrentAssignment = Assignment;
+
+	// Update timestamp
+	CurrentAssignment.Timestamp = GetWorld()->GetTimeSeconds();
+
+	// Notify RewardCalculator of strategy change
+	if (RewardCalculator)
 	{
-		// No mission assigned - default to Defend
-		return EStrategyType::Defend;
+		// RewardCalculator may need to know about objective changes
+		// For now, we'll handle this through the existing reward system
 	}
 
-	// Map mission type to strategy (v8.0: 1-to-1 mapping)
-	switch (CurrentMission->Type)
-	{
-		case EMissionType::Assault:
-			return EStrategyType::Assault;
-		case EMissionType::Defend:
-			return EStrategyType::Defend;
-		case EMissionType::Support:
-			return EStrategyType::Support;
-		case EMissionType::Retreat:
-			return EStrategyType::Retreat;
-		default:
-			return EStrategyType::Assault;
-	}
+	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v8.0] '%s': Strategy assignment received - Strategy=%s, Objective=%s, Priority=%d, Value=%.2f"),
+		*GetOwner()->GetName(),
+		*UEnum::GetValueAsString(Assignment.Strategy),
+		Assignment.TargetObjective ? *Assignment.TargetObjective->GetName() : TEXT("None"),
+		Assignment.Priority,
+		Assignment.ExpectedValue);
+
+	// Broadcast event for StateTree or other systems
+	OnStrategyAssignmentReceived.Broadcast(Assignment);
+
+	// Force strategy update on next tick
+	TicksSinceLastUpdate = 999;
+}
+
+AObjectiveActor* UFollowerAgentComponent::GetTargetObjective() const
+{
+	return CurrentAssignment.TargetObjective;
 }
 
 void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -310,7 +299,8 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 			LastEnemyCount = CachedPerceptionComponent->GetDetectedEnemies().Num();
 		}
 
-		LastMission = CurrentMission;
+		// v8.0: Cache assignment for change detection
+		LastAssignment = CurrentAssignment;
 		TicksSinceLastUpdate = 0;
 	}
 
@@ -452,13 +442,8 @@ void UFollowerAgentComponent::SignalEventToLeader(
 
 
 //------------------------------------------------------------------------------
-// Mission EXECUTION (v3.0)
+// v8.0: Strategy Assignment Helpers
 //------------------------------------------------------------------------------
-
-bool UFollowerAgentComponent::HasActiveMission() const
-{
-	return CurrentMission != nullptr && CurrentMission->IsActive();
-}
 
 //------------------------------------------------------------------------------
 // STATE MANAGEMENT (v3.0: StateTree-based, no explicit FSM)
@@ -708,51 +693,6 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 	return Observation;
 }
 
-// ============================================
-// v6.0: Build Mission Context
-// ============================================
-
-FMissionContext UFollowerAgentComponent::BuildMissionContext(UMission* Mission)
-{
-	FMissionContext Context;
-
-	if (!Mission || !GetOwner())
-	{
-		// Return default (all zeros) if no mission or owner
-		UE_LOG(LogTemp, Verbose, TEXT("[BUILD CONTEXT] '%s': No mission or owner - returning empty context"),
-			GetOwner() ? *GetOwner()->GetName() : TEXT("Unknown"));
-		return Context;
-	}
-
-	// Set mission type
-	Context.Type = Mission->Type;
-	Context.TargetActor = Mission->TargetActor;
-	Context.Priority = Mission->Priority;
-
-	// v7.0: Verify ObjectiveActor is preserved during context building
-	bool bHasObjectiveActor = Cast<AObjectiveActor>(Context.TargetActor) != nullptr;
-	UE_LOG(LogTemp, Verbose, TEXT("[BUILD CONTEXT v7.0] '%s': Mission %s - TargetActor=%s (IsObjectiveActor=%d)"),
-		*GetOwner()->GetName(),
-		*UEnum::GetValueAsString(Mission->Type),
-		Context.TargetActor ? *Context.TargetActor->GetName() : TEXT("NULL"),
-		bHasObjectiveActor);
-
-	// Calculate distance and direction to mission
-	FVector AgentLoc = GetOwner()->GetActorLocation();
-	FVector MissionLoc = Mission->TargetLocation;
-
-	// Calculate distance (normalized by max distance)
-	float Distance = FVector::Dist(AgentLoc, MissionLoc);
-	const float MaxDistanceNormalization = 5000.0f;  // 50m max (from RLConfig)
-	Context.Distance = FMath::Clamp(Distance / MaxDistanceNormalization, 0.0f, 1.0f);
-
-	// Calculate 2D direction to mission (normalized)
-	FVector Direction = (MissionLoc - AgentLoc).GetSafeNormal2D();
-	Context.Direction = FVector2D(Direction.X, Direction.Y);
-
-	return Context;
-}
-
 bool UFollowerAgentComponent::FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies)
 {
 	// Start profiling
@@ -893,8 +833,14 @@ void UFollowerAgentComponent::ResetEpisode()
 	// v6.0 Phase 11: Reset event-driven strategy tracking
 	// v7.0 FIX: Removed LastStrategyHealth (now handled by damage events)
 	LastEnemyCount = 0;
-	LastMission = nullptr;
 	TicksSinceLastUpdate = 0;
+
+	// v8.0: Reset assignment to default
+	CurrentAssignment.Strategy = EStrategyType::Assault;
+	CurrentAssignment.TargetObjective = nullptr;
+	CurrentAssignment.Priority = 5;
+	LastAssignment = FStrategyAssignment();
+
 	CurrentStrategy = EStrategyType::Assault; // v8.0 DEPRECATED: Reset to default (kept for v7.0 compatibility)
 	CurrentMacroAction = FMacroAction();  // v8.0: Reset macro action to defaults
 
@@ -1075,47 +1021,31 @@ void UFollowerAgentComponent::DrawDebugInfo()
 	// End v6.0 RL Strategy Visualization
 	// ============================================
 
-	// Draw mission info above follower (v3.0 legacy)
+	// v8.0: Draw assignment info above follower
 	if (!bEnableDebugDrawing)
 	{
-		FString MissionStr = CurrentMission ? UEnum::GetValueAsString(CurrentMission->Type) : TEXT("None");
-		float Progress = CurrentMission ? CurrentMission->GetProgress() : 0.0f;
+		FString StrategyStr = UEnum::GetValueAsString(CurrentAssignment.Strategy);
+		FString ObjectiveStr = CurrentAssignment.TargetObjective ? CurrentAssignment.TargetObjective->GetName() : TEXT("None");
 
-		FString StateText = FString::Printf(TEXT("Alive: %s\nMission: %s\nProgress: %.1f%%"),
+		FString StateText = FString::Printf(TEXT("Alive: %s\nStrategy: %s\nObjective: %s\nPriority: %d"),
 			bIsAlive ? TEXT("Yes") : TEXT("Dead"),
-			*MissionStr,
-			Progress * 100.0f);
+			*StrategyStr,
+			*ObjectiveStr,
+			CurrentAssignment.Priority);
 
 		DrawDebugString(World, FollowerPos + FVector(0, 0, 120), StateText, nullptr, FColor::Cyan, 0.1f, true);
 	}
 
-	// Draw line to mission target (actor or location)
-	if (HasActiveMission())
+	// v8.0: Draw line to target objective
+	if (CurrentAssignment.TargetObjective && IsValid(CurrentAssignment.TargetObjective))
 	{
-		// Check if target actor exists and is alive
-		if (CurrentMission->TargetActor && IsValid(CurrentMission->TargetActor))
-		{
-			// Check if target has health component and is alive
-			UHealthComponent* TargetHealth = CurrentMission->TargetActor->FindComponentByClass<UHealthComponent>();
-			bool bTargetAlive = !TargetHealth || TargetHealth->IsAlive();
+		FVector TargetPos = CurrentAssignment.TargetObjective->GetActorLocation();
+		DrawDebugLine(World, FollowerPos, TargetPos, FColor::Red, false, 0.1f, 0, 2.0f);
+		DrawDebugSphere(World, TargetPos, 50.0f, 8, FColor::Red, false, 0.1f);
 
-			if (bTargetAlive)
-			{
-				FVector TargetPos = CurrentMission->TargetActor->GetActorLocation();
-				DrawDebugLine(World, FollowerPos, TargetPos, FColor::Red, false, 0.1f, 0, 2.0f);
-				DrawDebugSphere(World, TargetPos, 50.0f, 8, FColor::Red, false, 0.1f);
-
-				// Draw target name
-				FString TargetName = FString::Printf(TEXT("Target: %s"), *CurrentMission->TargetActor->GetName());
-				DrawDebugString(World, TargetPos + FVector(0, 0, 100), TargetName, nullptr, FColor::Red, 0.1f, true);
-			}
-		}
-		// Draw to target location if no valid actor
-		else if (!CurrentMission->TargetLocation.IsZero())
-		{
-			DrawDebugLine(World, FollowerPos, CurrentMission->TargetLocation, FColor::Yellow, false, 0.1f, 0, 2.0f);
-			DrawDebugSphere(World, CurrentMission->TargetLocation, 50.0f, 8, FColor::Yellow, false, 0.1f);
-		}
+		// Draw objective name
+		FString ObjectiveName = FString::Printf(TEXT("Objective: %s"), *CurrentAssignment.TargetObjective->GetName());
+		DrawDebugString(World, TargetPos + FVector(0, 0, 100), ObjectiveName, nullptr, FColor::Red, 0.1f, true);
 	}
 
 	// Draw line to team leader
@@ -1276,29 +1206,30 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 	}
 	bool bNewEnemyDetected = CurrentEnemyCount > LastEnemyCount;
 
-	// Check mission change
-	bool bMissionChanged = CurrentMission != LastMission;
+	// v8.0: Check assignment change (strategy or objective changed)
+	bool bAssignmentChanged = (CurrentAssignment.Strategy != LastAssignment.Strategy) ||
+	                           (CurrentAssignment.TargetObjective != LastAssignment.TargetObjective);
 
 	// Fallback: Force update every 30 ticks (~0.5s at 60 FPS)
 	// v7.0 FIX: Increased from 10 ticks to reduce oscillation
 	bool bTimeout = TicksSinceLastUpdate > 30;
 
 	// Debug log significant events
-	if (bNewEnemyDetected || bMissionChanged || bTimeout)
+	if (bNewEnemyDetected || bAssignmentChanged || bTimeout)
 	{
 		FString Reason = TEXT("");
 		if (bNewEnemyDetected) Reason += TEXT("NewEnemy ");
-		if (bMissionChanged) Reason += TEXT("MissionChange ");
+		if (bAssignmentChanged) Reason += TEXT("AssignmentChange ");
 		if (bTimeout) Reason += TEXT("Timeout");
 
-		UE_LOG(LogTemp, Verbose, TEXT("🔄 [EVENT-DRIVEN v7.0] '%s': Strategy update triggered - %s (Enemies: %d→%d)"),
+		UE_LOG(LogTemp, Verbose, TEXT("🔄 [EVENT-DRIVEN v8.0] '%s': Strategy update triggered - %s (Enemies: %d→%d)"),
 			*GetOwner()->GetName(),
 			*Reason,
 			LastEnemyCount,
 			CurrentEnemyCount);
 	}
 
-	return bNewEnemyDetected || bMissionChanged || bTimeout;
+	return bNewEnemyDetected || bAssignmentChanged || bTimeout;
 }
 
 //------------------------------------------------------------------------------
@@ -1461,37 +1392,6 @@ AActor* UFollowerAgentComponent::GetLowestHPEnemy(const TArray<AActor*>& Enemies
 	return LowestHPEnemy;
 }
 
-//------------------------------------------------------------------------------
-// Mission INTEGRATION (SPRINT 4)
-//------------------------------------------------------------------------------
 
-void UFollowerAgentComponent::SetCurrentMission(UMission* Mission)
-{
-	// Set the current mission
-	CurrentMission = Mission;
-
-	// Notify reward calculator
-	if (RewardCalculator)
-	{
-		RewardCalculator->SetCurrentMission(Mission);
-	}
-
-	// v7.0: Enhanced logging to verify ObjectiveActor propagation
-	bool bHasObjectiveActor = false;
-	if (Mission && Mission->TargetActor)
-	{
-		bHasObjectiveActor = Cast<AObjectiveActor>(Mission->TargetActor) != nullptr;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v7.0] '%s': Mission set to %s (Active=%d, TargetActor=%s, IsObjectiveActor=%d)"),
-		*GetOwner()->GetName(),
-		Mission ? *UEnum::GetValueAsString(Mission->Type) : TEXT("None"),
-		Mission ? Mission->IsActive() : false,
-		(Mission && Mission->TargetActor) ? *Mission->TargetActor->GetName() : TEXT("NULL"),
-		bHasObjectiveActor);
-
-	// Broadcast delegate for StateTree event binding
-	OnMissionReceived.Broadcast(Mission);
-}
 
 

@@ -116,7 +116,14 @@ if SCHOLA_AVAILABLE:
             # - Mission Context (4): type_encoded(1), distance(1), direction(2)
             # v6.0: Using RLConfig for consistency with C++ runtime
             self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
-            self._action_space = spaces.Discrete(RLConfig.NUM_STRATEGIES)  # v6.0: Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
+            # v8.0: Hybrid action space (4 continuous tactical + 2 discrete combat)
+            # Network outputs 6 values: [Aggression, CoverPref, Spread, Risk, combat_logit_0, combat_logit_1]
+            self._action_space = spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(RLConfig.NUM_TOTAL_OUTPUTS,),
+                dtype=np.float32
+            )
 
             self.episode_steps = 0
 
@@ -401,6 +408,53 @@ if SCHOLA_AVAILABLE:
                     traceback.print_exc()
                     return {}, {}
 
+        def _process_hybrid_action(self, action_array):
+            """
+            Process hybrid action from multi-head network output (v8.0).
+
+            Network Output Structure:
+                - output[0:4]: Tactical parameters (sigmoid-activated, [0,1])
+                  - [0]: Aggression
+                  - [1]: CoverPreference
+                  - [2]: SpreadDistance
+                  - [3]: RiskTolerance
+                - output[4:6]: Combat priority logits (softmax input)
+                  - [4]: Closest enemy logit
+                  - [5]: LowestHP enemy logit
+
+            Args:
+                action_array: np.array of shape (6,) from network forward pass
+
+            Returns:
+                dict with keys:
+                    - 'tactical': np.array (4,) clipped to [0, 1]
+                    - 'combat': int (0=Closest, 1=LowestHP)
+            """
+            # Validate input
+            if action_array.shape[0] != 6:
+                raise ValueError(f"Expected action shape (6,), got {action_array.shape}")
+
+            # Extract components
+            tactical_params = action_array[:4].astype(np.float32)
+            combat_logits = action_array[4:6].astype(np.float32)
+
+            # Safety: Clip tactical params (should already be [0,1] from sigmoid)
+            tactical_params = np.clip(tactical_params, 0.0, 1.0)
+
+            # Sample combat choice from logits (stochastic during training)
+            # Softmax normalization
+            exp_logits = np.exp(combat_logits - np.max(combat_logits))  # Numerical stability
+            combat_probs = exp_logits / np.sum(exp_logits)
+
+            # Sample (training) or argmax (inference)
+            # For now, always sample to maintain exploration
+            combat_choice = np.random.choice(2, p=combat_probs)
+
+            return {
+                'tactical': tactical_params,
+                'combat': combat_choice
+            }
+
         def step(self, action_dict):
             # v7.5: Let UE5 control the step rate via poll() blocking
             #
@@ -456,16 +510,20 @@ if SCHOLA_AVAILABLE:
                     # v7.5: No Python-side rate limiting - UE5's Think() controls the rate
                     # Just format and send the action directly
 
-                    # v6.0: Action is now a single integer (strategy index)
-                    # Convert scalar to array for Schola compatibility
-                    if isinstance(action, (int, np.integer)):
-                        action_value = int(action)
-                    else:
-                        action_value = int(action[0]) if len(action) > 0 else 0
+                    # v8.0: Hybrid action space (4 continuous tactical + 2 discrete combat)
+                    if isinstance(action, np.ndarray) and action.shape[0] == 6:
+                        # Process hybrid action [4 tactical params + 2 combat logits]
+                        processed = self._process_hybrid_action(action)
 
-                    # Clamp to valid strategy range [0-3]
-                    action_value = np.clip(action_value, 0, 3)
-                    action_array = np.array([action_value], dtype=np.int32)
+                        # Format for Schola: [4 tactical params + 1 combat choice]
+                        action_array = np.concatenate([
+                            processed['tactical'],  # [4] floats in [0,1]
+                            [processed['combat']]   # [1] int in {0,1}
+                        ]).astype(np.int32)  # Schola expects int32
+                    else:
+                        # Fallback for old format or invalid action
+                        print(f"[WARNING] Invalid action shape: {action.shape if isinstance(action, np.ndarray) else type(action)}")
+                        action_array = np.array([0, 0, 0, 0, 0], dtype=np.int32)  # Default: neutral tactical + closest combat
 
                     # Get ALL component keys for this agent
                     agent_keys = all_action_keys.get((env_idx, agent_idx), [])

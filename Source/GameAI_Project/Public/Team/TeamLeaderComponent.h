@@ -9,24 +9,23 @@
 // Forward declarations
 class UTeamCommunicationManager;
 class UMCTS;
-class UMissionManager;
-class UMission;
+class AObjectiveActor;
 
 /**
- * Delegate for strategic decision events (v3.0)
+ * Delegate for strategic decision events (v8.0 - Strategy Assignment)
  */
 USTRUCT(BlueprintType)
-struct FMissionAssignmentMap
+struct FStrategyAssignmentMap
 {
 	GENERATED_BODY()
 
 	UPROPERTY(BlueprintReadWrite)
-	TMap<AActor*, UMission*> Missions;
+	TArray<FStrategyAssignment> Assignments;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnStrategicDecisionMade,
-	FMissionAssignmentMap, Missions
+	FStrategyAssignmentMap, Assignments
 );
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -165,16 +164,16 @@ public:
 	FTeamObservation BuildTeamObservation();
 
 
-	/** Run mission-based decision-making (sync) - v6.0 MCTS Coordination */
+	/** Run strategy assignment decision-making (sync) - v8.0 MCTS Strategy Assignment */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
-	void RunMissionDecisionMaking();
+	void RunStrategyAssignment();
 
-	/** Run mission-based decision-making (async) - v6.0 MCTS Coordination */
+	/** Run strategy assignment decision-making (async) - v8.0 MCTS Strategy Assignment */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
-	void RunMissionDecisionMakingAsync();
+	void RunStrategyAssignmentAsync();
 
-	/** Apply mission assignment to followers (v6.0) */
-	void ApplyMissionAssignment(const FMissionAssignment& Assignment);
+	/** Apply strategy assignment to followers (v8.0) */
+	void ApplyStrategyAssignment(const TArray<FStrategyAssignment>& Assignments);
 
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
 	bool IsMCTSRunning() const { return bMCTSRunning; }
@@ -223,13 +222,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Debug")
 	bool IsRunningMCTS() const { return bMCTSRunning; }
 
-	/**
-	 * �±׸� ������� ���͸� ã�� ��ǥ�� ����ϴ� ���� ���� �Լ�
-	 * @param TagName �˻��� ������ �±�
-	 * @param MissionCreator �� ���Ϳ� ���� ��ǥ�� �����ϴ� ������ ���� ���� �Լ� (nullptr ��ȯ �� ��ŵ)
-	 * @return �߰� �� ��ϵ� ��ǥ�� ��
-	 */
-	int32 FindAndRegisterMissions(FName TagName, TFunctionRef<UMission* (AActor*)> MissionCreator);
 
 
 private:
@@ -242,8 +234,8 @@ private:
 	/** Initialize MCTS engine */
 	void InitializeMCTS();
 
-	/** Discover missions from tagged actors in the level (v3.0) */
-	void DiscoverWorldMissions();
+	/** Discover objectives from the level (v8.0) */
+	void DiscoverWorldObjectives();
 
 
 public:
@@ -307,7 +299,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team Leader|Config")
 	bool bAutoRegisterWithSimManager = true;
 
-	// v7.0: Legacy ObjectiveActor property removed - use MissionManager->FindFriendlyObjective(TeamID) instead
+	// v8.0: Objectives discovered dynamically in DiscoverWorldObjectives()
 
 	//--------------------------------------------------------------------------
 	// STATE
@@ -317,9 +309,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
 	TArray<AActor*> Followers;
 
-	/** Current missions for each follower (v3.0) */
+	/** Current strategy assignments for each follower (v8.0) */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
-	TMap<AActor*, UMission*> CurrentMissions;
+	TMap<AActor*, FStrategyAssignment> CurrentAssignments;
 
 	/** Is MCTS currently running? */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
@@ -349,13 +341,17 @@ public:
 	UPROPERTY()
 	UMCTS* StrategicMCTS;
 
-	/** Mission manager (v3.0 Combat Refactoring) */
-	UPROPERTY(BlueprintReadWrite, Category = "Team Leader|Components")
-	UMissionManager* MissionManager;
-
 	/** Curriculum manager for MCTS-guided RL training (v3.0 Sprint 3) */
 	UPROPERTY(BlueprintReadWrite, Category = "Team Leader|Components")
 	class UCurriculumManager* CurriculumManager;
+
+	/** Friendly objective actor (v8.0 - defend this) */
+	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
+	AObjectiveActor* FriendlyObjective = nullptr;
+
+	/** Hostile objective actor (v8.0 - assault this) */
+	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
+	AObjectiveActor* HostileObjective = nullptr;
 
 	//--------------------------------------------------------------------------
 	// EVENTS

@@ -444,20 +444,6 @@ bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 	return true;
 }
 
-//------------------------------------------------------------------------------
-// TRAINING SERVER
-//------------------------------------------------------------------------------
-
-bool AScholaCombatEnvironment::StartTrainingServer()
-{
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] StartTrainingServer is deprecated. ScholaManagerSubsystem handles server startup automatically."));
-	return true;
-}
-
-void AScholaCombatEnvironment::StopTrainingServer()
-{
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] StopTrainingServer is deprecated. ScholaManagerSubsystem handles server shutdown automatically."));
-}
 
 //------------------------------------------------------------------------------
 // EPISODE EVENTS

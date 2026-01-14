@@ -12,18 +12,18 @@
 class UTeamLeaderComponent;
 class URLPolicyNetwork;
 class URewardCalculator;
-class UMission;
 class UAgentPerceptionComponent;
 class UHealthComponent;
+class AObjectiveActor;
 struct FDamageEventData;
 struct FDeathEventData;
 
 /**
- * Delegate for follower events (v3.0)
+ * Delegate for follower events (v8.0)
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
-	FOnMissionReceived,
-	UMission*, Mission
+	FOnStrategyAssignmentReceived,
+	FStrategyAssignment, Assignment
 );
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
@@ -87,24 +87,24 @@ public:
 
 
 	//--------------------------------------------------------------------------
-	// MISSION EXECUTION (v3.0)
+	// STRATEGY ASSIGNMENT (v8.0)
 	//--------------------------------------------------------------------------
 
-	/** Get current mission assigned by leader */
-	UFUNCTION(BlueprintPure, Category = "Follower|Mission")
-	UMission* GetCurrentMission() const { return CurrentMission; }
+	/** Set strategy assignment from MCTS */
+	UFUNCTION(BlueprintCallable, Category = "Follower|Strategy")
+	void SetStrategyAssignment(const FStrategyAssignment& Assignment);
 
-	/** Has active mission? */
-	UFUNCTION(BlueprintPure, Category = "Follower|Mission")
-	bool HasActiveMission() const;
+	/** Get target objective from current assignment */
+	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
+	AObjectiveActor* GetTargetObjective() const;
 
 	//--------------------------------------------------------------------------
 	// INDIVIDUAL STRATEGY (v8.0: MCTS-Assigned, RL-Controlled Parameters)
 	//--------------------------------------------------------------------------
 
-	/** Get strategy assigned by MCTS (v8.0: No longer selected by RL) */
+	/** Get strategy assigned by MCTS via FStrategyAssignment */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
-	EStrategyType GetAssignedStrategy() const;
+	EStrategyType GetAssignedStrategy() const { return CurrentAssignment.Strategy; }
 
 	/** v7.0 DEPRECATED: Get current strategy (v8.0: Use GetAssignedStrategy instead) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Strategy is now assigned by MCTS, not RL. Use GetAssignedStrategy() instead."))
@@ -145,10 +145,6 @@ public:
 	/** Build observation from current actor state */
 	UFUNCTION(BlueprintCallable, Category = "Follower|Observation")
 	FObservationElement BuildLocalObservation();
-
-	/** Build mission context from assigned mission (v6.0) */
-	UFUNCTION(BlueprintCallable, Category = "Follower|Observation")
-	FMissionContext BuildMissionContext(UMission* Mission);
 
 	/** Find nearest cover position relative to enemies */
 	UFUNCTION(BlueprintCallable, Category = "Follower|Tactical")
@@ -206,6 +202,10 @@ public:
 	/** Get reward calculator (Sprint 5) */
 	UFUNCTION(BlueprintPure, Category = "Follower|RL")
 	URewardCalculator* GetRewardCalculator() const { return RewardCalculator; }
+
+	/** v7.0 DEPRECATED: Use SetStrategyAssignment instead */
+	UFUNCTION(BlueprintCallable, Category = "Follower|RL", meta = (DeprecatedFunction, DeprecationMessage = "v8.0: Use SetStrategyAssignment() instead"))
+	void SetCurrentMission(class UMission* Mission);
 
 	/** Is follower alive? */
 	UFUNCTION(BlueprintPure, Category = "Follower|State")
@@ -329,9 +329,9 @@ public:
 	// STATE
 	//--------------------------------------------------------------------------
 
-	/** Current mission from leader (v3.0) */
+	/** v8.0: Current strategy assignment from MCTS */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
-	TObjectPtr<UMission> CurrentMission = nullptr;
+	FStrategyAssignment CurrentAssignment;
 
 	/** v8.0: Current macro action (tactical parameters + combat parameters from RL) */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|State")
@@ -373,9 +373,9 @@ public:
 	// EVENTS
 	//--------------------------------------------------------------------------
 
-	/** Fired when mission is received from leader */
+	/** v8.0: Fired when strategy assignment is received from leader */
 	UPROPERTY(BlueprintAssignable, Category = "Follower|Events")
-	FOnMissionReceived OnMissionReceived;
+	FOnStrategyAssignmentReceived OnStrategyAssignmentReceived;
 
 	/** Fired when event is signaled to leader */
 	UPROPERTY(BlueprintAssignable, Category = "Follower|Events")
@@ -424,9 +424,8 @@ private:
 	/** Enemy count at last strategy update */
 	int32 LastEnemyCount = 0;
 
-	/** Mission at last strategy update */
-	UPROPERTY()
-	UMission* LastMission = nullptr;
+	/** v8.0: Strategy assignment at last update (for change detection) */
+	FStrategyAssignment LastAssignment;
 
 	/** Ticks since last strategy update (for timeout fallback) */
 	int32 TicksSinceLastUpdate = 0;

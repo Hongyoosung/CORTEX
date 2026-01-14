@@ -105,13 +105,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	bool RegisterAgent(UScholaAgentComponent* Agent);
 
-	/** DEPRECATED: ScholaManagerSubsystem handles server startup automatically (v5.0) */
-	UFUNCTION(BlueprintCallable, Category = "Schola", meta = (DeprecatedFunction, DeprecationMessage = "ScholaManagerSubsystem handles server startup automatically"))
-	bool StartTrainingServer();
-
-	/** DEPRECATED: ScholaManagerSubsystem handles server shutdown automatically (v5.0) */
-	UFUNCTION(BlueprintCallable, Category = "Schola", meta = (DeprecatedFunction, DeprecationMessage = "ScholaManagerSubsystem handles server shutdown automatically"))
-	void StopTrainingServer();
 
 	/** Bind to SimulationManager episode events */
 	UFUNCTION()

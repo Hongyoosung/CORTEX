@@ -14,21 +14,6 @@ UTacticalActuator::UTacticalActuator()
 	MaxEnemies = 10; // Default max enemies for dynamic action space
 }
 
-FDiscreteSpace UTacticalActuator::GetActionSpace()
-{
-	// v8.0: DEPRECATED - This actuator is for v7.0 architecture
-	// v8.0 uses tactical parameters (continuous) + combat parameters (discrete)
-	// TODO: Implement BoxSpace for continuous tactical params + MultiDiscrete for combat
-
-	// Temporary: Return empty action space to prevent usage
-	// This file should be replaced with v8.0 TacticalActuator implementation
-	TArray<int32> Nvec = { 1 };  // Dummy placeholder
-	FDiscreteSpace ActionSpace = FDiscreteSpace(Nvec);
-
-	UE_LOG(LogTemp, Error, TEXT("[TacticalActuator v7.0 DEPRECATED] GetActionSpace() called - v8.0 requires new actuator implementation!"));
-	return ActionSpace;
-}
-
 void UTacticalActuator::TakeAction(const FDiscretePoint& Action)
 {
 	if (!FollowerAgent || !FollowerAgent->IsValidLowLevel() || !FollowerAgent->GetOwner())

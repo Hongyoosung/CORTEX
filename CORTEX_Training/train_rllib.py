@@ -1,20 +1,27 @@
 """
-RLlib Training Script for SBDAPM (v6.0 - Single-Head Strategy Selection)
+RLlib Training Script for CORTEX (v8.0 - Multi-Head Tactical Parameters)
 
 Trains PPO agents via Schola gRPC connection to Unreal Engine.
 
-v6.0 Architecture:
+v8.0 Architecture (Current - 2026-01-14):
+    - MCTS assigns strategies → RL outputs tactical parameters + combat priority
+    - Multi-head network: 68 input → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (2 choices)
+    - Hybrid action space: 4 continuous tactical params + 2 discrete combat logits
+    - Curriculum learning (3 phases: Single → Mixed → Dynamic)
+    - Exports to: cortex_policy_v8.onnx
+
+v6.0 Architecture (Deprecated 2026-01-14):
     - MCTS assigns Missions → RL selects strategies (4-action space)
     - Single-head network: 68 input → [128, 128, 64] → 4 policy logits + 1 value
-    - Exports to: cortex_policy_v6.onnx
+    - Exports to: cortex_policy_v6.onnx (archived to Content/AI/Models/v7.0-archive/)
 
 Usage:
     1. Start UE with Schola plugin (game mode)
-    2. Run: python train_rllib.py
-    3. Model exports to cortex_policy_v6.onnx
+    2. Run: python train_rllib.py --iterations 50
+    3. Model exports to cortex_policy_v8.onnx
 
 Requirements:
-    pip install schola[rllib] ray[rllib] torch
+    pip install schola[rllib] ray[rllib] torch onnx onnxruntime
 """
 
 import os
@@ -314,16 +321,16 @@ class SBDAPMConfig:
     # Network architecture (increased capacity for value learning)
     HIDDEN_LAYERS = [256, 256, 128]  # Increased from [128, 128, 64]
 
-    # PPO hyperparameters
-    LEARNING_RATE = 1e-4  # Reduced from 3e-4 for stability with sparse rewards
-    TRAIN_BATCH_SIZE = 4000
-    SGD_MINIBATCH_SIZE = 256  # Doubled to match batch size increase
-    NUM_SGD_ITER = 10
+    # PPO hyperparameters (v8.0: Tuned for hybrid continuous + discrete action space)
+    LEARNING_RATE = 5e-5  # Reduced from 1e-4 for continuous action stability
+    TRAIN_BATCH_SIZE = 8000  # Increased from 4000 for better continuous gradient estimates
+    SGD_MINIBATCH_SIZE = 512  # Doubled from 256 for more stable updates
+    NUM_SGD_ITER = 15  # Increased from 10 for better continuous action learning
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.5  # Will decay during training (see get_entropy_coeff)
-    VF_LOSS_COEFF = 1.5  # Increased from 0.5 to 1.5 - critical for value learning
+    ENTROPY_COEFF = 0.01  # Reduced from 0.5 (continuous actions have higher base entropy)
+    VF_LOSS_COEFF = 1.5  # Unchanged - critical for value learning
 
     # Training
     NUM_WORKERS = 0  # Windows fix: 0 = single process (no DLL conflicts)
@@ -334,6 +341,107 @@ class SBDAPMConfig:
     # Paths
     OUTPUT_DIR = "training_results"
     MODEL_NAME = "tactical_policy"
+
+
+# ==============================================================================
+# CURRICULUM LEARNING (v8.0)
+# ==============================================================================
+
+class CurriculumScheduler:
+    """
+    Three-phase curriculum learning for v8.0 tactical parameter training.
+
+    Phase 1 (0-1000 episodes): Single Strategy
+        - All agents assigned Assault strategy
+        - Learn: Basic movement, objective advancement, combat engagement
+        - Goal: Establish baseline tactical parameter values
+
+    Phase 2 (1000-3000 episodes): Mixed Strategies
+        - 2 agents Assault, 2 agents Defend
+        - Learn: Strategy-specific parameter differentiation
+        - Goal: Separate policy heads learn distinct profiles
+
+    Phase 3 (3000+ episodes): Dynamic Assignment
+        - MCTS controls strategy assignments
+        - Learn: Adaptive tactics, strategy coordination
+        - Goal: Robust policy across all strategy combinations
+    """
+
+    def __init__(self, phase1_episodes=1000, phase2_episodes=3000):
+        self.phase1_threshold = phase1_episodes
+        self.phase2_threshold = phase2_episodes
+        self.current_phase = 1
+        self.episode_count = 0
+        self.last_log_episode = 0
+
+    def get_strategy_assignments(self, num_agents=4):
+        """
+        Get strategy assignments for current curriculum phase.
+
+        Returns:
+            dict {agent_id: strategy_index} or None (MCTS control in Phase 3)
+        """
+        if self.episode_count < self.phase1_threshold:
+            # Phase 1: All Assault
+            return {f"agent_{i}": 0 for i in range(num_agents)}
+
+        elif self.episode_count < self.phase2_threshold:
+            # Phase 2: 2 Assault, 2 Defend
+            assignments = {}
+            for i in range(num_agents):
+                assignments[f"agent_{i}"] = 0 if i < 2 else 1
+            return assignments
+
+        else:
+            # Phase 3: MCTS controls
+            return None
+
+    def update(self, episodes_this_iter):
+        """Update episode count and log phase transitions."""
+        prev_phase = self.current_phase
+        self.episode_count += episodes_this_iter
+
+        # Determine current phase
+        if self.episode_count >= self.phase2_threshold:
+            self.current_phase = 3
+        elif self.episode_count >= self.phase1_threshold:
+            self.current_phase = 2
+        else:
+            self.current_phase = 1
+
+        # Log phase transition
+        if self.current_phase != prev_phase:
+            self._log_phase_transition()
+
+        # Periodic status log (every 100 episodes)
+        if self.episode_count - self.last_log_episode >= 100:
+            self._log_status()
+            self.last_log_episode = self.episode_count
+
+    def _log_phase_transition(self):
+        """Log curriculum phase transition."""
+        print(f"\n{'='*70}")
+        print(f"CURRICULUM PHASE TRANSITION: Phase {self.current_phase} ACTIVATED")
+        print(f"{'='*70}")
+        print(f"Episode Count: {self.episode_count}")
+
+        if self.current_phase == 1:
+            print(f"Strategy Assignment: All Assault (single strategy learning)")
+            print(f"Focus: Basic movement, combat, objective advancement")
+        elif self.current_phase == 2:
+            print(f"Strategy Assignment: 2 Assault, 2 Defend (mixed strategies)")
+            print(f"Focus: Strategy differentiation, parameter profile separation")
+        elif self.current_phase == 3:
+            print(f"Strategy Assignment: MCTS-controlled (dynamic)")
+            print(f"Focus: Adaptive tactics, full strategy coordination")
+
+        print(f"{'='*70}\n")
+
+    def _log_status(self):
+        """Log periodic curriculum status."""
+        assignments = self.get_strategy_assignments()
+        assignment_str = "MCTS-controlled" if assignments is None else str(assignments)
+        print(f"[CURRICULUM] Phase {self.current_phase} | Episodes: {self.episode_count} | Assignments: {assignment_str}")
 
 
 def create_env_config():
@@ -823,6 +931,19 @@ def train(args):
     best_reward = float("-inf")
     total_ue_episodes = 0  # Track UE episodes for sync logging
 
+    # v8.0: Initialize curriculum scheduler
+    curriculum = CurriculumScheduler(phase1_episodes=1000, phase2_episodes=3000)
+    print(f"\n{'='*70}")
+    print(f"CURRICULUM LEARNING ENABLED (v8.0)")
+    print(f"  Phase 1 (0-1000 episodes): All Assault")
+    print(f"  Phase 2 (1000-3000 episodes): 2 Assault, 2 Defend")
+    print(f"  Phase 3 (3000+ episodes): MCTS-controlled")
+    print(f"{'='*70}\n")
+
+    # v8.0: Track parameter distributions for monitoring differentiation
+    from collections import defaultdict
+    strategy_params_history = defaultdict(list)
+
     for i in range(args.iterations):
         result = algo.train()
 
@@ -835,6 +956,9 @@ def train(args):
 
         # Track UE episodes
         total_ue_episodes += episodes_this_iter
+
+        # v8.0: Update curriculum scheduler
+        curriculum.update(episodes_this_iter)
 
         # Multi-agent specific metrics
         num_agent_steps = result.get("num_agent_steps_sampled", 0)
@@ -853,6 +977,51 @@ def train(args):
               f"vf_var={vf_explained_var:.4f}, "
               f"entropy={entropy:.3f}, "
               f"agent_steps={num_agent_steps}")
+
+        # v8.0: Monitor parameter profiles every 10 iterations
+        if (i + 1) % 10 == 0:
+            try:
+                import torch
+                policy = algo.get_policy("shared_policy")
+                model = policy.model
+
+                print(f"\n{'='*70}")
+                print(f"TACTICAL PARAMETER PROFILES (Iteration {i+1}, Phase {curriculum.current_phase})")
+                print(f"{'='*70}")
+
+                for strategy_idx, strategy_name in enumerate(['Assault', 'Defend', 'Support', 'Retreat']):
+                    # Create dummy observation with strategy one-hot
+                    dummy_obs = torch.zeros(1, 68)
+                    dummy_obs[0, 64 + strategy_idx] = 1.0
+
+                    # Sample tactical parameters from strategy-specific head
+                    with torch.no_grad():
+                        output, _ = model({"obs": dummy_obs}, [], None)
+                        tactical_params = output[0, :4].cpu().numpy()
+
+                    strategy_params_history[strategy_name].append(tactical_params)
+
+                    # Calculate recent mean
+                    recent = np.array(strategy_params_history[strategy_name][-10:])
+                    means = recent.mean(axis=0)
+                    stds = recent.std(axis=0)
+
+                    print(f"{strategy_name:8s}: Agg={means[0]:.3f}±{stds[0]:.3f}, "
+                          f"Cover={means[1]:.3f}±{stds[1]:.3f}, "
+                          f"Spread={means[2]:.3f}±{stds[2]:.3f}, "
+                          f"Risk={means[3]:.3f}±{stds[3]:.3f}")
+
+                # Calculate differentiation metric (Assault vs Defend)
+                if len(strategy_params_history['Assault']) > 0 and len(strategy_params_history['Defend']) > 0:
+                    assault_params = strategy_params_history['Assault'][-1]
+                    defend_params = strategy_params_history['Defend'][-1]
+                    diff = np.abs(assault_params - defend_params).mean()
+                    print(f"\nDifferentiation (Assault vs Defend): {diff:.3f} (target: >0.3)")
+
+                print(f"{'='*70}\n")
+
+            except Exception as e:
+                print(f"[WARNING] Parameter monitoring failed: {e}")
 
         # Save checkpoint
         if (i + 1) % args.checkpoint_freq == 0:

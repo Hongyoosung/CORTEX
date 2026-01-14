@@ -11,31 +11,98 @@ class UHealthComponent;
 class UMission;
 
 /**
- * v6.0 Reward Configuration
- * CRITICAL: Mission completion MUST be highest priority
- * If death penalty > Mission reward, RL learns to hide instead of completing Missions
- * This ensures MCTS-RL value alignment for proper coordination
+ * v8.0 Unified Reward Configuration
+ * Strategy-specific behavior emerges from weight profiles, not separate reward functions.
+ * All strategies use same reward components with different weights.
+ *
+ * Key Benefits:
+ * - Single source of truth for reward computation
+ * - Easy hyperparameter tuning via weight profiles
+ * - TensorBoard-compatible component breakdown
+ * - No code duplication
  */
 namespace RewardConfig {
-	// === PRIORITY 0: Mission Completion (Dominant Term) ===
-	constexpr float OBJECTIVE_CAPTURE_REWARD = 100.0f;   // Mission success
-	constexpr float OBJECTIVE_DEFEND_REWARD = 80.0f;     // Hold for duration
-	constexpr float SUPPORT_REWARD = 90.0f;    // Protected ally survives
-	constexpr float RETREAT_REWARD = 70.0f;    // Reach safe zone
+	// === BASE REWARD COMPONENT VALUES ===
+	// These are scaled by strategy-specific weights
 
-	// === PRIORITY 1: Mission Progress ===
-	constexpr float PROGRESS_PER_METER = 0.5f;           // Incremental progress
+	// Objective progress (v8.0: volume-based)
+	constexpr float OBJECTIVE_ADVANCE_REWARD = 0.1f;       // Moving closer per step
+	constexpr float OBJECTIVE_VOLUME_REWARD = 0.1f;        // Inside volume per step
 
-	// === PRIORITY 2: Combat Efficiency ===
-	constexpr float KILL_REWARD = 15.0f;                 // Enemy eliminated
+	// Combat effectiveness
+	constexpr float DAMAGE_REWARD_SCALE = 0.1f;            // Per 1 damage dealt
+	constexpr float KILL_REWARD_BASE = 10.0f;              // Base kill reward
+	constexpr float KILL_REWARD_EFFICIENT = 12.0f;         // Efficient target selection
 
-	// === PRIORITY 3: Survival (MUST be < Mission rewards) ===
-	constexpr float DEATH_PENALTY = -10.0f;              // Acceptable loss if Mission achieved
+	// Survival
+	constexpr float DEATH_PENALTY = -10.0f;                // Base death penalty
 
-	// CRITICAL INVARIANT: Mission Completion > Death Penalty
-	// 100.0 > 10.0 ✅ (dying to capture objective = net +90 reward)
-	static_assert(OBJECTIVE_CAPTURE_REWARD > -DEATH_PENALTY,
-		"Objective reward must exceed death penalty for proper MCTS-RL alignment");
+	// Cover usage
+	constexpr float COVER_BONUS = 0.1f;                    // Per step in cover
+
+	// Team coordination
+	constexpr float FORMATION_BONUS = 0.1f;                // Per step in formation
+
+	// === STRATEGY-SPECIFIC WEIGHT PROFILES ===
+	// Mirrored from Python training_env/unified_reward.py
+
+	struct FStrategyWeights
+	{
+		float ObjectiveProgress;
+		float CombatEffectiveness;
+		float Survival;
+		float CoverUsage;
+		float TeamCoordination;
+	};
+
+	// Assault: High aggression, push objectives
+	constexpr FStrategyWeights ASSAULT_WEIGHTS = {
+		1.0f,  // ObjectiveProgress: High
+		0.8f,  // CombatEffectiveness: High
+		0.6f,  // Survival: Medium (acceptable risk)
+		0.3f,  // CoverUsage: Low (don't camp)
+		0.4f   // TeamCoordination: Medium (loose formation)
+	};
+
+	// Defend: Hold position, maximize survival
+	constexpr FStrategyWeights DEFEND_WEIGHTS = {
+		0.2f,  // ObjectiveProgress: Low (stay near objective)
+		0.6f,  // CombatEffectiveness: Medium (suppress threats)
+		1.0f,  // Survival: High (must survive to hold)
+		0.9f,  // CoverUsage: High (maximize cover)
+		0.5f   // TeamCoordination: Medium (defensive formation)
+	};
+
+	// Support: Stick with ally, balanced positioning
+	constexpr FStrategyWeights SUPPORT_WEIGHTS = {
+		0.5f,  // ObjectiveProgress: Medium (follow ally)
+		0.4f,  // CombatEffectiveness: Medium-low (assist, don't solo)
+		0.7f,  // Survival: Medium-high (stay alive to support)
+		0.5f,  // CoverUsage: Medium (balanced)
+		1.0f   // TeamCoordination: High (stick with ally)
+	};
+
+	// Retreat: Survive at all costs, avoid combat
+	constexpr FStrategyWeights RETREAT_WEIGHTS = {
+		0.8f,  // ObjectiveProgress: High (reach safe zone)
+		0.0f,  // CombatEffectiveness: None (avoid combat)
+		1.2f,  // Survival: Highest (survival paramount)
+		0.7f,  // CoverUsage: High (use cover while retreating)
+		0.3f   // TeamCoordination: Low (self-preservation)
+	};
+
+	// Lookup helper
+	inline const FStrategyWeights& GetWeightsForStrategy(EStrategyType Strategy)
+	{
+		switch (Strategy)
+		{
+			case EStrategyType::Assault:  return ASSAULT_WEIGHTS;
+			case EStrategyType::Defend:   return DEFEND_WEIGHTS;
+			case EStrategyType::Support:  return SUPPORT_WEIGHTS;
+			case EStrategyType::Retreat:  return RETREAT_WEIGHTS;
+			default:                       return ASSAULT_WEIGHTS;
+		}
+	}
 }
 
 /**
@@ -51,6 +118,43 @@ struct FCombinedFireRecord
 
 	UPROPERTY()
 	float Timestamp = 0.0f;
+};
+
+/**
+ * v8.0 Reward Component Breakdown
+ * For TensorBoard logging and debugging
+ */
+USTRUCT(BlueprintType)
+struct FRewardComponentBreakdown
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly)
+	float ObjectiveProgress = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly)
+	float CombatEffectiveness = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly)
+	float Survival = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly)
+	float CoverUsage = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly)
+	float TeamCoordination = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly)
+	float Total = 0.0f;
+
+	// For debugging
+	FString ToString() const
+	{
+		return FString::Printf(
+			TEXT("Obj=%.2f, Combat=%.2f, Surv=%.2f, Cover=%.2f, Coord=%.2f, Total=%.2f"),
+			ObjectiveProgress, CombatEffectiveness, Survival, CoverUsage, TeamCoordination, Total
+		);
+	}
 };
 
 /**
@@ -96,38 +200,62 @@ public:
 	);
 
 	/**
-	 * Calculate strategy-specific rewards (v6.0)
-	 * Base rewards for combat events adjusted by current strategy
+	 * v8.0 Unified Reward Calculation
+	 * All strategies use same components, different weights
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateStrategyReward(
+	FRewardComponentBreakdown CalculateUnifiedReward(
 		EStrategyType Strategy,
 		const FObservationElement& PrevObs,
 		const FObservationElement& CurrentObs
 	);
 
+	// ========================================================================
+	// v8.0 REWARD COMPONENT CALCULATIONS (Strategy-Agnostic)
+	// These return base values, scaled by strategy weights in CalculateUnifiedReward
+	// ========================================================================
+
 	/**
-	 * Calculate Mission progress rewards (v6.0 - CRITICAL)
-	 * Rewards for making progress toward assigned Mission
+	 * Objective progress component (volume-based in v8.0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateMissionProgressReward(
-		EMissionType Mission,
+	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
+	float CalculateObjectiveProgressComponent(
 		const FObservationElement& PrevObs,
 		const FObservationElement& CurrentObs
 	);
 
 	/**
-	 * Calculate alignment bonus (v6.0)
-	 * Bonus for strategy matching Mission intent
+	 * Combat effectiveness component (kills, damage, target priority)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	float CalculateAlignmentBonus(
-		EStrategyType Strategy,
-		EMissionType Mission
+	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
+	float CalculateCombatEffectivenessComponent(
+		const FObservationElement& CurrentObs
 	);
 
-	
+	/**
+	 * Survival component (death penalty)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
+	float CalculateSurvivalComponent(
+		const FObservationElement& CurrentObs
+	);
+
+	/**
+	 * Cover usage component (tactical positioning)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
+	float CalculateCoverUsageComponent(
+		const FObservationElement& CurrentObs
+	);
+
+	/**
+	 * Team coordination component (formation, ally proximity)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
+	float CalculateTeamCoordinationComponent(
+		const FObservationElement& CurrentObs
+	);
+
 
 	//--------------------------------------------------------------------------
 	// EVENT TRACKING
@@ -136,6 +264,10 @@ public:
 	/** Track kill event */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void OnKillEnemy(AActor* Enemy);
+
+	/** Track kill event with target priority info (v8.0) */
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	void OnKillEnemyWithPriority(AActor* Enemy, bool bWasLowestHP);
 
 	/** Track damage dealt */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
@@ -148,14 +280,6 @@ public:
 	/** Track death event */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void OnDeath();
-
-	/** Track Mission completion */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	void OnMissionComplete(UMission* Mission);
-
-	/** Track Mission failure */
-	UFUNCTION(BlueprintCallable, Category = "Reward")
-	void OnMissionFailed(UMission* Mission);
 
 	/** Set current Mission for reward tracking */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
@@ -282,4 +406,19 @@ private:
 
 	/** Previous observation for calculating reward deltas */
 	FObservationElement PreviousObservation;
+
+	//--------------------------------------------------------------------------
+	// v8.0 UNIFIED REWARD TRACKING
+	//--------------------------------------------------------------------------
+
+	/** Last reward component breakdown (for TensorBoard logging) */
+	FRewardComponentBreakdown LastRewardBreakdown;
+
+	/** Track if target was lowest HP for efficient kill bonus */
+	bool bLastKillWasLowestHP = false;
+
+public:
+	/** Get last reward breakdown for TensorBoard logging */
+	UFUNCTION(BlueprintPure, Category = "Reward")
+	FRewardComponentBreakdown GetLastRewardBreakdown() const { return LastRewardBreakdown; }
 };

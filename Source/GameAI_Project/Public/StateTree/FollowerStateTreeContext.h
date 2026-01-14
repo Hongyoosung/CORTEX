@@ -14,19 +14,19 @@ class URLPolicyNetwork;
 class AAIController;
 class APawn;
 class UTeamLeaderComponent;
-class UMission;
+class AObjectiveActor;
 
 /**
- * State Tree Shared Context for Follower Agents (v3.0)
+ * State Tree Shared Context for Follower Agents (v8.0)
  *
  * Contains all data shared between State Tree states, tasks, evaluators, and conditions.
  * Replaces both Blackboard and component polling for better performance.
  *
- * This schema is optimized for Mission-driven tactical execution:
- * 1. Leader assigns Mission to follower
- * 2. State Tree transitions to appropriate state
- * 3. RL policy selects atomic tactical actions (move, aim, fire, crouch)
- * 4. State executes actions using observation data
+ * This schema is optimized for Strategy-driven tactical execution:
+ * 1. MCTS assigns Strategy + TargetObjective to follower
+ * 2. RL policy outputs Tactical Parameters (Aggression, Cover, Spread, Risk)
+ * 3. State Tree executes tactical movement via EQS (parameter-modulated)
+ * 4. Rules execute combat actions (auto-targeting + auto-firing)
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FFollowerStateTreeContext
@@ -73,16 +73,20 @@ struct GAMEAI_PROJECT_API FFollowerStateTreeContext
 	float ActionProgress = 0.0f;
 
 	//--------------------------------------------------------------------------
-	// Mission & SPATIAL CONTEXT (v3.0 - Mission-based execution)
+	// STRATEGY ASSIGNMENT (v8.0 - MCTS-assigned strategy + target)
 	//--------------------------------------------------------------------------
 
-	/** Current Mission assigned to this agent */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mission")
-	TObjectPtr<UMission> CurrentMission = nullptr;
+	/** Assigned strategy from MCTS */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy")
+	EStrategyType AssignedStrategy = EStrategyType::Assault;
 
-	/** Does agent have an active Mission? */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mission")
-	bool bHasActiveMission = false;
+	/** Target objective for this strategy */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy")
+	TObjectPtr<AObjectiveActor> TargetObjective = nullptr;
+
+	/** Strategy assignment priority [0-10] */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy")
+	int32 StrategyPriority = 5;
 
 
 	//--------------------------------------------------------------------------
