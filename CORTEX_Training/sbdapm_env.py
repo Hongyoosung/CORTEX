@@ -1,24 +1,27 @@
 """
-SBDAPM Environment for Schola/RLlib Training (v6.0 - Single-Head Strategy Selection)
+SBDAPM Environment for Schola/RLlib Training (v8.0 - Tactical Parameters)
 
-Solution: Provides actions for ALL keys in the DictSpace because Schola's
-fill_proto() iterates through ALL sub-spaces and expects action data for each key.
-Each agent's action is duplicated across all its component keys.
+v8.0 Architecture:
+    - MCTS assigns strategies → RL outputs tactical parameters + combat priority
+    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (2 choices)
+    - Hybrid action space: 4 continuous tactical params + 2 discrete combat logits
+    - Exports to: cortex_policy_v8.onnx
 
-v6.0 Changes (MCTS-RL Coordination Architecture):
-- ARCHITECTURE: MCTS assigns Missions → RL selects strategies (4-action space)
-- Observation: 68 features (64 base + 4 Mission context)
-- Action: Discrete(4) - Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
-- Removed multi-discrete action space (Position/Target/Fire now handled by rules)
-- Simplified action masking (all strategies always valid)
+Action Space (v8.0):
+    - Observation: 50 features (46 base from UE5 + 4 strategy one-hot added by Python)
+    - Action: Box(5) - [Aggression, CoverPref, Spread, Risk, CombatPriority]
+    - Tactical params (0-3): Continuous [0,1] values that modulate EQS weights
+    - Combat priority (4): Continuous [0,1], thresholded at 0.5 (Closest/LowestHP)
 
-Architecture:
-1. UE5's Think() has time-based throttle (DecisionInterval = 1.0s default)
-2. Think() only calls Super::Think() once per interval
-3. Super::Think() sends observations to Python via gRPC
-4. poll() in Python BLOCKS until UE5 sends data
-5. When an agent dies, it's moved to _dead_agents but NOT marked terminated
-6. Only when episode ends (all dead OR timeout) do ALL agents terminate/truncate together
+Data Flow:
+1. UE5's Think() throttled to DecisionInterval (default 1.0s)
+2. Think() sends observations + strategy assignment via gRPC
+3. Python RL policy returns tactical parameters + combat choice
+4. UE5 applies parameters to EQS weights + combat targeting
+5. Episode ends on timeout or objective completion (NOT individual agent death)
+
+Note: Schola's fill_proto() iterates through ALL sub-spaces and expects action data
+for each key. Each agent's action is duplicated across all component keys.
 """
 
 from gymnasium import spaces
@@ -43,7 +46,7 @@ except ImportError:
     SCHOLA_AVAILABLE = False
     print("Warning: schola not installed. Install with: pip install schola[rllib]")
 
-# v6.0: Import RLConfig from auto-generated config (synced from C++)
+# Import RLConfig from auto-generated config (synced from C++)
 try:
     from training_env.config import RLConfig
     CONFIG_AVAILABLE = True
@@ -52,7 +55,7 @@ except ImportError:
     print("Warning: training_env/config.py not found. Run: python tools/sync_config_from_cpp.py")
     # Fallback values if config not available
     class RLConfig:
-        OBSERVATION_SIZE = 68
+        OBSERVATION_SIZE = 46
         NUM_STRATEGIES = 4
 
 
@@ -65,9 +68,14 @@ if SCHOLA_AVAILABLE:
 
     class SBDAPMMultiAgentEnv(MultiAgentEnv):
         """
-        Multi-Agent RLlib Environment for SBDAPM (v7.6)
+        Multi-Agent RLlib Environment for SBDAPM (v8.0 - Tactical Parameters)
 
-        Key features:
+        v8.0 Key Features:
+        - Hybrid action space: 4 continuous tactical + 2 discrete combat
+        - MCTS assigns strategy (part of observation), RL outputs tactical params
+        - Multi-head policy: separate output heads per strategy type
+
+        Environment Features:
         - Provides actions for ALL keys in each agent's DictSpace
         - Tracks alive/dead agents to ensure proper trajectory handling
         - All agents terminate/truncate TOGETHER at episode end (RLlib requirement)
@@ -101,20 +109,26 @@ if SCHOLA_AVAILABLE:
             self.reverse_map = {}
             self._agent_ids = set()
 
+            # v8.0: Strategy assignments for curriculum learning
+            # Maps agent_id -> strategy_index (0=Assault, 1=Defend, 2=Support, 3=Retreat)
+            # Must be initialized BEFORE _update_agent_map() which accesses it
+            self._strategy_assignments = {}
+
             # 초기 ID 파싱 (reset시 갱신됨)
             if hasattr(self.schola_env, 'ids'):
                 self._update_agent_map()
 
-            # Space 정의 (v6.0: 64 core observation + 4 Mission context = 68 features)
-            # Observation breakdown:
-            # - Agent State (7): pos(3), vel(3), health(1)
+            # v8.0 Observation Space (50 features = 46 base + 4 strategy one-hot)
+            # Base observation from UE5 (46 features):
+            # - Position (3): pos(3)
+            # - Health (1): health(1)
             # - Combat (1): enemy_dist(1)
-            # - Perception (32): raycasts(16), hit_types(16)
-            # - Enemy Info (16): count(1), nearby(15)
+            # - Perception (16): raycasts(16)
+            # - Enemy Info (16): count(1), nearby(5x3=15)
             # - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
-            # - Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
-            # - Mission Context (4): type_encoded(1), distance(1), direction(2)
-            # v6.0: Using RLConfig for consistency with C++ runtime
+            # - Support Context (5): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(2)
+            # Strategy one-hot (4 features, added by Python wrapper):
+            # - [Assault, Defend, Support, Retreat]
             self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
             # v8.0: Hybrid action space (4 continuous tactical + 2 discrete combat)
             # Network outputs 6 values: [Aggression, CoverPref, Spread, Risk, combat_logit_0, combat_logit_1]
@@ -124,6 +138,18 @@ if SCHOLA_AVAILABLE:
                 shape=(RLConfig.NUM_TOTAL_OUTPUTS,),
                 dtype=np.float32
             )
+
+            # DEBUG: Print what action space Schola received from UE5
+            if hasattr(self.schola_env, 'action_defns'):
+                print(f"[DEBUG] Schola action_defns from UE5:")
+                for env_idx, agents in self.schola_env.action_defns.items():
+                    for agent_idx, defn in agents.items():
+                        print(f"  Agent ({env_idx},{agent_idx}): {defn}")
+                        if hasattr(defn, 'shape'):
+                            print(f"    Shape: {defn.shape}")
+                        elif hasattr(defn, 'spaces'):
+                            for key, space in defn.spaces.items():
+                                print(f"    {key}: {space} (shape={getattr(space, 'shape', 'N/A')})")
 
             self.episode_steps = 0
 
@@ -171,14 +197,39 @@ if SCHOLA_AVAILABLE:
             self.agent_map.clear()
             self.reverse_map.clear()
             self._agent_ids.clear()
-            
+
             if hasattr(self.schola_env, 'ids'):
                 for env_idx, agent_list in enumerate(self.schola_env.ids):
                     for agent_idx in agent_list:
-                        flat_id = f"agent_{agent_idx}" 
+                        flat_id = f"agent_{agent_idx}"
                         self.agent_map[flat_id] = (env_idx, agent_idx)
                         self.reverse_map[(env_idx, agent_idx)] = flat_id
                         self._agent_ids.add(flat_id)
+
+            # v8.0: Initialize strategy assignments for new agents (default: Assault)
+            for flat_id in self._agent_ids:
+                if flat_id not in self._strategy_assignments:
+                    self._strategy_assignments[flat_id] = 0  # Assault by default
+
+        def set_strategy_assignments(self, assignments):
+            """
+            Set strategy assignments for curriculum learning (v8.0).
+
+            Args:
+                assignments: dict mapping agent_id -> strategy_index
+                    OR list of strategy indices (applied to agents in order)
+
+            Strategy indices:
+                0 = Assault, 1 = Defend, 2 = Support, 3 = Retreat
+            """
+            if isinstance(assignments, dict):
+                self._strategy_assignments.update(assignments)
+            elif isinstance(assignments, (list, tuple)):
+                # Apply in order to sorted agent IDs
+                sorted_ids = sorted(self._agent_ids)
+                for i, strategy_idx in enumerate(assignments):
+                    if i < len(sorted_ids):
+                        self._strategy_assignments[sorted_ids[i]] = strategy_idx
 
         def _get_all_action_keys(self):
             """
@@ -226,39 +277,34 @@ if SCHOLA_AVAILABLE:
 
         def _get_action_mask(self, obs):
             """
-            Generate action mask for strategy selection (v6.0).
+            Generate action mask (v8.0 - not used for continuous actions).
 
-            v6.0: RL selects strategy only, not micro-actions (Position/Target/Fire)
-            All 4 strategies are always valid (no masking needed in v6.0)
+            v8.0: RL outputs continuous tactical parameters, no discrete strategy selection.
+            This mask is kept for backwards compatibility with RLlib info dict.
 
             Returns:
-                np.array: [1, 1, 1, 1] - All strategies valid
+                np.array: [1, 1, 1, 1] - Placeholder (not used for continuous actions)
             """
-            # v6.0: All strategies always valid (MCTS assigns Missions, RL selects strategy)
-            # No context-dependent masking needed
-            return np.array([1, 1, 1, 1], dtype=np.int8)  # [Assault, Defend, Support, Retreat]
+            # v8.0: Placeholder mask - tactical parameters are continuous, no masking
+            return np.array([1, 1, 1, 1], dtype=np.int8)
 
         def _shape_reward(self, base_reward, obs, flat_id):
             """
             Dense reward shaping to provide learning signal in long episodes.
 
-            Observation structure (68 dims):
-            [0-2]: position
-            [3-5]: velocity
-            [6]: health (0-1)
-            [7]: enemy_dist
-            [8-23]: raycasts (16)
-            [24-39]: hit_types (16)
-            [40-55]: enemy info (count + nearby)
-            [56-59]: tactical (cover)
-            [60-63]: support context (ally info)
-            [64]: Mission_type_encoded
-            [65]: Mission_distance
-            [66-67]: Mission_direction
+            Observation structure (46 dims, v8.0):
+            [0-2]: position (3)
+            [3]: health (1)
+            [4]: enemy_dist (1)
+            [5-20]: raycasts (16)
+            [21]: visible_enemy_count (1)
+            [22-36]: nearby enemies (5x3=15)
+            [37-40]: tactical/cover (4)
+            [41-45]: support context (5)
 
             Args:
                 base_reward: Raw reward from UE5
-                obs: Observation array (68 dims)
+                obs: Observation array (46 dims)
                 flat_id: Agent ID
 
             Returns:
@@ -266,29 +312,16 @@ if SCHOLA_AVAILABLE:
             """
             shaped_reward = base_reward
 
-            # Extract key features
-            health = obs[6] if len(obs) > 6 else 0.5
-            enemy_dist = obs[7] if len(obs) > 7 else 100.0
-            obj_distance = obs[65] if len(obs) > 65 else 100.0
+            # Extract key features (v8.0 indices)
+            health = obs[3] if len(obs) > 3 else 0.5
+            enemy_dist = obs[4] if len(obs) > 4 else 1.0  # Normalized [0,1]
 
             # 1. SURVIVAL BONUS: Small reward for staying alive
             # Mitigates excessive negative rewards from time penalties
             survival_bonus = 0.001
             shaped_reward += survival_bonus
 
-            # 2. OBJECTIVE PROXIMITY: Reward getting closer to objective
-            # This is the PRIMARY learning signal for navigation
-            if obj_distance < 100.0:  # Valid objective distance
-                # Inverse distance reward: closer = better
-                # At 1m: +0.05, at 5m: +0.01, at 50m: +0.001
-                proximity_reward = 0.05 / max(obj_distance, 1.0)
-                shaped_reward += proximity_reward
-
-                # Extra bonus for being very close (within 5m)
-                if obj_distance < 5.0:
-                    shaped_reward += 0.02
-
-            # 3. HEALTH PRESERVATION: Penalize damage, reward high health
+            # 2. HEALTH PRESERVATION: Penalize damage, reward high health
             # Encourages defensive behavior and survival
             if health < 0.5:
                 # Low health penalty (escalating)
@@ -298,30 +331,15 @@ if SCHOLA_AVAILABLE:
                 # High health bonus (surviving well)
                 shaped_reward += 0.005
 
-            # 4. COMBAT ENGAGEMENT: Reward appropriate enemy distance
-            # Not too far (disengaged), not too close (dangerous)
-            if enemy_dist < 100.0:  # Enemy detected
-                if 10.0 < enemy_dist < 30.0:
-                    # Optimal combat range
+            # 3. COMBAT ENGAGEMENT: Reward appropriate enemy distance
+            # enemy_dist is normalized [0,1], where 0 = very close, 1 = far/no enemy
+            if enemy_dist < 0.5:  # Enemy detected (closer than half perception range)
+                if 0.1 < enemy_dist < 0.3:
+                    # Optimal combat range (10-30% of perception range)
                     shaped_reward += 0.01
-                elif enemy_dist < 5.0:
+                elif enemy_dist < 0.05:
                     # Too close - dangerous!
                     shaped_reward -= 0.005
-
-            # Store previous objective distance for progress tracking
-            if not hasattr(self, '_prev_obj_dist'):
-                self._prev_obj_dist = {}
-
-            # 5. PROGRESS REWARD: Bonus for getting closer to objective
-            if flat_id in self._prev_obj_dist:
-                prev_dist = self._prev_obj_dist[flat_id]
-                if obj_distance < 100.0 and prev_dist < 100.0:
-                    distance_delta = prev_dist - obj_distance
-                    # Reward progress toward objective
-                    if distance_delta > 0:
-                        shaped_reward += 0.01 * distance_delta
-
-            self._prev_obj_dist[flat_id] = obj_distance
 
             return shaped_reward
 
@@ -346,10 +364,6 @@ if SCHOLA_AVAILABLE:
             self.episode_steps = 0
             self._episode_start_time = time.time()
             self._episode_rewards.clear()  # Reset reward tracking
-
-            # Clear reward shaping state
-            if hasattr(self, '_prev_obj_dist'):
-                self._prev_obj_dist.clear()
 
             # v7.3: Clear rate limiting state on reset
             self.last_action_time.clear()
@@ -408,52 +422,31 @@ if SCHOLA_AVAILABLE:
                     traceback.print_exc()
                     return {}, {}
 
-        def _process_hybrid_action(self, action_array):
+        def _process_combined_action(self, action_array):
             """
-            Process hybrid action from multi-head network output (v8.0).
+            Process combined action from multi-head network output (v8.0).
 
-            Network Output Structure:
-                - output[0:4]: Tactical parameters (sigmoid-activated, [0,1])
+            Network Output Structure (5 values, all continuous [0,1]):
+                - output[0:4]: Tactical parameters (sigmoid-activated)
                   - [0]: Aggression
                   - [1]: CoverPreference
                   - [2]: SpreadDistance
                   - [3]: RiskTolerance
-                - output[4:6]: Combat priority logits (softmax input)
-                  - [4]: Closest enemy logit
-                  - [5]: LowestHP enemy logit
+                - output[4]: Combat priority (sigmoid-activated)
+                  - <0.5 = Closest enemy, >=0.5 = LowestHP enemy
 
             Args:
-                action_array: np.array of shape (6,) from network forward pass
+                action_array: np.array of shape (5,) from network forward pass
 
             Returns:
-                dict with keys:
-                    - 'tactical': np.array (4,) clipped to [0, 1]
-                    - 'combat': int (0=Closest, 1=LowestHP)
+                np.array (5,) clipped to [0, 1] - ready to send to UE5
             """
             # Validate input
-            if action_array.shape[0] != 6:
-                raise ValueError(f"Expected action shape (6,), got {action_array.shape}")
+            if action_array.shape[0] != 5:
+                raise ValueError(f"Expected action shape (5,), got {action_array.shape}")
 
-            # Extract components
-            tactical_params = action_array[:4].astype(np.float32)
-            combat_logits = action_array[4:6].astype(np.float32)
-
-            # Safety: Clip tactical params (should already be [0,1] from sigmoid)
-            tactical_params = np.clip(tactical_params, 0.0, 1.0)
-
-            # Sample combat choice from logits (stochastic during training)
-            # Softmax normalization
-            exp_logits = np.exp(combat_logits - np.max(combat_logits))  # Numerical stability
-            combat_probs = exp_logits / np.sum(exp_logits)
-
-            # Sample (training) or argmax (inference)
-            # For now, always sample to maintain exploration
-            combat_choice = np.random.choice(2, p=combat_probs)
-
-            return {
-                'tactical': tactical_params,
-                'combat': combat_choice
-            }
+            # Clip all values to [0,1] (should already be from sigmoid)
+            return np.clip(action_array, 0.0, 1.0).astype(np.float32)
 
         def step(self, action_dict):
             # v7.5: Let UE5 control the step rate via poll() blocking
@@ -510,20 +503,14 @@ if SCHOLA_AVAILABLE:
                     # v7.5: No Python-side rate limiting - UE5's Think() controls the rate
                     # Just format and send the action directly
 
-                    # v8.0: Hybrid action space (4 continuous tactical + 2 discrete combat)
-                    if isinstance(action, np.ndarray) and action.shape[0] == 6:
-                        # Process hybrid action [4 tactical params + 2 combat logits]
-                        processed = self._process_hybrid_action(action)
-
-                        # Format for Schola: [4 tactical params + 1 combat choice]
-                        action_array = np.concatenate([
-                            processed['tactical'],  # [4] floats in [0,1]
-                            [processed['combat']]   # [1] int in {0,1}
-                        ]).astype(np.int32)  # Schola expects int32
+                    # v8.0: Combined action space (5 continuous values)
+                    if isinstance(action, np.ndarray) and action.shape[0] == 5:
+                        # Process combined action [4 tactical params + 1 combat priority]
+                        action_array = self._process_combined_action(action)
                     else:
-                        # Fallback for old format or invalid action
-                        print(f"[WARNING] Invalid action shape: {action.shape if isinstance(action, np.ndarray) else type(action)}")
-                        action_array = np.array([0, 0, 0, 0, 0], dtype=np.int32)  # Default: neutral tactical + closest combat
+                        # Fallback for invalid action shape
+                        print(f"[WARNING] Invalid action shape: {action.shape if isinstance(action, np.ndarray) else type(action)}, expected (5,)")
+                        action_array = np.array([0.5, 0.5, 0.5, 0.5, 0.0], dtype=np.float32)  # Default: neutral tactical + closest combat
 
                     # Get ALL component keys for this agent
                     agent_keys = all_action_keys.get((env_idx, agent_idx), [])
@@ -583,14 +570,14 @@ if SCHOLA_AVAILABLE:
                     if flat_id in self._dead_agents:
                         # Dead agents get zero obs/rewards but NOT terminated (yet)
                         # They'll be terminated when the whole episode ends
-                        obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
+                        obs_dict[flat_id] = np.zeros(RLConfig.OBSERVATION_SIZE, dtype=np.float32)  # v8.0: 64 base + 4 strategy one-hot
                         reward_dict[flat_id] = 0.0
                         terminated_dict[flat_id] = False  # Will be set True when episode ends
                         truncated_dict[flat_id] = False
                         # Dead agents: all actions masked
                         info_dict[flat_id] = {
                             "dead": True,
-                            "action_mask": np.zeros(4, dtype=np.int8)  # v6.0: All 4 strategies invalid
+                            "action_mask": np.zeros(4, dtype=np.int8)  # Dead agent - no valid actions
                         }
                     else:
                         # Live agents get normal obs/rewards
@@ -602,7 +589,7 @@ if SCHOLA_AVAILABLE:
                                 obs_val = agent_obs_data
                             obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
                         else:
-                            obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
+                            obs_dict[flat_id] = np.zeros(RLConfig.OBSERVATION_SIZE, dtype=np.float32)  # v8.0: 64 base + 4 strategy one-hot
 
                         # Get base reward from UE5
                         base_reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
@@ -623,7 +610,7 @@ if SCHOLA_AVAILABLE:
                         terminated_dict[flat_id] = False
                         truncated_dict[flat_id] = False
 
-                        # v6.0: Add action masking (all strategies valid)
+                        # v8.0: Action mask placeholder (continuous actions don't use masking)
                         action_mask = self._get_action_mask(obs_dict[flat_id])
 
                         info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
@@ -671,7 +658,7 @@ if SCHOLA_AVAILABLE:
                 traceback.print_exc()
 
                 return (
-                    {aid: np.zeros(68, dtype=np.float32) for aid in self._agent_ids},  # v6.0: 64 obs + 4 Mission context
+                    {aid: np.zeros(RLConfig.OBSERVATION_SIZE, dtype=np.float32) for aid in self._agent_ids},  # v6.0: 64 obs + 4 Mission context
                     {aid: 0.0 for aid in self._agent_ids},
                     {aid: True for aid in self._agent_ids} | {"__all__": True},
                     {aid: False for aid in self._agent_ids} | {"__all__": True},
@@ -690,16 +677,26 @@ if SCHOLA_AVAILABLE:
                 env_idx, agent_idx = self.agent_map[flat_id]
                 agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
 
+                # v8.0: Get base observation (46 features from UE5)
                 if agent_obs_data is not None:
                     if isinstance(agent_obs_data, dict):
                         obs_val = list(agent_obs_data.values())[0]
                     else:
                         obs_val = agent_obs_data
-                    obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
+                    base_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
+                    base_obs = np.zeros(46, dtype=np.float32)  # v8.0: 46 base features
 
-                # v6.0: Add action masking on reset (all strategies valid)
+                # v8.0: Append strategy one-hot (4 features) for curriculum learning
+                # Strategy indices: 0=Assault, 1=Defend, 2=Support, 3=Retreat
+                strategy_idx = self._strategy_assignments.get(flat_id, 0)  # Default: Assault
+                strategy_onehot = np.zeros(4, dtype=np.float32)
+                strategy_onehot[strategy_idx] = 1.0
+
+                # Concatenate: [46 base features] + [4 strategy one-hot] = 50 total
+                obs_dict[flat_id] = np.concatenate([base_obs, strategy_onehot])
+
+                # v8.0: Action mask placeholder for RLlib info dict
                 action_mask = self._get_action_mask(obs_dict[flat_id])
                 info_dict[flat_id] = {"action_mask": action_mask}
 
@@ -718,11 +715,18 @@ class SBDAPMEnv:
     """
     Dummy single-agent environment for testing without Schola.
     Returns random observations and zero rewards.
+    v8.0: Updated to use 50-dim observation (46 base + 4 strategy one-hot)
     """
     def __init__(self, **kwargs):
         print("[SBDAPMEnv] WARNING: Using dummy environment (Schola not available)")
         self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
-        self._action_space = spaces.Discrete(RLConfig.NUM_STRATEGIES)
+        # v8.0: Combined action space (4 tactical + 1 combat priority = 5 continuous)
+        self._action_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(RLConfig.NUM_TOTAL_OUTPUTS,),
+            dtype=np.float32
+        )
         self.max_episode_steps = kwargs.get("max_episode_steps", 1000)
         self.episode_steps = 0
 
@@ -736,17 +740,23 @@ class SBDAPMEnv:
 
     def reset(self, *, seed=None, options=None):
         self.episode_steps = 0
-        obs = np.random.randn(RLConfig.OBSERVATION_SIZE).astype(np.float32)
-        info = {"action_mask": np.ones(RLConfig.NUM_STRATEGIES, dtype=np.int8)}
+        # v8.0: Generate random 46-dim base obs + assault strategy one-hot [1,0,0,0]
+        base_obs = np.random.randn(46).astype(np.float32)
+        strategy_onehot = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)  # Assault
+        obs = np.concatenate([base_obs, strategy_onehot])
+        info = {"action_mask": np.ones(4, dtype=np.int8)}
         return obs, info
 
     def step(self, action):
         self.episode_steps += 1
-        obs = np.random.randn(RLConfig.OBSERVATION_SIZE).astype(np.float32)
+        # v8.0: Generate random 46-dim base obs + assault strategy one-hot
+        base_obs = np.random.randn(46).astype(np.float32)
+        strategy_onehot = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)  # Assault
+        obs = np.concatenate([base_obs, strategy_onehot])
         reward = 0.0
         terminated = False
         truncated = self.episode_steps >= self.max_episode_steps
-        info = {"action_mask": np.ones(RLConfig.NUM_STRATEGIES, dtype=np.int8)}
+        info = {"action_mask": np.ones(4, dtype=np.int8)}
         return obs, reward, terminated, truncated, info
 
     def render(self):

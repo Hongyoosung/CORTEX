@@ -8,12 +8,12 @@
 
 UTacticalObserver::UTacticalObserver()
 {
-	// Build observation space (68 continuous features, v6.0: 64 base + 4 Mission context)
+	// Build observation space (46 continuous features, v8.0: streamlined obs, strategy context added by network)
 	TArray<FBoxSpaceDimension> Dimensions;
-	Dimensions.Reserve(68);
+	Dimensions.Reserve(46);
 
 	// All features normalized to [-1, 1] or [0, 1]
-	for (int32 i = 0; i < 68; ++i)
+	for (int32 i = 0; i < 46; ++i)
 	{
 		FBoxSpaceDimension Dim;
 		Dim.Low = -1.0f;
@@ -62,7 +62,7 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 	static int32 CallCount = 0;
 	CallCount++;
 
-	OutObservations.Values.SetNum(68);  // v6.0: 68 features (64 base + 4 Mission
+	OutObservations.Values.SetNum(46);  // v8.0: 46 features (strategy context added by network)
 	// CRITICAL: Add safety checks to prevent crash during initialization
 	if (!FollowerAgent || !FollowerAgent->IsValidLowLevel() || !FollowerAgent->GetOwner())
 	{
@@ -71,7 +71,7 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			UE_LOG(LogTemp, Error, TEXT("[TacticalObserver] CollectObservations called but FollowerAgent is NULL or invalid! (Call #%d)"), CallCount);
 		}
 		// Return zeros if no follower
-		for (int32 i = 0; i < 68; ++i)
+		for (int32 i = 0; i < 46; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
@@ -84,15 +84,15 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			CallCount, *FollowerAgent->GetOwner()->GetName());
 	}
 
-	// v6.0: Get observation from follower (now includes Mission context automatically)
-	// Includes: Agent State(7) + Combat(1) + Perception(32) + Enemies(16) +
-	//           Tactical(4) + Support Context(4) + Mission Context(4) = 68 features
+	// v8.0: Get observation from follower (46 base features, strategy context added by network)
+	// Includes: Position(3) + Health(1) + EnemyDist(1) + Raycasts(16) +
+	//           EnemyInfo(16) + Tactical(4) + Support(5) = 46 features
 	const FObservationElement& Obs = FollowerAgent->GetLocalObservation();
 	TArray<float> Features = Obs.ToFeatureVector();
 
-	// Copy all 68 features (v6.0: ToFeatureVector now includes Mission context)
-	check(Features.Num() == 68);
-	for (int32 i = 0; i < 68; ++i)
+	// Copy all 46 features (v8.0: streamlined observation)
+	check(Features.Num() == 46);
+	for (int32 i = 0; i < 46; ++i)
 	{
 		OutObservations.Values[i] = Features[i];
 	}

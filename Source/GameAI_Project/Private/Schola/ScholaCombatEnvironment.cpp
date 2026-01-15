@@ -438,12 +438,6 @@ bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 		return false;
 	}
 
-	// v8.0: Check v8.0 actuators (TacticalParameterActuator + CombatChoiceActuator)
-	if (!Agent->TacticalParameterActuator || !Agent->CombatChoiceActuator)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v8.0] Agent %s missing v8.0 actuators (TacticalParameterActuator or CombatChoiceActuator)"), *Agent->GetOwner()->GetName());
-		return false;
-	}
 
 	// Initialize components (only done once per agent)
 	Agent->InitializeScholaComponents();

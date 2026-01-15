@@ -3,17 +3,12 @@ RLlib Training Script for CORTEX (v8.0 - Multi-Head Tactical Parameters)
 
 Trains PPO agents via Schola gRPC connection to Unreal Engine.
 
-v8.0 Architecture (Current - 2026-01-14):
+v8.0 Architecture:
     - MCTS assigns strategies → RL outputs tactical parameters + combat priority
-    - Multi-head network: 68 input → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (2 choices)
+    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (2 choices)
     - Hybrid action space: 4 continuous tactical params + 2 discrete combat logits
     - Curriculum learning (3 phases: Single → Mixed → Dynamic)
     - Exports to: cortex_policy_v8.onnx
-
-v6.0 Architecture (Deprecated 2026-01-14):
-    - MCTS assigns Missions → RL selects strategies (4-action space)
-    - Single-head network: 68 input → [128, 128, 64] → 4 policy logits + 1 value
-    - Exports to: cortex_policy_v6.onnx (archived to Content/AI/Models/v7.0-archive/)
 
 Usage:
     1. Start UE with Schola plugin (game mode)
@@ -33,14 +28,14 @@ from pathlib import Path
 os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# v6.0: Import RLConfig from auto-generated config (synced from C++)
+# Import RLConfig from auto-generated config (synced from C++)
 try:
     from training_env.config import RLConfig
 except ImportError:
     print("Warning: training_env/config.py not found. Run: python tools/sync_config_from_cpp.py")
     # Fallback values if config not available
     class RLConfig:
-        OBSERVATION_SIZE = 68
+        OBSERVATION_SIZE = 50  # 46 base + 4 strategy one-hot
         NUM_STRATEGIES = 4
 
 import torch  # Fix for Windows DLL error (must be imported before ray)
@@ -94,22 +89,22 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     Multi-Head PPO Network for Tactical Parameters + Combat Control (v8.0)
 
     Architecture:
-        - Input: 68 features (64 base + 4 strategy one-hot from MCTS)
+        - Input: 50 features (46 base + 4 strategy one-hot from Python wrapper)
         - Shared Feature Extractor: [128 → 128 → 64] ReLU
         - 4 Strategy-Specific Heads: Assault, Defend, Support, Retreat
           - Each head: FC(64→32→4) → Sigmoid → [Aggression, CoverPref, Spread, Risk]
-        - 1 Combat Head: FC(64→2) → Softmax → [Closest, LowestHP]
+        - 1 Combat Head: FC(64→1) → Sigmoid → Combat Priority [0,1]
         - 1 Shared Critic Head: FC(64→1) → Linear → State Value
 
     v8.0 Key Changes:
         - MCTS assigns strategies (part of observation, not action)
-        - RL outputs tactical parameters (continuous) + combat choices (discrete)
+        - RL outputs tactical parameters (continuous) + combat priority (continuous)
         - Separate policy heads guarantee strategy differentiation
-        - Combat control: target priority (2 discrete choices)
+        - Combat priority: <0.5 = Closest, >=0.5 = LowestHP (thresholded in UE5)
 
     Outputs:
         - Tactical parameters: 4 continuous values [0,1] (Aggression, CoverPref, Spread, Risk)
-        - Combat priority: 2-way discrete (Closest, LowestHP)
+        - Combat priority: 1 continuous value [0,1] (thresholded to Closest/LowestHP)
         - State value: 1-dim value estimate
     """
 
@@ -118,7 +113,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         nn.Module.__init__(self)
 
         # v8.0: Observation size from RLConfig (synced from C++)
-        obs_dim = RLConfig.OBSERVATION_SIZE  # 68 features (64 base + 4 strategy one-hot)
+        obs_dim = RLConfig.OBSERVATION_SIZE  # 50 features (46 base + 4 strategy one-hot)
 
         # Get hidden layers from config (default: [128, 128, 64])
         hidden_layers = model_config.get("custom_model_config", {}).get("hidden_layers", [128, 128, 64])
@@ -154,8 +149,8 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         )
 
         # === Combat Head (Target Priority) ===
-        # 2-way softmax: [Closest, LowestHP]
-        self.combat_head = SlimFC(final_hidden_size, 2, activation_fn=None)  # Logits for softmax
+        # Single value [0,1]: <0.5 = Closest, >=0.5 = LowestHP (thresholded in UE5)
+        self.combat_head = SlimFC(final_hidden_size, 1, activation_fn=nn.Sigmoid)
 
         # === Shared Value Head ===
         # Value estimate independent of strategy assignment
@@ -171,18 +166,18 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         Forward pass (v8.0 - Multi-Head)
 
         Args:
-            input_dict: Contains 'obs' with shape [batch, 68]
-                - obs[:, :64]: base observation
-                - obs[:, 64:68]: strategy one-hot [Assault, Defend, Support, Retreat]
+            input_dict: Contains 'obs' with shape [batch, 50]
+                - obs[:, :46]: base observation
+                - obs[:, 46:50]: strategy one-hot [Assault, Defend, Support, Retreat]
 
         Returns:
-            (action_logits, state): 6-dim output (4 tactical params + 2 combat logits), unchanged state
+            (action_logits, state): 5-dim output (4 tactical params + 1 combat priority), unchanged state
         """
         obs = input_dict["obs"]
         batch_size = obs.shape[0]
 
         # Extract strategy one-hot (last 4 features)
-        strategy_onehot = obs[:, 64:68]  # [batch, 4]
+        strategy_onehot = obs[:, 46:50]  # [batch, 4]
 
         # Run shared trunk
         features = self.shared_trunk(obs)  # [batch, 64]
@@ -206,101 +201,17 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
                 tactical_params[i] = self.retreat_head(features[i:i+1]).squeeze(0)
 
         # Combat head (shared across all strategies)
-        combat_logits = self.combat_head(features)  # [batch, 2]
+        combat_priority = self.combat_head(features)  # [batch, 1]
 
-        # Concatenate outputs: [4 tactical params, 2 combat logits] = 6 dims
-        # RLlib will treat this as a multi-discrete action space
-        output = torch.cat([tactical_params, combat_logits], dim=-1)  # [batch, 6]
+        # Concatenate outputs: [4 tactical params, 1 combat priority] = 5 dims
+        # All continuous values in [0,1] range (sigmoid activated)
+        output = torch.cat([tactical_params, combat_priority], dim=-1)  # [batch, 5]
 
         return output, state
 
     @override(TorchModelV2)
     def value_function(self):
         """Return value estimate from value head (used by PPO)"""
-        if self._last_features is None:
-            raise ValueError("Must call forward() before value_function()")
-        return self.value_head(self._last_features).squeeze(-1)
-
-
-# ==============================================================================
-# SINGLE-HEAD STRATEGY POLICY (v6.0 - DEPRECATED)
-# ==============================================================================
-
-class SingleHeadStrategyPolicy(TorchModelV2, nn.Module):
-    """
-    Single-Head PPO Network for Strategy Selection (v6.0)
-
-    Architecture:
-        - Input: 68 features (64 base + 4 Mission context)
-        - Shared Trunk: [128 → 128 → 64] ReLU (learns common features)
-        - Policy Head: 4 strategy logits (Assault, Defend, Support, Retreat)
-        - Value Head: 1-dim value estimate (for MCTS + PPO)
-
-    v6.0 Changes:
-        - MCTS assigns Missions, RL selects strategies (not micro-actions)
-        - Simplified from 13-output multi-head to 4-output single-head
-        - Mission context included in observation (replaces strategy index)
-
-    Outputs:
-        - Policy logits: 4-dim [Assault, Defend, Support, Retreat]
-        - State value: 1-dim value estimate
-    """
-
-    def __init__(self, obs_space, action_space, num_outputs, model_config, name):
-        TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
-        nn.Module.__init__(self)
-
-        # v6.0: Observation size from RLConfig (synced from C++)
-        obs_dim = RLConfig.OBSERVATION_SIZE  # 68 features (64 base + 4 Mission context)
-
-        # Get hidden layers from config (default: [256, 256, 128])
-        hidden_layers = model_config.get("custom_model_config", {}).get("hidden_layers", [256, 256, 128])
-
-        # Shared trunk: learns common features (perception, tactical context)
-        layers = []
-        prev_size = obs_dim
-        for hidden_size in hidden_layers:
-            layers.append(SlimFC(prev_size, hidden_size, activation_fn=nn.ReLU))
-            prev_size = hidden_size
-
-        self.shared_trunk = nn.Sequential(*layers)
-        final_hidden_size = hidden_layers[-1]  # Last layer size
-
-        # Single policy head: 4 strategy logits (v6.0)
-        # Outputs probability distribution over [Assault, Defend, Support, Retreat]
-        self.policy_head = SlimFC(final_hidden_size, num_outputs, activation_fn=None)
-
-        # Value head: state value estimate (used by MCTS + PPO)
-        self.value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
-
-        # Store last features for value function
-        self._last_features = None
-
-    @override(TorchModelV2)
-    def forward(self, input_dict, state, seq_lens):
-        """
-        Forward pass (v6.0 - Single Head)
-
-        Args:
-            input_dict: Contains 'obs' with shape [batch, 68] (64 base + 4 Mission context)
-
-        Returns:
-            (policy_logits, state): 4-dim strategy logits, unchanged state
-        """
-        obs = input_dict["obs"]
-
-        # Run shared trunk (learns from full observation including Mission context)
-        features = self.shared_trunk(obs)  # [batch, 64]
-        self._last_features = features
-
-        # Single policy head: outputs strategy logits
-        logits = self.policy_head(features)  # [batch, 4]
-
-        return logits, state
-
-    @override(TorchModelV2)
-    def value_function(self):
-        """Return value estimate from value head (used by MCTS + PPO)"""
         if self._last_features is None:
             raise ValueError("Must call forward() before value_function()")
         return self.value_head(self._last_features).squeeze(-1)
@@ -510,7 +421,7 @@ def create_ppo_config():
         # v8.0: Multi-head tactical policy (4 strategy heads + combat head)
         "custom_model": "multi_head_tactical_policy",
         "custom_model_config": {
-            "obs_dim": RLConfig.OBSERVATION_SIZE,  # v8.0: 68 features (64 base + 4 strategy one-hot)
+            "obs_dim": RLConfig.OBSERVATION_SIZE,  # v8.0: 50 features (46 base + 4 strategy one-hot)
             "hidden_layers": SBDAPMConfig.HIDDEN_LAYERS,  # [128, 128, 64]
             # v8.0: Hybrid action space (4 continuous tactical + 2 combat logits)
             "num_outputs": RLConfig.NUM_TACTICAL_PARAMS + RLConfig.NUM_COMBAT_CHOICES,  # 4 + 2 = 6
@@ -566,10 +477,6 @@ def register_custom_model():
         # v8.0: Multi-head tactical parameters + combat control
         ModelCatalog.register_custom_model("multi_head_tactical_policy", MultiHeadTacticalPolicy)
         print("[v8.0] Multi-head tactical policy registered with RLlib")
-
-        # v6.0: Keep legacy single-head for backwards compatibility
-        ModelCatalog.register_custom_model("single_head_strategy_policy", SingleHeadStrategyPolicy)
-        print("[v6.0] Legacy single-head strategy policy registered")
     else:
         print("[WARNING] PyTorch not available - cannot register custom model")
 
@@ -583,9 +490,9 @@ def export_onnx_v8(algo, output_dir):
     - cortex_policy_v8.onnx
 
     Model structure:
-        Input: 68 features (64 base + 4 strategy one-hot from MCTS)
+        Input: 50 features (46 base + 4 strategy one-hot from Python wrapper)
         Output 1-4: Tactical parameters for each strategy head [4 continuous values each]
-        Output 5: Combat priority logits [2-way: Closest, LowestHP]
+        Output 5: Combat priority [1 continuous value, thresholded at 0.5]
         Output 6: State value estimate
     """
     try:
@@ -611,7 +518,7 @@ def export_onnx_v8(algo, output_dir):
 
             Exports all strategy-specific heads separately so C++ can:
             1. Route to correct head based on MCTS-assigned strategy
-            2. Sample combat priority from combat head
+            2. Use combat priority from combat head (threshold at 0.5)
             3. Use value head for RL training
 
             Outputs:
@@ -619,7 +526,7 @@ def export_onnx_v8(algo, output_dir):
                 - defend_tactical: [batch, 4] tactical params for Defend
                 - support_tactical: [batch, 4] tactical params for Support
                 - retreat_tactical: [batch, 4] tactical params for Retreat
-                - combat_logits: [batch, 2] target priority logits [Closest, LowestHP]
+                - combat_priority: [batch, 1] target priority (<0.5=Closest, >=0.5=LowestHP)
                 - value: [batch, 1] state value estimate
             """
             def __init__(self, model):
@@ -629,11 +536,11 @@ def export_onnx_v8(algo, output_dir):
             def forward(self, obs):
                 """
                 Args:
-                    obs: [batch, 68] (64 base + 4 strategy one-hot)
+                    obs: [batch, 50] (46 base + 4 strategy one-hot)
 
                 Returns:
                     Tuple of (assault_tactical, defend_tactical, support_tactical,
-                             retreat_tactical, combat_logits, value)
+                             retreat_tactical, combat_priority, value)
                 """
                 # Run shared trunk
                 features = self.model.shared_trunk(obs)  # [batch, 64]
@@ -645,13 +552,13 @@ def export_onnx_v8(algo, output_dir):
                 retreat_tactical = self.model.retreat_head(features)  # [batch, 4]
 
                 # Run combat head
-                combat_logits = self.model.combat_head(features)  # [batch, 2]
+                combat_priority = self.model.combat_head(features)  # [batch, 1]
 
                 # Run value head
                 value = self.model.value_head(features)  # [batch, 1]
 
                 return (assault_tactical, defend_tactical, support_tactical,
-                       retreat_tactical, combat_logits, value)
+                       retreat_tactical, combat_priority, value)
 
         wrapper = MultiHeadPolicyWrapper(model)
         wrapper.eval()
@@ -671,7 +578,7 @@ def export_onnx_v8(algo, output_dir):
                 "defend_tactical",    # Output 1: [batch, 4]
                 "support_tactical",   # Output 2: [batch, 4]
                 "retreat_tactical",   # Output 3: [batch, 4]
-                "combat_logits",      # Output 4: [batch, 2]
+                "combat_priority",    # Output 4: [batch, 1]
                 "value"               # Output 5: [batch, 1]
             ],
             dynamic_axes={
@@ -680,7 +587,7 @@ def export_onnx_v8(algo, output_dir):
                 "defend_tactical": {0: "batch_size"},
                 "support_tactical": {0: "batch_size"},
                 "retreat_tactical": {0: "batch_size"},
-                "combat_logits": {0: "batch_size"},
+                "combat_priority": {0: "batch_size"},
                 "value": {0: "batch_size"}
             },
             opset_version=11
@@ -689,118 +596,18 @@ def export_onnx_v8(algo, output_dir):
         print(f"\n[v8.0 EXPORT COMPLETE]")
         print(f"[SUCCESS] Multi-head policy exported to: {model_path}")
         print(f"\nModel structure:")
-        print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (64 base + 4 strategy one-hot)")
+        print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (46 base + 4 strategy one-hot)")
         print(f"  - Output 0 (Assault): 4 tactical params [Aggression, CoverPref, Spread, Risk]")
         print(f"  - Output 1 (Defend): 4 tactical params")
         print(f"  - Output 2 (Support): 4 tactical params")
         print(f"  - Output 3 (Retreat): 4 tactical params")
-        print(f"  - Output 4 (Combat): 2 logits [Closest, LowestHP]")
+        print(f"  - Output 4 (Combat): 1 dim priority (<0.5=Closest, >=0.5=LowestHP)")
         print(f"  - Output 5 (Value): 1 dim state value estimate")
         print(f"\nReady for UE5:")
         print(f"  - Copy cortex_policy_v8.onnx to: Content/AI/Models/")
         print(f"  - RLPolicyNetwork routes to appropriate strategy head based on MCTS assignment")
-        print(f"  - Combat head provides target priority selection")
+        print(f"  - Combat priority thresholded at 0.5 for target selection")
         print(f"  - Value head used for PPO training")
-        return True
-
-    except Exception as e:
-        print(f"ONNX export failed: {e}")
-        import traceback
-        traceback.print_exc()
-        print("Saving checkpoint instead...")
-        return False
-
-
-def export_onnx(algo, output_dir):
-    """
-    Export trained single-head policy to ONNX format (v6.0 - DEPRECATED)
-
-    Exports single ONNX model for C++ inference:
-    - cortex_policy_v6.onnx
-
-    Model structure:
-        Input: 68 features (64 base + 4 Mission context)
-        Output 1: 4-dim policy logits [Assault, Defend, Support, Retreat]
-        Output 2: 1-dim state value (for MCTS value estimation)
-    """
-    try:
-        import torch
-        import torch.nn as nn
-
-        # Get policy (must specify policy name for multi-agent training)
-        policy = algo.get_policy("shared_policy")
-        if not policy:
-            print("ERROR: Could not get 'shared_policy'. Available policies:", algo.workers.local_worker().policy_map.keys())
-            return False
-
-        model = policy.model
-
-        # ========================================
-        # Export Single-Head Network (v6.0)
-        # Unified model for all strategies
-        # ========================================
-
-        class PolicyWrapper(nn.Module):
-            """
-            Wrapper for policy + value export
-
-            Exports:
-                - Shared trunk + policy head (4 strategy logits)
-                - Value head (state value for MCTS)
-            """
-            def __init__(self, model):
-                super().__init__()
-                self.model = model
-
-            def forward(self, obs):
-                """
-                Args:
-                    obs: [batch, 68] (64 base + 4 Mission context)
-
-                Returns:
-                    policy_logits: [batch, 4] strategy probabilities
-                    state_value: [batch, 1] value estimate
-                """
-                # Run model forward pass
-                policy_logits, _ = self.model({"obs": obs}, [], None)
-
-                # Get value estimate
-                value = self.model.value_function()
-
-                return policy_logits, value.unsqueeze(-1)  # Make value [batch, 1]
-
-        wrapper = PolicyWrapper(model)
-        wrapper.eval()
-
-        # Dummy input: observation size from RLConfig (synced from C++)
-        dummy_input = torch.randn(1, RLConfig.OBSERVATION_SIZE)
-
-        # Export single unified model
-        model_path = output_dir / "cortex_policy_v6.onnx"
-        torch.onnx.export(
-            wrapper,
-            dummy_input,
-            str(model_path),
-            input_names=["observation"],
-            output_names=["policy_logits", "value"],
-            dynamic_axes={
-                "observation": {0: "batch_size"},
-                "policy_logits": {0: "batch_size"},
-                "value": {0: "batch_size"}
-            },
-            opset_version=11
-        )
-
-        print(f"\n[v6.0 EXPORT COMPLETE]")
-        print(f"[SUCCESS] Policy exported to: {model_path}")
-        print(f"\nModel structure:")
-        print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (64 base + 4 Mission context)")
-        print(f"  - Output 1 (Policy): {RLConfig.NUM_STRATEGIES} dims [Assault, Defend, Support, Retreat]")
-        print(f"  - Output 2 (Value): 1 dim (state value for MCTS)")
-        print(f"\nReady for UE5:")
-        print(f"  - Copy cortex_policy_v6.onnx to: Content/Models/")
-        print(f"  - RLPolicyNetwork loads single model for all strategies")
-        print(f"  - MCTS uses value head for assignment evaluation")
         return True
 
     except Exception as e:
@@ -905,7 +712,9 @@ def train(args):
     print(f"Training for {args.iterations} iterations\n")
 
     # Create config and algorithm with TensorBoard logging
+    print("[v8.0] Creating PPO configuration...")
     config = create_ppo_config()
+    print("[v8.0] PPO configuration created successfully")
 
     # Enable TensorBoard - Use Ray's default UnifiedLogger which includes:
     # - CSVLogger (progress.csv)
@@ -925,7 +734,17 @@ def train(args):
     # Initial entropy coefficient (will be updated dynamically in training loop)
     config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
 
-    algo = config.build(logger_creator=logger_creator)
+    print("[v8.0] Building PPO algorithm (this creates the environment)...")
+    print("[v8.0] Waiting for connection to UE5 Schola server...")
+    try:
+        algo = config.build(logger_creator=logger_creator)
+        print("[v8.0] PPO algorithm built successfully!")
+    except Exception as e:
+        print(f"[ERROR] Failed to build PPO algorithm: {e}")
+        import traceback
+        traceback.print_exc()
+        ray.shutdown()
+        sys.exit(1)
 
     # Training loop
     best_reward = float("-inf")
@@ -990,9 +809,9 @@ def train(args):
                 print(f"{'='*70}")
 
                 for strategy_idx, strategy_name in enumerate(['Assault', 'Defend', 'Support', 'Retreat']):
-                    # Create dummy observation with strategy one-hot
-                    dummy_obs = torch.zeros(1, 68)
-                    dummy_obs[0, 64 + strategy_idx] = 1.0
+                    # Create dummy observation with strategy one-hot (v8.0: 50 = 46 base + 4 strategy)
+                    dummy_obs = torch.zeros(1, 50)
+                    dummy_obs[0, 46 + strategy_idx] = 1.0
 
                     # Sample tactical parameters from strategy-specific head
                     with torch.no_grad():
@@ -1043,9 +862,7 @@ def train(args):
     final_checkpoint = algo.save(output_dir)
     print(f"Final checkpoint: {final_checkpoint}")
 
-    # Export ONNX from best checkpoint (v6.0: single-head policy + value)
-
-    # Try to export from best checkpoint first (v8.0: multi-head policy)
+    # Export ONNX (v8.0: multi-head policy with tactical parameters + combat)
     best_checkpoint_dir = os.path.join(output_dir, "best")
     if os.path.exists(best_checkpoint_dir):
         print(f"\nExporting best model from: {best_checkpoint_dir}")

@@ -3,8 +3,7 @@
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/TacticalObserver.h"
 #include "Schola/TacticalRewardProvider.h"
-#include "Schola/TacticalParameterActuator.h"
-#include "Schola/CombatChoiceActuator.h"
+#include "Schola/CombinedTacticalActuator.h"
 #include "Team/FollowerAgentComponent.h"
 #include "Inference/InferenceComponent.h"
 #include "Combat/HealthComponent.h"
@@ -211,49 +210,28 @@ void UScholaAgentComponent::ConfigureActuators()
 		return;
 	}
 
-	// v8.0: Configure TacticalParameterActuator (4 continuous values)
-	if (TacticalParameterActuator)
+	// v8.0: Configure CombinedTacticalActuator (5 continuous values: 4 tactical + 1 combat priority)
+	if (CombinedTacticalActuator)
 	{
-		TacticalParameterActuator->FollowerAgent = FollowerAgent;
-		TacticalParameterActuator->bAutoFindFollower = false;
-		TacticalParameterActuator->InitializeActuator();
+		CombinedTacticalActuator->FollowerAgent = FollowerAgent;
+		CombinedTacticalActuator->bAutoFindFollower = false;
+		CombinedTacticalActuator->InitializeActuator();
 
-		if (!this->Actuators.Contains(TacticalParameterActuator))
+		if (!this->Actuators.Contains(CombinedTacticalActuator))
 		{
-			this->Actuators.Add(TacticalParameterActuator);
+			this->Actuators.Add(CombinedTacticalActuator);
 		}
 
-		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: TacticalParameterActuator configured (Box([0,1]^4))"),
+		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: CombinedTacticalActuator configured (Box([0,1]^5))"),
 			*GetOwner()->GetName());
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent v8.0] %s: TacticalParameterActuator is null!"),
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent v8.0] %s: CombinedTacticalActuator is null!"),
 			*GetOwner()->GetName());
 	}
 
-	// v8.0: Configure CombatChoiceActuator (2 discrete choices)
-	if (CombatChoiceActuator)
-	{
-		CombatChoiceActuator->FollowerAgent = FollowerAgent;
-		CombatChoiceActuator->bAutoFindFollower = false;
-		CombatChoiceActuator->InitializeActuator();
-
-		if (!this->Actuators.Contains(CombatChoiceActuator))
-		{
-			this->Actuators.Add(CombatChoiceActuator);
-		}
-
-		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: CombatChoiceActuator configured (Discrete(2))"),
-			*GetOwner()->GetName());
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent v8.0] %s: CombatChoiceActuator is null!"),
-			*GetOwner()->GetName());
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: v8.0 action space configured (4 continuous + 2 discrete)"),
+	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: v8.0 action space configured (5 continuous)"),
 		*GetOwner()->GetName());
 }
 
