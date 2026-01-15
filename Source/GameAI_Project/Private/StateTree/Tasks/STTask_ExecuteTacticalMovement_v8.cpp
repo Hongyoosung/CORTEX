@@ -293,6 +293,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 	const int32 ItemCount = QueryResult->Items.Num();
 	if (ItemCount == 0)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[TACTICAL v8.0] EQS returned 0 items! Check EQS query configuration and context providers."));
 		return Results;
 	}
 
@@ -308,7 +309,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 		}
 	}
 
-	UE_LOG(LogTemp, Verbose, TEXT("[TACTICAL v8.0] EQS returned %d positions (Aggression=%.2f → MinDist=%.0fcm, Cover=%.2f → Weight=%.1f)"),
+	UE_LOG(LogTemp, Log, TEXT("[TACTICAL v8.0] EQS returned %d positions (Aggression=%.2f → MinDist=%.0fcm, Cover=%.2f → Weight=%.1f)"),
 		Results.Num(), Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);
 
 	return Results;

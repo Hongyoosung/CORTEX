@@ -3,8 +3,8 @@ SBDAPM Environment for Schola/RLlib Training (v8.0 - Tactical Parameters)
 
 v8.0 Architecture:
     - MCTS assigns strategies → RL outputs tactical parameters + combat priority
-    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (2 choices)
-    - Hybrid action space: 4 continuous tactical params + 2 discrete combat logits
+    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (1 priority)
+    - Action space: 5 continuous outputs (4 tactical params + 1 combat priority)
     - Exports to: cortex_policy_v8.onnx
 
 Action Space (v8.0):
@@ -55,8 +55,11 @@ except ImportError:
     print("Warning: training_env/config.py not found. Run: python tools/sync_config_from_cpp.py")
     # Fallback values if config not available
     class RLConfig:
-        OBSERVATION_SIZE = 46
+        OBSERVATION_SIZE = 50  # v8.0: 46 base + 4 strategy one-hot
         NUM_STRATEGIES = 4
+        NUM_TACTICAL_PARAMS = 4
+        NUM_COMBAT_CHOICES = 2
+        NUM_TOTAL_OUTPUTS = 5  # 4 tactical + 1 combat priority (action dim)
 
 
 # The maximum duration of an episode. After this time, the environment will reset.
@@ -71,7 +74,7 @@ if SCHOLA_AVAILABLE:
         Multi-Agent RLlib Environment for SBDAPM (v8.0 - Tactical Parameters)
 
         v8.0 Key Features:
-        - Hybrid action space: 4 continuous tactical + 2 discrete combat
+        - Action space: 5 continuous outputs (4 tactical params + 1 combat priority)
         - MCTS assigns strategy (part of observation), RL outputs tactical params
         - Multi-head policy: separate output heads per strategy type
 
@@ -130,12 +133,12 @@ if SCHOLA_AVAILABLE:
             # Strategy one-hot (4 features, added by Python wrapper):
             # - [Assault, Defend, Support, Retreat]
             self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
-            # v8.0: Hybrid action space (4 continuous tactical + 2 discrete combat)
-            # Network outputs 6 values: [Aggression, CoverPref, Spread, Risk, combat_logit_0, combat_logit_1]
+            # v8.0: Continuous action space (4 tactical params + 1 combat priority)
+            # Network outputs 5 values: [Aggression, CoverPref, Spread, Risk, CombatPriority]
             self._action_space = spaces.Box(
                 low=-np.inf,
                 high=np.inf,
-                shape=(RLConfig.NUM_TOTAL_OUTPUTS,),
+                shape=(RLConfig.NUM_TOTAL_OUTPUTS,),  # 5
                 dtype=np.float32
             )
 
@@ -570,7 +573,12 @@ if SCHOLA_AVAILABLE:
                     if flat_id in self._dead_agents:
                         # Dead agents get zero obs/rewards but NOT terminated (yet)
                         # They'll be terminated when the whole episode ends
-                        obs_dict[flat_id] = np.zeros(RLConfig.OBSERVATION_SIZE, dtype=np.float32)  # v8.0: 64 base + 4 strategy one-hot
+                        # v8.0: Dead agents still need 50-dim obs (46 base zeros + 4 strategy one-hot)
+                        base_obs = np.zeros(46, dtype=np.float32)
+                        strategy_idx = self._strategy_assignments.get(flat_id, 0)
+                        strategy_onehot = np.zeros(4, dtype=np.float32)
+                        strategy_onehot[strategy_idx] = 1.0
+                        obs_dict[flat_id] = np.concatenate([base_obs, strategy_onehot])  # 46 + 4 = 50
                         reward_dict[flat_id] = 0.0
                         terminated_dict[flat_id] = False  # Will be set True when episode ends
                         truncated_dict[flat_id] = False
@@ -587,9 +595,15 @@ if SCHOLA_AVAILABLE:
                                 obs_val = list(agent_obs_data.values())[0]
                             else:
                                 obs_val = agent_obs_data
-                            obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
+                            base_obs = np.array(obs_val, dtype=np.float32).flatten()
                         else:
-                            obs_dict[flat_id] = np.zeros(RLConfig.OBSERVATION_SIZE, dtype=np.float32)  # v8.0: 64 base + 4 strategy one-hot
+                            base_obs = np.zeros(46, dtype=np.float32)  # v8.0: 46 base features
+
+                        # v8.0: Append strategy one-hot (4 features) - MUST match _process_obs()
+                        strategy_idx = self._strategy_assignments.get(flat_id, 0)  # Default: Assault
+                        strategy_onehot = np.zeros(4, dtype=np.float32)
+                        strategy_onehot[strategy_idx] = 1.0
+                        obs_dict[flat_id] = np.concatenate([base_obs, strategy_onehot])  # 46 + 4 = 50
 
                         # Get base reward from UE5
                         base_reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
@@ -657,8 +671,17 @@ if SCHOLA_AVAILABLE:
                 import traceback
                 traceback.print_exc()
 
+                # v8.0: Build 50-dim obs (46 base zeros + 4 strategy one-hot) for each agent
+                fallback_obs = {}
+                for aid in self._agent_ids:
+                    base_obs = np.zeros(46, dtype=np.float32)
+                    strategy_idx = self._strategy_assignments.get(aid, 0)
+                    strategy_onehot = np.zeros(4, dtype=np.float32)
+                    strategy_onehot[strategy_idx] = 1.0
+                    fallback_obs[aid] = np.concatenate([base_obs, strategy_onehot])
+
                 return (
-                    {aid: np.zeros(RLConfig.OBSERVATION_SIZE, dtype=np.float32) for aid in self._agent_ids},  # v6.0: 64 obs + 4 Mission context
+                    fallback_obs,
                     {aid: 0.0 for aid in self._agent_ids},
                     {aid: True for aid in self._agent_ids} | {"__all__": True},
                     {aid: False for aid in self._agent_ids} | {"__all__": True},

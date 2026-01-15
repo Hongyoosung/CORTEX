@@ -321,6 +321,13 @@ void UFollowerStateTreeComponent::UpdateContextFromFollower()
 	// (Detailed observation updates are handled by STEvaluator_UpdateObservation)
 	Context.bIsAlive = FollowerComponent->bIsAlive;
 	Context.AccumulatedReward = FollowerComponent->GetAccumulatedReward();
+
+	// v8.0 FIX: Sync strategy assignment from MCTS to SharedContext
+	// This is CRITICAL for EQS context providers to work correctly:
+	// - EnvQueryContext_ObjectiveLocation reads SharedContext.TargetObjective
+	// - Without this sync, EQS tests score 0 and return no valid positions
+	Context.AssignedStrategy = FollowerComponent->GetAssignedStrategy();
+	Context.TargetObjective = FollowerComponent->GetTargetObjective();
 }
 
 bool UFollowerStateTreeComponent::IsStateTreeRunning() const

@@ -5,8 +5,8 @@ Trains PPO agents via Schola gRPC connection to Unreal Engine.
 
 v8.0 Architecture:
     - MCTS assigns strategies → RL outputs tactical parameters + combat priority
-    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (2 choices)
-    - Hybrid action space: 4 continuous tactical params + 2 discrete combat logits
+    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (1 priority)
+    - Action space: 5 continuous outputs (4 tactical params + 1 combat priority)
     - Curriculum learning (3 phases: Single → Mixed → Dynamic)
     - Exports to: cortex_policy_v8.onnx
 
@@ -90,22 +90,22 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
 
     Architecture:
         - Input: 50 features (46 base + 4 strategy one-hot from Python wrapper)
-        - Shared Feature Extractor: [128 → 128 → 64] ReLU
-        - 4 Strategy-Specific Heads: Assault, Defend, Support, Retreat
-          - Each head: FC(64→32→4) → Sigmoid → [Aggression, CoverPref, Spread, Risk]
-        - 1 Combat Head: FC(64→1) → Sigmoid → Combat Priority [0,1]
-        - 1 Shared Critic Head: FC(64→1) → Linear → State Value
+        - Shared Feature Extractor: [256 → 256 → 128] ReLU
+        - 4 Strategy-Specific Mean Heads: Assault, Defend, Support, Retreat
+          - Each head: FC(128→32→4) → Linear → [Aggression, CoverPref, Spread, Risk] means
+        - 1 Combat Mean Head: FC(128→1) → Linear → Combat Priority mean
+        - 1 Shared Log-Std Head: FC(128→5) → Linear → Log standard deviations
+        - 1 Shared Critic Head: FC(128→1) → Linear → State Value
 
     v8.0 Key Changes:
         - MCTS assigns strategies (part of observation, not action)
-        - RL outputs tactical parameters (continuous) + combat priority (continuous)
+        - RL outputs Gaussian distribution parameters (mean + log_std) for PPO
+        - RLlib's DiagGaussian samples actions, environment clips to [0,1]
         - Separate policy heads guarantee strategy differentiation
-        - Combat priority: <0.5 = Closest, >=0.5 = LowestHP (thresholded in UE5)
 
     Outputs:
-        - Tactical parameters: 4 continuous values [0,1] (Aggression, CoverPref, Spread, Risk)
-        - Combat priority: 1 continuous value [0,1] (thresholded to Closest/LowestHP)
-        - State value: 1-dim value estimate
+        - 10 values: 5 means + 5 log_stds for DiagGaussian distribution
+        - State value: 1-dim value estimate (via value_function())
     """
 
     def __init__(self, obs_space, action_space, num_outputs, model_config, name):
@@ -115,8 +115,13 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         # v8.0: Observation size from RLConfig (synced from C++)
         obs_dim = RLConfig.OBSERVATION_SIZE  # 50 features (46 base + 4 strategy one-hot)
 
-        # Get hidden layers from config (default: [128, 128, 64])
-        hidden_layers = model_config.get("custom_model_config", {}).get("hidden_layers", [128, 128, 64])
+        # RLlib passes num_outputs = 2 * action_dim for DiagGaussian (mean + log_std)
+        # For Box(5,) action space: num_outputs = 10
+        self.num_outputs = num_outputs
+        self.action_dim = num_outputs // 2  # 5
+
+        # Get hidden layers from config (default: [256, 256, 128])
+        hidden_layers = model_config.get("custom_model_config", {}).get("hidden_layers", [256, 256, 128])
 
         # Shared feature extractor: learns common features (perception, tactical context)
         layers = []
@@ -126,31 +131,37 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
             prev_size = hidden_size
 
         self.shared_trunk = nn.Sequential(*layers)
-        final_hidden_size = hidden_layers[-1]  # Last layer size (64)
+        final_hidden_size = hidden_layers[-1]  # Last layer size (128)
 
-        # === Strategy-Specific Policy Heads (4 heads) ===
-        # Each strategy has dedicated output layers for tactical parameters
-        # This architecturally guarantees behavioral differentiation
-        self.assault_head = nn.Sequential(
+        # === Strategy-Specific Mean Heads (4 heads) ===
+        # Each strategy has dedicated output layers for tactical parameter MEANS
+        # Output unbounded values - RLlib's DiagGaussian will sample from these
+        # The environment clips sampled actions to [0,1]
+        self.assault_mean_head = nn.Sequential(
             SlimFC(final_hidden_size, 32, activation_fn=nn.ReLU),
-            SlimFC(32, 4, activation_fn=nn.Sigmoid)  # [Aggression, CoverPref, Spread, Risk]
+            SlimFC(32, 4, activation_fn=None)  # 4 tactical param means (unbounded)
         )
-        self.defend_head = nn.Sequential(
+        self.defend_mean_head = nn.Sequential(
             SlimFC(final_hidden_size, 32, activation_fn=nn.ReLU),
-            SlimFC(32, 4, activation_fn=nn.Sigmoid)
+            SlimFC(32, 4, activation_fn=None)
         )
-        self.support_head = nn.Sequential(
+        self.support_mean_head = nn.Sequential(
             SlimFC(final_hidden_size, 32, activation_fn=nn.ReLU),
-            SlimFC(32, 4, activation_fn=nn.Sigmoid)
+            SlimFC(32, 4, activation_fn=None)
         )
-        self.retreat_head = nn.Sequential(
+        self.retreat_mean_head = nn.Sequential(
             SlimFC(final_hidden_size, 32, activation_fn=nn.ReLU),
-            SlimFC(32, 4, activation_fn=nn.Sigmoid)
+            SlimFC(32, 4, activation_fn=None)
         )
 
-        # === Combat Head (Target Priority) ===
-        # Single value [0,1]: <0.5 = Closest, >=0.5 = LowestHP (thresholded in UE5)
-        self.combat_head = SlimFC(final_hidden_size, 1, activation_fn=nn.Sigmoid)
+        # === Combat Mean Head (Target Priority) ===
+        # Single mean value for combat priority
+        self.combat_mean_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+
+        # === Shared Log-Std Head ===
+        # Log standard deviation for all 5 action dimensions
+        # Shared across strategies for stable exploration
+        self.log_std_head = SlimFC(final_hidden_size, self.action_dim, activation_fn=None)
 
         # === Shared Value Head ===
         # Value estimate independent of strategy assignment
@@ -163,7 +174,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     @override(TorchModelV2)
     def forward(self, input_dict, state, seq_lens):
         """
-        Forward pass (v8.0 - Multi-Head)
+        Forward pass (v8.0 - Multi-Head with Gaussian outputs)
 
         Args:
             input_dict: Contains 'obs' with shape [batch, 50]
@@ -171,7 +182,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
                 - obs[:, 46:50]: strategy one-hot [Assault, Defend, Support, Retreat]
 
         Returns:
-            (action_logits, state): 5-dim output (4 tactical params + 1 combat priority), unchanged state
+            (output, state): 10-dim output [5 means, 5 log_stds] for DiagGaussian
         """
         obs = input_dict["obs"]
         batch_size = obs.shape[0]
@@ -180,32 +191,37 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         strategy_onehot = obs[:, 46:50]  # [batch, 4]
 
         # Run shared trunk
-        features = self.shared_trunk(obs)  # [batch, 64]
+        features = self.shared_trunk(obs)  # [batch, 128]
         self._last_features = features
 
-        # Route to appropriate strategy head based on one-hot encoding
-        # For each sample in batch, select the appropriate head
-        tactical_params = torch.zeros(batch_size, 4, device=obs.device)  # [batch, 4]
+        # Route to appropriate strategy mean head based on one-hot encoding
+        tactical_means = torch.zeros(batch_size, 4, device=obs.device)  # [batch, 4]
 
         for i in range(batch_size):
             strategy_idx = torch.argmax(strategy_onehot[i]).item()
             self._last_strategy_index = strategy_idx  # Store for debugging
 
             if strategy_idx == 0:  # Assault
-                tactical_params[i] = self.assault_head(features[i:i+1]).squeeze(0)
+                tactical_means[i] = self.assault_mean_head(features[i:i+1]).squeeze(0)
             elif strategy_idx == 1:  # Defend
-                tactical_params[i] = self.defend_head(features[i:i+1]).squeeze(0)
+                tactical_means[i] = self.defend_mean_head(features[i:i+1]).squeeze(0)
             elif strategy_idx == 2:  # Support
-                tactical_params[i] = self.support_head(features[i:i+1]).squeeze(0)
+                tactical_means[i] = self.support_mean_head(features[i:i+1]).squeeze(0)
             elif strategy_idx == 3:  # Retreat
-                tactical_params[i] = self.retreat_head(features[i:i+1]).squeeze(0)
+                tactical_means[i] = self.retreat_mean_head(features[i:i+1]).squeeze(0)
 
-        # Combat head (shared across all strategies)
-        combat_priority = self.combat_head(features)  # [batch, 1]
+        # Combat mean head (shared across all strategies)
+        combat_mean = self.combat_mean_head(features)  # [batch, 1]
 
-        # Concatenate outputs: [4 tactical params, 1 combat priority] = 5 dims
-        # All continuous values in [0,1] range (sigmoid activated)
-        output = torch.cat([tactical_params, combat_priority], dim=-1)  # [batch, 5]
+        # Concatenate means: [4 tactical means, 1 combat mean] = 5 dims
+        means = torch.cat([tactical_means, combat_mean], dim=-1)  # [batch, 5]
+
+        # Log-std head (shared, state-dependent exploration)
+        log_stds = self.log_std_head(features)  # [batch, 5]
+
+        # Concatenate [means, log_stds] for RLlib's DiagGaussian distribution
+        # RLlib expects [mean_1, mean_2, ..., log_std_1, log_std_2, ...]
+        output = torch.cat([means, log_stds], dim=-1)  # [batch, 10]
 
         return output, state
 
@@ -418,13 +434,13 @@ def create_ppo_config():
     config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
     config.vf_loss_coeff = SBDAPMConfig.VF_LOSS_COEFF
     config.model = {
-        # v8.0: Multi-head tactical policy (4 strategy heads + combat head)
+        # v8.0: Multi-head tactical policy (4 strategy mean heads + combat mean head + log_std head)
+        # Model outputs 10 values: 5 means + 5 log_stds for DiagGaussian distribution
         "custom_model": "multi_head_tactical_policy",
         "custom_model_config": {
             "obs_dim": RLConfig.OBSERVATION_SIZE,  # v8.0: 50 features (46 base + 4 strategy one-hot)
-            "hidden_layers": SBDAPMConfig.HIDDEN_LAYERS,  # [128, 128, 64]
-            # v8.0: Hybrid action space (4 continuous tactical + 2 combat logits)
-            "num_outputs": RLConfig.NUM_TACTICAL_PARAMS + RLConfig.NUM_COMBAT_CHOICES,  # 4 + 2 = 6
+            "hidden_layers": SBDAPMConfig.HIDDEN_LAYERS,  # [256, 256, 128]
+            # NOTE: num_outputs is provided by RLlib based on action space (10 for Box(5,) + DiagGaussian)
         },
         "max_seq_len": 20,  # Required by RLlib (not used for feedforward nets)
     }
@@ -486,14 +502,17 @@ def export_onnx_v8(algo, output_dir):
     """
     Export trained multi-head policy to ONNX format (v8.0)
 
-    Exports ONNX model with separate strategy heads for C++ inference:
+    Exports ONNX model with separate strategy mean heads for C++ inference:
     - cortex_policy_v8.onnx
 
     Model structure:
         Input: 50 features (46 base + 4 strategy one-hot from Python wrapper)
-        Output 1-4: Tactical parameters for each strategy head [4 continuous values each]
-        Output 5: Combat priority [1 continuous value, thresholded at 0.5]
+        Output 1-4: Tactical parameter MEANS for each strategy head [4 values each]
+        Output 5: Combat priority MEAN [1 value, apply sigmoid then threshold at 0.5]
         Output 6: State value estimate
+
+    NOTE: For inference (ONNX), we export MEAN values only (not log_std).
+    Apply sigmoid to clamp to [0,1] for tactical params and combat priority.
     """
     try:
         import torch
@@ -509,25 +528,26 @@ def export_onnx_v8(algo, output_dir):
 
         # ========================================
         # Export Multi-Head Network (v8.0)
-        # Separate heads for each strategy + combat + value
+        # Separate mean heads for each strategy + combat + value
+        # Apply sigmoid for bounded [0,1] outputs
         # ========================================
 
         class MultiHeadPolicyWrapper(nn.Module):
             """
             Wrapper for multi-head policy export (v8.0)
 
-            Exports all strategy-specific heads separately so C++ can:
+            Exports all strategy-specific mean heads with sigmoid activation so C++ can:
             1. Route to correct head based on MCTS-assigned strategy
-            2. Use combat priority from combat head (threshold at 0.5)
-            3. Use value head for RL training
+            2. Use combat priority from combat mean head (sigmoid then threshold at 0.5)
+            3. Use value head for evaluation
 
-            Outputs:
+            Outputs (all in [0,1] via sigmoid):
                 - assault_tactical: [batch, 4] tactical params for Assault
                 - defend_tactical: [batch, 4] tactical params for Defend
                 - support_tactical: [batch, 4] tactical params for Support
                 - retreat_tactical: [batch, 4] tactical params for Retreat
                 - combat_priority: [batch, 1] target priority (<0.5=Closest, >=0.5=LowestHP)
-                - value: [batch, 1] state value estimate
+                - value: [batch, 1] state value estimate (unbounded)
             """
             def __init__(self, model):
                 super().__init__()
@@ -543,18 +563,18 @@ def export_onnx_v8(algo, output_dir):
                              retreat_tactical, combat_priority, value)
                 """
                 # Run shared trunk
-                features = self.model.shared_trunk(obs)  # [batch, 64]
+                features = self.model.shared_trunk(obs)  # [batch, 128]
 
-                # Run all strategy heads
-                assault_tactical = self.model.assault_head(features)  # [batch, 4]
-                defend_tactical = self.model.defend_head(features)    # [batch, 4]
-                support_tactical = self.model.support_head(features)  # [batch, 4]
-                retreat_tactical = self.model.retreat_head(features)  # [batch, 4]
+                # Run all strategy mean heads and apply sigmoid for [0,1] bounds
+                assault_tactical = torch.sigmoid(self.model.assault_mean_head(features))  # [batch, 4]
+                defend_tactical = torch.sigmoid(self.model.defend_mean_head(features))    # [batch, 4]
+                support_tactical = torch.sigmoid(self.model.support_mean_head(features))  # [batch, 4]
+                retreat_tactical = torch.sigmoid(self.model.retreat_mean_head(features))  # [batch, 4]
 
-                # Run combat head
-                combat_priority = self.model.combat_head(features)  # [batch, 1]
+                # Run combat mean head with sigmoid
+                combat_priority = torch.sigmoid(self.model.combat_mean_head(features))  # [batch, 1]
 
-                # Run value head
+                # Run value head (unbounded)
                 value = self.model.value_head(features)  # [batch, 1]
 
                 return (assault_tactical, defend_tactical, support_tactical,
@@ -597,17 +617,17 @@ def export_onnx_v8(algo, output_dir):
         print(f"[SUCCESS] Multi-head policy exported to: {model_path}")
         print(f"\nModel structure:")
         print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (46 base + 4 strategy one-hot)")
-        print(f"  - Output 0 (Assault): 4 tactical params [Aggression, CoverPref, Spread, Risk]")
-        print(f"  - Output 1 (Defend): 4 tactical params")
-        print(f"  - Output 2 (Support): 4 tactical params")
-        print(f"  - Output 3 (Retreat): 4 tactical params")
-        print(f"  - Output 4 (Combat): 1 dim priority (<0.5=Closest, >=0.5=LowestHP)")
-        print(f"  - Output 5 (Value): 1 dim state value estimate")
+        print(f"  - Output 0 (Assault): 4 tactical params [Aggression, CoverPref, Spread, Risk] in [0,1]")
+        print(f"  - Output 1 (Defend): 4 tactical params in [0,1]")
+        print(f"  - Output 2 (Support): 4 tactical params in [0,1]")
+        print(f"  - Output 3 (Retreat): 4 tactical params in [0,1]")
+        print(f"  - Output 4 (Combat): 1 dim priority in [0,1] (<0.5=Closest, >=0.5=LowestHP)")
+        print(f"  - Output 5 (Value): 1 dim state value estimate (unbounded)")
         print(f"\nReady for UE5:")
         print(f"  - Copy cortex_policy_v8.onnx to: Content/AI/Models/")
         print(f"  - RLPolicyNetwork routes to appropriate strategy head based on MCTS assignment")
+        print(f"  - All tactical outputs are sigmoid-bounded to [0,1]")
         print(f"  - Combat priority thresholded at 0.5 for target selection")
-        print(f"  - Value head used for PPO training")
         return True
 
     except Exception as e:
