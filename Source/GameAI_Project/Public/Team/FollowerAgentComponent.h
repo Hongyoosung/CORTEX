@@ -114,6 +114,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Follower|Action")
 	FMacroAction GetCurrentMacroAction() const { return CurrentMacroAction; }
 
+	//--------------------------------------------------------------------------
+	// v8.0: TACTICAL & COMBAT PARAMETER SETTERS (for Schola actuators)
+	//--------------------------------------------------------------------------
+
+	/** Set tactical parameters from RL actuator (v8.0) */
+	UFUNCTION(BlueprintCallable, Category = "Follower|Action")
+	void SetTacticalParameters(const FTacticalParameters& Params);
+
+	/** Set combat parameters from RL actuator (v8.0) */
+	UFUNCTION(BlueprintCallable, Category = "Follower|Action")
+	void SetCombatParameters(const FCombatParameters& Params);
+
+	/** Get current tactical parameters */
+	UFUNCTION(BlueprintPure, Category = "Follower|Action")
+	FTacticalParameters GetTacticalParameters() const { return CurrentMacroAction.TacticalParams; }
+
+	/** Get current combat parameters */
+	UFUNCTION(BlueprintPure, Category = "Follower|Action")
+	FCombatParameters GetCombatParameters() const { return CurrentMacroAction.CombatParams; }
+
 	/** Get ally context for support strategy (v5.0) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
 	FAllyContext GetAllyContext() const { return CachedAllyContext; }

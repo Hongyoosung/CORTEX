@@ -31,7 +31,7 @@ void URewardCalculator::BeginPlay()
 		}
 		else
 		{
-			// Initialize previous observation (v6.0 fix)
+			// Initialize previous observation for delta calculations
 			PreviousObservation = FollowerComponent->BuildLocalObservation();
 			UE_LOG(LogTemp, Log, TEXT("[REWARD INIT] '%s': PreviousObservation initialized"), *Owner->GetName());
 		}
@@ -46,8 +46,8 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// CRITICAL FIX (v6.0): Hybrid reward calculation (continuous + event-driven)
-	// This ensures ALL rewards (kills, damage, positioning, progress) are forwarded to FollowerComponent
+	// Hybrid reward calculation: continuous (positioning) + event-driven (kills, damage)
+	// All rewards forwarded to FollowerComponent for Schola integration
 
 	if (!FollowerComponent)
 	{
@@ -174,12 +174,18 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	float coordComponent = CalculateTeamCoordinationComponent(CurrentObs);
 	Breakdown.TeamCoordination = coordComponent * Weights.TeamCoordination;
 
+	// Component 6: v8.0 Tactical Parameter Effectiveness
+	// Creates tight feedback loop: RL parameters → EQS positioning → outcome → reward
+	float tacticalComponent = CalculateTacticalParameterEffectivenessComponent(CurrentObs, CurrentTacticalParams);
+	Breakdown.TacticalEffectiveness = tacticalComponent * Weights.TacticalEffectiveness;
+
 	// Total reward
 	Breakdown.Total = Breakdown.ObjectiveProgress +
 	                  Breakdown.CombatEffectiveness +
 	                  Breakdown.Survival +
 	                  Breakdown.CoverUsage +
-	                  Breakdown.TeamCoordination;
+	                  Breakdown.TeamCoordination +
+	                  Breakdown.TacticalEffectiveness;
 
 	// Log breakdown for debugging
 	UE_LOG(LogTemp, Verbose, TEXT("[REWARD v8.0] %s: %s"),
@@ -279,19 +285,112 @@ float URewardCalculator::CalculateTeamCoordinationComponent(
 	const FObservationElement& CurrentObs)
 {
 	float Reward = 0.0f;
-	
+
 	// Formation bonus (optimal support range: 200cm to 800cm)
+	// v8.0 FIX: AllyDistance is normalized [0,1] by MAX_DISTANCE_NORMALIZATION (5000cm)
+	// Optimal range: 200-800cm → normalized: [0.04, 0.16]
 	if (ProtectedAlly && CurrentObs.AllyDistance > 0.0f)
 	{
-		float distance = CurrentObs.AllyDistance;
+		float normalizedDist = CurrentObs.AllyDistance;
+		constexpr float MIN_FORMATION_DIST = 200.0f / RLConfig::MAX_DISTANCE_NORMALIZATION;  // ~0.04
+		constexpr float MAX_FORMATION_DIST = 800.0f / RLConfig::MAX_DISTANCE_NORMALIZATION;  // ~0.16
 
-		if (distance > 200.0f && distance < 800.0f)
+		if (normalizedDist > MIN_FORMATION_DIST && normalizedDist < MAX_FORMATION_DIST)
 		{
 			Reward += RewardConfig::FORMATION_BONUS;  // +0.1 per step in formation
 		}
 	}
 
 	return Reward;
+}
+
+float URewardCalculator::CalculateTacticalParameterEffectivenessComponent(
+	const FObservationElement& CurrentObs,
+	const FTacticalParameters& TacticalParams)
+{
+	float Reward = 0.0f;
+	float AlignmentScore = 0.0f;
+	int32 AlignmentCount = 0;
+
+	// v8.0: Reward alignment between tactical parameters and actual positioning outcomes
+	// This creates a tight feedback loop: parameters → EQS → positioning → reward
+
+	// 1. Aggression alignment: High aggression should correlate with close enemy proximity
+	// If Aggression > 0.5 and enemy is close (< 0.3 normalized), reward alignment
+	// If Aggression < 0.5 and enemy is far (> 0.5 normalized), reward alignment
+	{
+		float enemyDist = CurrentObs.DistanceToNearestEnemy;
+		bool bAggressiveParams = TacticalParams.Aggression > 0.5f;
+		bool bCloseToEnemy = enemyDist < 0.3f;
+		bool bFarFromEnemy = enemyDist > 0.5f;
+
+		if ((bAggressiveParams && bCloseToEnemy) || (!bAggressiveParams && bFarFromEnemy))
+		{
+			AlignmentScore += 1.0f;
+		}
+		AlignmentCount++;
+	}
+
+	// 2. Cover preference alignment: High cover preference should correlate with being in cover
+	{
+		bool bCoverParams = TacticalParams.CoverPreference > 0.5f;
+		bool bInCover = CurrentObs.bHasCover;
+
+		if ((bCoverParams && bInCover) || (!bCoverParams && !bInCover))
+		{
+			AlignmentScore += 1.0f;
+		}
+		AlignmentCount++;
+	}
+
+	// 3. Spread distance alignment: Low spread should correlate with close ally proximity
+	// Only relevant if we have ally info
+	if (CurrentObs.AllyDistance > 0.01f)  // Has ally nearby
+	{
+		bool bTightFormation = TacticalParams.SpreadDistance < 0.4f;
+		bool bCloseToAlly = CurrentObs.AllyDistance < 0.2f;
+		bool bFarFromAlly = CurrentObs.AllyDistance > 0.4f;
+
+		if ((bTightFormation && bCloseToAlly) || (!bTightFormation && bFarFromAlly))
+		{
+			AlignmentScore += 1.0f;
+		}
+		AlignmentCount++;
+	}
+
+	// 4. Risk tolerance alignment: High risk tolerance + surviving in dangerous position = good
+	// Low risk tolerance + retreating from danger = good
+	{
+		bool bHighRisk = TacticalParams.RiskTolerance > 0.6f;
+		bool bLowHealth = CurrentObs.AgentHealth < 0.4f;
+		bool bInDanger = CurrentObs.DistanceToNearestEnemy < 0.3f && CurrentObs.VisibleEnemyCount > 1;
+
+		// High risk: Staying in danger despite low health (risky but intentional)
+		// Low risk: Avoiding danger or maintaining health (conservative)
+		if (bHighRisk && bInDanger)
+		{
+			AlignmentScore += 0.5f;  // Partial credit for risky behavior
+		}
+		else if (!bHighRisk && !bInDanger)
+		{
+			AlignmentScore += 1.0f;  // Full credit for conservative success
+		}
+		AlignmentCount++;
+	}
+
+	// Calculate average alignment and convert to reward
+	if (AlignmentCount > 0)
+	{
+		float AverageAlignment = AlignmentScore / static_cast<float>(AlignmentCount);
+		Reward = AverageAlignment * RewardConfig::TACTICAL_EFFECTIVENESS_BONUS;
+	}
+
+	return Reward;
+}
+
+void URewardCalculator::SetCurrentTacticalParameters(const FTacticalParameters& Params)
+{
+	CurrentTacticalParams = Params;
 }
 
 
@@ -340,11 +439,10 @@ void URewardCalculator::OnTakeDamage(float Damage)
 
 void URewardCalculator::OnDeath()
 {
-	// v6.0: Unified death penalty (CRITICAL: Must be < Mission rewards)
-	// This ensures agents will sacrifice themselves to complete Missions
+	// Death penalty scaled by strategy survival weight
 	AccumulatedIndividualReward += RewardConfig::DEATH_PENALTY;
 
-	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Death penalty %.1f (acceptable if Mission achieved)"),
+	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT] '%s': Death penalty %.1f"),
 		*GetOwner()->GetName(), RewardConfig::DEATH_PENALTY);
 }
 

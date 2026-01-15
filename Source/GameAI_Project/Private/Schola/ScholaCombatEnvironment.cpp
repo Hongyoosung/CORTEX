@@ -432,9 +432,16 @@ bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 
 	// Check required components
 	UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
-	if (!FollowerComp || !Agent->TacticalObserver || !Agent->RewardProvider || !Agent->TacticalActuator)
+	if (!FollowerComp || !Agent->TacticalObserver || !Agent->RewardProvider)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Agent %s missing required components"), *Agent->GetOwner()->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Agent %s missing required components (FollowerComp, Observer, or RewardProvider)"), *Agent->GetOwner()->GetName());
+		return false;
+	}
+
+	// v8.0: Check v8.0 actuators (TacticalParameterActuator + CombatChoiceActuator)
+	if (!Agent->TacticalParameterActuator || !Agent->CombatChoiceActuator)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v8.0] Agent %s missing v8.0 actuators (TacticalParameterActuator or CombatChoiceActuator)"), *Agent->GetOwner()->GetName());
 		return false;
 	}
 

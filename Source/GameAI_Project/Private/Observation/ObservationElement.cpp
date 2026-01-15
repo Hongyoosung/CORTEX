@@ -6,7 +6,7 @@ TArray<float> FObservationElement::ToFeatureVector() const
     SCOPE_CYCLE_COUNTER(STAT_ObservationBuild);  // v6.0: Profile observation building (target: <0.5ms)
 
     TArray<float> Features;
-    Features.Reserve(68);  // v6.0: 68 features (64 base + 4 objective context)
+    Features.Reserve(46);  // v8.0: 46 base features (strategy context added by network)
 
     // ========================================
     // AGENT STATE (7 features) - v5.0 streamlined
@@ -74,13 +74,25 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(CoverDirection.Y);
 
     // ========================================
-    // SUPPORT CONTEXT (1 features) - v5.0 NEW
-    // For Support strategy head selection
+    // SUPPORT CONTEXT (5 features) - v8.0: Full ally context for Support strategy
+    // Critical for Support head to learn differentiated tactical parameters
     // ========================================
+
+    // Ally needs help flag (1)
+    Features.Add(bAllyNeedsHelp ? 1.0f : 0.0f);
+
+    // Ally health (1) - already normalized [0, 1]
+    Features.Add(FMath::Clamp(AllyHealth, 0.0f, 1.0f));
+
+    // Ally distance (1) - already normalized [0, 1]
     Features.Add(FMath::Clamp(AllyDistance, 0.0f, 1.0f));
 
+    // Ally direction (2) - normalized 2D vector
+    Features.Add(static_cast<float>(AllyDirection.X));
+    Features.Add(static_cast<float>(AllyDirection.Y));
 
-    check(Features.Num() == 68);
+
+    check(Features.Num() == 46);
     return Features;
 }
 
@@ -105,8 +117,11 @@ void FObservationElement::Reset()
     NearestCoverDistance = 1.0f;  // Normalized [0, 1]
     CoverDirection = FVector2D::ZeroVector;
 
-    // Support Context (v5.0: 1 features - NEW)
+    // Support Context (v8.0: 5 features - Full ally context)
+    bAllyNeedsHelp = false;
+    AllyHealth = 1.0f;
     AllyDistance = 0.0f;
+    AllyDirection = FVector2D::ZeroVector;
 }
 
 float FObservationElement::CalculateSimilarity(

@@ -3,7 +3,8 @@
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/TacticalObserver.h"
 #include "Schola/TacticalRewardProvider.h"
-#include "Schola/TacticalActuator.h"
+#include "Schola/TacticalParameterActuator.h"
+#include "Schola/CombatChoiceActuator.h"
 #include "Team/FollowerAgentComponent.h"
 #include "Inference/InferenceComponent.h"
 #include "Combat/HealthComponent.h"
@@ -204,23 +205,55 @@ float UScholaAgentComponent::GetCurrentReward() const
 
 void UScholaAgentComponent::ConfigureActuators()
 {
-	if (!TacticalActuator || !FollowerAgent)
+	if (!FollowerAgent)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent]: FollowerAgent is null, cannot configure actuators!"));
 		return;
 	}
 
-	// Link actuator to follower agent
-	TacticalActuator->FollowerAgent = FollowerAgent;
-	TacticalActuator->bAutoFindFollower = false;
-	TacticalActuator->InitializeActuator();
-
-	// Add to InferenceComponent's actuators array if not already present (this class IS the InferenceComponent)
-	if (!this->Actuators.Contains(TacticalActuator))
+	// v8.0: Configure TacticalParameterActuator (4 continuous values)
+	if (TacticalParameterActuator)
 	{
-		this->Actuators.Add(TacticalActuator);
+		TacticalParameterActuator->FollowerAgent = FollowerAgent;
+		TacticalParameterActuator->bAutoFindFollower = false;
+		TacticalParameterActuator->InitializeActuator();
+
+		if (!this->Actuators.Contains(TacticalParameterActuator))
+		{
+			this->Actuators.Add(TacticalParameterActuator);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: TacticalParameterActuator configured (Box([0,1]^4))"),
+			*GetOwner()->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent v8.0] %s: TacticalParameterActuator is null!"),
+			*GetOwner()->GetName());
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: TacticalActuator configured (7D actions)"),
+	// v8.0: Configure CombatChoiceActuator (2 discrete choices)
+	if (CombatChoiceActuator)
+	{
+		CombatChoiceActuator->FollowerAgent = FollowerAgent;
+		CombatChoiceActuator->bAutoFindFollower = false;
+		CombatChoiceActuator->InitializeActuator();
+
+		if (!this->Actuators.Contains(CombatChoiceActuator))
+		{
+			this->Actuators.Add(CombatChoiceActuator);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: CombatChoiceActuator configured (Discrete(2))"),
+			*GetOwner()->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent v8.0] %s: CombatChoiceActuator is null!"),
+			*GetOwner()->GetName());
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: v8.0 action space configured (4 continuous + 2 discrete)"),
 		*GetOwner()->GetName());
 }
 

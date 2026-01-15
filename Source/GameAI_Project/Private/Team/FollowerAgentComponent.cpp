@@ -195,6 +195,33 @@ AObjectiveActor* UFollowerAgentComponent::GetTargetObjective() const
 	return CurrentAssignment.TargetObjective;
 }
 
+//------------------------------------------------------------------------------
+// v8.0: TACTICAL & COMBAT PARAMETER SETTERS (for Schola actuators)
+//------------------------------------------------------------------------------
+
+void UFollowerAgentComponent::SetTacticalParameters(const FTacticalParameters& Params)
+{
+	CurrentMacroAction.TacticalParams = Params;
+
+	// Notify StateTree of parameter change (if using StateTree-based execution)
+	// The StateTree task STTask_ExecuteTacticalMovement_v8 will read these params
+	// and apply them to EQS query weights
+
+	UE_LOG(LogTemp, Verbose, TEXT("[FollowerAgent v8.0] '%s': Tactical params set [Agg=%.2f, Cover=%.2f, Spread=%.2f, Risk=%.2f]"),
+		*GetOwner()->GetName(),
+		Params.Aggression, Params.CoverPreference, Params.SpreadDistance, Params.RiskTolerance);
+}
+
+void UFollowerAgentComponent::SetCombatParameters(const FCombatParameters& Params)
+{
+	CurrentMacroAction.CombatParams = Params;
+
+	// Combat parameters affect target selection in ExecuteCombat()
+	UE_LOG(LogTemp, Verbose, TEXT("[FollowerAgent v8.0] '%s': Combat params set [Priority=%s]"),
+		*GetOwner()->GetName(),
+		Params.Priority == ETargetPriority::Closest ? TEXT("Closest") : TEXT("LowestHP"));
+}
+
 void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	FActorComponentTickFunction* ThisTickFunction)
 {

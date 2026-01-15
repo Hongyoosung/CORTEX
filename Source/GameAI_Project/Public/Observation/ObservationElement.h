@@ -44,11 +44,24 @@ struct GAMEAI_PROJECT_API FObservationElement
 
 
     //--------------------------------------------------------------------------
-    // SUPPORT CONTEXT (1 features)
+    // SUPPORT CONTEXT (4 features) - v8.0: Full ally context for Support strategy
     //--------------------------------------------------------------------------
+
+    /** Whether any ally needs immediate help (health < 50% or surrounded) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    bool bAllyNeedsHelp = false;  // 1 feature
+
+    /** Normalized health of the ally most in need [0, 1] */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    float AllyHealth = 1.0f;  // 1 feature
+
     /** Distance to ally in need (normalized by max range) [0, 1] */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
     float AllyDistance = 0.0f;  // 1 feature
+
+    /** Direction to ally (normalized 2D vector) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
+    FVector2D AllyDirection = FVector2D::ZeroVector;  // 2 features (X, Y)
 
 
     //--------------------------------------------------------------------------
@@ -95,11 +108,11 @@ struct GAMEAI_PROJECT_API FObservationElement
         NearbyEnemies.Init(FEnemyObservation(), 5);  // Track top 5 closest enemies
     }
 
-    /** Convert observation to normalized feature vector (68 elements) - v6.0 */
+    /** Convert observation to normalized feature vector (46 elements) - v8.0 */
     TArray<float> ToFeatureVector() const;
 
-    /** Get feature count (v6.0: 68 features = 64 base + 4 Mission context) */
-    static int32 GetFeatureCount() { return 68; }
+    /** Get feature count (v8.0: 46 base features, strategy context added by network) */
+    static int32 GetFeatureCount() { return 46; }
 
     /** Reset to default values */
     void Reset();

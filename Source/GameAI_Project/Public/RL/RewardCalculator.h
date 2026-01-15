@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "RL/RLTypes.h"  // v6.0: EStrategyType, EMissionType, FMissionContext
+#include "RL/RLTypes.h"
 #include "Observation/ObservationElement.h"
 #include "RewardCalculator.generated.h"
 
@@ -42,6 +42,9 @@ namespace RewardConfig {
 	// Team coordination
 	constexpr float FORMATION_BONUS = 0.1f;                // Per step in formation
 
+	// v8.0: Tactical parameter effectiveness
+	constexpr float TACTICAL_EFFECTIVENESS_BONUS = 0.15f;  // Per step when parameters match outcomes
+
 	// === STRATEGY-SPECIFIC WEIGHT PROFILES ===
 	// Mirrored from Python training_env/unified_reward.py
 
@@ -52,6 +55,7 @@ namespace RewardConfig {
 		float Survival;
 		float CoverUsage;
 		float TeamCoordination;
+		float TacticalEffectiveness;  // v8.0: Parameter-outcome alignment
 	};
 
 	// Assault: High aggression, push objectives
@@ -60,7 +64,8 @@ namespace RewardConfig {
 		0.8f,  // CombatEffectiveness: High
 		0.6f,  // Survival: Medium (acceptable risk)
 		0.3f,  // CoverUsage: Low (don't camp)
-		0.4f   // TeamCoordination: Medium (loose formation)
+		0.4f,  // TeamCoordination: Medium (loose formation)
+		0.8f   // TacticalEffectiveness: High (parameter alignment matters)
 	};
 
 	// Defend: Hold position, maximize survival
@@ -69,7 +74,8 @@ namespace RewardConfig {
 		0.6f,  // CombatEffectiveness: Medium (suppress threats)
 		1.0f,  // Survival: High (must survive to hold)
 		0.9f,  // CoverUsage: High (maximize cover)
-		0.5f   // TeamCoordination: Medium (defensive formation)
+		0.5f,  // TeamCoordination: Medium (defensive formation)
+		0.8f   // TacticalEffectiveness: High (parameter alignment matters)
 	};
 
 	// Support: Stick with ally, balanced positioning
@@ -78,7 +84,8 @@ namespace RewardConfig {
 		0.4f,  // CombatEffectiveness: Medium-low (assist, don't solo)
 		0.7f,  // Survival: Medium-high (stay alive to support)
 		0.5f,  // CoverUsage: Medium (balanced)
-		1.0f   // TeamCoordination: High (stick with ally)
+		1.0f,  // TeamCoordination: High (stick with ally)
+		0.9f   // TacticalEffectiveness: Highest (critical for support behavior)
 	};
 
 	// Retreat: Survive at all costs, avoid combat
@@ -87,7 +94,8 @@ namespace RewardConfig {
 		0.0f,  // CombatEffectiveness: None (avoid combat)
 		1.2f,  // Survival: Highest (survival paramount)
 		0.7f,  // CoverUsage: High (use cover while retreating)
-		0.3f   // TeamCoordination: Low (self-preservation)
+		0.3f,  // TeamCoordination: Low (self-preservation)
+		0.7f   // TacticalEffectiveness: Medium-high (escape efficiency)
 	};
 
 	// Lookup helper
@@ -144,30 +152,32 @@ struct FRewardComponentBreakdown
 	float TeamCoordination = 0.0f;
 
 	UPROPERTY(BlueprintReadOnly)
+	float TacticalEffectiveness = 0.0f;  // v8.0: Parameter-outcome alignment
+
+	UPROPERTY(BlueprintReadOnly)
 	float Total = 0.0f;
 
 	// For debugging
 	FString ToString() const
 	{
 		return FString::Printf(
-			TEXT("Obj=%.2f, Combat=%.2f, Surv=%.2f, Cover=%.2f, Coord=%.2f, Total=%.2f"),
-			ObjectiveProgress, CombatEffectiveness, Survival, CoverUsage, TeamCoordination, Total
+			TEXT("Obj=%.2f, Combat=%.2f, Surv=%.2f, Cover=%.2f, Coord=%.2f, Tact=%.2f, Total=%.2f"),
+			ObjectiveProgress, CombatEffectiveness, Survival, CoverUsage, TeamCoordination, TacticalEffectiveness, Total
 		);
 	}
 };
 
 /**
- * v6.0 Mission-Aware Reward System
+ * v8.0 Unified Reward System
  *
- * Calculates rewards based on Mission completion and progress, with proper MCTS-RL alignment.
- * The reward structure ensures Mission completion is the dominant term, preventing agents
- * from learning to prioritize survival over mission success.
+ * Calculates rewards using strategy-specific weight profiles applied to common reward components.
+ * MCTS assigns strategies, RL outputs tactical parameters, rewards guide parameter learning.
  *
  * Key Features:
- * - Mission-aware rewards (rewards vary based on assigned Mission type)
- * - Strategy-Mission alignment bonuses
- * - Progress tracking (rewards for moving toward Mission)
- * - Proper value alignment with MCTS (Mission reward > death penalty)
+ * - Strategy-specific weight profiles (Assault, Defend, Support, Retreat)
+ * - Component-based reward breakdown (Objective, Combat, Survival, Cover, Coordination, TacticalEffectiveness)
+ * - Tactical parameter effectiveness rewards (parameter → outcome alignment)
+ * - TensorBoard-compatible logging
  */
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API URewardCalculator : public UActorComponent
@@ -181,14 +191,14 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	//--------------------------------------------------------------------------
-	// CORE REWARD CALCULATION (v6.0)
+	// CORE REWARD CALCULATION
 	//--------------------------------------------------------------------------
 
 	/**
-	 * Calculate total reward (v6.0 - Mission-aware)
+	 * Calculate total reward (delegates to CalculateUnifiedReward)
 	 * @param PrevObs - Previous observation
-	 * @param CurrentObs - Current observation (includes Mission context)
-	 * @param Action - Action taken (strategy selection)
+	 * @param CurrentObs - Current observation
+	 * @param Action - Macro action (tactical + combat parameters)
 	 * @return Total reward for this step
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
@@ -255,6 +265,23 @@ public:
 		const FObservationElement& CurrentObs
 	);
 
+	/**
+	 * v8.0: Tactical parameter effectiveness component
+	 * Rewards alignment between tactical parameters and actual positioning outcomes
+	 * Creates tight feedback loop: parameters → EQS → positioning → reward
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
+	float CalculateTacticalParameterEffectivenessComponent(
+		const FObservationElement& CurrentObs,
+		const FTacticalParameters& TacticalParams
+	);
+
+	/**
+	 * v8.0: Set current tactical parameters for reward calculation
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	void SetCurrentTacticalParameters(const FTacticalParameters& Params);
+
 
 	//--------------------------------------------------------------------------
 	// EVENT TRACKING
@@ -280,7 +307,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void OnDeath();
 
-	/** Set current strategy for reward calculation (v5.0) */
+	/** Set current strategy for reward calculation (from MCTS assignment) */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void SetCurrentStrategy(EStrategyType Strategy);
 
@@ -301,7 +328,7 @@ public:
 
 
 	//--------------------------------------------------------------------------
-	// CONFIGURATION (v6.0 - Simplified)
+	// CONFIGURATION
 	//--------------------------------------------------------------------------
 
 	/** Time window for combined fire detection (seconds) */
@@ -323,7 +350,7 @@ private:
 	UPROPERTY()
 	UHealthComponent* HealthComponent = nullptr;
 
-	/** Current strategy (v5.0) - affects reward calculation */
+	/** Current strategy (from MCTS) - determines reward weight profile */
 	EStrategyType CurrentStrategy = EStrategyType::Assault;
 
 	//--------------------------------------------------------------------------
@@ -345,43 +372,15 @@ private:
 	TArray<FCombinedFireRecord> RecentCombinedFires;
 
 	//--------------------------------------------------------------------------
-	// COVER TRACKING (Sprint 6)
+	// SUPPORT STRATEGY TRACKING
 	//--------------------------------------------------------------------------
 
-	/** Was agent in cover last tick? */
-	bool bWasInCover = false;
-
-	/** Was agent taking damage last tick? */
-	bool bWasUnderFire = false;
-
-	/** Time spent in cover this episode */
-	float TimeInCover = 0.0f;
-
-	//--------------------------------------------------------------------------
-	// STRATEGY-SPECIFIC TRACKING (v5.0)
-	//--------------------------------------------------------------------------
-
-	/** Last distance to Mission (for advance tracking) */
-	float LastDistanceToMission = 0.0f;
-
-	/** Last distance to nearest enemy (for retreat tracking) */
-	float LastDistanceToEnemy = 0.0f;
-
-	/** Protected ally (for Support strategy) */
+	/** Protected ally (for Support strategy coordination reward) */
 	UPROPERTY()
 	AActor* ProtectedAlly = nullptr;
 
-	/** Protected ally's last health (to detect protection success) */
-	float ProtectedAllyLastHealth = 1.0f;
-
-	/** Was agent in safe zone last tick? (for Retreat strategy) */
-	bool bWasInSafeZone = false;
-
-	/** Was agent on Mission last tick? (for Defend strategy) */
-	bool bWasOnMission = false;
-
 	//--------------------------------------------------------------------------
-	// HYBRID REWARD TRACKING (v6.0 Fix)
+	// OBSERVATION TRACKING
 	//--------------------------------------------------------------------------
 
 	/** Previous observation for calculating reward deltas */
@@ -396,6 +395,9 @@ private:
 
 	/** Track if target was lowest HP for efficient kill bonus */
 	bool bLastKillWasLowestHP = false;
+
+	/** Current tactical parameters from RL (for effectiveness reward calculation) */
+	FTacticalParameters CurrentTacticalParams;
 
 public:
 	/** Get last reward breakdown for TensorBoard logging */

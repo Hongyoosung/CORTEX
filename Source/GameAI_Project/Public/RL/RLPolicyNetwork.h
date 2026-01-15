@@ -16,31 +16,36 @@ class INNERuntime;
 class INNERuntimeGPU;
 
 /**
- * Neural Network-based RL Policy for Strategy Selection (v6.0 Single-Head)
+ * Neural Network-based RL Policy for Tactical Parameter Control (v8.0 Multi-Head)
  *
- * v7.0 Architecture (Single-Head):
- *   Input Layer:  68 features (64 base + 4 mission context)
+ * v8.0 Architecture (Multi-Head):
+ *   Input Layer:  50 features (46 base + 4 strategy one-hot from MCTS)
  *   Shared Trunk: 128 → 128 → 64 (ReLU)
- *   ├─ Policy Head:  4 strategy logits (Assault, Defend, Support, Retreat)
- *   └─ Critic Head:  1 value estimate (for MCTS leaf evaluation)
+ *   ├─ Assault Head:  [4] tactical parameters (Aggression, Cover, Spread, Risk)
+ *   ├─ Defend Head:   [4] tactical parameters
+ *   ├─ Support Head:  [4] tactical parameters
+ *   ├─ Retreat Head:  [4] tactical parameters
+ *   ├─ Combat Head:   [2] target priority logits (Closest, LowestHP)
+ *   └─ Critic Head:   [1] state value estimate
  *
- * v7.0 Changes:
- *   - Single-head architecture: Simplified action space (4 strategies only)
- *   - Mission-aware: Observation includes mission context (4 features)
- *   - Batched inference: Process multiple agents in single forward pass
- *   - MCTS integration: Assigns missions, RL selects strategies
- *   - Rules-based execution: Strategy → Position/Target mapping is deterministic
+ * v8.0 Changes:
+ *   - MCTS assigns strategies, RL outputs tactical parameters (not strategy selection)
+ *   - Strategy-specific policy heads for guaranteed differentiation
+ *   - Tactical parameters modulate EQS weights for spatial reasoning
+ *   - Combat head learns target priority selection
  *
- * v5.0 → v7.0 Migration:
- *   - MCTS: Strategy assignment → Mission assignment
- *   - RL: Multi-head (44 actions) → Single-head (4 strategies)
- *   - Execution: RL micro-actions → Rules-based execution
+ * Observation Space (46 base features):
+ *   - Agent State (4): pos(3), health(1)
+ *   - Combat (1): enemy_dist(1)
+ *   - Perception (16): raycasts(16)
+ *   - Support Context (5): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(2)
+ *   - Enemy Info (16): count(1), nearby(15)
+ *   - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
  *
  * Usage:
- *   1. Load trained policy: LoadPolicy("Models/cortex_policy_v6.onnx")
- *   2. Get strategy: GetStrategy(Observation, MissionContext)
- *   3. Batched inference: GetStrategiesBatched(Observations, MissionContexts)
- *   4. MCTS value query: GetStateValue(Observation, MissionContext)
+ *   1. Get macro action: GetMacroAction(Observation, AssignedStrategy)
+ *   2. Batched inference: GetMacroActionsBatched(Observations, Strategies)
+ *   3. MCTS value query: GetStateValueV8(Observation, Strategy)
  */
 UCLASS(BlueprintType, Blueprintable)
 class GAMEAI_PROJECT_API URLPolicyNetwork : public UObject
@@ -97,10 +102,10 @@ private:
 	// ========================================
 
 	/**
-	 * Build 68-feature input from observation + assigned strategy (v8.0)
-	 * @param Observation - Agent's 64-feature observation
+	 * Build 50-feature input from observation + assigned strategy (v8.0)
+	 * @param Observation - Agent's 46-feature observation
 	 * @param AssignedStrategy - Strategy assigned by MCTS (one-hot encoded)
-	 * @return 68-element vector (64 base + 4 strategy one-hot)
+	 * @return 50-element vector (46 base + 4 strategy one-hot)
 	 */
 	TArray<float> BuildNetworkInputV8(const FObservationElement& Observation, EStrategyType AssignedStrategy) const;
 

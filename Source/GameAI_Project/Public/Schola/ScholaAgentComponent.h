@@ -71,9 +71,13 @@ public:
 	UPROPERTY(EditAnywhere, Instanced, Category = "Schola|Components")
 	UTacticalRewardProvider* RewardProvider = nullptr;
 
-	/** Tactical actuator (8-dimensional actions) */
+	/** v8.0: Tactical parameter actuator (4 continuous values for EQS modulation) */
 	UPROPERTY(EditAnywhere, Instanced, Category = "Schola|Components")
-	class UTacticalActuator* TacticalActuator = nullptr;
+	class UTacticalParameterActuator* TacticalParameterActuator = nullptr;
+
+	/** v8.0: Combat choice actuator (2 discrete choices for target priority) */
+	UPROPERTY(EditAnywhere, Instanced, Category = "Schola|Components")
+	class UCombatChoiceActuator* CombatChoiceActuator = nullptr;
 
 	/** Reference to follower agent component (auto-found) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
@@ -128,7 +132,7 @@ private:
 	/** Configure reward provider */
 	void ConfigureRewardProvider();
 
-	/** Configure actuators (TacticalActuator) */
+	/** Configure v8.0 actuators (TacticalParameterActuator + CombatChoiceActuator) */
 	void ConfigureActuators();
 
 	//--------------------------------------------------------------------------

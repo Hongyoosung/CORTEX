@@ -42,8 +42,9 @@ namespace RLConfig {
 	constexpr int32 NUM_TACTICAL_PARAMS = 4;  // Aggression, CoverPreference, SpreadDistance, RiskTolerance
 	constexpr int32 NUM_COMBAT_CHOICES = 2;   // TargetPriority: Closest, LowestHP
 
-	// Observation Space
-	constexpr int32 OBSERVATION_SIZE = 68;  // 64 base + 4 strategy context (one-hot from MCTS)
+	// Observation Space (v8.0: Streamlined - removed velocity, raycast hit types)
+	constexpr int32 OBSERVATION_BASE_SIZE = 46;  // Base observation features
+	constexpr int32 OBSERVATION_SIZE = 50;       // 46 base + 4 strategy context (one-hot from MCTS)
 
 	// === END CRITICAL SECTION ===
 }
@@ -357,7 +358,7 @@ struct GAMEAI_PROJECT_API FRLPolicyConfig
 
 	/** Input size (observation features) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
-	int32 InputSize = 68;  // v7.0: 64 base + 4 mission context
+	int32 InputSize = 50;  // v8.0: 46 base + 4 strategy context
 
 	/** Policy output size (strategy logits) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
