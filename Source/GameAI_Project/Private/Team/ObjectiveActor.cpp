@@ -205,13 +205,8 @@ void AObjectiveActor::OnDefeat()
 		*GetName(), OwnerTeamID);
 
 	// Broadcast defeat event to game mode for episode reset
-	AGameModeBase* GameMode = UGameplayStatics::GetGameMode(this);
-	if (GameMode)
-	{
-		// Game mode should handle episode reset logic
-		// TODO: Implement GameMode->OnObjectiveDefeated(OwnerTeamID);
-		UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE] Game mode found, should trigger episode reset"));
-	}
+	OnObjectiveDefeated.Broadcast(OwnerTeamID);
+	UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE] Defeat event broadcast for Team %d"), OwnerTeamID);
 
 	// Visual feedback (disable mesh or change material)
 	if (PillarMesh)

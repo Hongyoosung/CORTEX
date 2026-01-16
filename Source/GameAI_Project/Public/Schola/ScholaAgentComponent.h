@@ -146,4 +146,8 @@ private:
 	/** Damage taken event - triggers immediate tactical response */
 	UFUNCTION()
 	void OnDamageTakenEventHandler(const FDamageEventData& DamageEvent, float CurrentHealth);
+
+	/** Episode started event - resets decision timer to allow immediate observations */
+	UFUNCTION()
+	void OnEpisodeStarted(int32 EpisodeNumber);
 };

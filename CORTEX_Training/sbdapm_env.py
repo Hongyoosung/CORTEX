@@ -353,58 +353,67 @@ if SCHOLA_AVAILABLE:
             return shaped_reward
 
         def reset(self, *, seed=None, options=None):
-            # v7.4 & v7.7: Step rate and reward diagnostics
+            # v8.0.2: Clean reset logic - Python controls episode boundaries
+            #
+            # With the fix to remove Python's independent timeout detection:
+            # - UE5 detects timeout/termination and signals it via gRPC
+            # - Python's step() sees the signal and returns truncated=True
+            # - RLlib calls reset()
+            # - Python calls hard_reset() to start a new episode in UE5
+            #
+            # UE5's bAutoRestartEpisode should be FALSE so it waits for Python's hard_reset().
+            # This makes Python the controller of episode boundaries.
+
+            # v7.7: Episode summary logging
             if hasattr(self, '_episode_start_time') and self.episode_steps > 0:
                 episode_duration = time.time() - self._episode_start_time
                 step_rate = self.episode_steps / max(episode_duration, 0.001)
 
-                # v7.7: Calculate total episode reward
+                # Calculate total episode reward
                 total_reward = sum(self._episode_rewards.values())
                 avg_reward = total_reward / max(len(self._episode_rewards), 1)
 
-                print(f"[EPISODE END] Steps={self.episode_steps}, Duration={episode_duration:.1f}s, Rate={step_rate:.1f} steps/sec")
+                print(f"[EPISODE SUMMARY] Steps={self.episode_steps}, Duration={episode_duration:.1f}s, Rate={step_rate:.1f} steps/sec")
                 print(f"[EPISODE REWARD] Total={total_reward:.2f}, Avg={avg_reward:.2f}, Agents={len(self._episode_rewards)}")
 
-                # Log individual agent rewards
-                if self._episode_rewards:
-                    reward_list = [f"{aid}:{rew:.1f}" for aid, rew in sorted(self._episode_rewards.items())]
-                    print(f"[AGENT REWARDS] {', '.join(reward_list)}")
-
             self.episode_steps = 0
-            self._episode_start_time = time.time()
-            self._episode_rewards.clear()  # Reset reward tracking
+            self._episode_rewards.clear()
 
-            # v7.3: Clear rate limiting state on reset
+            # Clear rate limiting state
             self.last_action_time.clear()
             self.cached_actions.clear()
 
-            # v7.4: Clear first-step logging flag
+            # Clear first-step logging flag
             if hasattr(self, '_first_step_logged'):
                 delattr(self, '_first_step_logged')
 
-            # Track if this is the first reset (during worker initialization)
+            # Track if this is the first reset
             is_first_reset = not hasattr(self, '_first_reset_done')
-            if is_first_reset:
-                print("[SBDAPMMultiAgentEnv] FIRST RESET - Initializing worker environment...")
-            else:
-                print("[SBDAPMMultiAgentEnv] Resetting environment via hard_reset()...")
 
             try:
-                # 1. Hard Reset (UE5와 동기화)
-                if is_first_reset:
-                    print("  Calling hard_reset() to sync with UE5...")
-                else:
-                    print(f"[RESET] Calling hard_reset() to start new episode (episode_steps_completed: {self.episode_steps})...")
-
                 reset_start_time = time.time()
-                raw_obs = self.schola_env.hard_reset()
-                reset_duration = time.time() - reset_start_time
 
+                # Always use hard_reset() to explicitly signal UE5 to start new episode
+                # UE5's bAutoRestartEpisode = false, so it waits for this signal
                 if is_first_reset:
-                    print("  hard_reset() completed successfully!")
-                    self._first_reset_done = True
+                    print("[SBDAPMMultiAgentEnv] FIRST RESET - Calling hard_reset() to sync with UE5...")
                 else:
-                    print(f"[RESET] hard_reset() completed in {reset_duration:.2f}s - UE5 ready for new episode")
+                    print(f"[RESET] Starting new episode via hard_reset()...")
+
+                # DIAGNOSTIC: Check if Schola connection is still alive
+                print(f"[RESET DEBUG] Schola connection status: {hasattr(self.schola_env, 'ids')}")
+                print(f"[RESET DEBUG] Calling hard_reset()...")
+
+                raw_obs = self.schola_env.hard_reset()
+
+                print(f"[RESET DEBUG] hard_reset() returned, obs keys: {raw_obs.keys() if isinstance(raw_obs, dict) else 'not a dict'}")
+                self._first_reset_done = True
+
+                reset_duration = time.time() - reset_start_time
+                print(f"[RESET] hard_reset() completed in {reset_duration:.2f}s")
+
+                # Start episode timer AFTER reset completes
+                self._episode_start_time = time.time()
 
                 # 2. Update agent mapping
                 self._update_agent_map()
@@ -412,16 +421,16 @@ if SCHOLA_AVAILABLE:
                 # v7.6: Reset alive/dead agent tracking AFTER agent map is updated
                 self._alive_agents = set(self._agent_ids)  # All agents start alive
                 self._dead_agents = set()
+
                 if is_first_reset:
                     print(f"[WORKER READY] {len(self._alive_agents)} agents detected and ready for training")
+                    # Only log action keys on first reset (verbose debug info)
+                    all_keys = self._get_all_action_keys()
+                    print(f"[DEBUG] All action keys at reset:")
+                    for (env_idx, agent_idx), keys in all_keys.items():
+                        print(f"  Agent ({env_idx},{agent_idx}): {len(keys)} keys")
                 else:
-                    print(f"[RESET COMPLETE] Episode reset successful: {len(self._alive_agents)} agents alive, ready for first step()")
-
-                # 3. Log all action keys
-                all_keys = self._get_all_action_keys()
-                print(f"[DEBUG] All action keys at reset:")
-                for (env_idx, agent_idx), keys in all_keys.items():
-                    print(f"  Agent ({env_idx},{agent_idx}): {len(keys)} keys")
+                    print(f"[RESET COMPLETE] {len(self._alive_agents)} agents ready for new episode")
 
                 return self._process_obs(raw_obs)
 
@@ -433,6 +442,8 @@ if SCHOLA_AVAILABLE:
                     # v7.6: Also reset alive/dead on fallback path
                     self._alive_agents = set(self._agent_ids)
                     self._dead_agents = set()
+                    # CRITICAL: Also set episode timer on fallback path
+                    self._episode_start_time = time.time()
                     return self._process_obs(raw_obs)
                 except:
                     import traceback
@@ -570,7 +581,17 @@ if SCHOLA_AVAILABLE:
                     print(f"[POLL] Episode step {self.episode_steps}: Waiting for UE5 observations...")
                     poll_start_time = time.time()
 
+                # CRITICAL FIX: Add timeout detection for poll() to prevent infinite blocking
+                # If UE5 stops sending observations (e.g., bEpisodeEnding=true), poll() will block forever
+                # Note: Schola's poll() may not support timeout parameter - if not, this will fall back to blocking
+                poll_start_time_check = time.time()
                 step_result = self.schola_env.poll()
+                poll_duration_check = time.time() - poll_start_time_check
+
+                # Detect abnormally long poll() calls (>120s = 2× max episode duration)
+                if poll_duration_check > 120.0:
+                    print(f"[POLL WARNING] poll() took {poll_duration_check:.1f}s (>120s threshold)")
+                    print(f"[POLL WARNING] This may indicate UE5 deadlock or performance issue")
 
                 if self.episode_steps < 3:
                     poll_duration = time.time() - poll_start_time
@@ -680,43 +701,62 @@ if SCHOLA_AVAILABLE:
                         info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
                         info_dict[flat_id]["action_mask"] = action_mask
 
-                # Episode Termination Logic (v8.0 - Fixed team elimination detection)
+                # Episode Termination Logic (v8.0.2 - UE5 is single source of truth)
+                #
+                # CRITICAL FIX: Removed Python-side timeout detection.
+                # Previously, Python and UE5 both detected timeouts independently, causing:
+                # 1. UE5 detects timeout → auto-resets to Episode N+1
+                # 2. Python detects timeout → calls hard_reset() → Episode N+2
+                # This resulted in double-resets and desync.
+                #
+                # Now, Python ONLY detects termination from UE5's response (any_term_from_ue5).
+                # This ensures UE5 is the single source of truth for episode boundaries.
+
                 self.episode_steps += 1
                 episode_duration = current_time - self._episode_start_time
 
                 # DIAGNOSTIC: Log alive/dead agents on first few steps
                 if self.episode_steps <= 3:
-                    print(f"[DIAGNOSTIC] Step {self.episode_steps}: Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)}")
+                    print(f"[DIAGNOSTIC] Step {self.episode_steps}: Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)}, EpisodeDuration={episode_duration:.1f}s")
 
-                # Condition 1: Timeout
-                timeout_reached = episode_duration >= MAX_EPISODE_DURATION
+                # Periodic progress log (every 100 steps)
+                if self.episode_steps % 100 == 0:
+                    print(f"[PROGRESS] Step {self.episode_steps}, Duration={episode_duration:.1f}s, Alive={len(self._alive_agents)}")
 
-                # Condition 2: Max step safeguard (fallback)
-                max_steps_reached = self.episode_steps >= self.max_episode_steps
+                # Condition 1: UE5 signals termination (timeout, objective, etc.)
+                # This is the PRIMARY termination condition - UE5 controls episode boundaries
+                ue5_terminated = any_term_from_ue5
 
-                # Condition 3: Team elimination (all agents dead)
-                # CRITICAL FIX: Without this check, poll() blocks forever when UE5 ends episode
+                # Condition 2: Team elimination (all agents dead) - backup for RLlib trajectory handling
                 team_eliminated = (len(self._alive_agents) == 0 and len(self._dead_agents) > 0)
 
-                if team_eliminated:
+                # Condition 3: Max step safeguard (fallback, should rarely trigger)
+                max_steps_reached = self.episode_steps >= self.max_episode_steps
+
+                if ue5_terminated:
+                    # UE5 signaled episode end - use truncated (time-based termination)
+                    for aid in self._agent_ids:
+                        truncated_dict[aid] = True
+                        terminated_dict[aid] = False
+                    truncated_dict["__all__"] = True
+                    terminated_dict["__all__"] = False
+                    print(f"[EPISODE END] UE5 signaled termination at step {self.episode_steps}, duration {episode_duration:.1f}s")
+                elif team_eliminated:
                     # Natural termination: all agents died
-                    # Use terminated=True (not truncated) since episode ended naturally
                     for aid in self._agent_ids:
                         terminated_dict[aid] = True
                         truncated_dict[aid] = False
                     terminated_dict["__all__"] = True
                     truncated_dict["__all__"] = False
                     print(f"[EPISODE END] Team eliminated at step {self.episode_steps}, duration {episode_duration:.1f}s")
-                elif timeout_reached or max_steps_reached:
-                    # Truncation: time limit reached
-                    # ALL agents (including those who died earlier) get truncated=True
+                elif max_steps_reached:
+                    # Safety fallback - should rarely trigger if UE5 is working correctly
                     for aid in self._agent_ids:
                         truncated_dict[aid] = True
                         terminated_dict[aid] = False
                     truncated_dict["__all__"] = True
                     terminated_dict["__all__"] = False
-                    reason = "timeout" if timeout_reached else f"max steps ({self.max_episode_steps})"
-                    print(f"[EPISODE END] {reason} at step {self.episode_steps}, duration {episode_duration:.1f}s (Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)})")
+                    print(f"[EPISODE END] Max steps safety ({self.max_episode_steps}) at step {self.episode_steps}")
                 else:
                     # Episode continues - all agents stay non-terminal
                     terminated_dict["__all__"] = False

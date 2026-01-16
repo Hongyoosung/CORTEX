@@ -351,6 +351,14 @@ public:
 	void OnAgentDied(const FDeathEventData& DeathEvent);
 
 	/**
+	 * Called when an objective is defeated (durability reaches 0)
+	 * Bind this to ObjectiveActor::OnObjectiveDefeated delegate
+	 * @param DefeatedTeamID - Team ID that lost their objective
+	 */
+	UFUNCTION()
+	void OnObjectiveDefeated(int32 DefeatedTeamID);
+
+	/**
 	 * Check episode termination conditions (called internally by OnAgentDied)
 	 */
 	void CheckEpisodeTermination();

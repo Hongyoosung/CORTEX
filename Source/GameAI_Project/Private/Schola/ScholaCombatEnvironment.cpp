@@ -179,13 +179,26 @@ void AScholaCombatEnvironment::ResetEnvironment()
 		return;
 	}
 
-	// Start or restart simulation
+	// CRITICAL FIX: Ensure simulation is running before starting new episode
+	// This ensures agents can send observations immediately after reset
 	if (!SimulationManager->IsSimulationRunning())
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Simulation not running - starting simulation before reset"));
 		SimulationManager->StartSimulation();
 	}
 
+	// Start new episode (this will reset agents and trigger OnEpisodeStarted event)
+	// OnEpisodeStarted will reset LastDecisionTime in all ScholaAgentComponents
+	// This ensures Think() can send observations immediately, preventing poll() from blocking
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Starting new episode - agents will reset decision timers"));
 	SimulationManager->StartNewEpisode();
+	
+	// Verify simulation is still running after reset
+	if (!SimulationManager->IsSimulationRunning())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] CRITICAL: Simulation stopped after StartNewEpisode()! Restarting..."));
+		SimulationManager->StartSimulation();
+	}
 }
 
 void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAgentTrainerPairs)

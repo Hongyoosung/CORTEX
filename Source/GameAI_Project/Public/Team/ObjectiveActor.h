@@ -113,6 +113,16 @@ protected:
 
 public:
 	//========================================
+	// Delegates
+	//========================================
+
+	/** Broadcast when this objective is defeated (durability reaches 0) */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnObjectiveDefeated, int32, DefeatedTeamID);
+	UPROPERTY(BlueprintAssignable, Category = "Objective|Events")
+	FOnObjectiveDefeated OnObjectiveDefeated;
+
+public:
+	//========================================
 	// Components
 	//========================================
 

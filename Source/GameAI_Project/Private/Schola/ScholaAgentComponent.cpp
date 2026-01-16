@@ -9,6 +9,8 @@
 #include "Combat/HealthComponent.h"
 #include "Perception/AgentPerceptionComponent.h"
 #include "GameFramework/Pawn.h"
+#include "Core/SimulationManagerGameMode.h"
+#include "Kismet/GameplayStatics.h"
 
 UScholaAgentComponent::UScholaAgentComponent()
 {
@@ -92,7 +94,16 @@ void UScholaAgentComponent::BeginPlay()
 			*Owner->GetName());
 	}
 
-	
+	// Bind to episode events to reset decision timer when new episode starts
+	// CRITICAL: This ensures agents send observations immediately after hard_reset()
+	// Without this, poll() blocks because Think() is throttled by LastDecisionTime
+	ASimulationManagerGameMode* SimulationManager = Cast<ASimulationManagerGameMode>(UGameplayStatics::GetGameMode(this));
+	if (SimulationManager)
+	{
+		SimulationManager->OnEpisodeStarted.AddUniqueDynamic(this, &UScholaAgentComponent::OnEpisodeStarted);
+		UE_LOG(LogTemp, Log, TEXT("[SCHOLA EVENT] '%s': Bound to episode started event for decision timer reset"),
+			*Owner->GetName());
+	}
 
 	// Note: gRPC server is now managed by ScholaCombatEnvironment
 	// This component will be auto-registered by the environment during initialization
@@ -365,4 +376,16 @@ void UScholaAgentComponent::OnDamageTakenEventHandler(const FDamageEventData& Da
 
 		LastDecisionTime = FPlatformTime::Seconds();
 	}
+}
+
+void UScholaAgentComponent::OnEpisodeStarted(int32 EpisodeNumber)
+{
+	// CRITICAL FIX: Reset decision timer when new episode starts
+	// This ensures agents send observations immediately after hard_reset()
+	// Without this, poll() blocks because Think() is throttled by LastDecisionTime from previous episode
+	LastDecisionTime = 0.0;
+	TimeSinceLastDecision = 0.0f;
+	
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] '%s': Episode %d started - Reset decision timer (LastDecisionTime=0.0)"),
+		*GetOwner()->GetName(), EpisodeNumber);
 }

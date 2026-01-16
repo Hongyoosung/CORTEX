@@ -36,6 +36,23 @@ void ASimulationManagerGameMode::BeginPlay()
 		}
 	}
 
+	// Bind all ObjectiveActor defeat events for episode termination
+	TArray<AActor*> FoundObjectives;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
+
+	for (AActor* ObjActor : FoundObjectives)
+	{
+		AObjectiveActor* Objective = Cast<AObjectiveActor>(ObjActor);
+		if (Objective)
+		{
+			Objective->OnObjectiveDefeated.AddUniqueDynamic(this, &ASimulationManagerGameMode::OnObjectiveDefeated);
+			UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound OnObjectiveDefeated for '%s' (Team %d)"),
+				*Objective->GetName(), Objective->OwnerTeamID);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound %d ObjectiveActor defeat delegates"), FoundObjectives.Num());
+
 	if (bAutoStartSimulation)
 	{
 		StartSimulation();
@@ -46,26 +63,34 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (bSimulationRunning && !bEpisodeEnding)
+	// v8.0 FIX: Don't skip Tick() when bEpisodeEnding = true
+	// We need to keep processing so Schola can send observations to Python
+	// Python will receive the terminated/truncated flags and call hard_reset()
+	if (bSimulationRunning)
 	{
-		// Auto-increment step counter (each tick = 1 step)
-		CurrentStep++;
-
-		// Check for max steps termination
-		if (MaxStepsPerEpisode > 0 && CurrentStep >= MaxStepsPerEpisode)
+		// Only increment step counter and check termination if episode is NOT ending
+		// Once bEpisodeEnding = true, we're in "zombie mode" - agents still exist but we're waiting for reset
+		if (!bEpisodeEnding)
 		{
-			CheckEpisodeTermination();
-		}
+			// Auto-increment step counter (each tick = 1 step)
+			CurrentStep++;
 
-		// Check for max duration termination (60s by default, matches Python MAX_EPISODE_DURATION)
-		if (MaxEpisodeDuration > 0.0f)
-		{
-			float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
-			if (EpisodeElapsed >= MaxEpisodeDuration)
+			// Check for max steps termination
+			if (MaxStepsPerEpisode > 0 && CurrentStep >= MaxStepsPerEpisode)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[EPISODE TIMEOUT] Duration: %.1fs >= MaxDuration: %.1fs - Triggering termination check"),
-					EpisodeElapsed, MaxEpisodeDuration);
 				CheckEpisodeTermination();
+			}
+
+			// Check for max duration termination (60s by default, matches Python MAX_EPISODE_DURATION)
+			if (MaxEpisodeDuration > 0.0f)
+			{
+				float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
+				if (EpisodeElapsed >= MaxEpisodeDuration)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[EPISODE TIMEOUT] Duration: %.1fs >= MaxDuration: %.1fs - Triggering termination check"),
+						EpisodeElapsed, MaxEpisodeDuration);
+					CheckEpisodeTermination();
+				}
 			}
 		}
 
@@ -638,6 +663,50 @@ void ASimulationManagerGameMode::OnAgentDied(const FDeathEventData& DeathEvent)
 	CheckEpisodeTermination();
 }
 
+void ASimulationManagerGameMode::OnObjectiveDefeated(int32 DefeatedTeamID)
+{
+	if (bEpisodeEnding)
+	{
+		return;
+	}
+
+	// Determine winner/loser
+	TArray<int32> AllTeamIDs = GetAllTeamIDs();
+	int32 WinningTeamID = -1;
+
+	// Find the team that is NOT the defeated team
+	for (int32 TeamID : AllTeamIDs)
+	{
+		if (TeamID != DefeatedTeamID)
+		{
+			WinningTeamID = TeamID;
+			break;
+		}
+	}
+
+	float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
+	UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE CAPTURE] Team %d's objective defeated at %.1fs! Winner: Team %d"),
+		DefeatedTeamID, EpisodeElapsed, WinningTeamID);
+
+	// CONTINUOUS TRAINING MODE: Award bonus and continue
+	if (bEnableContinuousTraining && WinningTeamID != -1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("🏆 [CONTINUOUS TRAINING] Team %d captured objective! Awarding bonus..."), WinningTeamID);
+		AwardObjectiveCaptureBonus(WinningTeamID);
+
+		// Note: Do NOT end episode in continuous training mode
+		// Objective will reset when team respawns
+	}
+	// TRADITIONAL MODE: End episode on objective capture
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[EPISODE TERMINATION] Episode %d - Objective captured at %.1fs! Winner: %d - OBJECTIVE CAPTURE"),
+			CurrentEpisode, EpisodeElapsed, WinningTeamID);
+
+		EndEpisode(WinningTeamID, DefeatedTeamID);
+	}
+}
+
 bool ASimulationManagerGameMode::IsTeamEliminated(int32 TeamID) const
 {
 	return GetAliveAgentCount(TeamID) == 0;
@@ -830,7 +899,10 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 	// Broadcast episode ended event
 	OnEpisodeEnded.Broadcast(LastEpisodeResult);
 
-	// Auto-restart if enabled
+	// v8.0: Do NOT auto-restart when bAutoRestartEpisode = false
+	// Python controls episode boundaries via hard_reset()
+	// UE5 must keep responding to observations even when bEpisodeEnding = true
+	// (see Tick() - we no longer early-return when bEpisodeEnding is true)
 	if (bAutoRestartEpisode)
 	{
 		GetWorldTimerManager().SetTimer(
@@ -843,10 +915,16 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 
 		UE_LOG(LogTemp, Log, TEXT("SimulationManager: New episode starting in %.1fs"), EpisodeRestartDelay);
 	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode ended, waiting for Python hard_reset() to trigger StartNewEpisode()"));
+	}
 }
 
 void ASimulationManagerGameMode::StartNewEpisode()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[StartNewEpisode] Called - clearing bEpisodeEnding flag"));
+
 	// CRITICAL: Early validation to prevent crashes during reset
 	if (RegisteredTeams.Num() == 0)
 	{
@@ -863,11 +941,11 @@ void ASimulationManagerGameMode::StartNewEpisode()
 	CurrentEpisode++;
 	CurrentStep = 0;
 	EpisodeStartTime = GetWorld()->GetTimeSeconds();
-	bEpisodeEnding = false;
+	bEpisodeEnding = false;  // CRITICAL: This unblocks Tick() so observations can flow again
 
 	UE_LOG(LogTemp, Warning, TEXT("===== EPISODE %d STARTED ====="), CurrentEpisode);
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE CONFIG] MaxEpisodeDuration: %.1fs, MaxSteps: %d, StartTime: %.2f"),
-		MaxEpisodeDuration, MaxStepsPerEpisode, EpisodeStartTime);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE CONFIG] bEpisodeEnding=%s, MaxEpisodeDuration: %.1fs, MaxSteps: %d"),
+		bEpisodeEnding ? TEXT("TRUE") : TEXT("FALSE"), MaxEpisodeDuration, MaxStepsPerEpisode);
 
 	// Reset agent health and positions
 	for (auto& Pair : RegisteredTeams)
