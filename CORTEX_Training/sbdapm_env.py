@@ -63,7 +63,13 @@ except ImportError:
 
 
 # The maximum duration of an episode. After this time, the environment will reset.
-MAX_EPISODE_DURATION = 600.0
+# v8.0: Set to 60s for 4v4 objective capture scenario
+# Timing breakdown:
+#   - Traversal: 5-15s (agent speed 600-1200 cm/s, map ~5000-10000 cm)
+#   - Combat: 5-15s (engagement with defenders)
+#   - Capture: 10-15s (4 agents × 2 HP/sec = 8 HP/sec → 12.5s for 100 HP)
+# 60s allows one complete capture cycle or multiple engagements
+MAX_EPISODE_DURATION = 60.0
 
 
 
@@ -387,10 +393,18 @@ if SCHOLA_AVAILABLE:
                 # 1. Hard Reset (UE5와 동기화)
                 if is_first_reset:
                     print("  Calling hard_reset() to sync with UE5...")
+                else:
+                    print(f"[RESET] Calling hard_reset() to start new episode (episode_steps_completed: {self.episode_steps})...")
+
+                reset_start_time = time.time()
                 raw_obs = self.schola_env.hard_reset()
+                reset_duration = time.time() - reset_start_time
+
                 if is_first_reset:
                     print("  hard_reset() completed successfully!")
                     self._first_reset_done = True
+                else:
+                    print(f"[RESET] hard_reset() completed in {reset_duration:.2f}s - UE5 ready for new episode")
 
                 # 2. Update agent mapping
                 self._update_agent_map()
@@ -401,7 +415,7 @@ if SCHOLA_AVAILABLE:
                 if is_first_reset:
                     print(f"[WORKER READY] {len(self._alive_agents)} agents detected and ready for training")
                 else:
-                    print(f"[v7.6] Episode start: {len(self._alive_agents)} agents alive")
+                    print(f"[RESET COMPLETE] Episode reset successful: {len(self._alive_agents)} agents alive, ready for first step()")
 
                 # 3. Log all action keys
                 all_keys = self._get_all_action_keys()
@@ -465,6 +479,15 @@ if SCHOLA_AVAILABLE:
             # and causes gRPC synchronization issues
             try:
                 current_time = time.time()
+
+                # CRITICAL: Log first step after reset to confirm step() is being called
+                if self.episode_steps == 0:
+                    print(f"[STEP 0] First step() call after reset - beginning new episode")
+
+                # v8.0: Log step entry to diagnose blocking issues
+                # If we see "STEP ENTRY" but no subsequent logs, poll() is blocking
+                if self.episode_steps > 0 and self.episode_steps % 30 == 0:
+                    print(f"[STEP ENTRY] step {self.episode_steps}, episode_time={current_time - getattr(self, '_episode_start_time', current_time):.1f}s")
 
                 # Track episode start time for 30s timeout
                 if not hasattr(self, '_episode_start_time'):
@@ -537,14 +560,31 @@ if SCHOLA_AVAILABLE:
                 # Action 전송
                 self.schola_env.send_actions(formatted_actions)
 
-                # 데이터 수신
+                # 데이터 수신 (poll() blocks until UE5 responds)
+                # Log before poll() to detect blocking issues
+                if self.episode_steps > 0 and self.episode_steps % 50 == 0:
+                    print(f"[POLL] Waiting for UE5 response (step {self.episode_steps})...")
+
+                # CRITICAL: Log first few steps of each episode to diagnose iteration issues
+                if self.episode_steps < 3:
+                    print(f"[POLL] Episode step {self.episode_steps}: Waiting for UE5 observations...")
+                    poll_start_time = time.time()
+
                 step_result = self.schola_env.poll()
-                
+
+                if self.episode_steps < 3:
+                    poll_duration = time.time() - poll_start_time
+                    print(f"[POLL] Episode step {self.episode_steps}: Received observations in {poll_duration:.3f}s")
+
+                # v8.0: Log poll() return to confirm data received
+                if self.episode_steps > 0 and self.episode_steps % 30 == 0:
+                    print(f"[POLL RETURN] step {self.episode_steps}, received {len(step_result)} items")
+
                 if len(step_result) == 5:
                     obs_nested, rew_nested, term_nested, trunc_nested, info_nested = step_result
                 elif len(step_result) == 4:
                     obs_nested, rew_nested, term_nested, info_nested = step_result
-                    trunc_nested = term_nested 
+                    trunc_nested = term_nested
                 else:
                     raise ValueError(f"Unexpected poll() result length: {len(step_result)}")
 
@@ -555,16 +595,26 @@ if SCHOLA_AVAILABLE:
                 truncated_dict = {}
                 info_dict = {}
 
-                # v7.6: First pass - check for newly dead agents from UE5
+                # v8.0: First pass - check for newly dead agents from UE5
+                # Also detect if UE5 signals episode-level termination
+                any_term_from_ue5 = False
                 for flat_id in self._agent_ids:
                     env_idx, agent_idx = self.agent_map[flat_id]
                     is_term_ue5 = term_nested.get(env_idx, {}).get(agent_idx, False)
+                    is_trunc_ue5 = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
+
+                    if is_term_ue5 or is_trunc_ue5:
+                        any_term_from_ue5 = True
 
                     # If UE5 reports this agent as terminated, move to dead set
                     if is_term_ue5 and flat_id in self._alive_agents:
                         self._alive_agents.discard(flat_id)
                         self._dead_agents.add(flat_id)
-                        print(f"[v7.6] Agent {flat_id} died. Alive: {len(self._alive_agents)}, Dead: {len(self._dead_agents)}")
+                        print(f"[v8.0] Agent {flat_id} died. Alive: {len(self._alive_agents)}, Dead: {len(self._dead_agents)}")
+
+                # Log if UE5 is signaling termination (helps diagnose sync issues)
+                if any_term_from_ue5 and self.episode_steps % 10 == 0:
+                    print(f"[v8.0] UE5 signaling termination at step {self.episode_steps}. Alive: {len(self._alive_agents)}, Dead: {len(self._dead_agents)}")
 
                 # v7.6 & v7.7: Second pass - build RLlib outputs and track rewards
                 for flat_id in self._agent_ids:
@@ -612,8 +662,8 @@ if SCHOLA_AVAILABLE:
                         shaped_reward = self._shape_reward(base_reward, obs_dict[flat_id], flat_id)
                         reward_dict[flat_id] = shaped_reward
 
-                        # In sbdapm_env.py step() function around line 569, add logging:
-                        print(f"[REWARD DEBUG] Agent {flat_id}: base_reward={base_reward:.2f}, shaped={shaped_reward:.2f}")
+                        # Reward debug logging (uncomment for debugging)
+                        # print(f"[REWARD DEBUG] Agent {flat_id}: base_reward={base_reward:.2f}, shaped={shaped_reward:.2f}")
 
                         # v7.7: Accumulate episode rewards
                         if flat_id not in self._episode_rewards:
@@ -630,7 +680,7 @@ if SCHOLA_AVAILABLE:
                         info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
                         info_dict[flat_id]["action_mask"] = action_mask
 
-                # Episode Termination Logic (v7.6 + v8.0 Continuous Training)
+                # Episode Termination Logic (v8.0 - Fixed team elimination detection)
                 self.episode_steps += 1
                 episode_duration = current_time - self._episode_start_time
 
@@ -638,18 +688,26 @@ if SCHOLA_AVAILABLE:
                 if self.episode_steps <= 3:
                     print(f"[DIAGNOSTIC] Step {self.episode_steps}: Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)}")
 
-                # v8.0 CONTINUOUS TRAINING: Team elimination handled by UE5 (respawn system)
-                # Python ONLY terminates on timeout, NOT on team elimination
-                # This allows teams to respawn and continue fighting within the same episode
-
-                # Condition 1: Timeout (10 minutes default)
+                # Condition 1: Timeout
                 timeout_reached = episode_duration >= MAX_EPISODE_DURATION
 
                 # Condition 2: Max step safeguard (fallback)
                 max_steps_reached = self.episode_steps >= self.max_episode_steps
 
-                # v8.0: ONLY terminate on timeout/max steps, NEVER on team elimination
-                if timeout_reached or max_steps_reached:
+                # Condition 3: Team elimination (all agents dead)
+                # CRITICAL FIX: Without this check, poll() blocks forever when UE5 ends episode
+                team_eliminated = (len(self._alive_agents) == 0 and len(self._dead_agents) > 0)
+
+                if team_eliminated:
+                    # Natural termination: all agents died
+                    # Use terminated=True (not truncated) since episode ended naturally
+                    for aid in self._agent_ids:
+                        terminated_dict[aid] = True
+                        truncated_dict[aid] = False
+                    terminated_dict["__all__"] = True
+                    truncated_dict["__all__"] = False
+                    print(f"[EPISODE END] Team eliminated at step {self.episode_steps}, duration {episode_duration:.1f}s")
+                elif timeout_reached or max_steps_reached:
                     # Truncation: time limit reached
                     # ALL agents (including those who died earlier) get truncated=True
                     for aid in self._agent_ids:

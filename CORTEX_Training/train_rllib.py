@@ -45,6 +45,7 @@ import torch  # Fix for Windows DLL error (must be imported before ray)
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import argparse
+import time
 from datetime import datetime
 
 # Check for required packages
@@ -243,7 +244,11 @@ class SBDAPMConfig:
     # Environment
     HOST = "localhost"
     PORT = 50051
-    MAX_EPISODE_STEPS = 2000  # MUST match UE5's MaxStepsPerEpisode (SimulationManagerGameMode.h:514)
+    # v8.0: Fallback step limit (episode termination is primarily time-based at 60s)
+    # CRITICAL: Actual step rate is ~10 Hz (not 1 Hz as originally assumed)
+    # At 10 Hz decision rate, 60s = 600 steps minimum
+    # Set to 1000 as safety margin to ensure timeout (not step limit) ends episodes
+    MAX_EPISODE_STEPS = 1000
 
     # Network architecture (increased capacity for value learning)
     HIDDEN_LAYERS = [256, 256, 128]  # Increased from [128, 128, 64]
@@ -784,7 +789,15 @@ def train(args):
     strategy_params_history = defaultdict(list)
 
     for i in range(args.iterations):
+        print(f"\n{'='*70}")
+        print(f"[ITERATION {i+1}/{args.iterations}] Starting training iteration...")
+        print(f"{'='*70}")
+
+        iter_start_time = time.time()
         result = algo.train()
+        iter_duration = time.time() - iter_start_time
+
+        print(f"[ITERATION {i+1}] Training completed in {iter_duration:.1f}s")
 
         # Extract metrics (multi-agent aware)
         # In RLlib's new API, episode metrics are nested under "env_runners"

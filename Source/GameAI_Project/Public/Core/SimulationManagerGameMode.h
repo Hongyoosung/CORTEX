@@ -514,9 +514,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
 	int32 MaxStepsPerEpisode = 0;
 
-	/** Max episode duration in seconds (0 = unlimited, default = 600s for 10 minutes to match Python) */
+	/** Max episode duration in seconds (0 = unlimited, default = 60s for 4v4 objective capture) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	float MaxEpisodeDuration = 600.0f;
+	float MaxEpisodeDuration = 60.0f;
 
 	/** Win reward for episode victory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")

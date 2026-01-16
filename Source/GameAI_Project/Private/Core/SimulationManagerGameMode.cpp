@@ -1,6 +1,7 @@
 #include "Core/SimulationManagerGameMode.h"
 #include "Team/TeamLeaderComponent.h"
 #include "Team/FollowerAgentComponent.h"
+#include "Team/ObjectiveActor.h"
 #include "Combat/HealthComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "DrawDebugHelpers.h"
@@ -56,12 +57,14 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 			CheckEpisodeTermination();
 		}
 
-		// Check for max duration termination (10 minutes by default, matches Python MAX_EPISODE_DURATION)
+		// Check for max duration termination (60s by default, matches Python MAX_EPISODE_DURATION)
 		if (MaxEpisodeDuration > 0.0f)
 		{
 			float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
 			if (EpisodeElapsed >= MaxEpisodeDuration)
 			{
+				UE_LOG(LogTemp, Warning, TEXT("[EPISODE TIMEOUT] Duration: %.1fs >= MaxDuration: %.1fs - Triggering termination check"),
+					EpisodeElapsed, MaxEpisodeDuration);
 				CheckEpisodeTermination();
 			}
 		}
@@ -694,14 +697,14 @@ void ASimulationManagerGameMode::CheckEpisodeTermination()
 		return;
 	}
 
-	// Check max duration (10 minutes by default, matches Python MAX_EPISODE_DURATION)
+	// Check max duration (60s by default, matches Python MAX_EPISODE_DURATION)
 	if (MaxEpisodeDuration > 0.0f)
 	{
 		float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
 		if (EpisodeElapsed >= MaxEpisodeDuration)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode %d - Max duration reached (%.1fs)"),
-				CurrentEpisode, EpisodeElapsed);
+			UE_LOG(LogTemp, Warning, TEXT("[EPISODE TERMINATION] Episode %d - Max duration reached (%.1fs >= %.1fs) - TIMEOUT"),
+				CurrentEpisode, EpisodeElapsed, MaxEpisodeDuration);
 			EndEpisode(-1, -1); // Draw (timeout)
 			return;
 		}
@@ -739,6 +742,10 @@ void ASimulationManagerGameMode::CheckEpisodeTermination()
 		int32 WinningTeamID = AliveTeams.Num() == 1 ? AliveTeams[0] : -1;
 		int32 LosingTeamID = EliminatedTeams.Num() > 0 ? EliminatedTeams[0] : -1;
 
+		float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
+		UE_LOG(LogTemp, Warning, TEXT("[EPISODE TERMINATION] Team elimination detected at %.1fs (MaxDuration: %.1fs)"),
+			EpisodeElapsed, MaxEpisodeDuration);
+
 		// CONTINUOUS TRAINING MODE: Respawn losing team instead of ending episode
 		if (bEnableContinuousTraining && WinningTeamID != -1 && LosingTeamID != -1)
 		{
@@ -754,8 +761,8 @@ void ASimulationManagerGameMode::CheckEpisodeTermination()
 		// TRADITIONAL MODE: End episode on team elimination
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode %d - Team %d eliminated! Winner: %d"),
-				CurrentEpisode, LosingTeamID, WinningTeamID);
+			UE_LOG(LogTemp, Warning, TEXT("[EPISODE TERMINATION] Episode %d - Team %d eliminated at %.1fs! Winner: %d - TEAM ELIMINATION"),
+				CurrentEpisode, LosingTeamID, EpisodeElapsed, WinningTeamID);
 
 			EndEpisode(WinningTeamID, LosingTeamID);
 		}
@@ -859,6 +866,8 @@ void ASimulationManagerGameMode::StartNewEpisode()
 	bEpisodeEnding = false;
 
 	UE_LOG(LogTemp, Warning, TEXT("===== EPISODE %d STARTED ====="), CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE CONFIG] MaxEpisodeDuration: %.1fs, MaxSteps: %d, StartTime: %.2f"),
+		MaxEpisodeDuration, MaxStepsPerEpisode, EpisodeStartTime);
 
 	// Reset agent health and positions
 	for (auto& Pair : RegisteredTeams)
@@ -930,8 +939,29 @@ void ASimulationManagerGameMode::StartNewEpisode()
 		}
 	}
 
+	// v8.0: Reset all ObjectiveActors in the world
+	// CRITICAL: Without this, objectives retain durability damage from previous episodes
+	TArray<AActor*> FoundObjectives;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
+
+	for (AActor* ObjActor : FoundObjectives)
+	{
+		AObjectiveActor* Objective = Cast<AObjectiveActor>(ObjActor);
+		if (Objective)
+		{
+			Objective->ResetDurability();
+			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset ObjectiveActor '%s' (Team %d) to full durability"),
+				*Objective->GetName(), Objective->OwnerTeamID);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset %d ObjectiveActor(s)"), FoundObjectives.Num());
+
 	// Broadcast episode started event
 	OnEpisodeStarted.Broadcast(CurrentEpisode);
+
+	// Final verification log - this confirms episode is ready for training
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE READY] Episode %d fully initialized - all agents reset and ready"), CurrentEpisode);
 }
 
 //------------------------------------------------------------------------------
