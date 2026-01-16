@@ -1,17 +1,21 @@
 """
-RLlib Training Script for CORTEX (v8.0 - Multi-Head Tactical Parameters)
+RLlib Training Script for CORTEX (v8.2 - Simplified)
 
 Trains PPO agents via Schola gRPC connection to Unreal Engine.
 
+v8.2 Changes:
+    - REMOVED: Curriculum learning (MCTS in UE5 already controls strategy assignments)
+    - SIMPLIFIED: Training loop with minimal logging
+    - FIXED: Episode boundary synchronization (UE5 is single source of truth)
+
 v8.0 Architecture:
     - MCTS assigns strategies → RL outputs tactical parameters + combat priority
-    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128] → 4 strategy heads (4 params each) + combat head (1 priority)
+    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128]
     - Action space: 5 continuous outputs (4 tactical params + 1 combat priority)
-    - Curriculum learning (3 phases: Single → Mixed → Dynamic)
     - Exports to: cortex_policy_v8.onnx
 
 Usage:
-    1. Start UE with Schola plugin (game mode)
+    1. Start UE5 with Schola plugin (MaxEpisodeDuration=60s)
     2. Run: python train_rllib.py --iterations 50
     3. Model exports to cortex_policy_v8.onnx
 
@@ -32,17 +36,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 try:
     from training_env.config import RLConfig
 except ImportError:
-    print("Warning: training_env/config.py not found. Run: python tools/sync_config_from_cpp.py")
-    # Fallback values if config not available
+    print("Warning: training_env/config.py not found. Using defaults.")
     class RLConfig:
         OBSERVATION_SIZE = 50  # 46 base + 4 strategy one-hot
         NUM_STRATEGIES = 4
 
-import torch  # Fix for Windows DLL error (must be imported before ray)
-
-# Windows DLL fix: Disable CUDA if not using GPU (prevents c10.dll conflicts)
-# Uncomment the line below if training on CPU only:
-# os.environ["CUDA_VISIBLE_DEVICES"] = ""
+import torch  # Must be imported before ray on Windows
 
 import argparse
 import time
@@ -52,7 +51,6 @@ from datetime import datetime
 try:
     import ray
     from ray.rllib.algorithms.ppo import PPOConfig
-    from ray.rllib.policy.policy import Policy
     RLLIB_AVAILABLE = True
 except ImportError:
     RLLIB_AVAILABLE = False
@@ -61,15 +59,14 @@ except ImportError:
 try:
     from schola.gym.env import GymEnv as UnrealEnv
     SCHOLA_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     SCHOLA_AVAILABLE = False
     print("Warning: schola not installed. Run: pip install schola[rllib]")
-    print(f"\n[치명적 오류] Schola import 실패 원인:\n{e}")
 
 import numpy as np
 from gymnasium import spaces
 
-# Import PyTorch and RLlib model classes for custom multi-head network
+# Import PyTorch and RLlib model classes
 try:
     import torch.nn as nn
     from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
@@ -87,44 +84,31 @@ except ImportError:
 
 class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     """
-    Multi-Head PPO Network for Tactical Parameters + Combat Control (v8.0)
+    Multi-Head PPO Network for Tactical Parameters + Combat Control.
 
     Architecture:
-        - Input: 50 features (46 base + 4 strategy one-hot from Python wrapper)
+        - Input: 50 features (46 base + 4 strategy one-hot)
         - Shared Feature Extractor: [256 → 256 → 128] ReLU
         - 4 Strategy-Specific Mean Heads: Assault, Defend, Support, Retreat
-          - Each head: FC(128→32→4) → Linear → [Aggression, CoverPref, Spread, Risk] means
-        - 1 Combat Mean Head: FC(128→1) → Linear → Combat Priority mean
-        - 1 Shared Log-Std Head: FC(128→5) → Linear → Log standard deviations
-        - 1 Shared Critic Head: FC(128→1) → Linear → State Value
-
-    v8.0 Key Changes:
-        - MCTS assigns strategies (part of observation, not action)
-        - RL outputs Gaussian distribution parameters (mean + log_std) for PPO
-        - RLlib's DiagGaussian samples actions, environment clips to [0,1]
-        - Separate policy heads guarantee strategy differentiation
+        - 1 Combat Mean Head: FC(128→1)
+        - 1 Shared Log-Std Head: FC(128→5)
+        - 1 Shared Critic Head: FC(128→1)
 
     Outputs:
         - 10 values: 5 means + 5 log_stds for DiagGaussian distribution
-        - State value: 1-dim value estimate (via value_function())
     """
 
     def __init__(self, obs_space, action_space, num_outputs, model_config, name):
         TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
 
-        # v8.0: Observation size from RLConfig (synced from C++)
-        obs_dim = RLConfig.OBSERVATION_SIZE  # 50 features (46 base + 4 strategy one-hot)
-
-        # RLlib passes num_outputs = 2 * action_dim for DiagGaussian (mean + log_std)
-        # For Box(5,) action space: num_outputs = 10
+        obs_dim = RLConfig.OBSERVATION_SIZE  # 50
         self.num_outputs = num_outputs
         self.action_dim = num_outputs // 2  # 5
 
-        # Get hidden layers from config (default: [256, 256, 128])
         hidden_layers = model_config.get("custom_model_config", {}).get("hidden_layers", [256, 256, 128])
 
-        # Shared feature extractor: learns common features (perception, tactical context)
+        # Shared feature extractor
         layers = []
         prev_size = obs_dim
         for hidden_size in hidden_layers:
@@ -132,15 +116,12 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
             prev_size = hidden_size
 
         self.shared_trunk = nn.Sequential(*layers)
-        final_hidden_size = hidden_layers[-1]  # Last layer size (128)
+        final_hidden_size = hidden_layers[-1]
 
-        # === Strategy-Specific Mean Heads (4 heads) ===
-        # Each strategy has dedicated output layers for tactical parameter MEANS
-        # Output unbounded values - RLlib's DiagGaussian will sample from these
-        # The environment clips sampled actions to [0,1]
+        # Strategy-Specific Mean Heads
         self.assault_mean_head = nn.Sequential(
             SlimFC(final_hidden_size, 32, activation_fn=nn.ReLU),
-            SlimFC(32, 4, activation_fn=None)  # 4 tactical param means (unbounded)
+            SlimFC(32, 4, activation_fn=None)
         )
         self.defend_mean_head = nn.Sequential(
             SlimFC(final_hidden_size, 32, activation_fn=nn.ReLU),
@@ -155,80 +136,53 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
             SlimFC(32, 4, activation_fn=None)
         )
 
-        # === Combat Mean Head (Target Priority) ===
-        # Single mean value for combat priority
+        # Combat Mean Head
         self.combat_mean_head = SlimFC(final_hidden_size, 1, activation_fn=None)
 
-        # === Shared Log-Std Head ===
-        # Log standard deviation for all 5 action dimensions
-        # Shared across strategies for stable exploration
+        # Shared Log-Std Head
         self.log_std_head = SlimFC(final_hidden_size, self.action_dim, activation_fn=None)
 
-        # === Shared Value Head ===
-        # Value estimate independent of strategy assignment
+        # Shared Value Head
         self.value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
 
-        # Store last features for value function
         self._last_features = None
-        self._last_strategy_index = None
 
     @override(TorchModelV2)
     def forward(self, input_dict, state, seq_lens):
-        """
-        Forward pass (v8.0 - Multi-Head with Gaussian outputs)
-
-        Args:
-            input_dict: Contains 'obs' with shape [batch, 50]
-                - obs[:, :46]: base observation
-                - obs[:, 46:50]: strategy one-hot [Assault, Defend, Support, Retreat]
-
-        Returns:
-            (output, state): 10-dim output [5 means, 5 log_stds] for DiagGaussian
-        """
         obs = input_dict["obs"]
         batch_size = obs.shape[0]
 
         # Extract strategy one-hot (last 4 features)
-        strategy_onehot = obs[:, 46:50]  # [batch, 4]
+        strategy_onehot = obs[:, 46:50]
 
         # Run shared trunk
-        features = self.shared_trunk(obs)  # [batch, 128]
+        features = self.shared_trunk(obs)
         self._last_features = features
 
-        # Route to appropriate strategy mean head based on one-hot encoding
-        tactical_means = torch.zeros(batch_size, 4, device=obs.device)  # [batch, 4]
+        # Route to appropriate strategy head
+        tactical_means = torch.zeros(batch_size, 4, device=obs.device)
 
         for i in range(batch_size):
             strategy_idx = torch.argmax(strategy_onehot[i]).item()
-            self._last_strategy_index = strategy_idx  # Store for debugging
 
-            if strategy_idx == 0:  # Assault
+            if strategy_idx == 0:
                 tactical_means[i] = self.assault_mean_head(features[i:i+1]).squeeze(0)
-            elif strategy_idx == 1:  # Defend
+            elif strategy_idx == 1:
                 tactical_means[i] = self.defend_mean_head(features[i:i+1]).squeeze(0)
-            elif strategy_idx == 2:  # Support
+            elif strategy_idx == 2:
                 tactical_means[i] = self.support_mean_head(features[i:i+1]).squeeze(0)
-            elif strategy_idx == 3:  # Retreat
+            else:
                 tactical_means[i] = self.retreat_mean_head(features[i:i+1]).squeeze(0)
 
-        # Combat mean head (shared across all strategies)
-        combat_mean = self.combat_mean_head(features)  # [batch, 1]
-
-        # Concatenate means: [4 tactical means, 1 combat mean] = 5 dims
-        means = torch.cat([tactical_means, combat_mean], dim=-1)  # [batch, 5]
-
-        # Log-std head (shared, state-dependent exploration)
-        log_stds = self.log_std_head(features)  # [batch, 5]
-
-        # Concatenate [means, log_stds] for RLlib's DiagGaussian distribution
-        # RLlib expects [mean_1, mean_2, ..., log_std_1, log_std_2, ...]
-        output = torch.cat([means, log_stds], dim=-1)  # [batch, 10]
+        combat_mean = self.combat_mean_head(features)
+        means = torch.cat([tactical_means, combat_mean], dim=-1)
+        log_stds = self.log_std_head(features)
+        output = torch.cat([means, log_stds], dim=-1)
 
         return output, state
 
     @override(TorchModelV2)
     def value_function(self):
-        """Return value estimate from value head (used by PPO)"""
         if self._last_features is None:
             raise ValueError("Must call forward() before value_function()")
         return self.value_head(self._last_features).squeeze(-1)
@@ -244,170 +198,47 @@ class SBDAPMConfig:
     # Environment
     HOST = "localhost"
     PORT = 50051
-    # v8.0: Fallback step limit (episode termination is primarily time-based at 60s)
-    # CRITICAL: Actual step rate is ~10 Hz (not 1 Hz as originally assumed)
-    # At 10 Hz decision rate, 60s = 600 steps minimum
-    # Set to 1000 as safety margin to ensure timeout (not step limit) ends episodes
-    MAX_EPISODE_STEPS = 1000
 
-    # Network architecture (increased capacity for value learning)
-    HIDDEN_LAYERS = [256, 256, 128]  # Increased from [128, 128, 64]
+    # Network architecture
+    HIDDEN_LAYERS = [256, 256, 128]
 
-    # PPO hyperparameters (v8.0: Tuned for hybrid continuous + discrete action space)
-    LEARNING_RATE = 5e-5  # Reduced from 1e-4 for continuous action stability
-    TRAIN_BATCH_SIZE = 8000  # Increased from 4000 for better continuous gradient estimates
-    SGD_MINIBATCH_SIZE = 512  # Doubled from 256 for more stable updates
-    NUM_SGD_ITER = 15  # Increased from 10 for better continuous action learning
+    # PPO hyperparameters
+    LEARNING_RATE = 5e-5
+    TRAIN_BATCH_SIZE = 8000
+    SGD_MINIBATCH_SIZE = 512
+    NUM_SGD_ITER = 15
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.01  # Reduced from 0.5 (continuous actions have higher base entropy)
-    VF_LOSS_COEFF = 1.5  # Unchanged - critical for value learning
+    ENTROPY_COEFF = 0.01
+    VF_LOSS_COEFF = 1.5
 
     # Training
-    NUM_WORKERS = 0  # Windows fix: 0 = single process (no DLL conflicts)
+    NUM_WORKERS = 0  # Windows: single process
     NUM_ENVS_PER_WORKER = 1
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
 
     # Paths
     OUTPUT_DIR = "training_results"
-    MODEL_NAME = "tactical_policy"
-
-
-# ==============================================================================
-# CURRICULUM LEARNING (v8.0)
-# ==============================================================================
-
-class CurriculumScheduler:
-    """
-    Three-phase curriculum learning for v8.0 tactical parameter training.
-
-    Phase 1 (0-1000 episodes): Single Strategy
-        - All agents assigned Assault strategy
-        - Learn: Basic movement, objective advancement, combat engagement
-        - Goal: Establish baseline tactical parameter values
-
-    Phase 2 (1000-3000 episodes): Mixed Strategies
-        - 2 agents Assault, 2 agents Defend
-        - Learn: Strategy-specific parameter differentiation
-        - Goal: Separate policy heads learn distinct profiles
-
-    Phase 3 (3000+ episodes): Dynamic Assignment
-        - MCTS controls strategy assignments
-        - Learn: Adaptive tactics, strategy coordination
-        - Goal: Robust policy across all strategy combinations
-    """
-
-    def __init__(self, phase1_episodes=1000, phase2_episodes=3000):
-        self.phase1_threshold = phase1_episodes
-        self.phase2_threshold = phase2_episodes
-        self.current_phase = 1
-        self.episode_count = 0
-        self.last_log_episode = 0
-
-    def get_strategy_assignments(self, num_agents=4):
-        """
-        Get strategy assignments for current curriculum phase.
-
-        Returns:
-            dict {agent_id: strategy_index} or None (MCTS control in Phase 3)
-        """
-        if self.episode_count < self.phase1_threshold:
-            # Phase 1: All Assault
-            return {f"agent_{i}": 0 for i in range(num_agents)}
-
-        elif self.episode_count < self.phase2_threshold:
-            # Phase 2: 2 Assault, 2 Defend
-            assignments = {}
-            for i in range(num_agents):
-                assignments[f"agent_{i}"] = 0 if i < 2 else 1
-            return assignments
-
-        else:
-            # Phase 3: MCTS controls
-            return None
-
-    def update(self, episodes_this_iter):
-        """Update episode count and log phase transitions."""
-        prev_phase = self.current_phase
-        self.episode_count += episodes_this_iter
-
-        # Determine current phase
-        if self.episode_count >= self.phase2_threshold:
-            self.current_phase = 3
-        elif self.episode_count >= self.phase1_threshold:
-            self.current_phase = 2
-        else:
-            self.current_phase = 1
-
-        # Log phase transition
-        if self.current_phase != prev_phase:
-            self._log_phase_transition()
-
-        # Periodic status log (every 100 episodes)
-        if self.episode_count - self.last_log_episode >= 100:
-            self._log_status()
-            self.last_log_episode = self.episode_count
-
-    def _log_phase_transition(self):
-        """Log curriculum phase transition."""
-        print(f"\n{'='*70}")
-        print(f"CURRICULUM PHASE TRANSITION: Phase {self.current_phase} ACTIVATED")
-        print(f"{'='*70}")
-        print(f"Episode Count: {self.episode_count}")
-
-        if self.current_phase == 1:
-            print(f"Strategy Assignment: All Assault (single strategy learning)")
-            print(f"Focus: Basic movement, combat, objective advancement")
-        elif self.current_phase == 2:
-            print(f"Strategy Assignment: 2 Assault, 2 Defend (mixed strategies)")
-            print(f"Focus: Strategy differentiation, parameter profile separation")
-        elif self.current_phase == 3:
-            print(f"Strategy Assignment: MCTS-controlled (dynamic)")
-            print(f"Focus: Adaptive tactics, full strategy coordination")
-
-        print(f"{'='*70}\n")
-
-    def _log_status(self):
-        """Log periodic curriculum status."""
-        assignments = self.get_strategy_assignments()
-        assignment_str = "MCTS-controlled" if assignments is None else str(assignments)
-        print(f"[CURRICULUM] Phase {self.current_phase} | Episodes: {self.episode_count} | Assignments: {assignment_str}")
 
 
 def create_env_config():
-    """Create environment configuration for Schola."""
-
-    # AWS distributed mode: Get worker IPs from environment variable
-    worker_ips_str = os.getenv("WORKER_IPS", None)
-    if worker_ips_str:
-        worker_ips = worker_ips_str.strip().split()
-        print(f"AWS Distributed Mode: {len(worker_ips)} worker IPs configured")
-        print(f"Worker IPs: {worker_ips}")
-    else:
-        worker_ips = None
-        print("Local Mode: Using localhost with port offsets")
-
+    """Create environment configuration."""
     return {
         "host": SBDAPMConfig.HOST,
-        "base_port": SBDAPMConfig.PORT,  # Base port, each worker adds worker_index
-        "max_episode_steps": SBDAPMConfig.MAX_EPISODE_STEPS,
-        "worker_ips": worker_ips,  # Pass to env creator for AWS mode
-        # v4.0: Rate limiting handled UE-side (ScholaAgentComponent::DecisionInterval = 1.0s)
-        # Python responds immediately to avoid blocking gRPC - UE5 controls decision frequency
+        "base_port": SBDAPMConfig.PORT,
     }
 
 
-
 def create_ppo_config():
-    """Create RLlib PPO configuration for multi-agent training."""
+    """Create RLlib PPO configuration."""
     config = (
         PPOConfig()
         .environment(
             env="sbdapm_env",
             env_config=create_env_config(),
-            disable_env_checking=True,  # Disable env wrapper inspection
+            disable_env_checking=True,
         )
         .framework("torch")
         .env_runners(
@@ -415,20 +246,17 @@ def create_ppo_config():
             num_envs_per_env_runner=SBDAPMConfig.NUM_ENVS_PER_WORKER,
         )
         .multi_agent(
-            # All agents share one policy (parameter sharing)
             policies={"shared_policy"},
             policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "shared_policy",
-            # Count rewards per agent
             count_steps_by="agent_steps",
         )
-        .debugging(log_level="INFO")
+        .debugging(log_level="WARN")
         .reporting(
             metrics_num_episodes_for_smoothing=10,
             min_sample_timesteps_per_iteration=100,
         )
     )
 
-    # Set training parameters directly on config object (Ray 2.6+ API)
     config.lr = SBDAPMConfig.LEARNING_RATE
     config.train_batch_size = SBDAPMConfig.TRAIN_BATCH_SIZE
     config.sgd_minibatch_size = SBDAPMConfig.SGD_MINIBATCH_SIZE
@@ -439,21 +267,15 @@ def create_ppo_config():
     config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
     config.vf_loss_coeff = SBDAPMConfig.VF_LOSS_COEFF
     config.model = {
-        # v8.0: Multi-head tactical policy (4 strategy mean heads + combat mean head + log_std head)
-        # Model outputs 10 values: 5 means + 5 log_stds for DiagGaussian distribution
         "custom_model": "multi_head_tactical_policy",
         "custom_model_config": {
-            "obs_dim": RLConfig.OBSERVATION_SIZE,  # v8.0: 50 features (46 base + 4 strategy one-hot)
-            "hidden_layers": SBDAPMConfig.HIDDEN_LAYERS,  # [256, 256, 128]
-            # NOTE: num_outputs is provided by RLlib based on action space (10 for Box(5,) + DiagGaussian)
+            "obs_dim": RLConfig.OBSERVATION_SIZE,
+            "hidden_layers": SBDAPMConfig.HIDDEN_LAYERS,
         },
-        "max_seq_len": 20,  # Required by RLlib (not used for feedforward nets)
+        "max_seq_len": 20,
     }
 
     return config
-
-
-
 
 
 def register_env():
@@ -461,28 +283,10 @@ def register_env():
     from ray.tune.registry import register_env
 
     if SCHOLA_AVAILABLE:
-        # Use multi-agent Schola environment (v3.1)
         def env_creator(config):
             from sbdapm_env import SBDAPMMultiAgentEnv
-
-            # AWS distributed mode: Use specific worker IP
-            worker_ips = config.get("worker_ips")
-            if worker_ips:
-                worker_index = config.get("worker_index", 0)
-                host = worker_ips[worker_index % len(worker_ips)]
-                port = config.get("base_port", 50051)
-                print(f"[Worker {worker_index}] Connecting to {host}:{port}")
-
-                return SBDAPMMultiAgentEnv(
-                    host=host,
-                    port=port,
-                    max_episode_steps=config.get("max_episode_steps", 1000)
-                )
-            else:
-                # Local mode: Use base_port + worker_index
-                return SBDAPMMultiAgentEnv(**config)
+            return SBDAPMMultiAgentEnv(**config)
     else:
-        # Fallback to dummy env for testing
         def env_creator(config):
             from sbdapm_env import SBDAPMEnv
             return SBDAPMEnv(**config)
@@ -491,121 +295,54 @@ def register_env():
 
 
 def register_custom_model():
-    """Register multi-head tactical policy with RLlib (v8.0)"""
+    """Register multi-head tactical policy with RLlib."""
     from ray.rllib.models import ModelCatalog
 
     if TORCH_AVAILABLE:
-        # v8.0: Multi-head tactical parameters + combat control
         ModelCatalog.register_custom_model("multi_head_tactical_policy", MultiHeadTacticalPolicy)
-        print("[v8.0] Multi-head tactical policy registered with RLlib")
-    else:
-        print("[WARNING] PyTorch not available - cannot register custom model")
+        print("[v8.2] Multi-head tactical policy registered")
 
 
-
-def export_onnx_v8(algo, output_dir):
-    """
-    Export trained multi-head policy to ONNX format (v8.0)
-
-    Exports ONNX model with separate strategy mean heads for C++ inference:
-    - cortex_policy_v8.onnx
-
-    Model structure:
-        Input: 50 features (46 base + 4 strategy one-hot from Python wrapper)
-        Output 1-4: Tactical parameter MEANS for each strategy head [4 values each]
-        Output 5: Combat priority MEAN [1 value, apply sigmoid then threshold at 0.5]
-        Output 6: State value estimate
-
-    NOTE: For inference (ONNX), we export MEAN values only (not log_std).
-    Apply sigmoid to clamp to [0,1] for tactical params and combat priority.
-    """
+def export_onnx(algo, output_dir):
+    """Export trained policy to ONNX format."""
     try:
         import torch
         import torch.nn as nn
 
-        # Get policy (must specify policy name for multi-agent training)
         policy = algo.get_policy("shared_policy")
         if not policy:
-            print("ERROR: Could not get 'shared_policy'. Available policies:", algo.workers.local_worker().policy_map.keys())
+            print("ERROR: Could not get 'shared_policy'")
             return False
 
         model = policy.model
 
-        # ========================================
-        # Export Multi-Head Network (v8.0)
-        # Separate mean heads for each strategy + combat + value
-        # Apply sigmoid for bounded [0,1] outputs
-        # ========================================
-
         class MultiHeadPolicyWrapper(nn.Module):
-            """
-            Wrapper for multi-head policy export (v8.0)
-
-            Exports all strategy-specific mean heads with sigmoid activation so C++ can:
-            1. Route to correct head based on MCTS-assigned strategy
-            2. Use combat priority from combat mean head (sigmoid then threshold at 0.5)
-            3. Use value head for evaluation
-
-            Outputs (all in [0,1] via sigmoid):
-                - assault_tactical: [batch, 4] tactical params for Assault
-                - defend_tactical: [batch, 4] tactical params for Defend
-                - support_tactical: [batch, 4] tactical params for Support
-                - retreat_tactical: [batch, 4] tactical params for Retreat
-                - combat_priority: [batch, 1] target priority (<0.5=Closest, >=0.5=LowestHP)
-                - value: [batch, 1] state value estimate (unbounded)
-            """
             def __init__(self, model):
                 super().__init__()
                 self.model = model
 
             def forward(self, obs):
-                """
-                Args:
-                    obs: [batch, 50] (46 base + 4 strategy one-hot)
-
-                Returns:
-                    Tuple of (assault_tactical, defend_tactical, support_tactical,
-                             retreat_tactical, combat_priority, value)
-                """
-                # Run shared trunk
-                features = self.model.shared_trunk(obs)  # [batch, 128]
-
-                # Run all strategy mean heads and apply sigmoid for [0,1] bounds
-                assault_tactical = torch.sigmoid(self.model.assault_mean_head(features))  # [batch, 4]
-                defend_tactical = torch.sigmoid(self.model.defend_mean_head(features))    # [batch, 4]
-                support_tactical = torch.sigmoid(self.model.support_mean_head(features))  # [batch, 4]
-                retreat_tactical = torch.sigmoid(self.model.retreat_mean_head(features))  # [batch, 4]
-
-                # Run combat mean head with sigmoid
-                combat_priority = torch.sigmoid(self.model.combat_mean_head(features))  # [batch, 1]
-
-                # Run value head (unbounded)
-                value = self.model.value_head(features)  # [batch, 1]
-
+                features = self.model.shared_trunk(obs)
+                assault_tactical = torch.sigmoid(self.model.assault_mean_head(features))
+                defend_tactical = torch.sigmoid(self.model.defend_mean_head(features))
+                support_tactical = torch.sigmoid(self.model.support_mean_head(features))
+                retreat_tactical = torch.sigmoid(self.model.retreat_mean_head(features))
+                combat_priority = torch.sigmoid(self.model.combat_mean_head(features))
+                value = self.model.value_head(features)
                 return (assault_tactical, defend_tactical, support_tactical,
                        retreat_tactical, combat_priority, value)
 
         wrapper = MultiHeadPolicyWrapper(model)
         wrapper.eval()
 
-        # Dummy input: observation size from RLConfig (synced from C++)
         dummy_input = torch.randn(1, RLConfig.OBSERVATION_SIZE)
-
-        # Export multi-head model
         model_path = output_dir / "cortex_policy_v8.onnx"
+
         torch.onnx.export(
-            wrapper,
-            dummy_input,
-            str(model_path),
+            wrapper, dummy_input, str(model_path),
             input_names=["observation"],
-            output_names=[
-                "assault_tactical",   # Output 0: [batch, 4]
-                "defend_tactical",    # Output 1: [batch, 4]
-                "support_tactical",   # Output 2: [batch, 4]
-                "retreat_tactical",   # Output 3: [batch, 4]
-                "combat_priority",    # Output 4: [batch, 1]
-                "value"               # Output 5: [batch, 1]
-            ],
+            output_names=["assault_tactical", "defend_tactical", "support_tactical",
+                         "retreat_tactical", "combat_priority", "value"],
             dynamic_axes={
                 "observation": {0: "batch_size"},
                 "assault_tactical": {0: "batch_size"},
@@ -618,112 +355,56 @@ def export_onnx_v8(algo, output_dir):
             opset_version=11
         )
 
-        print(f"\n[v8.0 EXPORT COMPLETE]")
-        print(f"[SUCCESS] Multi-head policy exported to: {model_path}")
-        print(f"\nModel structure:")
-        print(f"  - Input: {RLConfig.OBSERVATION_SIZE} dims (46 base + 4 strategy one-hot)")
-        print(f"  - Output 0 (Assault): 4 tactical params [Aggression, CoverPref, Spread, Risk] in [0,1]")
-        print(f"  - Output 1 (Defend): 4 tactical params in [0,1]")
-        print(f"  - Output 2 (Support): 4 tactical params in [0,1]")
-        print(f"  - Output 3 (Retreat): 4 tactical params in [0,1]")
-        print(f"  - Output 4 (Combat): 1 dim priority in [0,1] (<0.5=Closest, >=0.5=LowestHP)")
-        print(f"  - Output 5 (Value): 1 dim state value estimate (unbounded)")
-        print(f"\nReady for UE5:")
-        print(f"  - Copy cortex_policy_v8.onnx to: Content/AI/Models/")
-        print(f"  - RLPolicyNetwork routes to appropriate strategy head based on MCTS assignment")
-        print(f"  - All tactical outputs are sigmoid-bounded to [0,1]")
-        print(f"  - Combat priority thresholded at 0.5 for target selection")
+        print(f"[EXPORT] Model saved to: {model_path}")
         return True
 
     except Exception as e:
         print(f"ONNX export failed: {e}")
-        import traceback
-        traceback.print_exc()
-        print("Saving checkpoint instead...")
         return False
-
-
-def get_entropy_coeff(iteration):
-    """
-    Entropy coefficient decay schedule.
-
-    Strategy:
-    - Iterations 0-30: 0.5 (high exploration)
-    - Iterations 31-80: 0.5 → 0.05 (linear decay)
-    - Iterations 81+: 0.05 (low exploitation)
-
-    This allows initial exploration, then gradual policy convergence.
-    """
-    if iteration <= 30:
-        return 0.5
-    elif iteration <= 80:
-        # Linear decay from 0.5 to 0.05
-        progress = (iteration - 30) / 50  # 0.0 to 1.0
-        return 0.5 - (0.45 * progress)
-    else:
-        return 0.05
 
 
 def train(args):
     """Main training loop."""
     print("=" * 60)
-    print("SBDAPM RLlib Training")
+    print("CORTEX v8.2 Training")
     print("=" * 60)
-    print(f"\nConnection Configuration:")
-    print(f"  Host: {SBDAPMConfig.HOST}")
-    print(f"  Port: {SBDAPMConfig.PORT}")
-    print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
+    print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
+    print(f"  Iterations: {args.iterations}")
     print()
 
-    # Windows fix: Ensure no stale Ray processes
+    # Cleanup any existing Ray
     try:
         ray.shutdown()
-        print("Cleaned up existing Ray processes")
     except:
-        pass  # No existing Ray instance
+        pass
 
-    # Windows multiprocessing fix: Use 'spawn' to avoid DLL conflicts
+    # Windows multiprocessing fix
     import multiprocessing
     try:
         multiprocessing.set_start_method('spawn', force=True)
     except RuntimeError:
-        pass  # Already set
+        pass
 
-    # Windows Ray fix: Create temp directory and configure Ray
+    # Initialize Ray
     import tempfile
     ray_temp_dir = os.path.join(tempfile.gettempdir(), "ray_cortex")
     os.makedirs(ray_temp_dir, exist_ok=True)
 
-    print(f"Initializing Ray with temp directory: {ray_temp_dir}")
-    print("This may take 10-30 seconds on first run...")
-
-    # Initialize Ray with Windows-specific settings
+    print("Initializing Ray...")
     try:
         ray.init(
             ignore_reinit_error=True,
-            include_dashboard=False,  # Disable dashboard to avoid GCS timeout
-            _temp_dir=ray_temp_dir,   # Explicit temp directory
-            num_cpus=4,               # Limit CPU detection issues on Windows
-            object_store_memory=1 * 1024**3,  # 1GB object store (prevent memory issues)
-            _system_config={
-                "gcs_rpc_server_reconnect_timeout_s": 300,  # Increase GCS timeout
-            },
-            logging_level="ERROR",  # Reduce log spam
+            include_dashboard=False,
+            _temp_dir=ray_temp_dir,
+            num_cpus=4,
+            object_store_memory=1 * 1024**3,
+            logging_level="ERROR",
         )
-        print("✅ Ray initialized successfully!")
+        print("Ray initialized")
     except Exception as e:
-        print(f"⚠️  Standard Ray init failed: {e}")
-        print("Falling back to Ray local mode (single machine, no GCS)...")
-        ray.init(
-            local_mode=True,  # Fallback: single-process mode (no GCS, no workers)
-            ignore_reinit_error=True,
-        )
-        print("✅ Ray local mode initialized (NUM_WORKERS will be ignored)")
-        if SBDAPMConfig.NUM_WORKERS > 0:
-            print(f"⚠️  Note: NUM_WORKERS={SBDAPMConfig.NUM_WORKERS} ignored in local mode")
-            SBDAPMConfig.NUM_WORKERS = 0  # Force single worker in local mode
+        print(f"Ray init failed: {e}, using local mode")
+        ray.init(local_mode=True, ignore_reinit_error=True)
 
-    # Register environment and custom model (v5.0)
     register_env()
     register_custom_model()
 
@@ -732,194 +413,74 @@ def train(args):
     output_dir = os.path.join(SBDAPMConfig.OUTPUT_DIR, timestamp)
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"\nOutput directory: {output_dir}")
-    print(f"TensorBoard logs: {output_dir}")
-    print(f"Training for {args.iterations} iterations\n")
+    print(f"Output: {output_dir}")
 
-    # Create config and algorithm with TensorBoard logging
-    print("[v8.0] Creating PPO configuration...")
-    config = create_ppo_config()
-    print("[v8.0] PPO configuration created successfully")
-
-    # Enable TensorBoard - Use Ray's default UnifiedLogger which includes:
-    # - CSVLogger (progress.csv)
-    # - JsonLogger (result.json)
-    # - TBXLogger (TensorBoard events)
+    # Create logger
     from ray.tune.logger import UnifiedLogger, TBXLogger, JsonLogger, CSVLogger
 
     def logger_creator(config_dict):
-        """Create logger with TensorBoard support."""
-        return UnifiedLogger(
-            config_dict,
-            output_dir,
-            loggers=[JsonLogger, CSVLogger, TBXLogger]  # Explicitly include TensorBoard
-        )
+        return UnifiedLogger(config_dict, output_dir, loggers=[JsonLogger, CSVLogger, TBXLogger])
 
+    # Build algorithm
+    print("\nConnecting to UE5...")
+    config = create_ppo_config()
 
-    # Initial entropy coefficient (will be updated dynamically in training loop)
-    config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
-
-    print("[v8.0] Building PPO algorithm (this creates the environment)...")
-    print("[v8.0] Waiting for connection to UE5 Schola server...")
     try:
         algo = config.build(logger_creator=logger_creator)
-        print("[v8.0] PPO algorithm built successfully!")
+        print("Connected!\n")
     except Exception as e:
-        print(f"[ERROR] Failed to build PPO algorithm: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"[ERROR] Failed to connect: {e}")
         ray.shutdown()
         sys.exit(1)
 
     # Training loop
     best_reward = float("-inf")
-    total_ue_episodes = 0  # Track UE episodes for sync logging
-
-    # v8.0: Initialize curriculum scheduler
-    curriculum = CurriculumScheduler(phase1_episodes=1000, phase2_episodes=3000)
-    print(f"\n{'='*70}")
-    print(f"CURRICULUM LEARNING ENABLED (v8.0)")
-    print(f"  Phase 1 (0-1000 episodes): All Assault")
-    print(f"  Phase 2 (1000-3000 episodes): 2 Assault, 2 Defend")
-    print(f"  Phase 3 (3000+ episodes): MCTS-controlled")
-    print(f"{'='*70}\n")
-
-    # v8.0: Track parameter distributions for monitoring differentiation
-    from collections import defaultdict
-    strategy_params_history = defaultdict(list)
 
     for i in range(args.iterations):
-        print(f"\n{'='*70}")
-        print(f"[ITERATION {i+1}/{args.iterations}] Starting training iteration...")
-        print(f"{'='*70}")
-
-        iter_start_time = time.time()
+        iter_start = time.time()
         result = algo.train()
-        iter_duration = time.time() - iter_start_time
+        iter_time = time.time() - iter_start
 
-        print(f"[ITERATION {i+1}] Training completed in {iter_duration:.1f}s")
+        # Extract metrics
+        env_results = result.get("env_runners", {})
+        reward = env_results.get("episode_reward_mean", 0)
+        ep_len = env_results.get("episode_len_mean", 0)
+        episodes = env_results.get("episodes_this_iter", 0)
+        agent_steps = result.get("num_agent_steps_sampled", 0)
 
-        # Extract metrics (multi-agent aware)
-        # In RLlib's new API, episode metrics are nested under "env_runners"
-        env_runner_results = result.get("env_runners", {})
-        episode_reward_mean = env_runner_results.get("episode_reward_mean", 0)
-        episode_len_mean = env_runner_results.get("episode_len_mean", 0)
-        episodes_this_iter = env_runner_results.get("episodes_this_iter", 0)
+        # Handle nan values
+        if np.isnan(reward):
+            reward = 0
+        if np.isnan(ep_len):
+            ep_len = 0
 
-        # Track UE episodes
-        total_ue_episodes += episodes_this_iter
+        print(f"[{i+1:3d}/{args.iterations}] reward={reward:8.2f}, len={ep_len:6.1f}, "
+              f"episodes={episodes}, steps={agent_steps}, time={iter_time:.1f}s")
 
-        # v8.0: Update curriculum scheduler
-        curriculum.update(episodes_this_iter)
-
-        # Multi-agent specific metrics
-        num_agent_steps = result.get("num_agent_steps_sampled", 0)
-        num_env_steps = result.get("num_env_steps_sampled", 0)
-
-        # Extract value function metrics
-        vf_explained_var = result.get("info", {}).get("learner", {}).get("default_policy", {}).get("learner_stats", {}).get("vf_explained_var", 0.0)
-        entropy = result.get("info", {}).get("learner", {}).get("default_policy", {}).get("learner_stats", {}).get("entropy", 0.0)
-
-        # Calculate current entropy coefficient based on iteration (for display only)
-        current_entropy_coeff = get_entropy_coeff(i)
-
-        print(f"Iteration {i+1:4d} (UE Episodes: ~{total_ue_episodes}): "
-              f"reward={episode_reward_mean:8.2f}, "
-              f"len={episode_len_mean:6.1f}, "
-              f"vf_var={vf_explained_var:.4f}, "
-              f"entropy={entropy:.3f}, "
-              f"agent_steps={num_agent_steps}")
-
-        # v8.0: Monitor parameter profiles every 10 iterations
-        if (i + 1) % 10 == 0:
-            try:
-                import torch
-                policy = algo.get_policy("shared_policy")
-                model = policy.model
-
-                print(f"\n{'='*70}")
-                print(f"TACTICAL PARAMETER PROFILES (Iteration {i+1}, Phase {curriculum.current_phase})")
-                print(f"{'='*70}")
-
-                for strategy_idx, strategy_name in enumerate(['Assault', 'Defend', 'Support', 'Retreat']):
-                    # Create dummy observation with strategy one-hot (v8.0: 50 = 46 base + 4 strategy)
-                    dummy_obs = torch.zeros(1, 50)
-                    dummy_obs[0, 46 + strategy_idx] = 1.0
-
-                    # Sample tactical parameters from strategy-specific head
-                    with torch.no_grad():
-                        output, _ = model({"obs": dummy_obs}, [], None)
-                        tactical_params = output[0, :4].cpu().numpy()
-
-                    strategy_params_history[strategy_name].append(tactical_params)
-
-                    # Calculate recent mean
-                    recent = np.array(strategy_params_history[strategy_name][-10:])
-                    means = recent.mean(axis=0)
-                    stds = recent.std(axis=0)
-
-                    print(f"{strategy_name:8s}: Agg={means[0]:.3f}±{stds[0]:.3f}, "
-                          f"Cover={means[1]:.3f}±{stds[1]:.3f}, "
-                          f"Spread={means[2]:.3f}±{stds[2]:.3f}, "
-                          f"Risk={means[3]:.3f}±{stds[3]:.3f}")
-
-                # Calculate differentiation metric (Assault vs Defend)
-                if len(strategy_params_history['Assault']) > 0 and len(strategy_params_history['Defend']) > 0:
-                    assault_params = strategy_params_history['Assault'][-1]
-                    defend_params = strategy_params_history['Defend'][-1]
-                    diff = np.abs(assault_params - defend_params).mean()
-                    print(f"\nDifferentiation (Assault vs Defend): {diff:.3f} (target: >0.3)")
-
-                print(f"{'='*70}\n")
-
-            except Exception as e:
-                print(f"[WARNING] Parameter monitoring failed: {e}")
-
-        # Save checkpoint
+        # Checkpoint
         if (i + 1) % args.checkpoint_freq == 0:
-            checkpoint_path = algo.save(output_dir)
-            print(f"  Checkpoint: {checkpoint_path}")
+            algo.save(output_dir)
+            print(f"  Checkpoint saved")
 
         # Track best
-        if episode_reward_mean > best_reward:
-            best_reward = episode_reward_mean
-            best_checkpoint = algo.save(os.path.join(output_dir, "best"))
-            print(f"  New best! reward={best_reward:.2f}")
-
+        if reward > best_reward and not np.isnan(reward):
+            best_reward = reward
+            algo.save(os.path.join(output_dir, "best"))
+            print(f"  New best: {best_reward:.2f}")
 
     # Final save
     print("\n" + "=" * 60)
     print("Training Complete!")
     print("=" * 60)
 
-    final_checkpoint = algo.save(output_dir)
-    print(f"Final checkpoint: {final_checkpoint}")
+    algo.save(output_dir)
 
-    # Export ONNX (v8.0: multi-head policy with tactical parameters + combat)
-    best_checkpoint_dir = os.path.join(output_dir, "best")
-    if os.path.exists(best_checkpoint_dir):
-        print(f"\nExporting best model from: {best_checkpoint_dir}")
-        # Restore best checkpoint (use absolute path for PyArrow compatibility)
-        algo.restore(os.path.abspath(best_checkpoint_dir))
-        if export_onnx_v8(algo, Path(output_dir)):
-            print(f"\nBest model exported to: {output_dir}/cortex_policy_v8.onnx")
-        else:
-            print("\nBest model export failed, trying final checkpoint...")
-            # Fallback to final checkpoint (use absolute path for PyArrow compatibility)
-            algo.restore(os.path.abspath(output_dir))
-            export_onnx_v8(algo, Path(output_dir))
-    else:
-        # No best checkpoint, use final
-        print(f"\nExporting final model...")
-        if export_onnx_v8(algo, Path(output_dir)):
-            print(f"\nModel exported to: {output_dir}/cortex_policy_v8.onnx")
+    # Export ONNX
+    best_dir = os.path.join(output_dir, "best")
+    if os.path.exists(best_dir):
+        algo.restore(os.path.abspath(best_dir))
+    export_onnx(algo, Path(output_dir))
 
-    print("\nTo use in Unreal Engine:")
-    print("  1. Copy cortex_policy_v8.onnx to Content/AI/Models/")
-    print("  2. RLPolicyNetwork routes to strategy-specific head based on MCTS assignment")
-    print("  3. Combat head provides target priority, Value head used for PPO training")
-
-    # Cleanup
     algo.stop()
     ray.shutdown()
 
@@ -927,31 +488,20 @@ def train(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train SBDAPM tactical policy with RLlib")
-    parser.add_argument("--iterations", type=int, default=SBDAPMConfig.NUM_ITERATIONS,
-                        help="Number of training iterations")
-    parser.add_argument("--checkpoint-freq", type=int, default=SBDAPMConfig.CHECKPOINT_FREQ,
-                        help="Save checkpoint every N iterations")
-    parser.add_argument("--host", type=str, default=SBDAPMConfig.HOST,
-                        help="Schola gRPC server host")
-    parser.add_argument("--port", type=int, default=SBDAPMConfig.PORT,
-                        help="Schola gRPC server port")
+    parser = argparse.ArgumentParser(description="Train CORTEX tactical policy")
+    parser.add_argument("--iterations", type=int, default=SBDAPMConfig.NUM_ITERATIONS)
+    parser.add_argument("--checkpoint-freq", type=int, default=SBDAPMConfig.CHECKPOINT_FREQ)
+    parser.add_argument("--host", type=str, default=SBDAPMConfig.HOST)
+    parser.add_argument("--port", type=int, default=SBDAPMConfig.PORT)
 
     args = parser.parse_args()
 
-    # Update config
     SBDAPMConfig.HOST = args.host
     SBDAPMConfig.PORT = args.port
 
     if not RLLIB_AVAILABLE:
-        print("\nError: ray[rllib] is required. Install with:")
-        print("  pip install ray[rllib] torch")
+        print("Error: ray[rllib] required. pip install ray[rllib] torch")
         sys.exit(1)
-
-    if not SCHOLA_AVAILABLE:
-        print("\nWarning: schola not installed. Using dummy environment.")
-        print("For real training, install with:")
-        print("  pip install schola[rllib]")
 
     train(args)
 
