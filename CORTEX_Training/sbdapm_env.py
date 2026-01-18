@@ -1,7 +1,7 @@
 """
-SBDAPM Environment for Schola/RLlib Training (v8.2 - Simplified)
+SBDAPM Environment for Schola/RLlib Training (v8.0 - Simplified)
 
-v8.2 Changes:
+v8.0 Changes:
     - REMOVED: Strategy assignment management (MCTS in UE5 controls strategies)
     - SIMPLIFIED: Code reduced from 900 lines to ~300 lines
     - ADDED: Debug logging for termination detection
@@ -46,7 +46,7 @@ if SCHOLA_AVAILABLE:
 
     class SBDAPMMultiAgentEnv(MultiAgentEnv):
         """
-        Multi-Agent RLlib Environment for SBDAPM (v8.2).
+        Multi-Agent RLlib Environment for SBDAPM (v8.0).
 
         Key Principle: UE5 is the SINGLE SOURCE OF TRUTH for episode termination.
         """
@@ -57,12 +57,12 @@ if SCHOLA_AVAILABLE:
             host = kwargs.get("host", "localhost")
             port = self._resolve_port(kwargs)
 
-            print(f"[ENV v8.2] Connecting to {host}:{port}...")
+            print(f"[ENV v8.0] Connecting to {host}:{port}...")
 
             try:
                 connection = UnrealEditorConnection(url=host, port=port)
                 self.schola_env = ScholaEnv(unreal_connection=connection, verbosity=1)
-                print(f"[ENV v8.2] Connected!")
+                print(f"[ENV v8.0] Connected!")
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
                 raise
@@ -91,9 +91,6 @@ if SCHOLA_AVAILABLE:
             self.episode_steps = 0
             self._episode_start_time = None
             self._first_reset_done = False
-
-            # Debug: Track termination signals
-            self._last_term_signal = None
             self._episodes_completed = 0
 
         def _resolve_port(self, kwargs):
@@ -167,6 +164,10 @@ if SCHOLA_AVAILABLE:
 
         def reset(self, *, seed=None, options=None):
             """Reset environment."""
+            reset_start = time.time()
+            print(f"\n{'='*80}")
+            print(f"[RESET START] Episode={self._episodes_completed}, Steps={self.episode_steps}, Time={reset_start:.2f}")
+
             if self._episode_start_time and self.episode_steps > 0:
                 duration = time.time() - self._episode_start_time
                 print(f"[EPISODE END] Steps={self.episode_steps}, Duration={duration:.1f}s")
@@ -179,18 +180,29 @@ if SCHOLA_AVAILABLE:
                 if is_first:
                     print("[RESET] First reset - synchronizing with UE5...")
 
+                print(f"[RESET] Calling schola_env.hard_reset()... Time={time.time():.2f}")
                 raw_obs = self.schola_env.hard_reset()
+                print(f"[RESET] hard_reset() returned successfully. Time={time.time():.2f}, Duration={time.time()-reset_start:.2f}s")
+
                 self._first_reset_done = True
                 self._episode_start_time = time.time()
-                self._update_agent_map()
 
+                # Only update agent map on first reset (agents don't change during training)
                 if is_first:
+                    self._update_agent_map()
                     print(f"[RESET] {len(self._agent_ids)} agents detected")
 
-                return self._process_obs(raw_obs)
+                result = self._process_obs(raw_obs)
+                print(f"[RESET COMPLETE] Duration={time.time()-reset_start:.2f}s, Agents={len(result[0])}")
+                print(f"{'='*80}\n")
+                return result
 
             except Exception as e:
                 print(f"[RESET ERROR] {e}")
+                import traceback
+                traceback.print_exc()
+                print(f"[RESET FAILED] Duration={time.time()-reset_start:.2f}s")
+                print(f"{'='*80}\n")
                 return {}, {}
 
         def step(self, action_dict):
@@ -220,9 +232,17 @@ if SCHOLA_AVAILABLE:
                             key: action_array for key in agent_keys
                         }
 
-                # Send and receive
+                # Send and receive (with diagnostics)
+                send_start = time.time()
                 self.schola_env.send_actions(formatted_actions)
+                send_duration = time.time() - send_start
+
+                poll_start = time.time()
                 step_result = self.schola_env.poll()
+                poll_duration = time.time() - poll_start
+
+                if send_duration > 0.1 or poll_duration > 0.1:
+                    print(f"[STEP SLOW] send={send_duration*1000:.1f}ms, poll={poll_duration*1000:.1f}ms")
 
                 # Parse response
                 if len(step_result) == 5:
@@ -262,16 +282,16 @@ if SCHOLA_AVAILABLE:
                     # Get reward
                     reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
 
-                    # Check termination (DEBUG)
+                    # Check termination from UE5
                     is_term = term_nested.get(env_idx, {}).get(agent_idx, False)
                     is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
 
                     if is_term or is_trunc:
+                        if not ue5_episode_done:  # Only log once per episode
+                            print(f"[UE5 TERM SIGNAL] Step={self.episode_steps}, Agent={flat_id}, term={is_term}, trunc={is_trunc}")
                         ue5_episode_done = True
-                        if self._last_term_signal != self.episode_steps:
-                            print(f"[TERM SIGNAL] Step {self.episode_steps}: term={is_term}, trunc={is_trunc}")
-                            self._last_term_signal = self.episode_steps
 
+                    # Always False for individual agents (only __all__ matters for RLlib)
                     terminated_dict[flat_id] = False
                     truncated_dict[flat_id] = False
                     info_dict[flat_id] = {}
@@ -284,10 +304,15 @@ if SCHOLA_AVAILABLE:
                         truncated_dict[flat_id] = True
                     truncated_dict["__all__"] = True
                     terminated_dict["__all__"] = False
-                    print(f"[EPISODE DONE] Step {self.episode_steps}, Total completed: {self._episodes_completed + 1}")
+                    print(f"\n[EPISODE DONE] Step={self.episode_steps}, Total completed={self._episodes_completed + 1}")
+                    print(f"[EPISODE DONE] Next call should be reset(). Waiting for RLlib...")
                 else:
                     truncated_dict["__all__"] = False
                     terminated_dict["__all__"] = False
+
+                # Periodic progress logging (every 100 steps)
+                if self.episode_steps % 100 == 0:
+                    print(f"[STEP {self.episode_steps}] Episode={self._episodes_completed}, Time={time.time()-self._episode_start_time:.1f}s")
 
                 return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 

@@ -165,6 +165,11 @@ void AScholaCombatEnvironment::InitializeEnvironment()
 
 void AScholaCombatEnvironment::ResetEnvironment()
 {
+	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] ResetEnvironment() called - Episode %d starting"),
+		SimulationManager ? SimulationManager->GetCurrentEpisode() + 1 : -1);
+	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
+
 	if (!SimulationManager)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] SimulationManager not found!"));
@@ -179,6 +184,8 @@ void AScholaCombatEnvironment::ResetEnvironment()
 		return;
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] %d teams registered"), AllTeamIDs.Num());
+
 	// CRITICAL FIX: Ensure simulation is running before starting new episode
 	// This ensures agents can send observations immediately after reset
 	if (!SimulationManager->IsSimulationRunning())
@@ -190,15 +197,19 @@ void AScholaCombatEnvironment::ResetEnvironment()
 	// Start new episode (this will reset agents and trigger OnEpisodeStarted event)
 	// OnEpisodeStarted will reset LastDecisionTime in all ScholaAgentComponents
 	// This ensures Think() can send observations immediately, preventing poll() from blocking
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Starting new episode - agents will reset decision timers"));
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Calling StartNewEpisode()..."));
 	SimulationManager->StartNewEpisode();
-	
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] StartNewEpisode() completed successfully"));
+
 	// Verify simulation is still running after reset
 	if (!SimulationManager->IsSimulationRunning())
 	{
 		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] CRITICAL: Simulation stopped after StartNewEpisode()! Restarting..."));
 		SimulationManager->StartSimulation();
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] ResetEnvironment() complete - ready for Python poll()"));
+	UE_LOG(LogTemp, Warning, TEXT("================================================================================\n"));
 }
 
 void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAgentTrainerPairs)

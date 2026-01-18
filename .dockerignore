@@ -1,0 +1,51 @@
+# Docker build context exclusions
+# Reduces build time and image size
+
+# Training results and checkpoints (large, frequently changing)
+CORTEX_Training/training_results/
+CORTEX_Training/models/
+CORTEX_Training/__pycache__/
+CORTEX_Training/*.pyc
+
+# UE5 build artifacts (huge, not needed in container)
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/
+
+# Git and IDE
+.git/
+.gitignore
+.vscode/
+.vs/
+*.sln
+*.vcxproj
+
+# Windows system files
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Documentation (not needed in runtime image)
+*.md
+!CORTEX_Training/README.md
+
+# Plugins (except Schola)
+Plugins/*
+!Plugins/Schola-1.3.0/
+
+# Content (not needed for training)
+Content/
+
+# Source code (only needed during development)
+Source/
+
+# Keep only what's needed:
+# - CORTEX_Training/ (Python scripts)
+# - Plugins/Schola-1.3.0/Resources/python (Schola package)

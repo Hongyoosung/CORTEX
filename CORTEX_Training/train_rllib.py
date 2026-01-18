@@ -1,9 +1,9 @@
 """
-RLlib Training Script for CORTEX (v8.2 - Simplified)
+RLlib Training Script for CORTEX (v8.0 - Simplified)
 
 Trains PPO agents via Schola gRPC connection to Unreal Engine.
 
-v8.2 Changes:
+v8.0 Changes:
     - REMOVED: Curriculum learning (MCTS in UE5 already controls strategy assignments)
     - SIMPLIFIED: Training loop with minimal logging
     - FIXED: Episode boundary synchronization (UE5 is single source of truth)
@@ -300,7 +300,7 @@ def register_custom_model():
 
     if TORCH_AVAILABLE:
         ModelCatalog.register_custom_model("multi_head_tactical_policy", MultiHeadTacticalPolicy)
-        print("[v8.2] Multi-head tactical policy registered")
+        print("[v8.0] Multi-head tactical policy registered")
 
 
 def export_onnx(algo, output_dir):
@@ -366,7 +366,7 @@ def export_onnx(algo, output_dir):
 def train(args):
     """Main training loop."""
     print("=" * 60)
-    print("CORTEX v8.2 Training")
+    print("CORTEX v8.0 Training")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Iterations: {args.iterations}")
@@ -397,10 +397,10 @@ def train(args):
             include_dashboard=False,
             _temp_dir=ray_temp_dir,
             num_cpus=4,
-            object_store_memory=1 * 1024**3,
+            object_store_memory=1 * 1024**3,  
             logging_level="ERROR",
         )
-        print("Ray initialized")
+        print("Ray initialized successfully")
     except Exception as e:
         print(f"Ray init failed: {e}, using local mode")
         ray.init(local_mode=True, ignore_reinit_error=True)
@@ -437,9 +437,17 @@ def train(args):
     best_reward = float("-inf")
 
     for i in range(args.iterations):
+        print(f"\n{'='*80}")
+        print(f"[TRAIN LOOP] Starting iteration {i+1}/{args.iterations}")
+        print(f"{'='*80}")
+
         iter_start = time.time()
+        print(f"[TRAIN LOOP] Calling algo.train()... Time={time.time():.2f}")
+
         result = algo.train()
+
         iter_time = time.time() - iter_start
+        print(f"[TRAIN LOOP] algo.train() returned. Duration={iter_time:.2f}s")
 
         # Extract metrics
         env_results = result.get("env_runners", {})
@@ -467,6 +475,9 @@ def train(args):
             best_reward = reward
             algo.save(os.path.join(output_dir, "best"))
             print(f"  New best: {best_reward:.2f}")
+
+
+        print(f"[TRAIN LOOP] Iteration {i+1} complete\n")
 
     # Final save
     print("\n" + "=" * 60)
