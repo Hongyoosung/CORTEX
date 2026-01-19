@@ -14,6 +14,7 @@ services:
       - NUM_ITERATIONS=100
       - HOST=host.docker.internal  # Connect to UE on host machine
       - PORT=50051
+      - IS_DOCKER=true  # Enable Docker-specific gRPC settings
     # Note: network_mode: "host" doesn't work on Windows/macOS Docker Desktop
     # Using default bridge network with host.docker.internal instead
     extra_hosts:
@@ -37,6 +38,7 @@ services:
       - NUM_ITERATIONS=100
       - HOST=host.docker.internal
       - PORT=50051  # Base port, workers use 50051-50054
+      - IS_DOCKER=true  # Enable Docker-specific gRPC settings
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: python train_rllib.py --iterations 100 --host host.docker.internal --port 50051

@@ -225,10 +225,20 @@ class SBDAPMConfig:
 
 def create_env_config():
     """Create environment configuration."""
-    return {
+    import os
+    is_docker = os.environ.get("IS_DOCKER", "false").lower() == "true"
+
+    config = {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,
     }
+
+    # Add Docker-specific settings
+    if is_docker:
+        config["is_docker"] = True
+        config["timeout"] = 60  # Extended timeout for Docker networking (increased from 30s)
+
+    return config
 
 
 def create_ppo_config():
@@ -365,10 +375,19 @@ def export_onnx(algo, output_dir):
 
 def train(args):
     """Main training loop."""
+    import os
+
+    # Override NUM_WORKERS from environment if set (Docker mode)
+    if "NUM_WORKERS" in os.environ:
+        num_workers = int(os.environ["NUM_WORKERS"])
+        SBDAPMConfig.NUM_WORKERS = num_workers
+        print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
+
     print("=" * 60)
     print("CORTEX v8.0 Training")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
+    print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
     print(f"  Iterations: {args.iterations}")
     print()
 

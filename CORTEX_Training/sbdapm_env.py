@@ -56,15 +56,69 @@ if SCHOLA_AVAILABLE:
 
             host = kwargs.get("host", "localhost")
             port = self._resolve_port(kwargs)
+            timeout = kwargs.get("timeout", 60)  # Default 60s for Docker (increased from 30s)
+            is_docker = kwargs.get("is_docker", False)
 
             print(f"[ENV v8.0] Connecting to {host}:{port}...")
+            if is_docker:
+                print(f"[ENV v8.0] Docker mode enabled - using extended timeout ({timeout}s) and keepalive options")
 
             try:
-                connection = UnrealEditorConnection(url=host, port=port)
-                self.schola_env = ScholaEnv(unreal_connection=connection, verbosity=1)
+                # For Docker mode, we need to patch the gRPC channel creation
+                # to include keepalive options that prevent timeout issues
+                if is_docker:
+                    import grpc
+                    from schola.core.unreal_connections.editor_connection import UnrealEditorConnection as BaseConnection
+
+                    # Monkey-patch grpc.insecure_channel to add our options
+                    original_insecure_channel = grpc.insecure_channel
+
+                    def patched_insecure_channel(target, options=None):
+                        # Add Docker-specific gRPC options
+                        docker_options = [
+                            ('grpc.keepalive_time_ms', 10000),
+                            ('grpc.keepalive_timeout_ms', 5000),
+                            ('grpc.http2.max_pings_without_data', 0),
+                            ('grpc.http2.min_time_between_pings_ms', 10000),
+                            ('grpc.max_connection_idle_ms', 300000),  # 5 minutes
+                            ('grpc.max_connection_age_ms', 600000),   # 10 minutes
+                            ('grpc.initial_reconnect_backoff_ms', 5000),
+                            ('grpc.max_reconnect_backoff_ms', 30000),
+                        ]
+
+                        # Merge with any existing options
+                        if options:
+                            docker_options.extend(options)
+
+                        return original_insecure_channel(target, options=docker_options)
+
+                    # Apply the patch
+                    grpc.insecure_channel = patched_insecure_channel
+                    print(f"[ENV v8.0] Applied gRPC channel patch for Docker networking")
+
+                # Create connection with default parameters
+                connection = UnrealEditorConnection(
+                    url=host,
+                    port=port
+                )
+
+                self.schola_env = ScholaEnv(
+                    unreal_connection=connection,
+                    verbosity=1
+                )
                 print(f"[ENV v8.0] Connected!")
+
+                # Restore original grpc.insecure_channel if we patched it
+                if is_docker:
+                    grpc.insecure_channel = original_insecure_channel
+
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
+                # Restore original grpc.insecure_channel if we patched it
+                if is_docker:
+                    import grpc
+                    if 'original_insecure_channel' in locals():
+                        grpc.insecure_channel = original_insecure_channel
                 raise
 
             # Agent mapping
