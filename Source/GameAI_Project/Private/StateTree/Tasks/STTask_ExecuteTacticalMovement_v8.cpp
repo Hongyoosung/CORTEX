@@ -309,8 +309,8 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TACTICAL v8.0] EQS returned %d positions (Aggression=%.2f → MinDist=%.0fcm, Cover=%.2f → Weight=%.1f)"),
-		Results.Num(), Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);
+	/*UE_LOG(LogTemp, Log, TEXT("[TACTICAL v8.0] EQS returned %d positions (Aggression=%.2f → MinDist=%.0fcm, Cover=%.2f → Weight=%.1f)"),
+		Results.Num(), Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);*/
 
 	return Results;
 }
@@ -396,9 +396,9 @@ void FSTTask_ExecuteTacticalMovement_v8::ExecuteMovementToTacticalPosition(
 				break;
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("[TACTICAL v8.0] '%s': MoveTo FAILED - %s (Target: %s)"),
+		/*UE_LOG(LogTemp, Warning, TEXT("[TACTICAL v8.0] '%s': MoveTo FAILED - %s (Target: %s)"),
 			*Pawn->GetName(),
 			*FailureReason,
-			*NavTargetPos.ToCompactString());
+			*NavTargetPos.ToCompactString());*/
 	}
 }

@@ -122,6 +122,19 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 	// Check if SimulationManager says the episode is ending (team annihilation or timeout)
 	// This ensures all agents terminate together when the episode ends
 
+	// DIAGNOSTIC: Track ComputeStatus() calls to verify it's being invoked
+	static int32 CallCounter = 0;
+	static int32 RunningCounter = 0;
+	static int32 CompletedCounter = 0;
+	static int32 TruncatedCounter = 0;
+	CallCounter++;
+
+	if (CallCounter % 100 == 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[ComputeStatus DIAGNOSTIC] Total calls: %d (Running: %d, Completed: %d, Truncated: %d)"),
+			CallCounter, RunningCounter, CompletedCounter, TruncatedCounter);
+	}
+
 	if (!ScholaAgent || !ScholaAgent->ScholaEnvironment)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeStatus: ScholaAgent or Environment is NULL!"));
@@ -138,26 +151,40 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 
 	ASimulationManagerGameMode* SimManager = Env->SimulationManager;
 
+	// CRITICAL FIX: Check both bEpisodeEnding AND bLastEpisodeWasTerminated
+	// bEpisodeEnding is cleared in StartNewEpisode(), but bLastEpisodeWasTerminated persists
+	// until all agents have reported their status to Python
+	bool bShouldTerminate = SimManager->IsEpisodeEnding() || SimManager->GetLastEpisodeWasTerminated();
+
 	// Check if episode is ending (set by SimulationManager when team is annihilated or timeout)
-	if (SimManager->IsEpisodeEnding())
+	if (bShouldTerminate)
 	{
 		// Determine if it was a timeout (truncated) or team annihilation (completed)
-		bool bWasTimeout = (SimManager->GetMaxStepsPerEpisode() > 0 && SimManager->GetCurrentStep() >= SimManager->GetMaxStepsPerEpisode()) ||
-						   (SimManager->GetMaxEpisodeDuration() > 0.0f && (GetWorld()->GetTimeSeconds() - SimManager->GetEpisodeStartTime()) >= SimManager->GetMaxEpisodeDuration());
+		// Use the cached timeout flag from EndEpisode()
+		bool bWasTimeout = SimManager->GetLastEpisodeWasTimeout();
 
 		if (bWasTimeout)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Episode TRUNCATED (timeout)"), *TrainerConfiguration.Name);
+			TruncatedCounter++;
+			UE_LOG(LogTemp, Warning, TEXT("[TERMINATION SIGNAL] %s: Episode TRUNCATED (timeout) - Sending to Python (Total truncated: %d)"),
+				*TrainerConfiguration.Name, TruncatedCounter);
 			return EAgentTrainingStatus::Truncated;
 		}
 		else
 		{
-			UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Episode COMPLETED (team annihilation)"), *TrainerConfiguration.Name);
+			CompletedCounter++;
+			UE_LOG(LogTemp, Warning, TEXT("[TERMINATION SIGNAL] %s: Episode COMPLETED (team annihilation) - Sending to Python (Total completed: %d)"),
+				*TrainerConfiguration.Name, CompletedCounter);
 			return EAgentTrainingStatus::Completed;
 		}
 	}
 
 	// Episode is still running
+	RunningCounter++;
+	if (CallCounter % 100 == 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Status=Running (step %d)"), *TrainerConfiguration.Name, EpisodeSteps);
+	}
 	return EAgentTrainingStatus::Running;
 }
 
@@ -177,6 +204,26 @@ void AFollowerAgentTrainer::GetInfo(TMap<FString, FString>& Info)
 	{
 		Info.Add(TEXT("current_reward"), FString::SanitizeFloat(RewardProvider->GetReward()));
 	}
+
+	// DIAGNOSTIC: Add current training status to info
+	EAgentTrainingStatus CurrentStatus = State.TrainingStatus;
+	FString StatusString;
+	switch (CurrentStatus)
+	{
+		case EAgentTrainingStatus::Running:
+			StatusString = TEXT("Running");
+			break;
+		case EAgentTrainingStatus::Completed:
+			StatusString = TEXT("Completed");
+			break;
+		case EAgentTrainingStatus::Truncated:
+			StatusString = TEXT("Truncated");
+			break;
+		default:
+			StatusString = TEXT("Unknown");
+			break;
+	}
+	Info.Add(TEXT("training_status"), StatusString);
 }
 
 void AFollowerAgentTrainer::ResetTrainer()
@@ -214,8 +261,17 @@ void AFollowerAgentTrainer::ResetTrainer()
 void AFollowerAgentTrainer::OnCompletion()
 {
 	// Called when episode ends
-	UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s - Episode completed (Total reward: %.2f, Steps: %d)"),
-		*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
+	// DIAGNOSTIC: Enhanced logging to track episode completion
+	EAgentTrainingStatus FinalStatus = State.TrainingStatus;
+	FString StatusString = (FinalStatus == EAgentTrainingStatus::Completed) ? TEXT("Completed") :
+		(FinalStatus == EAgentTrainingStatus::Truncated) ? TEXT("Truncated") : TEXT("Unknown");
+
+	UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ EPISODE COMPLETION: %s"), *TrainerConfiguration.Name);
+	UE_LOG(LogTemp, Warning, TEXT("║ Status: %s"), *StatusString);
+	UE_LOG(LogTemp, Warning, TEXT("║ Total Reward: %.2f"), EpisodeReward);
+	UE_LOG(LogTemp, Warning, TEXT("║ Total Steps: %d"), EpisodeSteps);
+	UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════════════════════════╝"));
 }
 
 void AFollowerAgentTrainer::OnPossess(APawn* InPawn)

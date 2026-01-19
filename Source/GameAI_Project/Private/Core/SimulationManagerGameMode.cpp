@@ -13,9 +13,6 @@ ASimulationManagerGameMode::ASimulationManagerGameMode()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.1f; // 10 Hz
-	
-	// Default to false - wait for external signal (e.g. from Python via Schola)
-	bAutoStartSimulation = false;
 }
 
 void ASimulationManagerGameMode::BeginPlay()
@@ -75,6 +72,9 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 			// Auto-increment step counter (each tick = 1 step)
 			CurrentStep++;
 
+			// v8.0 TIMING FIX: Accumulate game time (unaffected by observation collection pauses)
+			EpisodeGameTime += DeltaTime;
+
 			// Check for max steps termination
 			if (MaxStepsPerEpisode > 0 && CurrentStep >= MaxStepsPerEpisode)
 			{
@@ -82,13 +82,15 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 			}
 
 			// Check for max duration termination (60s by default, matches Python MAX_EPISODE_DURATION)
+			// v8.0 TIMING FIX: Use accumulated game time instead of wall-clock time
 			if (MaxEpisodeDuration > 0.0f)
 			{
-				float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
-				if (EpisodeElapsed >= MaxEpisodeDuration)
+				float WallClockElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
+
+				if (EpisodeGameTime >= MaxEpisodeDuration)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("[EPISODE TIMEOUT] Duration: %.1fs >= MaxDuration: %.1fs - Triggering termination check"),
-						EpisodeElapsed, MaxEpisodeDuration);
+					UE_LOG(LogTemp, Warning, TEXT("[EPISODE TIMEOUT] GameTime: %.1fs >= MaxDuration: %.1fs (WallClock: %.1fs, Discrepancy: %.1fs)"),
+						EpisodeGameTime, MaxEpisodeDuration, WallClockElapsed, WallClockElapsed - EpisodeGameTime);
 					CheckEpisodeTermination();
 				}
 			}
@@ -126,8 +128,6 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 				}
 			}
 		}
-
-		UpdateStatistics();
 
 		// Episode termination is now event-driven via OnAgentDied()
 		// No per-tick checking needed
@@ -591,12 +591,6 @@ FSimulationStats ASimulationManagerGameMode::GetSimulationStats() const
 // INTERNAL
 //------------------------------------------------------------------------------
 
-void ASimulationManagerGameMode::UpdateStatistics()
-{
-	// Statistics are computed on-demand in GetSimulationStats()
-	// This function can be used for periodic updates if needed
-}
-
 void ASimulationManagerGameMode::DrawDebugInformation()
 {
 	UWorld* World = GetWorld();
@@ -846,7 +840,12 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 	}
 
 	bEpisodeEnding = true;
+	bLastEpisodeWasTerminated = true;  // Persists until observations collected
 	float EpisodeDuration = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
+
+	// Determine if timeout
+	bool bIsTimeout = (WinningTeamID == -1 && LosingTeamID == -1);
+	bLastEpisodeWasTimeout = bIsTimeout;
 
 	// Build episode result
 	LastEpisodeResult.EpisodeNumber = CurrentEpisode;
@@ -898,27 +897,6 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 
 	// Broadcast episode ended event
 	OnEpisodeEnded.Broadcast(LastEpisodeResult);
-
-	// v8.0: Do NOT auto-restart when bAutoRestartEpisode = false
-	// Python controls episode boundaries via hard_reset()
-	// UE5 must keep responding to observations even when bEpisodeEnding = true
-	// (see Tick() - we no longer early-return when bEpisodeEnding is true)
-	if (bAutoRestartEpisode)
-	{
-		GetWorldTimerManager().SetTimer(
-			EpisodeRestartTimerHandle,
-			this,
-			&ASimulationManagerGameMode::StartNewEpisode,
-			EpisodeRestartDelay,
-			false
-		);
-
-		UE_LOG(LogTemp, Log, TEXT("SimulationManager: New episode starting in %.1fs"), EpisodeRestartDelay);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode ended, waiting for Python hard_reset() to trigger StartNewEpisode()"));
-	}
 }
 
 void ASimulationManagerGameMode::StartNewEpisode()
@@ -941,11 +919,16 @@ void ASimulationManagerGameMode::StartNewEpisode()
 	CurrentEpisode++;
 	CurrentStep = 0;
 	EpisodeStartTime = GetWorld()->GetTimeSeconds();
+	EpisodeGameTime = 0.0f;  // v8.0 TIMING FIX: Reset accumulated game time
 	bEpisodeEnding = false;  // CRITICAL: This unblocks Tick() so observations can flow again
+	// NOTE: bLastEpisodeWasTerminated is NOT cleared here - it persists until agents report status
 
 	UE_LOG(LogTemp, Warning, TEXT("===== EPISODE %d STARTED ====="), CurrentEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("[EPISODE CONFIG] bEpisodeEnding=%s, MaxEpisodeDuration: %.1fs, MaxSteps: %d"),
 		bEpisodeEnding ? TEXT("TRUE") : TEXT("FALSE"), MaxEpisodeDuration, MaxStepsPerEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("[TERMINATION FLAGS] bLastEpisodeWasTerminated=%s, bLastEpisodeWasTimeout=%s"),
+		bLastEpisodeWasTerminated ? TEXT("TRUE") : TEXT("FALSE"), bLastEpisodeWasTimeout ? TEXT("TRUE") : TEXT("FALSE"));
+	UE_LOG(LogTemp, Warning, TEXT("[TIMING FIX] Using accumulated game time (DeltaTime) instead of wall-clock to prevent discrepancy during observation collection"));
 
 	// Reset agent health and positions
 	for (auto& Pair : RegisteredTeams)
@@ -1213,108 +1196,4 @@ AActor* ASimulationManagerGameMode::FindObjectiveActor()
 	}
 
 	return nullptr;
-}
-
-//==============================================================================
-// v6.0 Phase 13: Debug Console Commands
-//==============================================================================
-
-void ASimulationManagerGameMode::ToggleMCTSDebug()
-{
-	int32 ToggledCount = 0;
-
-	for (const auto& Pair : RegisteredTeams)
-	{
-		UTeamLeaderComponent* Leader = Pair.Value.TeamLeader;
-		if (Leader)
-		{
-			Leader->bEnableDebugDrawing = !Leader->bEnableDebugDrawing;
-			ToggledCount++;
-
-			UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Team '%s' MCTS Debug: %s"),
-				*Pair.Value.TeamName,
-				Leader->bEnableDebugDrawing ? TEXT("ON") : TEXT("OFF"));
-		}
-	}
-
-	if (ToggledCount > 0)
-	{
-		UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Toggled MCTS visualization for %d teams"), ToggledCount);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[v6.0 Debug] No teams found to toggle MCTS visualization"));
-	}
-}
-
-void ASimulationManagerGameMode::ToggleRLDebug()
-{
-	int32 ToggledCount = 0;
-
-	for (const auto& Pair : RegisteredTeams)
-	{
-		const FTeamInfo& TeamInfo = Pair.Value;
-
-		for (AActor* Agent : TeamInfo.TeamMembers)
-		{
-			if (!Agent) continue;
-
-			UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
-			if (FollowerComp)
-			{
-				FollowerComp->bEnableDebugDrawing = !FollowerComp->bEnableDebugDrawing;
-				ToggledCount++;
-			}
-		}
-	}
-
-	if (ToggledCount > 0)
-	{
-		UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Toggled RL Strategy visualization for %d agents"), ToggledCount);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[v6.0 Debug] No agents found to toggle RL visualization"));
-	}
-}
-
-void ASimulationManagerGameMode::PrintMCTSStats()
-{
-	UE_LOG(LogTemp, Display, TEXT("=== v6.0 MCTS Statistics ==="));
-
-	for (const auto& Pair : RegisteredTeams)
-	{
-		const FTeamInfo& TeamInfo = Pair.Value;
-		UTeamLeaderComponent* Leader = TeamInfo.TeamLeader;
-
-		if (!Leader) continue;
-
-		UE_LOG(LogTemp, Display, TEXT(""));
-		UE_LOG(LogTemp, Display, TEXT("Team: %s (ID: %d)"), *TeamInfo.TeamName, Pair.Key);
-		UE_LOG(LogTemp, Display, TEXT("  Followers: %d alive / %d total"),
-			Leader->GetAliveFollowers().Num(),
-			Leader->GetFollowerCount());
-		UE_LOG(LogTemp, Display, TEXT("  MCTS Running: %s"), Leader->IsMCTSRunning() ? TEXT("Yes") : TEXT("No"));
-		UE_LOG(LogTemp, Display, TEXT("  Last MCTS Time: %.2f seconds ago"),
-			GetWorld()->GetTimeSeconds() - Leader->GetLastMCTSDecisionTime());
-		UE_LOG(LogTemp, Display, TEXT("  Current Assignments:"));
-
-		for (const auto& Assignment : Leader->CurrentAssignments)
-		{
-			AActor* Agent = Assignment.Key;
-			FStrategyAssignment StrategyAssignment = Assignment.Value;
-
-			if (Agent)
-			{
-				FString StrategyType = UEnum::GetValueAsString(StrategyAssignment.Strategy);
-				UE_LOG(LogTemp, Display, TEXT("    - %s → %s (Priority: %d)"),
-					*Agent->GetName(),
-					*StrategyType,
-					StrategyAssignment.Priority);
-			}
-		}
-	}
-
-	UE_LOG(LogTemp, Display, TEXT(""));
-	UE_LOG(LogTemp, Display, TEXT("=== End MCTS Statistics ==="));
 }

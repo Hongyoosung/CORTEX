@@ -194,6 +194,14 @@ void AScholaCombatEnvironment::ResetEnvironment()
 		SimulationManager->StartSimulation();
 	}
 
+	// CRITICAL: Clear the persistent termination flag BEFORE starting new episode
+	// This flag was set in EndEpisode() and persists during ResetCompletedEnvironments()
+	// so agents could report their termination status to Python.
+	// Now that reset() has been called, we can clear it.
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Clearing bLastEpisodeWasTerminated flag..."));
+	SimulationManager->SetLastEpisodeWasTerminated(false);
+	SimulationManager->SetLastEpisodeWasTimeout(false);
+
 	// Start new episode (this will reset agents and trigger OnEpisodeStarted event)
 	// OnEpisodeStarted will reset LastDecisionTime in all ScholaAgentComponents
 	// This ensures Think() can send observations immediately, preventing poll() from blocking

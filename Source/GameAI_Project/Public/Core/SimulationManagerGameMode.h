@@ -384,10 +384,16 @@ public:
 	bool IsEpisodeEnding() const { return bEpisodeEnding; }
 
 	/**
-	 * Get episode start time
+	 * Get episode start time (wall-clock reference)
 	 */
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
 	float GetEpisodeStartTime() const { return EpisodeStartTime; }
+
+	/**
+	 * Get episode game time (accumulated DeltaTime, unaffected by observation collection)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	float GetEpisodeGameTime() const { return EpisodeGameTime; }
 
 	/**
 	 * Get max steps per episode
@@ -400,6 +406,14 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
 	float GetMaxEpisodeDuration() const { return MaxEpisodeDuration; }
+
+
+	FORCEINLINE bool GetLastEpisodeWasTerminated() const { return bLastEpisodeWasTerminated; }
+
+	FORCEINLINE bool GetLastEpisodeWasTimeout() const { return bLastEpisodeWasTimeout; }
+
+	void SetLastEpisodeWasTerminated(bool bTerminated) { bLastEpisodeWasTerminated = bTerminated; }
+	void SetLastEpisodeWasTimeout(bool bTimeout) { bLastEpisodeWasTimeout = bTimeout; }
 
 	/**
 	 * Schedule a team to respawn after delay (for continuous training)
@@ -447,31 +461,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Objective")
 	AActor* FindObjectiveActor();
 
-	//--------------------------------------------------------------------------
-	// v6.0 Phase 13: Debug Console Commands
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Toggle MCTS debug visualization (yellow arrows, value estimates, Mission labels)
-	 * Console: ToggleMCTSDebug
-	 */
-	UFUNCTION(Exec)
-	void ToggleMCTSDebug();
-
-	/**
-	 * Toggle RL strategy debug visualization (colored spheres, strategy text, health bars)
-	 * Console: ToggleRLDebug
-	 */
-	UFUNCTION(Exec)
-	void ToggleRLDebug();
-
-	/**
-	 * Print MCTS statistics to console (assignments, iterations, values)
-	 * Console: PrintMCTSStats
-	 */
-	UFUNCTION(Exec)
-	void PrintMCTSStats();
-
 	/** Delegate broadcast when episode ends */
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEpisodeEnded, const FEpisodeResult&, Result);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
@@ -483,9 +472,6 @@ public:
 	FOnEpisodeStarted OnEpisodeStarted;
 
 private:
-	/** Update statistics */
-	void UpdateStatistics();
-
 	/** Draw debug information */
 	void DrawDebugInformation();
 
@@ -509,11 +495,6 @@ public:
 	//--------------------------------------------------------------------------
 	// EPISODE CONFIG
 	//--------------------------------------------------------------------------
-
-	/** Auto-restart episode when a team is eliminated (DISABLE for RLlib training!) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	bool bAutoRestartEpisode = false;
-
 	/** Delay before starting new episode (for visualization) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
 	float EpisodeRestartDelay = 2.0f;
@@ -599,8 +580,11 @@ private:
 	/** Current step within episode */
 	int32 CurrentStep = 0;
 
-	/** Episode start time */
+	/** Episode start time (wall-clock for reference) */
 	float EpisodeStartTime = 0.0f;
+
+	/** Accumulated game time for this episode (DeltaTime sum, unaffected by observation collection pauses) */
+	float EpisodeGameTime = 0.0f;
 
 	/** Last episode result */
 	FEpisodeResult LastEpisodeResult;
@@ -610,6 +594,12 @@ private:
 
 	/** Is episode transition in progress */
 	bool bEpisodeEnding = false;
+
+	/** Was the last episode terminated? (persists until all agents report status) */
+	bool bLastEpisodeWasTerminated = false;
+
+	/** Was last episode a timeout (truncated) or team elimination (completed)? */
+	bool bLastEpisodeWasTimeout = false;
 
 	//--------------------------------------------------------------------------
 	// CONTINUOUS TRAINING STATE (Respawn System)

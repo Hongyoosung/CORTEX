@@ -83,13 +83,13 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 		FollowerComponent->ProvideReward(StepReward);
 
 		// v8.0: Log with component breakdown
-		UE_LOG(LogTemp, Display,
+		/*UE_LOG(LogTemp, Display,
 			TEXT("[REWARD TICK v8.0] '%s' (%s): Total=%.2f | %s | Events=%.2f"),
 			*GetOwner()->GetName(),
 			*UEnum::GetValueAsString(CurrentStrategy),
 			StepReward + eventRewards,
 			*Breakdown.ToString(),
-			eventRewards);
+			eventRewards);*/
 	}
 
 	// Reset event accumulators (events are one-time, continuous rewards recalculate every tick)
