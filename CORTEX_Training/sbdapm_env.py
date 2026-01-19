@@ -64,39 +64,8 @@ if SCHOLA_AVAILABLE:
                 print(f"[ENV v8.0] Docker mode enabled - using extended timeout ({timeout}s) and keepalive options")
 
             try:
-                # For Docker mode, we need to patch the gRPC channel creation
-                # to include keepalive options that prevent timeout issues
-                if is_docker:
-                    import grpc
-                    from schola.core.unreal_connections.editor_connection import UnrealEditorConnection as BaseConnection
-
-                    # Monkey-patch grpc.insecure_channel to add our options
-                    original_insecure_channel = grpc.insecure_channel
-
-                    def patched_insecure_channel(target, options=None):
-                        # Add Docker-specific gRPC options
-                        docker_options = [
-                            ('grpc.keepalive_time_ms', 10000),
-                            ('grpc.keepalive_timeout_ms', 5000),
-                            ('grpc.http2.max_pings_without_data', 0),
-                            ('grpc.http2.min_time_between_pings_ms', 10000),
-                            ('grpc.max_connection_idle_ms', 300000),  # 5 minutes
-                            ('grpc.max_connection_age_ms', 600000),   # 10 minutes
-                            ('grpc.initial_reconnect_backoff_ms', 5000),
-                            ('grpc.max_reconnect_backoff_ms', 30000),
-                        ]
-
-                        # Merge with any existing options
-                        if options:
-                            docker_options.extend(options)
-
-                        return original_insecure_channel(target, options=docker_options)
-
-                    # Apply the patch
-                    grpc.insecure_channel = patched_insecure_channel
-                    print(f"[ENV v8.0] Applied gRPC channel patch for Docker networking")
-
-                # Create connection with default parameters
+                # Docker mode: Schola is already patched at build time (see patch_schola_insecure.py)
+                # with 60s RPC timeout interceptor and keepalive options
                 connection = UnrealEditorConnection(
                     url=host,
                     port=port
@@ -108,17 +77,8 @@ if SCHOLA_AVAILABLE:
                 )
                 print(f"[ENV v8.0] Connected!")
 
-                # Restore original grpc.insecure_channel if we patched it
-                if is_docker:
-                    grpc.insecure_channel = original_insecure_channel
-
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
-                # Restore original grpc.insecure_channel if we patched it
-                if is_docker:
-                    import grpc
-                    if 'original_insecure_channel' in locals():
-                        grpc.insecure_channel = original_insecure_channel
                 raise
 
             # Agent mapping
@@ -219,13 +179,18 @@ if SCHOLA_AVAILABLE:
         def reset(self, *, seed=None, options=None):
             """Reset environment."""
             reset_start = time.time()
-            print(f"\n{'='*80}")
-            print(f"[RESET START] Episode={self._episodes_completed}, Steps={self.episode_steps}, Time={reset_start:.2f}")
 
+            # Log previous episode completion FIRST (before printing new episode number)
             if self._episode_start_time and self.episode_steps > 0:
                 duration = time.time() - self._episode_start_time
-                print(f"[EPISODE END] Steps={self.episode_steps}, Duration={duration:.1f}s")
+                print(f"\n{'='*80}")
+                print(f"[EPISODE {self._episodes_completed} END] Steps={self.episode_steps}, Duration={duration:.1f}s")
+                print(f"{'='*80}")
                 self._episodes_completed += 1
+
+            # Now print the NEW episode number (matches UE5's 1-indexed convention)
+            print(f"\n{'='*80}")
+            print(f"[RESET START] Episode={self._episodes_completed + 1}, Total Completed={self._episodes_completed}, Time={reset_start:.2f}")
 
             self.episode_steps = 0
             is_first = not self._first_reset_done
@@ -342,7 +307,8 @@ if SCHOLA_AVAILABLE:
 
                     if is_term or is_trunc:
                         if not ue5_episode_done:  # Only log once per episode
-                            print(f"[UE5 TERM SIGNAL] Step={self.episode_steps}, Agent={flat_id}, term={is_term}, trunc={is_trunc}")
+                            elapsed = time.time() - self._episode_start_time
+                            print(f"\n[UE5 TERM SIGNAL] Episode={self._episodes_completed + 1}, Step={self.episode_steps}, Time={elapsed:.1f}s, Agent={flat_id}, term={is_term}, trunc={is_trunc}")
                         ue5_episode_done = True
 
                     # Always False for individual agents (only __all__ matters for RLlib)
@@ -358,7 +324,12 @@ if SCHOLA_AVAILABLE:
                         truncated_dict[flat_id] = True
                     truncated_dict["__all__"] = True
                     terminated_dict["__all__"] = False
-                    print(f"\n[EPISODE DONE] Step={self.episode_steps}, Total completed={self._episodes_completed + 1}")
+
+                    # Calculate total episode reward
+                    total_reward = sum(reward_dict.values())
+                    avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
+
+                    print(f"\n[EPISODE {self._episodes_completed + 1} DONE] Step={self.episode_steps}, Total reward={total_reward:.2f}, Avg={avg_reward:.2f}")
                     print(f"[EPISODE DONE] Next call should be reset(). Waiting for RLlib...")
                 else:
                     truncated_dict["__all__"] = False
@@ -366,7 +337,16 @@ if SCHOLA_AVAILABLE:
 
                 # Periodic progress logging (every 100 steps)
                 if self.episode_steps % 100 == 0:
-                    print(f"[STEP {self.episode_steps}] Episode={self._episodes_completed}, Time={time.time()-self._episode_start_time:.1f}s")
+                    elapsed = time.time() - self._episode_start_time
+                    # Accumulate recent rewards for progress tracking
+                    total_reward = sum(reward_dict.values())
+                    avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
+                    print(f"[STEP {self.episode_steps}] Episode={self._episodes_completed + 1}, Time={elapsed:.1f}s, StepReward={avg_reward:.2f}")
+
+                    # Warning if episode is running too long (MaxEpisodeDuration should be 60s)
+                    if elapsed > 90.0:
+                        print(f"[WARNING] Episode {self._episodes_completed + 1} has been running for {elapsed:.1f}s (expected max: 60s)")
+                        print(f"[WARNING] Check if UE5 MaxEpisodeDuration is set correctly or if termination signals are being sent")
 
                 return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 

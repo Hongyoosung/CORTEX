@@ -454,56 +454,91 @@ def train(args):
 
     # Training loop
     best_reward = float("-inf")
+    cumulative_episodes = 0
+    cumulative_steps = 0
+
+    print("\n" + "="*80)
+    print("TRAINING PROGRESS")
+    print("="*80)
+    print(f"{'Iter':<6} {'Reward':>10} {'EpLen':>8} {'Episodes':>10} {'Steps':>12} {'Time':>8} {'Best':>10}")
+    print("-"*80)
 
     for i in range(args.iterations):
-        print(f"\n{'='*80}")
-        print(f"[TRAIN LOOP] Starting iteration {i+1}/{args.iterations}")
-        print(f"{'='*80}")
-
         iter_start = time.time()
-        print(f"[TRAIN LOOP] Calling algo.train()... Time={time.time():.2f}")
 
         result = algo.train()
 
         iter_time = time.time() - iter_start
-        print(f"[TRAIN LOOP] algo.train() returned. Duration={iter_time:.2f}s")
 
         # Extract metrics
         env_results = result.get("env_runners", {})
-        reward = env_results.get("episode_reward_mean", 0)
-        ep_len = env_results.get("episode_len_mean", 0)
+        reward = env_results.get("episode_reward_mean", None)
+        reward_min = env_results.get("episode_reward_min", None)
+        reward_max = env_results.get("episode_reward_max", None)
+        ep_len = env_results.get("episode_len_mean", None)
         episodes = env_results.get("episodes_this_iter", 0)
         agent_steps = result.get("num_agent_steps_sampled", 0)
 
-        # Handle nan values
-        if np.isnan(reward):
+        # Handle nan/None values (happens when no episodes complete in this iteration)
+        episodes_completed_this_iter = episodes > 0
+        if reward is None or np.isnan(reward):
             reward = 0
-        if np.isnan(ep_len):
+        if reward_min is None or np.isnan(reward_min):
+            reward_min = 0
+        if reward_max is None or np.isnan(reward_max):
+            reward_max = 0
+        if ep_len is None or np.isnan(ep_len):
             ep_len = 0
 
-        print(f"[{i+1:3d}/{args.iterations}] reward={reward:8.2f}, len={ep_len:6.1f}, "
-              f"episodes={episodes}, steps={agent_steps}, time={iter_time:.1f}s")
+        # Update cumulative counters
+        cumulative_episodes += episodes
+        cumulative_steps += agent_steps
+
+        # Print concise progress line
+        status_indicator = "✓" if episodes_completed_this_iter else "→"
+        print(f"{status_indicator} {i+1:>3}/{args.iterations:<3} {reward:>10.2f} {ep_len:>8.1f} "
+              f"{episodes:>10} {agent_steps:>12} {iter_time:>7.1f}s {best_reward:>10.2f}")
+
+        # Print detailed breakdown every 10 iterations or on first iteration
+        if i == 0 or (i + 1) % 10 == 0:
+            print(f"\n  [ITERATION {i+1} DETAILS]")
+            if episodes_completed_this_iter:
+                print(f"    Reward: mean={reward:.2f}, min={reward_min:.2f}, max={reward_max:.2f}")
+                print(f"    Episode length: {ep_len:.1f} steps")
+                print(f"    Episodes this iteration: {episodes}")
+            else:
+                print(f"    No episodes completed this iteration (still collecting samples)")
+            print(f"    Agent steps this iteration: {agent_steps}")
+            print(f"    Cumulative: {cumulative_episodes} episodes, {cumulative_steps} steps")
+            learner_info = result.get('info', {}).get('learner', {}).get('default_policy', {}).get('learner_stats', {})
+            total_loss = learner_info.get('total_loss', 'N/A')
+            print(f"    Policy loss: {total_loss}")
+            print()
 
         # Checkpoint
         if (i + 1) % args.checkpoint_freq == 0:
             algo.save(output_dir)
-            print(f"  Checkpoint saved")
+            print(f"  >> Checkpoint saved at iteration {i+1}\n")
 
         # Track best
         if reward > best_reward and not np.isnan(reward):
             best_reward = reward
             algo.save(os.path.join(output_dir, "best"))
-            print(f"  New best: {best_reward:.2f}")
-
-
-        print(f"[TRAIN LOOP] Iteration {i+1} complete\n")
+            print(f"  >> NEW BEST REWARD: {best_reward:.2f} (iteration {i+1})\n")
 
     # Final save
-    print("\n" + "=" * 60)
-    print("Training Complete!")
-    print("=" * 60)
+    print("\n" + "="*80)
+    print("TRAINING COMPLETE!")
+    print("="*80)
+    print(f"Total iterations: {args.iterations}")
+    print(f"Total episodes: {cumulative_episodes}")
+    print(f"Total agent steps: {cumulative_steps}")
+    print(f"Best reward: {best_reward:.2f}")
+    print(f"Output directory: {output_dir}")
+    print("="*80 + "\n")
 
     algo.save(output_dir)
+    print(f"Final model saved to: {output_dir}")
 
     # Export ONNX
     best_dir = os.path.join(output_dir, "best")

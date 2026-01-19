@@ -27,8 +27,8 @@ def patch_schola_grpc():
         print("[PATCH] Schola not installed - skipping patch")
         return
 
-    # Path to UnrealEditorConnection
-    connection_file = os.path.join(schola_path, "core", "unreal_connections", "editor_connection.py")
+    # Path to BaseUnrealConnection (where start() method is)
+    connection_file = os.path.join(schola_path, "core", "unreal_connections", "base_connection.py")
 
     if not os.path.exists(connection_file):
         print(f"[PATCH] File not found: {connection_file}")
@@ -53,25 +53,57 @@ def patch_schola_grpc():
         content = content.replace(original_channel, patched_channel)
         patches_applied.append(f"secure_channel -> insecure_channel")
 
-    # Patch 2: Add extended timeout and keepalive options
-    # Find the channel creation line and add options
-    channel_pattern = r'(grpc\.insecure_channel\(["\']?[^,)]+["\']?)\)'
+    # Patch 2: Replace the entire start() method to add timeout interceptor
+    start_method_pattern = r'(    def start\(self\) -> None:.*?""".*?""")\s+self\.channel = grpc\.insecure_channel\(\s+self\.address.*?\).__enter__\(\)'
 
-    channel_replacement = r'''\1,
-        options=[
-            # Docker networking requires longer timeouts
-            ('grpc.keepalive_time_ms', 10000),
-            ('grpc.keepalive_timeout_ms', 5000),
-            ('grpc.http2.max_pings_without_data', 0),
-            ('grpc.http2.min_time_between_pings_ms', 10000),
-            ('grpc.max_connection_idle_ms', 300000),
-            ('grpc.max_connection_age_ms', 600000),
-        ]
-    )'''
+    start_method_replacement = r'''\1
+        # Create channel with extended timeout for Docker networking
+        import grpc
 
-    if re.search(channel_pattern, content):
-        content = re.sub(channel_pattern, channel_replacement, content)
-        patches_applied.append("added timeout and keepalive options")
+        # Create timeout interceptor
+        class _TimeoutInterceptor(grpc.UnaryUnaryClientInterceptor):
+            """Add default 60s timeout to all RPC calls"""
+            def intercept_unary_unary(self, continuation, client_call_details, request):
+                new_details = client_call_details
+                if client_call_details.timeout is None or client_call_details.timeout < 60:
+                    new_details = client_call_details._replace(timeout=60)
+                return continuation(new_details, request)
+
+        # Create channel with keepalive options
+        base_channel = grpc.insecure_channel(
+            self.address,
+            options=[
+                ('grpc.keepalive_time_ms', 10000),
+                ('grpc.keepalive_timeout_ms', 5000),
+                ('grpc.http2.max_pings_without_data', 0),
+                ('grpc.http2.min_time_between_pings_ms', 10000),
+                ('grpc.max_connection_idle_ms', 300000),
+                ('grpc.max_connection_age_ms', 600000),
+            ]
+        )
+
+        # Apply timeout interceptor
+        self.channel = grpc.intercept_channel(base_channel, _TimeoutInterceptor()).__enter__()'''
+
+    if re.search(start_method_pattern, content, re.DOTALL):
+        content = re.sub(start_method_pattern, start_method_replacement, content, flags=re.DOTALL)
+        patches_applied.append("replaced start() method with timeout interceptor")
+    else:
+        # Fallback: Just add options if pattern doesn't match
+        channel_pattern = r'(grpc\.insecure_channel\(["\']?[^,)]+["\']?)\)'
+        channel_replacement = r'''\1,
+            options=[
+                ('grpc.keepalive_time_ms', 10000),
+                ('grpc.keepalive_timeout_ms', 5000),
+                ('grpc.http2.max_pings_without_data', 0),
+                ('grpc.http2.min_time_between_pings_ms', 10000),
+                ('grpc.max_connection_idle_ms', 300000),
+                ('grpc.max_connection_age_ms', 600000),
+            ]
+        )'''
+        if re.search(channel_pattern, content):
+            content = re.sub(channel_pattern, channel_replacement, content)
+            patches_applied.append("added keepalive options (fallback)")
 
     # Patch 3: Add Docker patch marker (comment at top of file)
     docker_marker = "# DOCKER_PATCHED: Modified for Docker compatibility (insecure channel + extended timeouts)\n"
