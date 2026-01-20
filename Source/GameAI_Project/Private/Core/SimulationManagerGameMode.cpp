@@ -191,23 +191,16 @@ bool ASimulationManagerGameMode::RegisterTeam(
 	//   - Environment 2: Team 4 vs Team 5
 	//   - Environment 3: Team 6 vs Team 7
 	//
-	// Logic: Teams are paired as (N, N+1) where N is even
+	// Logic: Use XOR with 1 to flip last bit (0↔1, 2↔3, 4↔5, 6↔7)
 	// When a team registers, check if its paired enemy exists and create mutual enemy relationship
 	//--------------------------------------------------------------------------
 
-	int32 PairedEnemyTeamID = -1;
+	// XOR with 1 flips last bit: 0→1, 1→0, 2→3, 3→2, etc.
+	int32 PairedEnemyTeamID = TeamID ^ 1;
+	int32 EnvironmentID = TeamID / 2;
 
-	// Determine paired enemy team ID
-	if (TeamID % 2 == 0)
-	{
-		// Even team ID → enemy is TeamID + 1
-		PairedEnemyTeamID = TeamID + 1;
-	}
-	else
-	{
-		// Odd team ID → enemy is TeamID - 1
-		PairedEnemyTeamID = TeamID - 1;
-	}
+	UE_LOG(LogTemp, Warning, TEXT("[SimManager v8.5] Registering Team %d (Env %d). Paired enemy: Team %d"),
+		TeamID, EnvironmentID, PairedEnemyTeamID);
 
 	// Check if paired enemy team is already registered
 	if (RegisteredTeams.Contains(PairedEnemyTeamID))
@@ -215,13 +208,30 @@ bool ASimulationManagerGameMode::RegisterTeam(
 		// Both teams exist → establish mutual enemy relationship
 		SetMutualEnemies(TeamID, PairedEnemyTeamID);
 
-		UE_LOG(LogTemp, Warning, TEXT("[SimManager v8.5] Auto-configured enemy relationship: Team %d ↔ Team %d (Environment %d)"),
-			TeamID, PairedEnemyTeamID, TeamID / 2);
+		// CRITICAL: Verify enemy relationship was actually set
+		const FTeamInfo* TeamInfo = RegisteredTeams.Find(TeamID);
+		const FTeamInfo* EnemyInfo = RegisteredTeams.Find(PairedEnemyTeamID);
+
+		bool bTeamHasEnemy = TeamInfo && TeamInfo->EnemyTeamIDs.Contains(PairedEnemyTeamID);
+		bool bEnemyHasTeam = EnemyInfo && EnemyInfo->EnemyTeamIDs.Contains(TeamID);
+
+		if (bTeamHasEnemy && bEnemyHasTeam)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SimManager v8.5] ✅ Enemy relationship confirmed: Team %d ↔ Team %d (Env %d)"),
+				TeamID, PairedEnemyTeamID, EnvironmentID);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[SimManager v8.5] ❌ FAILED to set enemy relationship: Team %d ↔ Team %d (Team→Enemy: %s, Enemy→Team: %s)"),
+				TeamID, PairedEnemyTeamID,
+				bTeamHasEnemy ? TEXT("OK") : TEXT("MISSING"),
+				bEnemyHasTeam ? TEXT("OK") : TEXT("MISSING"));
+		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("[SimManager v8.5] Team %d registered. Waiting for Team %d to establish enemy relationship (Environment %d)"),
-			TeamID, PairedEnemyTeamID, TeamID / 2);
+		UE_LOG(LogTemp, Log, TEXT("[SimManager v8.5] Team %d registered. Waiting for Team %d to establish enemy relationship (Env %d)"),
+			TeamID, PairedEnemyTeamID, EnvironmentID);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("SimulationManager: Registered team %d (%s)"), TeamID, *TeamName);

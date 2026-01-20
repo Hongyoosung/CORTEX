@@ -49,7 +49,7 @@ void AFollowerCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	// DIAGNOSTIC: Track if controller gets lost during gameplay (only check every 60 frames to reduce spam)
-	static int32 TickCounter = 0;
+	/*static int32 TickCounter = 0;
 	if (++TickCounter % 60 == 0)
 	{
 		static TMap<AFollowerCharacter*, AController*> LastKnownController;
@@ -65,7 +65,7 @@ void AFollowerCharacter::Tick(float DeltaTime)
 
 			LastKnownController.Add(this, CurrentController);
 		}
-	}
+	}*/
 }
 
 //------------------------------------------------------------------------------

@@ -272,34 +272,72 @@ void UTeamLeaderComponent::DiscoverWorldObjectives()
 	//==========================================================================
 	// v8.0: ObjectiveActor Discovery for Strategy Assignment
 	// MCTS now assigns strategies directly to objectives
+	//
+	// v8.5 MULTI-ENVIRONMENT FIX:
+	// In vectorized training (4 environments, 8 teams total), we must filter
+	// objectives by environment to prevent cross-environment assignments.
+	//
+	// Environment mapping: EnvironmentID = TeamID / 2
+	//   - Team 0, 1 → Environment 0
+	//   - Team 2, 3 → Environment 1
+	//   - Team 4, 5 → Environment 2
+	//   - Team 6, 7 → Environment 3
 	//==========================================================================
+
+	// Calculate which environment this team belongs to
+	int32 MyEnvironmentID = TeamID / 2;
+
+	// Get SimulationManager to query enemy relationships
+	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(
+		UGameplayStatics::GetGameMode(GetWorld())
+	);
 
 	// Find all ObjectiveActors in the world
 	TArray<AActor*> FoundObjectives;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
 
-	// Find friendly and hostile objectives
+	UE_LOG(LogTemp, Display, TEXT("[v8.5 DISCOVERY] TeamLeader '%s' (TeamID=%d, Env %d): Scanning %d total objectives..."),
+		*TeamName, TeamID, MyEnvironmentID, FoundObjectives.Num());
+
+	// Find friendly and hostile objectives (environment-filtered)
 	for (AActor* Actor : FoundObjectives)
 	{
 		AObjectiveActor* Objective = Cast<AObjectiveActor>(Actor);
 		if (!Objective) continue;
 
+		// Calculate objective's environment
+		int32 ObjectiveEnvironmentID = Objective->OwnerTeamID / 2;
+
+		// CRITICAL: Skip objectives from different environments
+		if (ObjectiveEnvironmentID != MyEnvironmentID)
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("  ⏭️ Skipping objective '%s' (Team %d, Env %d) - different environment"),
+				*Objective->GetName(), Objective->OwnerTeamID, ObjectiveEnvironmentID);
+			continue;
+		}
+
 		// Check if friendly (same team)
 		if (Objective->OwnerTeamID == TeamID)
 		{
 			FriendlyObjective = Objective;
-			UE_LOG(LogTemp, Display, TEXT("✅ [v8.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): Found friendly ObjectiveActor '%s' at %s"),
-				*TeamName, TeamID,
+			UE_LOG(LogTemp, Display, TEXT("✅ [v8.5 DISCOVERY] TeamLeader '%s' (TeamID=%d, Env %d): Found FRIENDLY ObjectiveActor '%s' (Team %d)"),
+				*TeamName, TeamID, MyEnvironmentID,
 				*FriendlyObjective->GetName(),
-				*FriendlyObjective->GetActorLocation().ToString());
+				Objective->OwnerTeamID);
+		}
+		// Check if hostile using SimulationManager's enemy relationship system
+		else if (SimManager && SimManager->AreTeamsEnemies(TeamID, Objective->OwnerTeamID))
+		{
+			HostileObjective = Objective;
+			UE_LOG(LogTemp, Display, TEXT("✅ [v8.5 DISCOVERY] TeamLeader '%s' (TeamID=%d, Env %d): Found HOSTILE ObjectiveActor '%s' (Team %d)"),
+				*TeamName, TeamID, MyEnvironmentID,
+				*HostileObjective->GetName(),
+				Objective->OwnerTeamID);
 		}
 		else
 		{
-			HostileObjective = Objective;
-			UE_LOG(LogTemp, Display, TEXT("✅ [v8.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): Found hostile ObjectiveActor '%s' at %s"),
-				*TeamName, TeamID,
-				*HostileObjective->GetName(),
-				*HostileObjective->GetActorLocation().ToString());
+			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ Objective '%s' (Team %d, Env %d) is in same environment but not friendly/hostile - neutral?"),
+				*Objective->GetName(), Objective->OwnerTeamID, ObjectiveEnvironmentID);
 		}
 	}
 
@@ -677,8 +715,23 @@ void UTeamLeaderComponent::RunStrategyAssignment()
 
 	if (!FriendlyObjective || !HostileObjective)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': Missing objectives, skipping MCTS"), *TeamName);
-		return;
+		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': Missing objectives, retrying discovery..."), *TeamName);
+
+		// RACE CONDITION FIX: Enemy team may not have registered yet during BeginPlay
+		// Retry objective discovery now that all teams should be registered
+		DiscoverWorldObjectives();
+
+		// Check again after retry
+		if (!FriendlyObjective || !HostileObjective)
+		{
+			UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Still missing objectives after retry! Friendly=%s, Hostile=%s"),
+				*TeamName,
+				FriendlyObjective ? TEXT("OK") : TEXT("NULL"),
+				HostileObjective ? TEXT("OK") : TEXT("NULL"));
+			return;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Objectives found after retry!"), *TeamName);
 	}
 
 	bMCTSRunning = true;
@@ -787,8 +840,23 @@ void UTeamLeaderComponent::RunStrategyAssignmentAsync()
 
 	if (!FriendlyObjective || !HostileObjective)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': Missing objectives, skipping MCTS"), *TeamName);
-		return;
+		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': Missing objectives, retrying discovery..."), *TeamName);
+
+		// RACE CONDITION FIX: Enemy team may not have registered yet during BeginPlay
+		// Retry objective discovery now that all teams should be registered
+		DiscoverWorldObjectives();
+
+		// Check again after retry
+		if (!FriendlyObjective || !HostileObjective)
+		{
+			UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Still missing objectives after retry! Friendly=%s, Hostile=%s"),
+				*TeamName,
+				FriendlyObjective ? TEXT("OK") : TEXT("NULL"),
+				HostileObjective ? TEXT("OK") : TEXT("NULL"));
+			return;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Objectives found after retry!"), *TeamName);
 	}
 
 	bMCTSRunning = true;
