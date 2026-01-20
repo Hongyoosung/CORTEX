@@ -65,9 +65,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Objective")
 	bool IsFriendlyTo(int32 AgentTeamID) const { return OwnerTeamID == AgentTeamID; }
 
-	/** Check if this objective is hostile to the given team */
+	/** Check if this objective is hostile to the given team (v8.5: Multi-environment support) */
 	UFUNCTION(BlueprintPure, Category = "Objective")
-	bool IsHostileTo(int32 AgentTeamID) const { return OwnerTeamID != AgentTeamID; }
+	bool IsHostileTo(int32 AgentTeamID) const;
 
 	/** Get number of hostile agents currently in volume */
 	UFUNCTION(BlueprintPure, Category = "Objective")

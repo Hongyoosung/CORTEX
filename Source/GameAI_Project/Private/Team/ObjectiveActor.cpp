@@ -5,6 +5,7 @@
 #include "Components/SphereComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Team/FollowerAgentComponent.h"
+#include "Core/SimulationManagerGameMode.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
@@ -256,6 +257,47 @@ bool AObjectiveActor::IsAgentInVolume(AActor* Agent) const
 	}
 
 	return CaptureVolume->IsOverlappingActor(Agent);
+}
+
+//------------------------------------------------------------------------------
+// v8.5: Multi-Environment Support - Proper Hostile Team Detection
+//------------------------------------------------------------------------------
+
+bool AObjectiveActor::IsHostileTo(int32 AgentTeamID) const
+{
+	// CRITICAL FIX (v8.5 Vectorized Training):
+	// Simple "OwnerTeamID != AgentTeamID" check FAILS in multi-environment setups
+	//
+	// Problem: With 4 environments (Team 0 vs 1, Team 2 vs 3, Team 4 vs 5, Team 6 vs 7),
+	//          an objective owned by Team 0 would incorrectly consider ALL other teams
+	//          (including Team 2, 3, 4, 5, 6, 7 from different environments) as hostile.
+	//
+	// Solution: Use SimulationManager's enemy relationship system (FTeamInfo::EnemyTeamIDs)
+	//           Only teams explicitly marked as enemies should be considered hostile.
+
+	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(
+		UGameplayStatics::GetGameMode(GetWorld())
+	);
+
+	if (!SimManager)
+	{
+		// Fallback: If no SimulationManager, use simple check (single-environment mode)
+		UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE] '%s': No SimulationManager found, using fallback hostile check"),
+			*GetName());
+		return OwnerTeamID != AgentTeamID;
+	}
+
+	// Query SimulationManager's enemy relationship system
+	// This respects per-environment team configurations
+	bool bIsHostile = SimManager->AreTeamsEnemies(OwnerTeamID, AgentTeamID);
+
+	UE_LOG(LogTemp, Verbose, TEXT("[OBJECTIVE v8.5] '%s' (Team %d) checking agent Team %d: %s"),
+		*GetName(),
+		OwnerTeamID,
+		AgentTeamID,
+		bIsHostile ? TEXT("HOSTILE") : TEXT("Friendly/Neutral"));
+
+	return bIsHostile;
 }
 
 void AObjectiveActor::UpdateMaterial()

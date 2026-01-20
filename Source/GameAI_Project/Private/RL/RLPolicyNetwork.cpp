@@ -66,12 +66,12 @@ FMacroAction URLPolicyNetwork::GetMacroAction(const FObservationElement& Observa
 	// Sample combat priority from combat head
 	Action.CombatParams.Priority = SampleCombatPriority(Output.CombatLogits);
 
-	UE_LOG(LogTemp, Verbose, TEXT("✅ [RL v8.0] Strategy=%s, Aggression=%.2f, CoverPref=%.2f, Combat=%d, Value=%.2f"),
+	/*UE_LOG(LogTemp, Verbose, TEXT("✅ [RL v8.0] Strategy=%s, Aggression=%.2f, CoverPref=%.2f, Combat=%d, Value=%.2f"),
 		*UEnum::GetValueAsString(AssignedStrategy),
 		Action.TacticalParams.Aggression,
 		Action.TacticalParams.CoverPreference,
 		static_cast<int32>(Action.CombatParams.Priority),
-		Output.Value);
+		Output.Value);*/
 
 	return Action;
 }

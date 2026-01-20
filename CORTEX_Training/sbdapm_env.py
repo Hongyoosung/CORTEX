@@ -59,7 +59,13 @@ if SCHOLA_AVAILABLE:
             timeout = kwargs.get("timeout", 60)  # Default 60s for Docker (increased from 30s)
             is_docker = kwargs.get("is_docker", False)
 
-            print(f"[ENV v8.0] Connecting to {host}:{port}...")
+            # v8.5 VECTORIZED TRAINING: Multi-environment support validated
+            # This environment already handles NUM_ENVS_PER_WORKER > 1 via nested dictionaries:
+            # - Agent mapping: flat_id -> (env_idx, agent_idx)
+            # - Observations: obs_nested[env_idx][agent_idx]
+            # - Actions: formatted_actions[env_idx][agent_idx]
+            # - Rewards/Dones: rew_nested[env_idx][agent_idx]
+            print(f"[ENV v8.5] Connecting to {host}:{port}... (Multi-environment support: ENABLED)")
             if is_docker:
                 print(f"[ENV v8.0] Docker mode enabled - using extended timeout ({timeout}s) and keepalive options")
 

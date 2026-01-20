@@ -283,19 +283,6 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 			bool bParamsChanged = FMath::Abs(NewAction.TacticalParams.Aggression - CurrentMacroAction.TacticalParams.Aggression) > 0.1f ||
 			                      FMath::Abs(NewAction.TacticalParams.CoverPreference - CurrentMacroAction.TacticalParams.CoverPreference) > 0.1f;
 
-			if (bParamsChanged || NewAction.CombatParams.Priority != CurrentMacroAction.CombatParams.Priority)
-			{
-				UE_LOG(LogTemp, Display, TEXT("✅ [RL v8.0] '%s': Strategy=%s, Aggression=%.2f, Cover=%.2f, Spread=%.2f, Risk=%.2f, Combat=%s (Health: %.0f%%, Enemies: %d)"),
-					*GetOwner()->GetName(),
-					*UEnum::GetValueAsString(AssignedStrategy),
-					NewAction.TacticalParams.Aggression,
-					NewAction.TacticalParams.CoverPreference,
-					NewAction.TacticalParams.SpreadDistance,
-					NewAction.TacticalParams.RiskTolerance,
-					*UEnum::GetValueAsString(NewAction.CombatParams.Priority),
-					Obs.AgentHealth * 100.0f,
-					Obs.VisibleEnemyCount);
-			}
 
 			CurrentMacroAction = NewAction;
 

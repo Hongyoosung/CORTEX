@@ -204,8 +204,8 @@ class SBDAPMConfig:
 
     # PPO hyperparameters
     LEARNING_RATE = 5e-5
-    TRAIN_BATCH_SIZE = 8000
-    SGD_MINIBATCH_SIZE = 512
+    TRAIN_BATCH_SIZE = 32000  # v8.5 VECTORIZED: 8000 → 32000 (4× for 4 envs)
+    SGD_MINIBATCH_SIZE = 2048  # v8.5 VECTORIZED: 512 → 2048 (4× for 4 envs)
     NUM_SGD_ITER = 15
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
@@ -215,7 +215,7 @@ class SBDAPMConfig:
 
     # Training
     NUM_WORKERS = 0  # Windows: single process
-    NUM_ENVS_PER_WORKER = 1
+    NUM_ENVS_PER_WORKER = 4  # v8.5 VECTORIZED: 1 → 4 (4 parallel environments)
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
 

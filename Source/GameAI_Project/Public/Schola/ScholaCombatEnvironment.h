@@ -64,7 +64,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoDiscoverAgents = true;
 
-	/** Team IDs to include in training (empty = all teams) */
+	/** Team IDs to include in training (empty = all teams) - v8.5 Vectorized Training: Use this to isolate environments */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	TArray<int32> TrainingTeamIDs;
 
@@ -87,11 +87,9 @@ public:
 	/** Has InternalRegisterAgents been called this session? */
 	bool bAgentsRegistered = false;
 
-	/** Is this the primary environment instance? (singleton enforcement) */
-	bool bIsPrimaryEnvironment = false;
-
-	/** Static reference to the primary environment (singleton) */
-	static AScholaCombatEnvironment* PrimaryEnvironmentInstance;
+	/** Unique ID for this environment instance (0, 1, 2, 3...) - v8.5 Vectorized Training */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	int32 EnvironmentID = -1;
 
 	//--------------------------------------------------------------------------
 	// UTILITY

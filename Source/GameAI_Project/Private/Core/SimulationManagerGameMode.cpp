@@ -182,6 +182,48 @@ bool ASimulationManagerGameMode::RegisterTeam(
 		ActorToTeamMap.Add(LeaderActor, TeamID);
 	}
 
+	//--------------------------------------------------------------------------
+	// v8.5: VECTORIZED TRAINING - Auto-configure enemy relationships
+	//--------------------------------------------------------------------------
+	// Environment pairing pattern:
+	//   - Environment 0: Team 0 vs Team 1
+	//   - Environment 1: Team 2 vs Team 3
+	//   - Environment 2: Team 4 vs Team 5
+	//   - Environment 3: Team 6 vs Team 7
+	//
+	// Logic: Teams are paired as (N, N+1) where N is even
+	// When a team registers, check if its paired enemy exists and create mutual enemy relationship
+	//--------------------------------------------------------------------------
+
+	int32 PairedEnemyTeamID = -1;
+
+	// Determine paired enemy team ID
+	if (TeamID % 2 == 0)
+	{
+		// Even team ID → enemy is TeamID + 1
+		PairedEnemyTeamID = TeamID + 1;
+	}
+	else
+	{
+		// Odd team ID → enemy is TeamID - 1
+		PairedEnemyTeamID = TeamID - 1;
+	}
+
+	// Check if paired enemy team is already registered
+	if (RegisteredTeams.Contains(PairedEnemyTeamID))
+	{
+		// Both teams exist → establish mutual enemy relationship
+		SetMutualEnemies(TeamID, PairedEnemyTeamID);
+
+		UE_LOG(LogTemp, Warning, TEXT("[SimManager v8.5] Auto-configured enemy relationship: Team %d ↔ Team %d (Environment %d)"),
+			TeamID, PairedEnemyTeamID, TeamID / 2);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("[SimManager v8.5] Team %d registered. Waiting for Team %d to establish enemy relationship (Environment %d)"),
+			TeamID, PairedEnemyTeamID, TeamID / 2);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("SimulationManager: Registered team %d (%s)"), TeamID, *TeamName);
 	return true;
 }
@@ -896,7 +938,10 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 	}
 
 	// Broadcast episode ended event
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] Broadcasting OnEpisodeEnded event to %d bound listeners..."),
+		OnEpisodeEnded.IsBound() ? 1 : 0);  // Note: Unreal doesn't expose listener count easily
 	OnEpisodeEnded.Broadcast(LastEpisodeResult);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] OnEpisodeEnded.Broadcast() completed"));
 }
 
 void ASimulationManagerGameMode::StartNewEpisode()
@@ -1019,7 +1064,12 @@ void ASimulationManagerGameMode::StartNewEpisode()
 	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset %d ObjectiveActor(s)"), FoundObjectives.Num());
 
 	// Broadcast episode started event
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] Broadcasting OnEpisodeStarted(%d) to bound listeners..."),
+		CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.IsBound() = %s"),
+		OnEpisodeStarted.IsBound() ? TEXT("TRUE") : TEXT("FALSE"));
 	OnEpisodeStarted.Broadcast(CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.Broadcast() completed"));
 
 	// Final verification log - this confirms episode is ready for training
 	UE_LOG(LogTemp, Warning, TEXT("[EPISODE READY] Episode %d fully initialized - all agents reset and ready"), CurrentEpisode);
