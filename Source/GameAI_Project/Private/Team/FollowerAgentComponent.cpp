@@ -1259,6 +1259,13 @@ void UFollowerAgentComponent::ExecuteCombat()
 		return;
 	}
 
+	// Get weapon component
+	UWeaponComponent* WeaponComp = GetOwner()->FindComponentByClass<UWeaponComponent>();
+	if (!WeaponComp)
+	{
+		return;
+	}
+
 	// Get detected enemies from perception
 	if (!CachedPerceptionComponent)
 	{
@@ -1315,13 +1322,66 @@ void UFollowerAgentComponent::ExecuteCombat()
 	{
 		// Set focus for auto-aim
 		AIController->SetFocus(Target, EAIFocusPriority::Gameplay);
+	}
 
-		// Auto-fire is handled by STTask_ExecuteFire in StateTree
-		// This function only handles target selection
-		UE_LOG(LogTemp, Verbose, TEXT("[COMBAT v8.0] '%s': Targeting %s (Priority: %s)"),
+	// ========================================
+	// Line-of-sight check before firing
+	// ========================================
+	FVector OwnerLocation = GetOwner()->GetActorLocation();
+	FVector TargetLocation = Target->GetActorLocation();
+
+	// Eye-level adjustment for accurate LOS check
+	FVector StartLocation = OwnerLocation + FVector(0, 0, 150.0f);
+	FVector EndLocation = TargetLocation + FVector(0, 0, 150.0f);
+
+	FHitResult HitResult;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(GetOwner());
+	Params.bTraceComplex = false;
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	bool bHitSomething = World->LineTraceSingleByChannel(
+		HitResult,
+		StartLocation,
+		EndLocation,
+		ECC_Visibility,
+		Params
+	);
+
+	// Only fire if we have clear LOS to target (not blocked by walls/obstacles)
+	if (bHitSomething && HitResult.GetActor() != Target)
+	{
+		// LOS blocked - don't waste ammo on walls
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[COMBAT v8.0] '%s': Target '%s' blocked by '%s', holding fire"),
 			*GetOwner()->GetName(),
 			*Target->GetName(),
-			*UEnum::GetValueAsString(CombatParams.Priority));
+			*GetNameSafe(HitResult.GetActor()));
+		return;
+	}
+
+	// ========================================
+	// Fire weapon if able
+	// ========================================
+	if (WeaponComp->CanFire())
+	{
+		// Calculate fire direction
+		FVector FireDirection = (TargetLocation - OwnerLocation).GetSafeNormal();
+
+		// Fire in direction (no auto-aim assistance for RL agents)
+		bool bFired = WeaponComp->FireInDirection(FireDirection);
+
+		if (bFired)
+		{
+			UE_LOG(LogTemp, VeryVerbose, TEXT("[COMBAT v8.0] '%s' → '%s': Fired (Priority: %s, clear LOS)"),
+				*GetOwner()->GetName(),
+				*Target->GetName(),
+				*UEnum::GetValueAsString(CombatParams.Priority));
+		}
 	}
 }
 
