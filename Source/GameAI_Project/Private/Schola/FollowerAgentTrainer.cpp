@@ -4,8 +4,8 @@
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/TacticalRewardProvider.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Combat/HealthComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Combat/Components/HealthComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 
 AFollowerAgentTrainer::AFollowerAgentTrainer()
@@ -24,6 +24,7 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 	ScholaAgent = InAgent;
 	FollowerAgent = InAgent->FollowerAgent;
 	RewardProvider = InAgent->RewardProvider;
+	AgentHealthComponent = InAgent->HealthComponent;
 
 	// Verify components
 	if (!FollowerAgent)
@@ -38,7 +39,7 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] Components verified: FollowerAgent=%s, RewardProvider=%s, bIsAlive=%d"),
-		*FollowerAgent->GetName(), *RewardProvider->GetName(), FollowerAgent->bIsAlive ? 1 : 0);
+		*FollowerAgent.Get()->GetName(), *RewardProvider->GetName(), AgentHealthComponent.Get()->bIsAlive ? 1 : 0);
 
 	// Get the controlled pawn first
 	APawn* ControlledPawn = InAgent->GetControlledPawn();
@@ -197,7 +198,7 @@ void AFollowerAgentTrainer::GetInfo(TMap<FString, FString>& Info)
 
 	if (FollowerAgent)
 	{
-		Info.Add(TEXT("is_alive"), FollowerAgent->bIsAlive ? TEXT("true") : TEXT("false"));
+		Info.Add(TEXT("is_alive"), AgentHealthComponent.Get()->bIsAlive ? TEXT("true") : TEXT("false"));
 	}
 
 	if (RewardProvider)

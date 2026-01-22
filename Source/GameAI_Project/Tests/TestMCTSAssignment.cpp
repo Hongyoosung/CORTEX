@@ -2,7 +2,7 @@
 
 #include "Misc/AutomationTest.h"
 #include "AI/MCTS/MCTS.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "RL/RLPolicyNetwork.h"
 #include "Observation/ObservationElement.h"
 #include "Tests/AutomationCommon.h"

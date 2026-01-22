@@ -4,10 +4,10 @@
 #include "Schola/TacticalObserver.h"
 #include "Schola/TacticalRewardProvider.h"
 #include "Schola/CombinedTacticalActuator.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Inference/InferenceComponent.h"
-#include "Combat/HealthComponent.h"
-#include "Perception/AgentPerceptionComponent.h"
+#include "Combat/Components/HealthComponent.h"
+#include "Combat/Components/AgentPerceptionComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Kismet/GameplayStatics.h"
@@ -86,22 +86,11 @@ void UScholaAgentComponent::BeginPlay()
 	}
 
 	// Bind to health events for critical triggers (damaged, health low)
-	UHealthComponent* HealthComp = Owner->FindComponentByClass<UHealthComponent>();
-	if (HealthComp)
+	HealthComponent = Owner->FindComponentByClass<UHealthComponent>();
+	if (HealthComponent)
 	{
-		HealthComp->OnDamageTaken.AddDynamic(this, &UScholaAgentComponent::OnDamageTakenEventHandler);
+		HealthComponent->OnDamageTaken.AddDynamic(this, &UScholaAgentComponent::OnDamageTakenEventHandler);
 		UE_LOG(LogTemp, Log, TEXT("[SCHOLA EVENT] '%s': Bound to health events for event-driven decisions"),
-			*Owner->GetName());
-	}
-
-	// Bind to episode events to reset decision timer when new episode starts
-	// CRITICAL: This ensures agents send observations immediately after hard_reset()
-	// Without this, poll() blocks because Think() is throttled by LastDecisionTime
-	ASimulationManagerGameMode* SimulationManager = Cast<ASimulationManagerGameMode>(UGameplayStatics::GetGameMode(this));
-	if (SimulationManager)
-	{
-		SimulationManager->OnEpisodeStarted.AddUniqueDynamic(this, &UScholaAgentComponent::OnEpisodeStarted);
-		UE_LOG(LogTemp, Log, TEXT("[SCHOLA EVENT] '%s': Bound to episode started event for decision timer reset"),
 			*Owner->GetName());
 	}
 
@@ -376,16 +365,4 @@ void UScholaAgentComponent::OnDamageTakenEventHandler(const FDamageEventData& Da
 
 		LastDecisionTime = FPlatformTime::Seconds();
 	}
-}
-
-void UScholaAgentComponent::OnEpisodeStarted(int32 EpisodeNumber)
-{
-	// CRITICAL FIX: Reset decision timer when new episode starts
-	// This ensures agents send observations immediately after hard_reset()
-	// Without this, poll() blocks because Think() is throttled by LastDecisionTime from previous episode
-	LastDecisionTime = 0.0;
-	TimeSinceLastDecision = 0.0f;
-	
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] '%s': Episode %d started - Reset decision timer (LastDecisionTime=0.0)"),
-		*GetOwner()->GetName(), EpisodeNumber);
 }

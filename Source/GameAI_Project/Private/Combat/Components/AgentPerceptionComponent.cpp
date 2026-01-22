@@ -1,10 +1,10 @@
-#include "Perception/AgentPerceptionComponent.h"
+#include "Combat/Components/AgentPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AIPerceptionSystem.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Team/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
 #include "Core/SimulationManagerGameMode.h"
-#include "Combat/HealthComponent.h"
+#include "Combat/Components/HealthComponent.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
@@ -46,7 +46,7 @@ void UAgentPerceptionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		if (ObservationUpdateInterval <= 0.0f ||
 			(CurrentTime - LastObservationUpdateTime) >= ObservationUpdateInterval)
 		{
-			FObservationElement& Observation = CachedFollowerComponent->LocalObservation;
+			FObservationElement Observation = CachedFollowerComponent->GetLocalObservation();
 			UpdateObservationWithEnemies(Observation);
 			LastObservationUpdateTime = CurrentTime;
 		}

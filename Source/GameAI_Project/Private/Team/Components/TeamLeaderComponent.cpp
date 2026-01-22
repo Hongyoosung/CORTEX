@@ -1,10 +1,9 @@
-#include "Team/TeamLeaderComponent.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Team/ObjectiveActor.h"  // v8.0: For durability-based objectives
 #include "AI/MCTS/MCTS.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
 #include "Observation/ObservationElement.h"
-#include "RL/CurriculumManager.h"
 #include "RL/RLTypes.h"  // v8.0: EStrategyType, FStrategyAssignment
 #include "RL/RLPolicyNetwork.h"  // v8.0: For value estimates
 #include "Core/SimulationManagerGameMode.h"
@@ -13,9 +12,9 @@
 #include "Misc/FileHelper.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
-#include "RL/RewardCalculator.h"
+#include "RL/Components/RewardCalculator.h"
 #include "Kismet/GameplayStatics.h"
-#include "Combat/HealthComponent.h"
+#include "Combat/Components/HealthComponent.h"
 
 //==============================================================================
 // v8.0: TEAM LEADER COMPONENT
@@ -36,15 +35,6 @@ void UTeamLeaderComponent::BeginPlay()
 	// Initialize MCTS
 	InitializeMCTS();
 
-	// Initialize curriculum manager (v3.0 Sprint 3)
-	if (!CurriculumManager)
-	{
-		CurriculumManager = NewObject<UCurriculumManager>(GetOwner());
-		if (CurriculumManager)
-		{
-			UE_LOG(LogTemp, Log, TEXT("TeamLeaderComponent: CurriculumManager initialized for '%s'"), *TeamName);
-		}
-	}
 
 	// Auto-register with SimulationManager (fix for missing team registration)
 	if (bAutoRegisterWithSimManager)
@@ -1161,7 +1151,8 @@ void UTeamLeaderComponent::DrawDebugInfo()
 			if (const FStrategyAssignment* AssignmentPtr = CurrentAssignments.Find(Follower))
 			{
 				FString StrategyText = UEnum::GetValueAsString(AssignmentPtr->Strategy);
-				DrawDebugString(World, FollowerPos + FVector(0, 0, 150), StrategyText, nullptr, FColor::White, 0.5f, true);
+				// Use 0.0f duration to prevent overlapping text from multiple frames
+				DrawDebugString(World, FollowerPos + FVector(0, 0, 180), StrategyText, nullptr, FColor::White, 0.0f, true);
 			}
 		}
 	}

@@ -204,8 +204,8 @@ class SBDAPMConfig:
 
     # PPO hyperparameters
     LEARNING_RATE = 5e-5
-    TRAIN_BATCH_SIZE = 32000  # v8.5 VECTORIZED: 8000 → 32000 (4× for 4 envs)
-    SGD_MINIBATCH_SIZE = 2048  # v8.5 VECTORIZED: 512 → 2048 (4× for 4 envs)
+    TRAIN_BATCH_SIZE = 32000  # v8.5 VECTORIZED: 32 agents (4 envs × 8) → 4× data volume
+    SGD_MINIBATCH_SIZE = 2048 # v8.5 VECTORIZED: Scaled proportionally (32000 / 16)
     NUM_SGD_ITER = 15
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
@@ -215,7 +215,8 @@ class SBDAPMConfig:
 
     # Training
     NUM_WORKERS = 0  # Windows: single process
-    NUM_ENVS_PER_WORKER = 4  # v8.5 VECTORIZED: 1 → 4 (4 parallel environments)
+    NUM_ENVS_PER_WORKER = 1  # FIXED: Schola handles vectorization internally via nested dicts
+    NUM_UE5_ENVIRONMENTS = 4  # v8.5: Number of parallel UE5 environments (managed by single Python env)
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
 
@@ -231,6 +232,7 @@ def create_env_config():
     config = {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,
+        "num_envs": SBDAPMConfig.NUM_UE5_ENVIRONMENTS,  # v8.5: Number of UE5 environments to manage
     }
 
     # Add Docker-specific settings
@@ -384,10 +386,12 @@ def train(args):
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
 
     print("=" * 60)
-    print("CORTEX v8.0 Training")
+    print("CORTEX v8.5 Vectorized Training")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
+    print(f"  UE5 Environments: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS}")
+    print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
     print(f"  Iterations: {args.iterations}")
     print()
 

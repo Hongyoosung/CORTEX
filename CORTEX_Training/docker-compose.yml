@@ -88,3 +88,48 @@ services:
     command: python test_grpc_connection.py
     profiles:
       - test
+
+  # Timeout diagnostics (DEADLINE_EXCEEDED errors)
+  diagnose-timeout:
+    build:
+      context: ..
+      dockerfile: CORTEX_Training/Dockerfile
+    container_name: sbdapm_timeout_diag
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - HOST=host.docker.internal
+      - PORT=50051
+    command: python diagnose_timeout.py
+    profiles:
+      - test
+
+  # Training failure diagnostics (why training fails but connection succeeds)
+  diagnose-training:
+    build:
+      context: ..
+      dockerfile: CORTEX_Training/Dockerfile
+    container_name: sbdapm_training_diag
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - HOST=host.docker.internal
+      - PORT=50051
+    command: python diagnose_training_failure.py
+    profiles:
+      - test
+
+  # Agent registration diagnostics (check multi-environment agent distribution)
+  diagnose-agents:
+    build:
+      context: ..
+      dockerfile: CORTEX_Training/Dockerfile
+    container_name: sbdapm_agent_diag
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - HOST=host.docker.internal
+      - PORT=50051
+    command: python diagnose_agent_registration.py
+    profiles:
+      - test

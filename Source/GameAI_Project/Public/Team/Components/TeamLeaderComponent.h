@@ -2,12 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "TeamTypes.h"
+#include "Team/TeamTypes.h"
 #include "Observation/TeamObservation.h"
 #include "TeamLeaderComponent.generated.h"
 
 // Forward declarations
-class UTeamCommunicationManager;
 class UMCTS;
 class AObjectiveActor;
 
@@ -340,10 +339,6 @@ public:
 	/** MCTS decision engine */
 	UPROPERTY()
 	UMCTS* StrategicMCTS;
-
-	/** Curriculum manager for MCTS-guided RL training (v3.0 Sprint 3) */
-	UPROPERTY(BlueprintReadWrite, Category = "Team Leader|Components")
-	class UCurriculumManager* CurriculumManager;
 
 	/** Friendly objective actor (v8.0 - defend this) */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")

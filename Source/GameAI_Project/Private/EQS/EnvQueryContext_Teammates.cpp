@@ -1,7 +1,7 @@
 #include "EQS/EnvQueryContext_Teammates.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_Actor.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "GameFramework/Pawn.h"
 #include "EngineUtils.h"
 

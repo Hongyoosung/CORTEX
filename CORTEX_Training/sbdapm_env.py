@@ -65,7 +65,10 @@ if SCHOLA_AVAILABLE:
             # - Observations: obs_nested[env_idx][agent_idx]
             # - Actions: formatted_actions[env_idx][agent_idx]
             # - Rewards/Dones: rew_nested[env_idx][agent_idx]
-            print(f"[ENV v8.5] Connecting to {host}:{port}... (Multi-environment support: ENABLED)")
+            self.num_envs = kwargs.get("num_envs", 4)  # Default to 4 environments (configurable)
+            print(f"[ENV v8.5] Connecting to {host}:{port}...")
+            print(f"[ENV v8.5] Multi-environment support: ENABLED ({self.num_envs} parallel environments)")
+            print(f"[ENV v8.5] Async episode termination: ENABLED (environments finish independently)")
             if is_docker:
                 print(f"[ENV v8.0] Docker mode enabled - using extended timeout ({timeout}s) and keepalive options")
 
@@ -112,6 +115,13 @@ if SCHOLA_AVAILABLE:
             self._episode_start_time = None
             self._first_reset_done = False
             self._episodes_completed = 0
+
+            # v8.5 VECTORIZED TRAINING: Per-environment episode tracking
+            self._env_episode_steps = {i: 0 for i in range(self.num_envs)}
+            self._env_episode_start_time = {i: None for i in range(self.num_envs)}
+            self._env_episodes_completed = {i: 0 for i in range(self.num_envs)}
+            self._env_done_flags = {i: False for i in range(self.num_envs)}
+            self._envs_waiting_for_reset = set()  # Environments that finished but waiting for others
 
         def _resolve_port(self, kwargs):
             base_port = kwargs.get("base_port")
@@ -183,39 +193,56 @@ if SCHOLA_AVAILABLE:
             return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
 
         def reset(self, *, seed=None, options=None):
-            """Reset environment."""
+            """Reset environment (resets ALL environments simultaneously)."""
             reset_start = time.time()
 
-            # Log previous episode completion FIRST (before printing new episode number)
+            # v8.5 VECTORIZED TRAINING: Log completion for each environment
             if self._episode_start_time and self.episode_steps > 0:
-                duration = time.time() - self._episode_start_time
                 print(f"\n{'='*80}")
-                print(f"[EPISODE {self._episodes_completed} END] Steps={self.episode_steps}, Duration={duration:.1f}s")
+                print(f"[EPISODE COMPLETION SUMMARY]")
+                for env_idx in range(self.num_envs):
+                    if self._env_episode_start_time[env_idx]:
+                        duration = time.time() - self._env_episode_start_time[env_idx]
+                        print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, Steps={self._env_episode_steps[env_idx]}, Duration={duration:.1f}s")
+                        self._env_episodes_completed[env_idx] += 1
                 print(f"{'='*80}")
                 self._episodes_completed += 1
 
-            # Now print the NEW episode number (matches UE5's 1-indexed convention)
+            # Print new episode start
             print(f"\n{'='*80}")
-            print(f"[RESET START] Episode={self._episodes_completed + 1}, Total Completed={self._episodes_completed}, Time={reset_start:.2f}")
+            print(f"[RESET START] Global Episode={self._episodes_completed}, Total Completed={self._episodes_completed}")
+            for env_idx in range(self.num_envs):
+                print(f"  Env {env_idx}: Starting episode {self._env_episodes_completed[env_idx] + 1}")
+            print(f"  Reset Time={reset_start:.2f}")
 
+            # Reset global counters
             self.episode_steps = 0
             is_first = not self._first_reset_done
+
+            # v8.5 VECTORIZED TRAINING: Reset per-environment tracking
+            current_time = time.time()
+            for env_idx in range(self.num_envs):
+                self._env_episode_steps[env_idx] = 0
+                self._env_episode_start_time[env_idx] = current_time
+                self._env_done_flags[env_idx] = False
+
+            self._envs_waiting_for_reset.clear()
 
             try:
                 if is_first:
                     print("[RESET] First reset - synchronizing with UE5...")
 
-                print(f"[RESET] Calling schola_env.hard_reset()... Time={time.time():.2f}")
+                print(f"[RESET] Calling schola_env.hard_reset() (resets ALL {self.num_envs} environments)... Time={time.time():.2f}")
                 raw_obs = self.schola_env.hard_reset()
                 print(f"[RESET] hard_reset() returned successfully. Time={time.time():.2f}, Duration={time.time()-reset_start:.2f}s")
 
                 self._first_reset_done = True
-                self._episode_start_time = time.time()
+                self._episode_start_time = current_time
 
                 # Only update agent map on first reset (agents don't change during training)
                 if is_first:
                     self._update_agent_map()
-                    print(f"[RESET] {len(self._agent_ids)} agents detected")
+                    print(f"[RESET] {len(self._agent_ids)} agents detected ({len(self._agent_ids) // self.num_envs} per environment)")
 
                 result = self._process_obs(raw_obs)
                 print(f"[RESET COMPLETE] Duration={time.time()-reset_start:.2f}s, Agents={len(result[0])}")
@@ -266,8 +293,8 @@ if SCHOLA_AVAILABLE:
                 step_result = self.schola_env.poll()
                 poll_duration = time.time() - poll_start
 
-                if send_duration > 0.1 or poll_duration > 0.1:
-                    print(f"[STEP SLOW] send={send_duration*1000:.1f}ms, poll={poll_duration*1000:.1f}ms")
+                #if send_duration > 0.1 or poll_duration > 0.1:
+                #    print(f"[STEP SLOW] send={send_duration*1000:.1f}ms, poll={poll_duration*1000:.1f}ms")
 
                 # Parse response
                 if len(step_result) == 5:
@@ -285,8 +312,9 @@ if SCHOLA_AVAILABLE:
                 truncated_dict = {}
                 info_dict = {}
 
-                # Check UE5 termination signal
-                ue5_episode_done = False
+                # v8.5 VECTORIZED TRAINING: Track termination PER ENVIRONMENT
+                # Reset done flags for this step
+                newly_finished_envs = []
 
                 for flat_id in self._agent_ids:
                     env_idx, agent_idx = self.agent_map[flat_id]
@@ -307,52 +335,100 @@ if SCHOLA_AVAILABLE:
                     # Get reward
                     reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
 
-                    # Check termination from UE5
+                    # Check termination from UE5 for THIS ENVIRONMENT
                     is_term = term_nested.get(env_idx, {}).get(agent_idx, False)
                     is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
 
-                    if is_term or is_trunc:
-                        if not ue5_episode_done:  # Only log once per episode
-                            elapsed = time.time() - self._episode_start_time
-                            print(f"\n[UE5 TERM SIGNAL] Episode={self._episodes_completed + 1}, Step={self.episode_steps}, Time={elapsed:.1f}s, Agent={flat_id}, term={is_term}, trunc={is_trunc}")
-                        ue5_episode_done = True
+                    # Mark environment as done if ANY agent from that environment reports termination
+                    if (is_term or is_trunc) and not self._env_done_flags[env_idx]:
+                        self._env_done_flags[env_idx] = True
+                        newly_finished_envs.append(env_idx)
+                        self._envs_waiting_for_reset.add(env_idx)
 
-                    # Always False for individual agents (only __all__ matters for RLlib)
+                        # Log environment completion
+                        if self._env_episode_start_time[env_idx]:
+                            elapsed = time.time() - self._env_episode_start_time[env_idx]
+                            print(f"\n{'┌'+'─'*78+'┐'}")
+                            print(f"│ [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx] + 1} completed{' '*41}│")
+                            print(f"│   Steps: {self._env_episode_steps[env_idx]:<10} Time: {elapsed:.1f}s{' '*47}│")
+                            print(f"│   Terminated: {str(is_term):<5} Truncated: {str(is_trunc):<5}{' '*39}│")
+                            print(f"│   Status: Waiting for other environments to finish...{' '*21}│")
+                            print(f"└{'─'*78}┘\n")
+
+                    # Set done flags ONLY for agents in finished environments
+                    # Agents in running environments continue with done=False
                     terminated_dict[flat_id] = False
-                    truncated_dict[flat_id] = False
-                    info_dict[flat_id] = {}
+                    truncated_dict[flat_id] = self._env_done_flags[env_idx]
+                    info_dict[flat_id] = {"env_idx": env_idx}
+
+                # Increment step counter for each environment
+                for env_idx in range(self.num_envs):
+                    if not self._env_done_flags[env_idx]:
+                        self._env_episode_steps[env_idx] += 1
 
                 self.episode_steps += 1
 
-                # Episode end: ONLY when UE5 signals
-                if ue5_episode_done:
-                    for flat_id in self._agent_ids:
-                        truncated_dict[flat_id] = True
+                # __all__ = True ONLY when ALL environments are done
+                all_envs_done = all(self._env_done_flags.values())
+
+                if all_envs_done:
+                    # All environments finished - trigger global reset
                     truncated_dict["__all__"] = True
                     terminated_dict["__all__"] = False
 
-                    # Calculate total episode reward
+                    # Calculate per-environment and total rewards
                     total_reward = sum(reward_dict.values())
                     avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
 
-                    print(f"\n[EPISODE {self._episodes_completed + 1} DONE] Step={self.episode_steps}, Total reward={total_reward:.2f}, Avg={avg_reward:.2f}")
-                    print(f"[EPISODE DONE] Next call should be reset(). Waiting for RLlib...")
+                    print(f"\n{'='*80}")
+                    print(f"[ALL ENVS DONE] All {self.num_envs} environments finished!")
+                    for env_idx in range(self.num_envs):
+                        elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
+                        print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx] + 1}, Steps={self._env_episode_steps[env_idx]}, Duration={elapsed:.1f}s")
+                    print(f"  Total reward={total_reward:.2f}, Avg={avg_reward:.2f}")
+                    print(f"[ALL ENVS DONE] Next call should be reset(). Waiting for RLlib...")
+                    print(f"{'='*80}\n")
                 else:
+                    # Some environments still running
                     truncated_dict["__all__"] = False
                     terminated_dict["__all__"] = False
 
-                # Periodic progress logging (every 100 steps)
+                    # Log status of newly finished environments
+                    if newly_finished_envs:
+                        running_envs = [i for i in range(self.num_envs) if not self._env_done_flags[i]]
+                        print(f"[ASYNC STATUS] Finished: {list(self._envs_waiting_for_reset)}, Running: {running_envs}")
+
+                # Periodic progress logging (every 100 steps) - v8.5: Show per-environment status
                 if self.episode_steps % 100 == 0:
                     elapsed = time.time() - self._episode_start_time
-                    # Accumulate recent rewards for progress tracking
                     total_reward = sum(reward_dict.values())
                     avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
-                    print(f"[STEP {self.episode_steps}] Episode={self._episodes_completed + 1}, Time={elapsed:.1f}s, StepReward={avg_reward:.2f}")
 
-                    # Warning if episode is running too long (MaxEpisodeDuration should be 60s)
-                    if elapsed > 90.0:
-                        print(f"[WARNING] Episode {self._episodes_completed + 1} has been running for {elapsed:.1f}s (expected max: 60s)")
-                        print(f"[WARNING] Check if UE5 MaxEpisodeDuration is set correctly or if termination signals are being sent")
+                    # Show per-environment status
+                    running_count = sum(1 for flag in self._env_done_flags.values() if not flag)
+                    done_count = sum(1 for flag in self._env_done_flags.values() if flag)
+
+                    print(f"\n{'='*80}")
+                    print(f"[STEP {self.episode_steps}] GlobalEp={self._episodes_completed + 1}, Time={elapsed:.1f}s, StepReward={avg_reward:.2f}, Running={running_count}/{self.num_envs}, Done={done_count}/{self.num_envs}")
+                    print(f"{'─'*80}")
+
+                    # Show individual environment status with better formatting
+                    for env_idx in range(self.num_envs):
+                        if not self._env_done_flags[env_idx]:
+                            env_elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
+                            status_icon = "🔄" if env_elapsed < 60 else "⚠️"
+                            print(f"  {status_icon} Env {env_idx}: Episode {self._env_episodes_completed[env_idx] + 1}, Steps={self._env_episode_steps[env_idx]}, Time={env_elapsed:.1f}s")
+                        else:
+                            print(f"  ✓ Env {env_idx}: DONE (Episode {self._env_episodes_completed[env_idx] + 1} completed, waiting for reset)")
+                    print(f"{'='*80}\n")
+
+                    # Warning if any running environment is taking too long
+                    for env_idx in range(self.num_envs):
+                        if not self._env_done_flags[env_idx] and self._env_episode_start_time[env_idx]:
+                            env_elapsed = time.time() - self._env_episode_start_time[env_idx]
+                            if env_elapsed > 90.0:
+                                print(f"[WARNING] Env {env_idx} has been running for {env_elapsed:.1f}s (expected max: 60s)")
+                                print(f"[WARNING] Check if UE5 MaxEpisodeDuration is set correctly or if termination signals are being sent")
 
                 return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 

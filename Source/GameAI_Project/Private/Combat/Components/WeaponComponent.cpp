@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Combat/WeaponComponent.h"
+#include "Combat/Components/WeaponComponent.h"
 #include "Combat/ProjectileBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"

@@ -1,6 +1,6 @@
 #include "Observation/TeamObservation.h"
 #include "Simulation/StateTransition.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 
 TArray<float> FTeamObservation::ToFeatureVector() const
 {

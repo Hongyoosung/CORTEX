@@ -3,7 +3,7 @@
 #include "StateTree/Tasks/STTask_ExecuteTacticalMovement_v8.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/CharacterMovementComponent.h"

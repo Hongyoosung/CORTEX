@@ -1,7 +1,7 @@
 // TacticalObserver.cpp - Schola observer for 68-feature tactical observation (v6.0)
 
 #include "Schola/TacticalObserver.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Observation/ObservationElement.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"

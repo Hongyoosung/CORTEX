@@ -5,8 +5,8 @@
 #include "Schola/FollowerAgentTrainer.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Core/ScholaGameInstance.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Team/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
 #include "Communicator/CommunicationManager.h"
 #include "Subsystem/ScholaManagerSubsystem.h"
 #include "EngineUtils.h"
@@ -116,10 +116,12 @@ void AScholaCombatEnvironment::InitializeEnvironment()
 
 void AScholaCombatEnvironment::ResetEnvironment()
 {
+	// v8.5 VECTORIZED TRAINING FIX: Increment per-environment episode counter
+	CurrentEpisode++;
+
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET #%d] ResetEnvironment() called on %s"), EnvironmentID, *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET #%d] Episode %d starting"), EnvironmentID,
-		SimulationManager ? SimulationManager->GetCurrentEpisode() + 1 : -1);
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET #%d] Episode %d starting (Environment-local counter)"), EnvironmentID, CurrentEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
 
 	// CRITICAL FIX: Validate SimulationManager before proceeding
@@ -173,8 +175,10 @@ void AScholaCombatEnvironment::ResetEnvironment()
 	// Start new episode (this will reset agents and trigger OnEpisodeStarted event)
 	// OnEpisodeStarted will reset LastDecisionTime in all ScholaAgentComponents
 	// This ensures Think() can send observations immediately, preventing poll() from blocking
-	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Calling StartNewEpisode()..."));
-	SimulationManager->StartNewEpisode();
+	// v8.5 VECTORIZED TRAINING: Pass EnvironmentID to enable per-environment episode tracking
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Calling StartNewEpisode(EnvID=%d, Episode=%d)..."),
+		EnvironmentID, CurrentEpisode);
+	SimulationManager->StartNewEpisode(EnvironmentID, CurrentEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] StartNewEpisode() completed successfully"));
 
 	// Verify simulation is still running after reset
@@ -296,6 +300,29 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Trainers Created: %d | Failed: %d"),
 		TrainersCreated, TrainersFailed);
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Note: Schola may discover CDO components - Python wrapper handles filtering"));
+
+	// v8.5 VECTORIZED TRAINING: Register team-to-environment mappings
+	if (SimulationManager && IsValid(SimulationManager))
+	{
+		TSet<int32> RegisteredTeamIDs;
+		for (UScholaAgentComponent* Agent : RegisteredAgents)
+		{
+			if (!Agent || !Agent->GetOwner()) continue;
+
+			UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
+			if (FollowerComp && FollowerComp->TeamLeader)
+			{
+				int32 TeamID = FollowerComp->TeamLeader->TeamID;
+				if (!RegisteredTeamIDs.Contains(TeamID))
+				{
+					SimulationManager->RegisterTeamEnvironment(TeamID, EnvironmentID);
+					RegisteredTeamIDs.Add(TeamID);
+					UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv #%d] Registered Team %d to this environment"),
+						EnvironmentID, TeamID);
+				}
+			}
+		}
+	}
 
 	bAgentsRegistered = true;
 }
@@ -499,12 +526,20 @@ void AScholaCombatEnvironment::BindEpisodeEvents()
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv #%d] Episode event bindings CONFIRMED ✓"), EnvironmentID);
 }
 
-void AScholaCombatEnvironment::OnEpisodeStarted(int32 EpisodeNumber)
+void AScholaCombatEnvironment::OnEpisodeStarted(int32 BroadcastEnvID, int32 EpisodeNumber)
 {
+	// Filter events - only process events for this environment
+	if (BroadcastEnvID != EnvironmentID)
+	{
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[ScholaEnv #%d] Ignoring episode start event from Env %d"),
+			EnvironmentID, BroadcastEnvID);
+		return;
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv #%d] Episode %d STARTED                             ║"), EnvironmentID, EpisodeNumber);
+	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv #%d] Episode %d STARTED                             ║"),
+		EnvironmentID, CurrentEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("║ Environment: %s                                               ║"), *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("║ SimulationManager Valid: %s                                     ║"), (SimulationManager && IsValid(SimulationManager)) ? TEXT("YES") : TEXT("NO"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════╝"));
 
 	// CRITICAL: Validate environment state
@@ -519,27 +554,35 @@ void AScholaCombatEnvironment::OnEpisodeStarted(int32 EpisodeNumber)
 	}
 }
 
-void AScholaCombatEnvironment::OnEpisodeEnded(const FEpisodeResult& Result)
+void AScholaCombatEnvironment::OnEpisodeEnded(int32 BroadcastEnvID, const FEpisodeResult& Result)
 {
+	// Filter events - only process events for this environment
+	if (BroadcastEnvID != EnvironmentID)
+	{
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[ScholaEnv #%d] Ignoring episode end event from Env %d"),
+			EnvironmentID, BroadcastEnvID);
+		return;
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv #%d] Episode %d ENDED                               ║"), EnvironmentID, Result.EpisodeNumber);
+	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv #%d] Episode %d ENDED                               ║"),
+		EnvironmentID, CurrentEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("║ Winner: Team %d | Loser: Team %d                               ║"), Result.WinningTeamID, Result.LosingTeamID);
 	UE_LOG(LogTemp, Warning, TEXT("║ Duration: %.2fs | Steps: %d                                    ║"), Result.EpisodeDuration, Result.TotalSteps);
 	UE_LOG(LogTemp, Warning, TEXT("║ Environment: %s                                                ║"), *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("║ SimulationManager Valid: %s                                     ║"), (SimulationManager && IsValid(SimulationManager)) ? TEXT("YES") : TEXT("NO"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════╝"));
 
 	// CRITICAL: Validate environment state before calling MarkCompleted
 	if (!SimulationManager || !IsValid(SimulationManager))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] CRITICAL: SimulationManager invalid in OnEpisodeEnded!"));
+		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv #%d] CRITICAL: SimulationManager invalid in OnEpisodeEnded!"), EnvironmentID);
 	}
 
 	// CRITICAL FIX v8.0: DO NOT call MarkCompleted() - it triggers Schola auto-reset
 	// Instead, agents will detect episode end via bLastEpisodeWasTerminated flag
 	// and send termination signals in their observations. Python will call reset() explicitly.
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Episode ended - agents will send termination signals"));
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Waiting for Python to call reset() (NOT auto-resetting)"));
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv #%d] Episode ended - agents will send termination signals"), EnvironmentID);
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv #%d] Waiting for Python to call reset() (NOT auto-resetting)"), EnvironmentID);
 
 	// NOTE: Removed MarkCompleted() call to prevent Schola auto-reset
 	// The environment remains in "Running" state but with bEpisodeEnding=true

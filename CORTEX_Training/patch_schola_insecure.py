@@ -60,25 +60,45 @@ def patch_schola_grpc():
         # Create channel with extended timeout for Docker networking
         import grpc
 
-        # Create timeout interceptor
-        class _TimeoutInterceptor(grpc.UnaryUnaryClientInterceptor):
-            """Add default 60s timeout to all RPC calls"""
-            def intercept_unary_unary(self, continuation, client_call_details, request):
-                new_details = client_call_details
-                if client_call_details.timeout is None or client_call_details.timeout < 60:
-                    new_details = client_call_details._replace(timeout=60)
-                return continuation(new_details, request)
+        # Multi-type timeout interceptor (handles all RPC types)
+        class _TimeoutInterceptor(
+            grpc.UnaryUnaryClientInterceptor,
+            grpc.UnaryStreamClientInterceptor,
+            grpc.StreamUnaryClientInterceptor,
+            grpc.StreamStreamClientInterceptor
+        ):
+            """Add default 120s timeout to all RPC calls (Docker networking is slow)"""
+            def _add_timeout(self, client_call_details):
+                # Use 120s timeout for Docker (UE5 initialization can be slow)
+                timeout = 120
+                if client_call_details.timeout is None or client_call_details.timeout < timeout:
+                    return client_call_details._replace(timeout=timeout)
+                return client_call_details
 
-        # Create channel with keepalive options
+            def intercept_unary_unary(self, continuation, client_call_details, request):
+                return continuation(self._add_timeout(client_call_details), request)
+
+            def intercept_unary_stream(self, continuation, client_call_details, request):
+                return continuation(self._add_timeout(client_call_details), request)
+
+            def intercept_stream_unary(self, continuation, client_call_details, request_iterator):
+                return continuation(self._add_timeout(client_call_details), request_iterator)
+
+            def intercept_stream_stream(self, continuation, client_call_details, request_iterator):
+                return continuation(self._add_timeout(client_call_details), request_iterator)
+
+        # Create channel with keepalive options (conservative settings to prevent "Too many pings")
         base_channel = grpc.insecure_channel(
             self.address,
             options=[
-                ('grpc.keepalive_time_ms', 10000),
-                ('grpc.keepalive_timeout_ms', 5000),
-                ('grpc.http2.max_pings_without_data', 0),
-                ('grpc.http2.min_time_between_pings_ms', 10000),
-                ('grpc.max_connection_idle_ms', 300000),
-                ('grpc.max_connection_age_ms', 600000),
+                ('grpc.keepalive_time_ms', 30000),              # Ping every 30s (reduced frequency)
+                ('grpc.keepalive_timeout_ms', 10000),           # Wait 10s for ping response
+                ('grpc.http2.max_pings_without_data', 2),       # Max 2 pings without data (was 0=unlimited)
+                ('grpc.http2.min_time_between_pings_ms', 30000), # Minimum 30s between pings
+                ('grpc.max_connection_idle_ms', 300000),        # 5 min idle timeout
+                ('grpc.max_connection_age_ms', 600000),         # 10 min max connection age
+                ('grpc.initial_reconnect_backoff_ms', 1000),    # Start reconnect backoff at 1s
+                ('grpc.max_reconnect_backoff_ms', 10000),       # Max reconnect backoff 10s
             ]
         )
 
@@ -93,12 +113,14 @@ def patch_schola_grpc():
         channel_pattern = r'(grpc\.insecure_channel\(["\']?[^,)]+["\']?)\)'
         channel_replacement = r'''\1,
             options=[
-                ('grpc.keepalive_time_ms', 10000),
-                ('grpc.keepalive_timeout_ms', 5000),
-                ('grpc.http2.max_pings_without_data', 0),
-                ('grpc.http2.min_time_between_pings_ms', 10000),
+                ('grpc.keepalive_time_ms', 30000),
+                ('grpc.keepalive_timeout_ms', 10000),
+                ('grpc.http2.max_pings_without_data', 2),
+                ('grpc.http2.min_time_between_pings_ms', 30000),
                 ('grpc.max_connection_idle_ms', 300000),
                 ('grpc.max_connection_age_ms', 600000),
+                ('grpc.initial_reconnect_backoff_ms', 1000),
+                ('grpc.max_reconnect_backoff_ms', 10000),
             ]
         )'''
         if re.search(channel_pattern, content):

@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actor/LeaderCharacter.h"
-#include "Team/TeamLeaderComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
 
 ALeaderCharacter::ALeaderCharacter()
 {

@@ -1,7 +1,7 @@
-#include "Team/ObservationBuilderComponent.h"
-#include "Team/TeamLeaderComponent.h"
-#include "Perception/AgentPerceptionComponent.h"
-#include "Combat/HealthComponent.h"
+#include "Observation/Components/ObservationBuilderComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Combat/Components/AgentPerceptionComponent.h"
+#include "Combat/Components/HealthComponent.h"
 
 UObservationBuilderComponent::UObservationBuilderComponent()
 {

@@ -1,7 +1,7 @@
 // TacticalParameterActuator.cpp - v8.0 tactical parameter actuator implementation
 
 #include "Schola/TacticalParameterActuator.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
 #include "GameFramework/Pawn.h"

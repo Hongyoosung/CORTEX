@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "TeamTypes.h"
+#include "Team/TeamTypes.h"
 #include "RL/RLTypes.h"
 #include "TacticalStateComponent.generated.h"
 

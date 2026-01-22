@@ -1,8 +1,8 @@
 #include "Core/SimulationManagerGameMode.h"
-#include "Team/TeamLeaderComponent.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Team/ObjectiveActor.h"
-#include "Combat/HealthComponent.h"
+#include "Combat/Components/HealthComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -332,6 +332,12 @@ void ASimulationManagerGameMode::UnregisterTeamMember(int32 TeamID, AActor* Agen
 
 	ActorToTeamMap.Remove(Agent);
 	SpawnTransforms.Remove(Agent);
+}
+
+void ASimulationManagerGameMode::RegisterTeamEnvironment(int32 TeamID, int32 EnvironmentID)
+{
+	TeamToEnvironmentMap.Add(TeamID, EnvironmentID);
+	UE_LOG(LogTemp, Log, TEXT("SimulationManager: Registered Team %d to Environment %d"), TeamID, EnvironmentID);
 }
 
 int32 ASimulationManagerGameMode::GetTeamIDForActor(AActor* Agent) const
@@ -884,7 +890,7 @@ void ASimulationManagerGameMode::CheckEpisodeTermination()
 	}
 }
 
-void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTeamID)
+void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTeamID, int32 EnvironmentID)
 {
 	if (bEpisodeEnding)
 	{
@@ -899,14 +905,47 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 	bool bIsTimeout = (WinningTeamID == -1 && LosingTeamID == -1);
 	bLastEpisodeWasTimeout = bIsTimeout;
 
+	// If EnvironmentID not provided, try to determine from teams
+	if (EnvironmentID < 0 && WinningTeamID >= 0)
+	{
+		int32* FoundEnvID = TeamToEnvironmentMap.Find(WinningTeamID);
+		if (FoundEnvID)
+		{
+			EnvironmentID = *FoundEnvID;
+		}
+	}
+	if (EnvironmentID < 0 && LosingTeamID >= 0)
+	{
+		int32* FoundEnvID = TeamToEnvironmentMap.Find(LosingTeamID);
+		if (FoundEnvID)
+		{
+			EnvironmentID = *FoundEnvID;
+		}
+	}
+
+	// Fallback to environment 0 if still not determined
+	if (EnvironmentID < 0)
+	{
+		EnvironmentID = 0;
+		UE_LOG(LogTemp, Warning, TEXT("[EndEpisode] Could not determine EnvironmentID, using default: 0"));
+	}
+
+	// Get episode number from per-environment tracking
+	int32 EpisodeNumber = CurrentEpisode;  // Fallback to global
+	int32* EnvEpisode = EnvironmentEpisodes.Find(EnvironmentID);
+	if (EnvEpisode)
+	{
+		EpisodeNumber = *EnvEpisode;
+	}
+
 	// Build episode result
-	LastEpisodeResult.EpisodeNumber = CurrentEpisode;
+	LastEpisodeResult.EpisodeNumber = EpisodeNumber;
 	LastEpisodeResult.WinningTeamID = WinningTeamID;
 	LastEpisodeResult.LosingTeamID = LosingTeamID;
 	LastEpisodeResult.EpisodeDuration = EpisodeDuration;
 	LastEpisodeResult.TotalSteps = CurrentStep;
 
-	UE_LOG(LogTemp, Warning, TEXT("===== EPISODE %d ENDED ====="), CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("===== ENV %d: EPISODE %d ENDED ====="), EnvironmentID, EpisodeNumber);
 	UE_LOG(LogTemp, Warning, TEXT("  Winner: Team %d"), WinningTeamID);
 	UE_LOG(LogTemp, Warning, TEXT("  Loser: Team %d"), LosingTeamID);
 	UE_LOG(LogTemp, Warning, TEXT("  Duration: %.2fs"), EpisodeDuration);
@@ -948,15 +987,18 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 	}
 
 	// Broadcast episode ended event
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] Broadcasting OnEpisodeEnded event to %d bound listeners..."),
-		OnEpisodeEnded.IsBound() ? 1 : 0);  // Note: Unreal doesn't expose listener count easily
-	OnEpisodeEnded.Broadcast(LastEpisodeResult);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] Broadcasting OnEpisodeEnded(EnvID=%d) to bound listeners..."),
+		EnvironmentID);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] OnEpisodeEnded.IsBound() = %s"),
+		OnEpisodeEnded.IsBound() ? TEXT("TRUE") : TEXT("FALSE"));
+	OnEpisodeEnded.Broadcast(EnvironmentID, LastEpisodeResult);
 	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] OnEpisodeEnded.Broadcast() completed"));
 }
 
-void ASimulationManagerGameMode::StartNewEpisode()
+void ASimulationManagerGameMode::StartNewEpisode(int32 EnvironmentID, int32 EnvironmentEpisodeNumber)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[StartNewEpisode] Called - clearing bEpisodeEnding flag"));
+	UE_LOG(LogTemp, Warning, TEXT("[StartNewEpisode] Called (EnvID: %d, Episode: %d)"),
+		EnvironmentID, EnvironmentEpisodeNumber);
 
 	// CRITICAL: Early validation to prevent crashes during reset
 	if (RegisteredTeams.Num() == 0)
@@ -967,23 +1009,33 @@ void ASimulationManagerGameMode::StartNewEpisode()
 		return;
 	}
 
+	if (EnvironmentID < 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("===== EPISODE START FAILED ====="));
+		UE_LOG(LogTemp, Error, TEXT("Invalid EnvironmentID: %d"), EnvironmentID);
+		return;
+	}
+
 	// Clear timer
 	GetWorldTimerManager().ClearTimer(EpisodeRestartTimerHandle);
 
-	// Increment episode counter
-	CurrentEpisode++;
+	// v8.5 VECTORIZED TRAINING: Per-environment episode tracking
+	EnvironmentEpisodes.Add(EnvironmentID, EnvironmentEpisodeNumber);
+	EnvironmentSteps.Add(EnvironmentID, 0);
+
+	// Reset global state (used by legacy code, but per-environment tracking is preferred)
 	CurrentStep = 0;
 	EpisodeStartTime = GetWorld()->GetTimeSeconds();
 	EpisodeGameTime = 0.0f;  // v8.0 TIMING FIX: Reset accumulated game time
 	bEpisodeEnding = false;  // CRITICAL: This unblocks Tick() so observations can flow again
-	// NOTE: bLastEpisodeWasTerminated is NOT cleared here - it persists until agents report status
 
-	UE_LOG(LogTemp, Warning, TEXT("===== EPISODE %d STARTED ====="), CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("===== ENV %d: EPISODE %d STARTED ====="), EnvironmentID, EnvironmentEpisodeNumber);
 	UE_LOG(LogTemp, Warning, TEXT("[EPISODE CONFIG] bEpisodeEnding=%s, MaxEpisodeDuration: %.1fs, MaxSteps: %d"),
 		bEpisodeEnding ? TEXT("TRUE") : TEXT("FALSE"), MaxEpisodeDuration, MaxStepsPerEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("[TERMINATION FLAGS] bLastEpisodeWasTerminated=%s, bLastEpisodeWasTimeout=%s"),
 		bLastEpisodeWasTerminated ? TEXT("TRUE") : TEXT("FALSE"), bLastEpisodeWasTimeout ? TEXT("TRUE") : TEXT("FALSE"));
-	UE_LOG(LogTemp, Warning, TEXT("[TIMING FIX] Using accumulated game time (DeltaTime) instead of wall-clock to prevent discrepancy during observation collection"));
+	UE_LOG(LogTemp, Warning, TEXT("[TIMING FIX] Using accumulated game time (DeltaTime) instead of wall-clock"));
+	UE_LOG(LogTemp, Warning, TEXT("[v8.5] Per-environment episode tracking: Env %d → Episode %d"), EnvironmentID, EnvironmentEpisodeNumber);
 
 	// Reset agent health and positions
 	for (auto& Pair : RegisteredTeams)
@@ -1074,15 +1126,15 @@ void ASimulationManagerGameMode::StartNewEpisode()
 	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset %d ObjectiveActor(s)"), FoundObjectives.Num());
 
 	// Broadcast episode started event
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] Broadcasting OnEpisodeStarted(%d) to bound listeners..."),
-		CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] Broadcasting OnEpisodeStarted(EnvID=%d, Episode=%d) to bound listeners..."),
+		EnvironmentID, EnvironmentEpisodeNumber);
 	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.IsBound() = %s"),
 		OnEpisodeStarted.IsBound() ? TEXT("TRUE") : TEXT("FALSE"));
-	OnEpisodeStarted.Broadcast(CurrentEpisode);
+	OnEpisodeStarted.Broadcast(EnvironmentID, EnvironmentEpisodeNumber);
 	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.Broadcast() completed"));
 
 	// Final verification log - this confirms episode is ready for training
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE READY] Episode %d fully initialized - all agents reset and ready"), CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE READY] Env %d Episode %d fully initialized - all agents reset and ready"), EnvironmentID, EnvironmentEpisodeNumber);
 }
 
 //------------------------------------------------------------------------------

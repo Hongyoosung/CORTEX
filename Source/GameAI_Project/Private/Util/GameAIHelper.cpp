@@ -1,7 +1,7 @@
 #include "Util/GameAIHelper.h"
-#include "Combat/HealthComponent.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Team/TeamLeaderComponent.h"
+#include "Combat/Components/HealthComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
 

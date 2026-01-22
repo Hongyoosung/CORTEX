@@ -167,6 +167,14 @@ public:
 	void UnregisterTeamMember(int32 TeamID, AActor* Agent);
 
 	/**
+	 * Associate a team with an environment (v8.5 Vectorized Training)
+	 * @param TeamID - Team ID to associate
+	 * @param EnvironmentID - Environment ID that owns this team
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Teams")
+	void RegisterTeamEnvironment(int32 TeamID, int32 EnvironmentID);
+
+	/**
 	 * Get team ID for an actor
 	 * @param Agent - Actor to query
 	 * @return Team ID (returns -1 if not found)
@@ -369,13 +377,14 @@ public:
 	 * @param LosingTeamID - ID of losing team (-1 for draw)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Episode")
-	void EndEpisode(int32 WinningTeamID, int32 LosingTeamID);
+	void EndEpisode(int32 WinningTeamID, int32 LosingTeamID, int32 EnvironmentID = 0);
 
 	/**
 	 * Start a new episode (resets agents to spawn positions)
+	 * @param EnvironmentEpisodeNumber - Episode number for the calling environment (for multi-env support)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Episode")
-	void StartNewEpisode();
+	void StartNewEpisode(int32 EnvironmentID, int32 EnvironmentEpisodeNumber);
 
 	/**
 	 * Check if episode is currently ending (team annihilation or timeout)
@@ -440,6 +449,7 @@ public:
 	 * Get current episode number
 	 */
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	/** DEPRECATED: Use per-environment episode tracking (EnvironmentEpisodes map) in v8.5+ */
 	int32 GetCurrentEpisode() const { return CurrentEpisode; }
 
 	/**
@@ -461,13 +471,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Objective")
 	AActor* FindObjectiveActor();
 
-	/** Delegate broadcast when episode ends */
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEpisodeEnded, const FEpisodeResult&, Result);
+	/** Delegate broadcast when episode ends - includes EnvironmentID for multi-env support */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeEnded, int32, EnvironmentID, const FEpisodeResult&, Result);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
 	FOnEpisodeEnded OnEpisodeEnded;
 
-	/** Delegate broadcast when new episode starts */
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEpisodeStarted, int32, EpisodeNumber);
+	/** Delegate broadcast when new episode starts - includes EnvironmentID for multi-env support */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeStarted, int32, EnvironmentID, int32, EpisodeNumber);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
 	FOnEpisodeStarted OnEpisodeStarted;
 
@@ -574,11 +584,22 @@ private:
 	// EPISODE STATE
 	//--------------------------------------------------------------------------
 
-	/** Current episode number */
+	/**
+	 * DEPRECATED: Global episode number - Use EnvironmentEpisodes map for multi-env training
+	 * Kept for backward compatibility with legacy single-environment mode
+	 */
 	int32 CurrentEpisode = 0;
 
-	/** Current step within episode */
+	/**
+	 * DEPRECATED: Global step counter - Use EnvironmentSteps map for multi-env training
+	 * Kept for backward compatibility with legacy single-environment mode
+	 */
 	int32 CurrentStep = 0;
+
+	/** v8.5 VECTORIZED TRAINING: Per-environment episode tracking */
+	TMap<int32, int32> EnvironmentEpisodes;  // EnvironmentID → Episode Number
+	TMap<int32, int32> EnvironmentSteps;     // EnvironmentID → Current Step
+	TMap<int32, int32> TeamToEnvironmentMap;  // TeamID → EnvironmentID
 
 	/** Episode start time (wall-clock for reference) */
 	float EpisodeStartTime = 0.0f;

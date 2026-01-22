@@ -1,7 +1,7 @@
 // TacticalRewardProvider.cpp - Schola reward provider for combat events
 
 #include "Schola/TacticalRewardProvider.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 
 UTacticalRewardProvider::UTacticalRewardProvider()
 {

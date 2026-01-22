@@ -1,12 +1,12 @@
 #include "AI/MCTS/MCTS.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Team/TeamTypes.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "RL/RLPolicyNetwork.h"
 #include "RL/RLTypes.h"  
-#include "Combat/HealthComponent.h"
-#include "Combat/WeaponComponent.h"
+#include "Combat/Components/HealthComponent.h"
+#include "Combat/Components/WeaponComponent.h"
 #include "Core/ProfilingMacros.h" 
 
 UMCTS::UMCTS()

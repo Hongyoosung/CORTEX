@@ -1,11 +1,11 @@
-#include "Team/CombatExecutorComponent.h"
-#include "Team/TeamLeaderComponent.h"
-#include "RL/RewardCalculator.h"
-#include "Perception/AgentPerceptionComponent.h"
-#include "Combat/HealthComponent.h"
-#include "Combat/WeaponComponent.h"
+#include "Combat/Components/CombatExecutorComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "RL/Components/RewardCalculator.h"
+#include "Combat/Components/AgentPerceptionComponent.h"
+#include "Combat/Components/HealthComponent.h"
+#include "Combat/Components/WeaponComponent.h"
 #include "AIController.h"
-#include "TeamTypes.h"
+#include "Team/TeamTypes.h"
 
 UCombatExecutorComponent::UCombatExecutorComponent()
 {

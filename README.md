@@ -47,9 +47,6 @@ Followers (N agents) → FSM + RL Policy + Behavior Tree → Tactical execution
 6.  **Observation System (`Observation/*`)**
     -   Gathers and manages the 71 individual and 40 team features that feed the AI decision-making processes.
 
-7.  **Communication (`Team/TeamCommunicationManager.h/cpp`)**
-    -   Manages message passing and events between the Team Leader and Followers.
-
 ## Project Status
 
 **✅ Implemented:**

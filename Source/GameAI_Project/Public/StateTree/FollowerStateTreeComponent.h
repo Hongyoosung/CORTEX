@@ -8,6 +8,7 @@
 #include "FollowerStateTreeComponent.generated.h"
 
 class UFollowerAgentComponent;
+class UHealthComponent;
 
 /**
  * Follower State Tree Component
@@ -107,6 +108,8 @@ protected:
 	/** Find FollowerAgentComponent on actor */
 	UFollowerAgentComponent* FindFollowerComponent();
 
+	UHealthComponent* FindHealthComponent();
+
 	/** Bind to follower component events */
 	void BindToFollowerEvents();
 
@@ -134,7 +137,10 @@ public:
 
 	/** Follower agent component reference (auto-found if nullptr) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
-	UFollowerAgentComponent* FollowerComponent;
+	TObjectPtr<UFollowerAgentComponent> FollowerComponent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
+	TObjectPtr<UHealthComponent> HealthComponent;
 
 	/** Auto-find FollowerAgentComponent on same actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")

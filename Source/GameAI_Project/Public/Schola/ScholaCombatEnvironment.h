@@ -91,6 +91,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	int32 EnvironmentID = -1;
 
+	/** Current episode number for this environment (independent per environment) */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	int32 CurrentEpisode = -1;
+
 	//--------------------------------------------------------------------------
 	// UTILITY
 	//--------------------------------------------------------------------------
@@ -104,12 +108,12 @@ public:
 	bool RegisterAgent(UScholaAgentComponent* Agent);
 
 
-	/** Bind to SimulationManager episode events */
+	/** Bind to SimulationManager episode events - includes EnvironmentID for filtering */
 	UFUNCTION()
-	void OnEpisodeStarted(int32 EpisodeNumber);
+	void OnEpisodeStarted(int32 BroadcastEnvID, int32 EpisodeNumber);
 
 	UFUNCTION()
-	void OnEpisodeEnded(const FEpisodeResult& Result);
+	void OnEpisodeEnded(int32 BroadcastEnvID, const FEpisodeResult& Result);
 
 private:
 	/** Validate agent for training (has required components) */

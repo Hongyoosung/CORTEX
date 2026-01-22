@@ -3,8 +3,8 @@
 #include "StateTree/Tasks/STTask_ExecuteFire.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Combat/WeaponComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Combat/Components/WeaponComponent.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
 

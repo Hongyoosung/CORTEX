@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "RL/RewardCalculator.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Team/TeamLeaderComponent.h"
-#include "Combat/HealthComponent.h"
+#include "RL/Components/RewardCalculator.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Combat/Components/HealthComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"

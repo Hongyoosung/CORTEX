@@ -2,8 +2,9 @@
 
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeSchema.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Team/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Combat/Components/HealthComponent.h"
 #include "RL/RLPolicyNetwork.h"
 #include "StateTreeExecutionContext.h"
 #include "AIController.h"
@@ -55,6 +56,12 @@ void UFollowerStateTreeComponent::BeginPlay()
 	{
 		UE_LOG(LogTemp, Error, TEXT("UFollowerStateTreeComponent: ❌ FollowerComponent not found!"));
 		return;
+	}
+
+	HealthComponent = FindHealthComponent();
+	if (!HealthComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: ⚠️ HealthComponent not found!"));
 	}
 
 	// Initialize context BEFORE Super::BeginPlay() starts the tree
@@ -205,10 +212,7 @@ bool UFollowerStateTreeComponent::SetContextRequirements(FStateTreeExecutionCont
 	{
 		InContext.SetContextDataByName(FName(TEXT("TacticalPolicy")), FStateTreeDataView(Context.TacticalPolicy));
 	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("  ⚠️ TacticalPolicy is NULL (optional)"));
-	}
+	// Note: TacticalPolicy is optional - no log needed for NULL case
 
 	// Use our custom schema's SetContextRequirements which makes AIController optional for Schola
 	const bool bResult = UFollowerStateTreeSchema::SetContextRequirements(*this, InContext, true);
@@ -298,8 +302,8 @@ void UFollowerStateTreeComponent::InitializeContext()
 	}
 
 	// Initialize state flags
-	Context.bIsAlive = FollowerComponent->bIsAlive;
-	Context.bUseRLPolicy = FollowerComponent->bUseRLPolicy;
+	Context.bIsAlive = HealthComponent.Get()->bIsAlive;
+	Context.bUseRLPolicy = FollowerComponent->IsUsingRLPolicy();
 
 	// Initialize observation
 	Context.CurrentObservation = FollowerComponent->GetLocalObservation();
@@ -319,7 +323,7 @@ void UFollowerStateTreeComponent::UpdateContextFromFollower()
 
 	// Sync basic state from follower component (v3.0)
 	// (Detailed observation updates are handled by STEvaluator_UpdateObservation)
-	Context.bIsAlive = FollowerComponent->bIsAlive;
+	Context.bIsAlive = HealthComponent->bIsAlive;
 	Context.AccumulatedReward = FollowerComponent->GetAccumulatedReward();
 
 	// v8.0 FIX: Sync strategy assignment from MCTS to SharedContext
@@ -532,6 +536,24 @@ UFollowerAgentComponent* UFollowerStateTreeComponent::FindFollowerComponent()
 	}
 
 	return OwnerFollowerComp;
+}
+
+UHealthComponent* UFollowerStateTreeComponent::FindHealthComponent()
+{
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return nullptr;
+	}
+
+	UHealthComponent* OwnerHealthComp = Owner->FindComponentByClass<UHealthComponent>();
+
+	if (!OwnerHealthComp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: No HealthComponent found on '%s'"), *Owner->GetName());
+	}
+
+	return OwnerHealthComp;
 }
 
 void UFollowerStateTreeComponent::BindToFollowerEvents()

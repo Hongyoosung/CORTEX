@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "TeamTypes.h"
+#include "Team/TeamTypes.h"
 #include "Observation/ObservationElement.h"
 #include "RL/RLTypes.h"
 #include "Observation/TeamObservation.h"
@@ -16,6 +16,7 @@ class UTacticalStateComponent;
 class UObservationBuilderComponent;
 class URLAgentComponent;
 class UCombatExecutorComponent;
+class URLPolicyNetwork;
 
 /**
  * Delegate for follower events (v8.0)
@@ -208,6 +209,12 @@ public:
 	/** Is tactical policy ready for queries? (delegates to RLAgentComponent) */
 	UFUNCTION(BlueprintPure, Category = "Follower|RL")
 	bool IsTacticalPolicyReady() const;
+
+	bool IsUsingRLPolicy() const;
+
+	URLPolicyNetwork* GetTacticalPolicy() const;
+
+	
 
 	//--------------------------------------------------------------------------
 	// UTILITY

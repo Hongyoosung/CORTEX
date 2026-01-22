@@ -4,7 +4,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"

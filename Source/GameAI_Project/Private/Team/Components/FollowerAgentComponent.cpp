@@ -1,16 +1,16 @@
-#include "Team/FollowerAgentComponent.h"
-#include "Team/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
 #include "Team/ObjectiveActor.h"
 // v8.0 Refactored: New component includes
-#include "Team/TacticalStateComponent.h"
-#include "Team/ObservationBuilderComponent.h"
-#include "Team/RLAgentComponent.h"
-#include "Team/CombatExecutorComponent.h"
+#include "RL/Components/TacticalStateComponent.h"
+#include "Observation/Components/ObservationBuilderComponent.h"
+#include "RL/Components/RLAgentComponent.h"
+#include "Combat/Components/CombatExecutorComponent.h"
 // Other includes
 #include "RL/RLPolicyNetwork.h"
-#include "RL/RewardCalculator.h"
-#include "Perception/AgentPerceptionComponent.h"
-#include "Combat/HealthComponent.h"
+#include "RL/Components/RewardCalculator.h"
+#include "Combat/Components/AgentPerceptionComponent.h"
+#include "Combat/Components/HealthComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/GameplayStatics.h"
@@ -614,6 +614,18 @@ bool UFollowerAgentComponent::IsTacticalPolicyReady() const
 {
 	if (!RLAgent) return false;
 	return RLAgent->IsTacticalPolicyReady();
+}
+
+bool UFollowerAgentComponent::IsUsingRLPolicy() const
+{
+	if (!RLAgent) return false;
+	return RLAgent->bUseRLPolicy;
+}
+
+URLPolicyNetwork* UFollowerAgentComponent::GetTacticalPolicy() const
+{
+	if (!RLAgent) return nullptr;
+	return RLAgent->GetTacticalPolicy();
 }
 
 //------------------------------------------------------------------------------

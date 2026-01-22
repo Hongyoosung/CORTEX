@@ -1,6 +1,6 @@
-#include "Team/RLAgentComponent.h"
+#include "RL/Components/RLAgentComponent.h"
 #include "RL/RLPolicyNetwork.h"
-#include "RL/RewardCalculator.h"
+#include "RL/Components/RewardCalculator.h"
 
 URLAgentComponent::URLAgentComponent()
 {

@@ -1,4 +1,4 @@
-#include "Team/TacticalStateComponent.h"
+#include "RL/Components/TacticalStateComponent.h"
 #include "Team/ObjectiveActor.h"
 
 UTacticalStateComponent::UTacticalStateComponent()

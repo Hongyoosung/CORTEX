@@ -3,7 +3,7 @@
 #include "StateTree/Tasks/STTask_Idle.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "GameFramework/Pawn.h"
 
 EStateTreeRunStatus FSTTask_Idle::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const

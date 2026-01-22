@@ -8,6 +8,7 @@
 #include "ScholaAgentComponent.generated.h"
 
 class UFollowerAgentComponent;
+class UHealthComponent;
 class UTacticalObserver;
 class UTacticalRewardProvider;
 struct FDamageEventData;
@@ -76,8 +77,11 @@ public:
 	class UCombinedTacticalActuator* CombinedTacticalActuator = nullptr;
 
 	/** Reference to follower agent component (auto-found) */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	UFollowerAgentComponent* FollowerAgent = nullptr;
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|Components")
+	TObjectPtr<UFollowerAgentComponent> FollowerAgent = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|Components")
+	TObjectPtr<UHealthComponent> HealthComponent = nullptr;
 
 	/** Reference to Schola environment (set by environment during registration) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
@@ -146,8 +150,4 @@ private:
 	/** Damage taken event - triggers immediate tactical response */
 	UFUNCTION()
 	void OnDamageTakenEventHandler(const FDamageEventData& DamageEvent, float CurrentHealth);
-
-	/** Episode started event - resets decision timer to allow immediate observations */
-	UFUNCTION()
-	void OnEpisodeStarted(int32 EpisodeNumber);
 };
