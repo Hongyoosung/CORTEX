@@ -389,4 +389,14 @@ private:
 
 	/** Count of MCTS executions for averaging */
 	int32 MCTSExecutionCount = 0;
+
+	/** SimulationManager에 리더가 성공적으로 등록되었는지 여부 */
+	bool bIsRegisteredToManager = false;
+
+	/** 리더가 등록되기 전에 먼저 도착한 팔로워 대기열 */
+	UPROPERTY()
+	TArray<AActor*> PendingFollowerRegistration;
+
+	/** 대기열에 있는 팔로워들을 매니저에 등록하는 내부 함수 */
+	void ProcessPendingRegistrations();
 };

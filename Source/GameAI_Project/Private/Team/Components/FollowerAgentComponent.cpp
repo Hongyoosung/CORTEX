@@ -286,6 +286,12 @@ bool UFollowerAgentComponent::RegisterWithTeamLeader()
 		// NOTE: SimulationManager registration is now handled by TeamLeader->RegisterFollower()
 		// This eliminates duplicate registration calls and simplifies the flow
 	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': FAILED to register with TeamLeader '%s'"),
+			*GetOwner()->GetName(), *TeamLeader->TeamName);
+
+	}
 
 	return bSuccess;
 }

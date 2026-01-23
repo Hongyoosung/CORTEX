@@ -32,44 +32,26 @@ UTeamLeaderComponent::UTeamLeaderComponent()
 void UTeamLeaderComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// Initialize MCTS
 	InitializeMCTS();
 
-
-	// Auto-register with SimulationManager (fix for missing team registration)
 	if (bAutoRegisterWithSimManager)
 	{
 		ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
 		if (SimManager)
 		{
-			bool InbRegistered = SimManager->RegisterTeam(TeamID, this, TeamName, TeamColor);
-			if (InbRegistered)
+			// 리더 등록 시도
+			if (SimManager->RegisterTeam(TeamID, this, TeamName, TeamColor))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Registered with SimulationManager (TeamID: %d)"),
-					*TeamName, TeamID);
+				bIsRegisteredToManager = true; // 등록 상태 확인
+				UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Registered with SimulationManager"), *TeamName);
 
-				// CRITICAL FIX: Register team-environment mapping IMMEDIATELY after team registration
-				// This must happen BEFORE objective discovery and follower registration
-				// Environment mapping: EnvironmentID = TeamID / 2
-				//   - Team 0, 1 → Environment 0
-				//   - Team 2, 3 → Environment 1
-				//   - Team 4, 5 → Environment 2
-				//   - Team 6, 7 → Environment 3
+				// 환경 등록
 				int32 EnvironmentID = TeamID / 2;
 				SimManager->RegisterTeamEnvironment(TeamID, EnvironmentID);
-				UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Registered Team %d to Environment %d"),
-					*TeamName, TeamID, EnvironmentID);
+
+				// 대기 중이던 팔로워들을 이제 등록 처리
+				ProcessPendingRegistrations();
 			}
-			else
-			{
-				UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': Failed to register with SimulationManager (TeamID: %d)"),
-					*TeamName, TeamID);
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("⚠️ TeamLeader '%s': SimulationManager not found, team registration skipped"), *TeamName);
 		}
 	}
 
@@ -377,61 +359,57 @@ void UTeamLeaderComponent::DiscoverWorldObjectives()
 	}
 }
 
+void UTeamLeaderComponent::ProcessPendingRegistrations()
+{
+	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
+	if (!SimManager || PendingFollowerRegistration.Num() == 0) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Processing %d pending followers..."), *TeamName, PendingFollowerRegistration.Num());
+
+	for (AActor* Follower : PendingFollowerRegistration)
+	{
+		if (Follower)
+		{
+			SimManager->RegisterTeamMember(TeamID, Follower);
+		}
+	}
+
+	PendingFollowerRegistration.Empty();
+}
+
 //------------------------------------------------------------------------------
 // FOLLOWER MANAGEMENT
 //------------------------------------------------------------------------------
 
 bool UTeamLeaderComponent::RegisterFollower(AActor* Follower)
 {
-	if (!Follower)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Cannot register null follower"), *TeamName);
+	if (!Follower) return false;
+
+	if (Followers.Num() >= MaxFollowers) {
+		UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': Max followers reached!"), *TeamName);
 		return false;
 	}
 
-	if (Followers.Num() >= MaxFollowers)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': CANNOT REGISTER %s - Max followers reached (%d/%d)!"),
-			*TeamName, *Follower->GetName(), Followers.Num(), MaxFollowers);
-		UE_LOG(LogTemp, Error, TEXT("    Current followers: %s"),
-			*FString::JoinBy(Followers, TEXT(", "), [](AActor* A) { return A->GetName(); }));
-		return false;
-	}
+	if (Followers.Contains(Follower)) return false;
 
-	if (Followers.Contains(Follower))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Follower %s already registered (duplicate call ignored)"),
-			*TeamName, *Follower->GetName());
-		return false;
-	}
-
+	// 리스트에는 먼저 추가
 	Followers.Add(Follower);
 
-	// Register with SimulationManager (fix for team ID detection)
 	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
-	if (SimManager)
+
+	// 핵심 수정: 리더가 아직 매니저에 등록되지 않았다면 대기열로 보냄
+	if (SimManager && bIsRegisteredToManager)
 	{
-		bool InbRegistered = SimManager->RegisterTeamMember(TeamID, Follower);
-		if (InbRegistered)
-		{
-			UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Registered follower %s with SimulationManager (TeamID: %d, %d/%d)"),
-				*TeamName, *Follower->GetName(), TeamID, Followers.Num(), MaxFollowers);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Failed to register follower %s with SimulationManager"),
-				*TeamName, *Follower->GetName());
-		}
+		SimManager->RegisterTeamMember(TeamID, Follower);
+		UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Registered %s (Immediate)"), *TeamName, *Follower->GetName());
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': SimulationManager not found, follower %s not registered with team mapping"),
-			*TeamName, *Follower->GetName());
+		PendingFollowerRegistration.Add(Follower);
+		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': %s added to PENDING queue (Leader not registered yet)"), *TeamName, *Follower->GetName());
 	}
 
-	// Broadcast event
 	OnFollowerRegistered.Broadcast(Follower, Followers.Num());
-
 	return true;
 }
 
