@@ -212,7 +212,7 @@ if SCHOLA_AVAILABLE:
             print(f"\n{'='*80}")
             print(f"[RESET START] Global Episode={self._episodes_completed}, Total Completed={self._episodes_completed}")
             for env_idx in range(self.num_envs):
-                print(f"  Env {env_idx}: Starting episode {self._env_episodes_completed[env_idx] + 1}")
+                print(f"  Env {env_idx}: Starting episode {self._env_episodes_completed[env_idx]}")
             print(f"  Reset Time={reset_start:.2f}")
 
             # Reset global counters
