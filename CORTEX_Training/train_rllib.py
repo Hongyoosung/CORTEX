@@ -234,7 +234,7 @@ def create_env_config():
         "base_port": SBDAPMConfig.PORT,
         "num_envs": SBDAPMConfig.NUM_UE5_ENVIRONMENTS,  # v8.5: Number of UE5 environments to manage
     }
-
+    
     # Add Docker-specific settings
     if is_docker:
         config["is_docker"] = True
@@ -244,18 +244,22 @@ def create_env_config():
 
 
 def create_ppo_config():
-    """Create RLlib PPO configuration."""
+    """Create RLlib PPO configuration - v8.5 Async Vectorized."""
     config = (
         PPOConfig()
         .environment(
             env="sbdapm_env",
             env_config=create_env_config(),
             disable_env_checking=True,
+            # 🔥 비동기 에피소드 처리
         )
         .framework("torch")
         .env_runners(
             num_env_runners=SBDAPMConfig.NUM_WORKERS,
             num_envs_per_env_runner=SBDAPMConfig.NUM_ENVS_PER_WORKER,
+            # 🔥 각 환경에서 수집할 스텝 수
+            rollout_fragment_length=200,  # 200 스텝마다 배치 생성
+            batch_mode="truncate_episodes",
         )
         .multi_agent(
             policies={"shared_policy"},
@@ -268,7 +272,8 @@ def create_ppo_config():
             min_sample_timesteps_per_iteration=100,
         )
     )
-
+    
+    # PPO hyperparameters
     config.lr = SBDAPMConfig.LEARNING_RATE
     config.train_batch_size = SBDAPMConfig.TRAIN_BATCH_SIZE
     config.sgd_minibatch_size = SBDAPMConfig.SGD_MINIBATCH_SIZE
@@ -278,6 +283,8 @@ def create_ppo_config():
     config.clip_param = SBDAPMConfig.CLIP_PARAM
     config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
     config.vf_loss_coeff = SBDAPMConfig.VF_LOSS_COEFF
+    
+    # Model
     config.model = {
         "custom_model": "multi_head_tactical_policy",
         "custom_model_config": {
@@ -286,8 +293,9 @@ def create_ppo_config():
         },
         "max_seq_len": 20,
     }
-
+    
     return config
+
 
 
 def register_env():

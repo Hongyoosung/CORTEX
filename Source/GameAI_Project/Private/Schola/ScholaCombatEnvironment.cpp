@@ -137,6 +137,22 @@ void AScholaCombatEnvironment::InitializeEnvironment()
 
 void AScholaCombatEnvironment::ResetEnvironment()
 {
+	// v8.5 FIX: Prevent duplicate reset calls from Schola's hard_reset() bug
+	// Schola's hard_reset() incorrectly calls ResetEnvironment() twice per environment
+	// within ~0.5 seconds. Block the duplicate call to prevent episode counter skipping.
+	static TMap<int32, double> LastResetTimestamp;
+	double CurrentTime = FPlatformTime::Seconds();
+	double* LastTime = LastResetTimestamp.Find(EnvironmentID);
+
+	if (LastTime && (CurrentTime - *LastTime) < 0.5)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv #%d] Duplicate reset blocked (%.3fs since last reset)"),
+			EnvironmentID, CurrentTime - *LastTime);
+		return;  // Skip duplicate reset
+	}
+
+	// Record this reset timestamp
+	LastResetTimestamp.Add(EnvironmentID, CurrentTime);
 
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET #%d] ResetEnvironment() called on %s"), EnvironmentID, *GetName());

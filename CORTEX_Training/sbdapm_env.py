@@ -26,7 +26,7 @@ except ImportError:
         pass
 
 try:
-    from schola.core.env import ScholaEnv
+    from schola.core.env import ScholaEnv, AutoResetType
     from schola.core.unreal_connections.editor_connection import UnrealEditorConnection
     SCHOLA_AVAILABLE = True
 except ImportError:
@@ -82,7 +82,8 @@ if SCHOLA_AVAILABLE:
 
                 self.schola_env = ScholaEnv(
                     unreal_connection=connection,
-                    verbosity=1
+                    verbosity=1,
+                    auto_reset_type=AutoResetType.SAME_STEP
                 )
                 print(f"[ENV v8.0] Connected!")
 
@@ -111,8 +112,6 @@ if SCHOLA_AVAILABLE:
             )
 
             # Episode tracking
-            self.episode_steps = 0
-            self._episode_start_time = None
             self._first_reset_done = False
 
             # v8.5 VECTORIZED TRAINING: Per-environment episode tracking
@@ -120,7 +119,6 @@ if SCHOLA_AVAILABLE:
             self._env_episode_start_time = {i: None for i in range(self.num_envs)}
             self._env_episodes_completed = {i: 0 for i in range(self.num_envs)}
             self._env_done_flags = {i: False for i in range(self.num_envs)}
-            self._envs_waiting_for_reset = set()  # Environments that finished but waiting for others
 
         def _resolve_port(self, kwargs):
             base_port = kwargs.get("base_port")
@@ -194,136 +192,123 @@ if SCHOLA_AVAILABLE:
             return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
 
         def reset(self, *, seed=None, options=None):
-            """Reset environment (resets ALL environments simultaneously)."""
             reset_start = time.time()
-
-            # v8.5 VECTORIZED TRAINING: Log completion for each environment
-            if self._episode_start_time and self.episode_steps > 0:
-                print(f"\n{'='*80}")
-                print(f"[EPISODE COMPLETION SUMMARY]")
+            
+            # 에피소드 통계 출력
+            if self._env_episode_start_time and any(v > 0 for v in self._env_episode_steps.values()):
+                print("=" * 80)
+                print("EPISODE COMPLETION SUMMARY")
                 for env_idx in range(self.num_envs):
                     if self._env_episode_start_time[env_idx]:
                         duration = time.time() - self._env_episode_start_time[env_idx]
-                        print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, Steps={self._env_episode_steps[env_idx]}, Duration={duration:.1f}s")
+                        print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, "
+                            f"Steps={self._env_episode_steps[env_idx]}, Duration={duration:.1f}s")
                         self._env_episodes_completed[env_idx] += 1
-                print(f"{'='*80}")
-
-            # Print new episode start
-            print(f"\n{'='*80}")
-            for env_idx in range(self.num_envs):
-                print(f"  Env {env_idx}: Starting episode {self._env_episodes_completed[env_idx]}")
-            print(f"  Reset Time={reset_start:.2f}")
-
-            # Reset global counters
-            self.episode_steps = 0
+                print("=" * 80)
+            
+            # ✅ 첫 번째 리셋만 hard_reset 호출
             is_first = not self._first_reset_done
+            
+            if is_first:
+                print("=" * 80)
+                print(f"RESET: First reset - calling hard_reset() at Time={time.time():.2f}")
+                
+                current_time = time.time()
+                for env_idx in range(self.num_envs):
+                    self._env_episode_steps[env_idx] = 0
+                    self._env_episode_start_time[env_idx] = current_time
+                    self._env_done_flags[env_idx] = False
+                
+                try:
+                    rawobs = self.schola_env.hard_reset()
+                    print(f"RESET: hard_reset returned successfully. Duration={time.time()-reset_start:.2f}s")
+                    self._first_reset_done = True
+                    self._env_episode_start_time = current_time
 
-            # v8.5 VECTORIZED TRAINING: Reset per-environment tracking
-            current_time = time.time()
-            for env_idx in range(self.num_envs):
-                self._env_episode_steps[env_idx] = 0
-                self._env_episode_start_time[env_idx] = current_time
-                self._env_done_flags[env_idx] = False
+                    if is_first:
+                        self._update_agent_map()
+                        print(f"RESET: {len(self._agent_ids)} agents detected "
+                            f"({len(self._agent_ids) // self.num_envs} per environment)")
 
-            self._envs_waiting_for_reset.clear()
+                    result = self._process_obs(rawobs)
+                    print(f"RESET: COMPLETE Duration={time.time()-reset_start:.2f}s, Agents={len(result[0])}")
+                    print("=" * 80)
+                    return result
+                    
+                except Exception as e:
+                    print(f"RESET ERROR: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    print(f"RESET FAILED Duration={time.time()-reset_start:.2f}s")
+                    print("=" * 80)
+                    return {}, {}
+            
+            else:
+                # ✅ 이후 리셋: Schola의 AutoReset이 자동 처리하므로
+                # 다음 poll()에서 새 에피소드 관측값을 받음
+                print(f"RESET: AutoReset mode - returning last observations (Time={time.time():.2f})")
+                
+                # 환경별 카운터 리셋
+                current_time = time.time()
+                for env_idx in range(self.num_envs):
+                    self._env_episode_steps[env_idx] = 0
+                    self._env_episode_start_time[env_idx] = current_time
+                    self._env_done_flags[env_idx] = False
 
+                # ✅ 마지막 관측값 반환 (Schola가 자동 리셋 처리)
+                fallback_obs = {
+                    flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
+                    for flat_id in self._agent_ids
+                }
+                return fallback_obs, {flat_id: {} for flat_id in self._agent_ids}
+
+        def step(self, actiondict):
+            """Execute one step - RLlib standard async pattern"""
             try:
-                if is_first:
-                    print("[RESET] First reset - synchronizing with UE5...")
-
-                print(f"[RESET] Calling schola_env.hard_reset() (resets ALL {self.num_envs} environments)... Time={time.time():.2f}")
-                raw_obs = self.schola_env.hard_reset()
-                print(f"[RESET] hard_reset() returned successfully. Time={time.time():.2f}, Duration={time.time()-reset_start:.2f}s")
-
-                self._first_reset_done = True
-                self._episode_start_time = current_time
-
-                # Only update agent map on first reset (agents don't change during training)
-                if is_first:
-                    self._update_agent_map()
-                    print(f"[RESET] {len(self._agent_ids)} agents detected ({len(self._agent_ids) // self.num_envs} per environment)")
-
-                result = self._process_obs(raw_obs)
-                print(f"[RESET COMPLETE] Duration={time.time()-reset_start:.2f}s, Agents={len(result[0])}")
-                print(f"{'='*80}\n")
-                return result
-
-            except Exception as e:
-                print(f"[RESET ERROR] {e}")
-                import traceback
-                traceback.print_exc()
-                print(f"[RESET FAILED] Duration={time.time()-reset_start:.2f}s")
-                print(f"{'='*80}\n")
-                return {}, {}
-
-        def step(self, action_dict):
-            """Execute one step."""
-            try:
-                all_action_keys = self._get_all_action_keys()
-
-                # Format actions
-                formatted_actions = {}
-                for flat_id, action in action_dict.items():
-                    if flat_id not in self.agent_map:
+                allactionkeys = self._get_all_action_keys()
+                formattedactions = {}
+                
+                # Format actions (기존 코드 유지)
+                for flatid, action in actiondict.items():
+                    if flatid not in self.agent_map:
                         continue
-
-                    env_idx, agent_idx = self.agent_map[flat_id]
-                    if env_idx not in formatted_actions:
-                        formatted_actions[env_idx] = {}
-
-                    # Clip action to [0, 1]
+                    envidx, agentidx = self.agent_map[flatid]
+                    if envidx not in formattedactions:
+                        formattedactions[envidx] = {}
+                    
                     if isinstance(action, np.ndarray) and action.shape[0] == 5:
-                        action_array = np.clip(action, 0.0, 1.0).astype(np.float32)
+                        actionarray = np.clip(action, 0.0, 1.0).astype(np.float32)
                     else:
-                        action_array = np.array([0.5, 0.5, 0.5, 0.5, 0.0], dtype=np.float32)
-
-                    agent_keys = all_action_keys.get((env_idx, agent_idx), [])
-                    if agent_keys:
-                        formatted_actions[env_idx][agent_idx] = {
-                            key: action_array for key in agent_keys
-                        }
-
-                # Send and receive (with diagnostics)
-                send_start = time.time()
-                self.schola_env.send_actions(formatted_actions)
-                send_duration = time.time() - send_start
-
-                poll_start = time.time()
+                        actionarray = np.array([0.5, 0.5, 0.5, 0.5, 0.0], dtype=np.float32)
+                    
+                    agentkeys = allactionkeys.get((envidx, agentidx), [])
+                    if agentkeys:
+                        formattedactions[envidx][agentidx] = {key: actionarray for key in agentkeys}
+                
+                # Send actions and poll
+                self.schola_env.send(formattedactions)
                 step_result = self.schola_env.poll()
-                poll_duration = time.time() - poll_start
-
-                #if send_duration > 0.1 or poll_duration > 0.1:
-                #    print(f"[STEP SLOW] send={send_duration*1000:.1f}ms, poll={poll_duration*1000:.1f}ms")
-
-                # Parse response
+                
+                # Parse result
                 if len(step_result) == 5:
                     obs_nested, rew_nested, term_nested, trunc_nested, info_nested = step_result
                 elif len(step_result) == 4:
                     obs_nested, rew_nested, term_nested, info_nested = step_result
                     trunc_nested = term_nested
                 else:
-                    raise ValueError(f"Unexpected poll() result: {len(step_result)} items")
-
-                # Build outputs
+                    raise ValueError(f"Unexpected poll result: {len(step_result)} items")
+                
                 obs_dict = {}
                 reward_dict = {}
                 terminated_dict = {}
                 truncated_dict = {}
                 info_dict = {}
-
-                # v8.5 VECTORIZED TRAINING: Track termination PER ENVIRONMENT
-                # Note: Episode timeouts are handled by UE5
-                # (SimulationManagerGameMode::MaxEpisodeDuration)
-                # Python receives termination signals via term_nested/trunc_nested from Schola
-                newly_finished_envs = []
-
-                # DEBUG: Track termination signals per environment
-                env_termination_signals = {env_idx: {'term': False, 'trunc': False} for env_idx in range(self.num_envs)}
-
+                
+                # 🔥 핵심 변경: 각 에이전트의 done 상태를 UE5에서 받은 값 그대로 반환
                 for flat_id in self._agent_ids:
                     env_idx, agent_idx = self.agent_map[flat_id]
-
-                    # Get observation
+                    
+                    # Observation
                     agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
                     if agent_obs_data is not None:
                         if isinstance(agent_obs_data, dict):
@@ -333,139 +318,66 @@ if SCHOLA_AVAILABLE:
                         base_obs = np.array(obs_val, dtype=np.float32).flatten()
                     else:
                         base_obs = np.zeros(46, dtype=np.float32)
-
                     obs_dict[flat_id] = self._build_observation(base_obs)
-
-                    # Get reward
+                    
+                    # Reward
                     reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
-
-                    # Check termination from UE5 for THIS ENVIRONMENT
+                    
+                    # 🔥 Termination - UE5 값을 그대로 전달 (동기화 로직 제거)
                     is_term = term_nested.get(env_idx, {}).get(agent_idx, False)
                     is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
-
-                    # Track if any agent in this environment reported termination
-                    if is_term or is_trunc:
-                        env_termination_signals[env_idx]['term'] = env_termination_signals[env_idx]['term'] or is_term
-                        env_termination_signals[env_idx]['trunc'] = env_termination_signals[env_idx]['trunc'] or is_trunc
                     
-                    # Mark environment as done if ANY agent from that environment reports termination
-                    if (is_term or is_trunc) and not self._env_done_flags[env_idx]:
-                        self._env_done_flags[env_idx] = True
-                        newly_finished_envs.append(env_idx)
-                        self._envs_waiting_for_reset.add(env_idx)
-
-                        # Log environment completion
-                        if self._env_episode_start_time[env_idx]:
-                            elapsed = time.time() - self._env_episode_start_time[env_idx]
-                            termination_reason = "Team Eliminated" if is_term else "Timeout" if is_trunc else "Unknown"
-                            print(f"\n{'┌'+'─'*78+'┐'}")
-                            print(f"│ [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} completed ( {termination_reason}){' '*(44-len(termination_reason))}│")
-                            print(f"│   Agent: {flat_id} (env={env_idx}, agent={agent_idx}){' '*35}│")
-                            print(f"│   Steps: {self._env_episode_steps[env_idx]:<10} Time: {elapsed:.1f}s{' '*47}│")
-                            print(f"│   Status: Waiting for other environments to finish...{' '*21}│")
-                            print(f"└{'─'*78}┘\n")
-
-                    # Set done flags ONLY for agents in finished environments
-                    # Agents in running environments continue with done=False
-                    terminated_dict[flat_id] = False
-                    truncated_dict[flat_id] = self._env_done_flags[env_idx]
-                    info_dict[flat_id] = {"env_idx": env_idx}
-
-                # DEBUG: Log termination signals received in this step
-                if newly_finished_envs:
-                    print(f"[TERMINATION DEBUG] Step {self.episode_steps}: Newly finished environments = {newly_finished_envs}")
-                    for env_idx in newly_finished_envs:
-                        signals = env_termination_signals[env_idx]
-                        print(f"  Env {env_idx}: terminated={signals['term']}, truncated={signals['trunc']}")
-
-                # Increment step counter for each environment
+                    terminated_dict[flat_id] = is_term
+                    truncated_dict[flat_id] = is_trunc
+                    info_dict[flat_id] = {"env_id": env_idx}
+                    
+                    # 🔥 에피소드 완료 시 카운터 증가 (로깅용)
+                    if (is_term or is_trunc) and self._env_episode_start_time[env_idx]:
+                        elapsed = time.time() - self._env_episode_start_time[env_idx]
+                        print(f"[ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} completed")
+                        print(f"  Duration: {elapsed:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
+                        self._env_episodes_completed[env_idx] += 1
+                        self._env_episode_steps[env_idx] = 0
+                        self._env_episode_start_time[env_idx] = time.time()
+                
+                # 🔥 진행 중인 환경의 스텝 카운터 증가
                 for env_idx in range(self.num_envs):
-                    if not self._env_done_flags[env_idx]:
+                    # terminated/truncated 체크하여 진행 중인 환경만 카운트
+                    env_agents = [f"agent_{env_idx}_{i}" for i in range(8)]
+                    if not all(terminated_dict.get(aid, False) or truncated_dict.get(aid, False) 
+                            for aid in env_agents if aid in self._agent_ids):
                         self._env_episode_steps[env_idx] += 1
 
-                self.episode_steps += 1
-
-                # __all__ = True ONLY when ALL environments are done
-                all_envs_done = all(self._env_done_flags.values())
-
-                if all_envs_done:
-                    # All environments finished - trigger global reset
-                    truncated_dict["__all__"] = True
-                    terminated_dict["__all__"] = False
-
-                    # Calculate per-environment and total rewards
+                # 🔥 주기적 진행 상황 로깅 (100 스텝마다)
+                if self._env_episode_steps[env_idx] % 100 == 0:
+                    elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
                     total_reward = sum(reward_dict.values())
                     avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
-
-                    print(f"\n{'='*80}")
-                    print(f"[ALL ENVS DONE] All {self.num_envs} environments finished!")
+                    print("="*80)
+                    print(f"[PROGRESS] Step={self._env_episode_steps[env_idx]}, Elapsed={elapsed:.1f}s")
+                    print(f"  Total Reward={total_reward:.2f}, Avg Reward={avg_reward:.2f}")
                     for env_idx in range(self.num_envs):
-                        elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
-                        print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx] + 1}, Steps={self._env_episode_steps[env_idx]}, Duration={elapsed:.1f}s")
-                    print(f"  Total reward={total_reward:.2f}, Avg={avg_reward:.2f}")
-                    print(f"[ALL ENVS DONE] Next call should be reset(). Waiting for RLlib...")
-                    print(f"{'='*80}\n")
-                else:
-                    # Some environments still running
-                    truncated_dict["__all__"] = False
-                    terminated_dict["__all__"] = False
-
-                    # Log status of newly finished environments
-                    if newly_finished_envs:
-                        running_envs = [i for i in range(self.num_envs) if not self._env_done_flags[i]]
-                        print(f"[ASYNC STATUS] Finished: {list(self._envs_waiting_for_reset)}, Running: {running_envs}")
-
-                # Periodic progress logging (every 100 steps) - v8.5: Show per-environment status
-                if self.episode_steps % 100 == 0:
-                    elapsed = time.time() - self._episode_start_time
-                    total_reward = sum(reward_dict.values())
-                    avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
-
-                    # Show per-environment status
-                    running_count = sum(1 for flag in self._env_done_flags.values() if not flag)
-                    done_count = sum(1 for flag in self._env_done_flags.values() if flag)
-
-                    print(f"\n{'='*80}")
-                    print(f"[PROGRESS] Step={self.episode_steps}, Elapsed={elapsed:.1f}s, Total Reward={total_reward:.2f}, Avg Reward={avg_reward:.2f}")
-                    print(f"{'─'*80}")
-
-                    # Show individual environment status with better formatting
-                    for env_idx in range(self.num_envs):
-                        if not self._env_done_flags[env_idx]:
-                            env_elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
-                            status_icon = "🔄" if env_elapsed < 60 else "⚠️"
-                            print(f"  {status_icon} Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, Steps={self._env_episode_steps[env_idx]}, Time={env_elapsed:.1f}s")
-                        else:
-                            print(f"  ✓ Env {env_idx}: DONE (Episode {self._env_episodes_completed[env_idx] + 1} completed, waiting for reset)")
-                    print(f"{'='*80}\n")
-
-                    # Warning if any running environment is taking too long
-                    for env_idx in range(self.num_envs):
-                        if not self._env_done_flags[env_idx] and self._env_episode_start_time[env_idx]:
-                            env_elapsed = time.time() - self._env_episode_start_time[env_idx]
-                            if env_elapsed > 90.0:
-                                print(f"[WARNING] Env {env_idx} has been running for {env_elapsed:.1f}s (expected max: 60s)")
-                                print(f"[WARNING] Check if UE5 MaxEpisodeDuration is set correctly or if termination signals are being sent")
-
+                        env_elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
+                        status = "⚡" if env_elapsed < 60 else "🔥"
+                        print(f"  {status} Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, "
+                            f"Steps={self._env_episode_steps[env_idx]}, Time={env_elapsed:.1f}s")
+                    print("="*80)
+                
                 return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
-
+                
             except Exception as e:
                 print(f"[STEP ERROR] {e}")
                 import traceback
                 traceback.print_exc()
-
                 # Return terminal state
-                fallback_obs = {
-                    flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
-                    for flat_id in self._agent_ids
-                }
-                return (
-                    fallback_obs,
-                    {flat_id: 0.0 for flat_id in self._agent_ids},
-                    {flat_id: True for flat_id in self._agent_ids} | {"__all__": True},
-                    {flat_id: False for flat_id in self._agent_ids} | {"__all__": False},
-                    {flat_id: {} for flat_id in self._agent_ids}
-                )
+                fallback_obs = {flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
+                            for flat_id in self._agent_ids}
+                return (fallback_obs,
+                        {flat_id: 0.0 for flat_id in self._agent_ids},
+                        {flat_id: True for flat_id in self._agent_ids},
+                        {flat_id: False for flat_id in self._agent_ids},
+                        {flat_id: {} for flat_id in self._agent_ids})
+
 
         def _process_obs(self, raw_data):
             """Process observation from reset."""
