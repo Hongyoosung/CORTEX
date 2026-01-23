@@ -167,6 +167,14 @@ public:
 	void UnregisterTeamMember(int32 TeamID, AActor* Agent);
 
 	/**
+	 * Associate a team with an environment (v8.5 Vectorized Training)
+	 * @param TeamID - Team ID to associate
+	 * @param EnvironmentID - Environment ID that owns this team
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Teams")
+	void RegisterTeamEnvironment(int32 TeamID, int32 EnvironmentID);
+
+	/**
 	 * Get team ID for an actor
 	 * @param Agent - Actor to query
 	 * @return Team ID (returns -1 if not found)
@@ -351,6 +359,14 @@ public:
 	void OnAgentDied(const FDeathEventData& DeathEvent);
 
 	/**
+	 * Called when an objective is defeated (durability reaches 0)
+	 * Bind this to ObjectiveActor::OnObjectiveDefeated delegate
+	 * @param DefeatedTeamID - Team ID that lost their objective
+	 */
+	UFUNCTION()
+	void OnObjectiveDefeated(int32 DefeatedTeamID);
+
+	/**
 	 * Check episode termination conditions (called internally by OnAgentDied)
 	 */
 	void CheckEpisodeTermination();
@@ -361,13 +377,14 @@ public:
 	 * @param LosingTeamID - ID of losing team (-1 for draw)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Episode")
-	void EndEpisode(int32 WinningTeamID, int32 LosingTeamID);
+	void EndEpisode(int32 WinningTeamID, int32 LosingTeamID, int32 EnvironmentID = 0);
 
 	/**
 	 * Start a new episode (resets agents to spawn positions)
+	 * @param EnvironmentEpisodeNumber - Episode number for the calling environment (for multi-env support)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Episode")
-	void StartNewEpisode();
+	void StartNewEpisode(int32 EnvironmentID, int32 EnvironmentEpisodeNumber);
 
 	/**
 	 * Check if episode is currently ending (team annihilation or timeout)
@@ -376,10 +393,16 @@ public:
 	bool IsEpisodeEnding() const { return bEpisodeEnding; }
 
 	/**
-	 * Get episode start time
+	 * Get episode start time (wall-clock reference)
 	 */
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
 	float GetEpisodeStartTime() const { return EpisodeStartTime; }
+
+	/**
+	 * Get episode game time (accumulated DeltaTime, unaffected by observation collection)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	float GetEpisodeGameTime() const { return EpisodeGameTime; }
 
 	/**
 	 * Get max steps per episode
@@ -392,6 +415,41 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
 	float GetMaxEpisodeDuration() const { return MaxEpisodeDuration; }
+
+
+	/** DEPRECATED: Use per-environment versions */
+	FORCEINLINE bool GetLastEpisodeWasTerminated() const { return bLastEpisodeWasTerminated; }
+
+	/** DEPRECATED: Use per-environment versions */
+	FORCEINLINE bool GetLastEpisodeWasTimeout() const { return bLastEpisodeWasTimeout; }
+
+	/** DEPRECATED: Use per-environment versions */
+	void SetLastEpisodeWasTerminated(bool bTerminated) { bLastEpisodeWasTerminated = bTerminated; }
+
+	/** DEPRECATED: Use per-environment versions */
+	void SetLastEpisodeWasTimeout(bool bTimeout) { bLastEpisodeWasTimeout = bTimeout; }
+
+	/**
+	 * v8.5 VECTORIZED TRAINING: Per-environment episode state queries
+	 */
+
+	/** Check if a specific environment's episode is ending */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	bool IsEnvironmentEpisodeEnding(int32 EnvironmentID) const;
+
+	/** Check if a specific environment's last episode was terminated */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	bool GetEnvironmentLastTerminated(int32 EnvironmentID) const;
+
+	/** Check if a specific environment's last episode was a timeout */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	bool GetEnvironmentLastTimeout(int32 EnvironmentID) const;
+
+	/** Set per-environment termination flags */
+	void SetEnvironmentTerminationFlags(int32 EnvironmentID, bool bEnding, bool bTerminated, bool bTimeout);
+
+	/** Get environment ID for a team */
+	int32 GetEnvironmentIDForTeam(int32 TeamID) const;
 
 	/**
 	 * Schedule a team to respawn after delay (for continuous training)
@@ -418,6 +476,7 @@ public:
 	 * Get current episode number
 	 */
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	/** DEPRECATED: Use per-environment episode tracking (EnvironmentEpisodes map) in v8.5+ */
 	int32 GetCurrentEpisode() const { return CurrentEpisode; }
 
 	/**
@@ -439,45 +498,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Objective")
 	AActor* FindObjectiveActor();
 
-	//--------------------------------------------------------------------------
-	// v6.0 Phase 13: Debug Console Commands
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Toggle MCTS debug visualization (yellow arrows, value estimates, Mission labels)
-	 * Console: ToggleMCTSDebug
-	 */
-	UFUNCTION(Exec)
-	void ToggleMCTSDebug();
-
-	/**
-	 * Toggle RL strategy debug visualization (colored spheres, strategy text, health bars)
-	 * Console: ToggleRLDebug
-	 */
-	UFUNCTION(Exec)
-	void ToggleRLDebug();
-
-	/**
-	 * Print MCTS statistics to console (assignments, iterations, values)
-	 * Console: PrintMCTSStats
-	 */
-	UFUNCTION(Exec)
-	void PrintMCTSStats();
-
-	/** Delegate broadcast when episode ends */
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEpisodeEnded, const FEpisodeResult&, Result);
+	/** Delegate broadcast when episode ends - includes EnvironmentID for multi-env support */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeEnded, int32, EnvironmentID, const FEpisodeResult&, Result);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
 	FOnEpisodeEnded OnEpisodeEnded;
 
-	/** Delegate broadcast when new episode starts */
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEpisodeStarted, int32, EpisodeNumber);
+	/** Delegate broadcast when new episode starts - includes EnvironmentID for multi-env support */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeStarted, int32, EnvironmentID, int32, EpisodeNumber);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
 	FOnEpisodeStarted OnEpisodeStarted;
 
 private:
-	/** Update statistics */
-	void UpdateStatistics();
-
 	/** Draw debug information */
 	void DrawDebugInformation();
 
@@ -501,11 +532,6 @@ public:
 	//--------------------------------------------------------------------------
 	// EPISODE CONFIG
 	//--------------------------------------------------------------------------
-
-	/** Auto-restart episode when a team is eliminated (DISABLE for RLlib training!) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	bool bAutoRestartEpisode = false;
-
 	/** Delay before starting new episode (for visualization) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
 	float EpisodeRestartDelay = 2.0f;
@@ -514,9 +540,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
 	int32 MaxStepsPerEpisode = 0;
 
-	/** Max episode duration in seconds (0 = unlimited, default = 600s for 10 minutes to match Python) */
+	/** Max episode duration in seconds (0 = unlimited, default = 60s for 4v4 objective capture) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	float MaxEpisodeDuration = 600.0f;
+	float MaxEpisodeDuration = 60.0f;
 
 	/** Win reward for episode victory */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
@@ -585,14 +611,28 @@ private:
 	// EPISODE STATE
 	//--------------------------------------------------------------------------
 
-	/** Current episode number */
+	/**
+	 * DEPRECATED: Global episode number - Use EnvironmentEpisodes map for multi-env training
+	 * Kept for backward compatibility with legacy single-environment mode
+	 */
 	int32 CurrentEpisode = 0;
 
-	/** Current step within episode */
+	/**
+	 * DEPRECATED: Global step counter - Use EnvironmentSteps map for multi-env training
+	 * Kept for backward compatibility with legacy single-environment mode
+	 */
 	int32 CurrentStep = 0;
 
-	/** Episode start time */
+	/** v8.5 VECTORIZED TRAINING: Per-environment episode tracking */
+	TMap<int32, int32> EnvironmentEpisodes;  // EnvironmentID → Episode Number
+	TMap<int32, int32> EnvironmentSteps;     // EnvironmentID → Current Step
+	TMap<int32, int32> TeamToEnvironmentMap;  // TeamID → EnvironmentID
+
+	/** Episode start time (wall-clock for reference) */
 	float EpisodeStartTime = 0.0f;
+
+	/** Accumulated game time for this episode (DeltaTime sum, unaffected by observation collection pauses) */
+	float EpisodeGameTime = 0.0f;
 
 	/** Last episode result */
 	FEpisodeResult LastEpisodeResult;
@@ -600,8 +640,21 @@ private:
 	/** Pending restart timer handle */
 	FTimerHandle EpisodeRestartTimerHandle;
 
-	/** Is episode transition in progress */
+	/** DEPRECATED: Global episode ending flag - Use EnvironmentEpisodeEnding map for multi-env training */
 	bool bEpisodeEnding = false;
+
+	/** DEPRECATED: Global termination flag - Use EnvironmentLastTerminated map for multi-env training */
+	bool bLastEpisodeWasTerminated = false;
+
+	/** DEPRECATED: Global timeout flag - Use EnvironmentLastTimeout map for multi-env training */
+	bool bLastEpisodeWasTimeout = false;
+
+	/** v8.5 VECTORIZED TRAINING: Per-environment episode state tracking */
+	TMap<int32, bool> EnvironmentEpisodeEnding;  // EnvironmentID → Is episode ending?
+	TMap<int32, bool> EnvironmentLastTerminated;  // EnvironmentID → Was last episode terminated?
+	TMap<int32, bool> EnvironmentLastTimeout;  // EnvironmentID → Was last episode a timeout?
+	TMap<int32, float> EnvironmentEpisodeStartTimes;  // EnvironmentID → Episode start time
+	TMap<int32, float> EnvironmentEpisodeGameTimes;  // EnvironmentID → Accumulated game time
 
 	//--------------------------------------------------------------------------
 	// CONTINUOUS TRAINING STATE (Respawn System)

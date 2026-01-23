@@ -8,6 +8,7 @@
 
 class UScholaAgentComponent;
 class UFollowerAgentComponent;
+class UHealthComponent;
 class UTacticalRewardProvider;
 
 /**
@@ -67,11 +68,14 @@ public:
 
 	/** Reference to ScholaAgentComponent */
 	UPROPERTY()
-	UScholaAgentComponent* ScholaAgent = nullptr;
+	TObjectPtr<UScholaAgentComponent> ScholaAgent = nullptr;
 
 	/** Reference to FollowerAgentComponent */
 	UPROPERTY()
-	UFollowerAgentComponent* FollowerAgent = nullptr;
+	TObjectPtr<UFollowerAgentComponent> FollowerAgent = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<UHealthComponent> AgentHealthComponent = nullptr;
 
 	/** Reference to TacticalRewardProvider */
 	UPROPERTY()

@@ -8,6 +8,7 @@
 #include "FollowerStateTreeComponent.generated.h"
 
 class UFollowerAgentComponent;
+class UHealthComponent;
 
 /**
  * Follower State Tree Component
@@ -107,12 +108,10 @@ protected:
 	/** Find FollowerAgentComponent on actor */
 	UFollowerAgentComponent* FindFollowerComponent();
 
+	UHealthComponent* FindHealthComponent();
+
 	/** Bind to follower component events */
 	void BindToFollowerEvents();
-
-	/** Handle Mission received from leader (v3.0) */
-	UFUNCTION()
-	void OnMissionReceived(UMission* Mission);
 
 	/** Handle controller changed (for Schola Trainer possession) */
 	UFUNCTION()
@@ -138,7 +137,10 @@ public:
 
 	/** Follower agent component reference (auto-found if nullptr) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
-	UFollowerAgentComponent* FollowerComponent;
+	TObjectPtr<UFollowerAgentComponent> FollowerComponent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
+	TObjectPtr<UHealthComponent> HealthComponent;
 
 	/** Auto-find FollowerAgentComponent on same actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")

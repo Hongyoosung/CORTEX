@@ -38,6 +38,10 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling", meta = (ClampMin = "0.01", ClampMax = "10.0"))
 	float DecisionInterval = 0.1f;
 
+	/** Enable timing diagnostics (logs overhead every 100 decisions) */
+	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling")
+	bool bEnableTimingDiagnostics = true;
+
 private:
 	/** Last decision time (FPlatformTime::Seconds()) */
 	double LastDecisionTime = 0.0;
@@ -47,4 +51,17 @@ private:
 
 	/** First step flag (for auto-reset logic) */
 	bool bFirstStep = true;
+
+	//--------------------------------------------------------------------------
+	// TIMING DIAGNOSTICS (v8.0)
+	//--------------------------------------------------------------------------
+
+	/** Total observation collection overhead (ms) */
+	double TotalCollectionOverhead = 0.0;
+
+	/** Number of decisions made */
+	int32 DecisionCount = 0;
+
+	/** Max single collection overhead (ms) */
+	double MaxCollectionOverhead = 0.0;
 };

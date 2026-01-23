@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Team/Mission.h"
 #include "RLTypes.generated.h"
 
 // Forward declarations (v6.0 - avoid circular dependency)
@@ -38,12 +37,14 @@ namespace RLConfig {
 	constexpr float MAX_DISTANCE_NORMALIZATION = 5000.0f;  // cm
 	constexpr float MAX_VELOCITY_NORMALIZATION = 1200.0f;
 
-	// Action Space
-	constexpr int32 NUM_STRATEGIES = 4;  // Assault, Defend, Support, Retreat
-	constexpr int32 NUM_TARGETS = 11;    // 10 enemies + 1 no-target
+	// Action Space (v8.0: Tactical Parameters + Combat Parameters)
+	constexpr int32 NUM_STRATEGIES = 4;  // Assault, Defend, Support, Retreat (MCTS-assigned, not RL)
+	constexpr int32 NUM_TACTICAL_PARAMS = 4;  // Aggression, CoverPreference, SpreadDistance, RiskTolerance
+	constexpr int32 NUM_COMBAT_CHOICES = 2;   // TargetPriority: Closest, LowestHP
 
-	// Observation Space
-	constexpr int32 OBSERVATION_SIZE = 68;  // 64 base + 4 mission context
+	// Observation Space (v8.0: Streamlined - removed velocity, raycast hit types)
+	constexpr int32 OBSERVATION_BASE_SIZE = 46;  // Base observation features
+	constexpr int32 OBSERVATION_SIZE = 50;       // 46 base + 4 strategy context (one-hot from MCTS)
 
 	// === END CRITICAL SECTION ===
 }
@@ -119,75 +120,34 @@ struct FAllyContext
 };
 
 // ============================================
-// v7.0: Mission Context for RL Observation
-// v7.0 NAMING: Mission = strategic goal, Objective = physical base (AObjectiveActor)
-// ============================================
-
-// Forward declare UMission (defined in Team/Mission.h)
-class UMission;
-
-/**
- * Mission context provided to RL policy (v7.0)
- * Informs agent about their assigned mission from MCTS
- */
-USTRUCT(BlueprintType)
-struct GAMEAI_PROJECT_API FMissionContext
-{
-	GENERATED_BODY()
-
-	/** Assigned mission type */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	EMissionType Type = EMissionType::None;
-
-	/** Normalized distance to mission target [0,1] */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	float Distance = 0.0f;
-
-	/** Normalized 2D direction to mission target */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	FVector2D Direction = FVector2D::ZeroVector;
-
-	/** Target actor (enemy, capture point, ally, etc.) */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	TObjectPtr<AActor> TargetActor = nullptr;
-
-	/** Mission priority [0-10] */
-	UPROPERTY(BlueprintReadWrite, Category = "Mission")
-	int32 Priority = 5;
-
-	/** Convert to feature array for neural network (4 features) */
-	TArray<float> ToFeatureVector() const
-	{
-		// Encode type as normalized value [0, 0.25, 0.5, 0.75, 1.0]
-		float TypeEncoded = static_cast<float>(Type) / static_cast<float>(EMissionType::Retreat);
-
-		return {
-			TypeEncoded,
-			Distance,
-			(float)Direction.X,
-			(float)Direction.Y
-		};
-	}
-};
-
-// ============================================
-// v7.0: MCTS Assignment Result
-// v7.0 NAMING: Mission = strategic goal assigned by MCTS
+// v8.0: Strategy Assignment (MCTS Output)
+// MCTS now assigns Strategies directly (not Missions)
 // ============================================
 
 /**
- * Result of MCTS mission assignment (v7.0)
- * Maps agents to missions with confidence metrics
- * v7.0: Renamed from FMissionAssignment to match UMission terminology
+ * Strategy assignment from MCTS (v8.0)
+ * MCTS assigns both the strategy and the target objective for each agent
  */
 USTRUCT(BlueprintType)
-struct GAMEAI_PROJECT_API FMissionAssignment
+struct GAMEAI_PROJECT_API FStrategyAssignment
 {
 	GENERATED_BODY()
 
-	/** Agent-to-mission mapping */
+	/** Assigned agent */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
-	TMap<TObjectPtr<AActor>, TObjectPtr<UMission>> AgentToMission;
+	TObjectPtr<AActor> Agent = nullptr;
+
+	/** Assigned strategy type */
+	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
+	EStrategyType Strategy = EStrategyType::Assault;
+
+	/** Target objective (which base to attack/defend) */
+	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
+	TObjectPtr<class AObjectiveActor> TargetObjective = nullptr;
+
+	/** Assignment priority [0-10] */
+	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
+	int32 Priority = 5;
 
 	/** MCTS-estimated value of this assignment [-1, 1] */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
@@ -203,19 +163,140 @@ struct GAMEAI_PROJECT_API FMissionAssignment
 };
 
 /**
- * Macro action space for v6.0 (Strategy only, execution is rules-based)
+ * Objective context for RL observation (v8.0)
+ * Provides information about the target objective for strategy execution
+ */
+USTRUCT(BlueprintType)
+struct GAMEAI_PROJECT_API FObjectiveContext
+{
+	GENERATED_BODY()
+
+	/** Target objective actor */
+	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	TObjectPtr<class AObjectiveActor> TargetObjective = nullptr;
+
+	/** Normalized distance to objective [0, 1] */
+	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	float Distance = 0.0f;
+
+	/** Normalized 2D direction to objective */
+	UPROPERTY(BlueprintReadWrite, Category = "Objective")
+	FVector2D Direction = FVector2D::ZeroVector;
+
+	/** Convert to feature vector for neural network (4 features total) */
+	TArray<float> ToFeatureVector() const
+	{
+		// For v8.0: Return objective context as 4 features
+		// [type_encoded, distance, direction.x, direction.y]
+		// Type encoding: 0.0 = friendly objective, 1.0 = hostile objective
+		return {
+			0.0f,  // Type encoding (to be set by caller based on team ownership)
+			Distance,
+			static_cast<float>(Direction.X),
+			static_cast<float>(Direction.Y)
+		};
+	}
+};
+
+// ============================================
+// v8.0: Tactical Parameters (RL → EQS Modulation)
+// ============================================
+
+/**
+ * Target priority for combat decisions (v8.0)
+ */
+UENUM(BlueprintType)
+enum class ETargetPriority : uint8
+{
+	Closest   UMETA(DisplayName = "Closest Enemy"),
+	LowestHP  UMETA(DisplayName = "Lowest HP Enemy"),
+	COUNT     UMETA(Hidden)
+};
+
+/**
+ * Tactical parameters for EQS weight modulation (v8.0)
+ * RL outputs these continuous values to control tactical positioning behavior
+ */
+USTRUCT(BlueprintType)
+struct GAMEAI_PROJECT_API FTacticalParameters
+{
+	GENERATED_BODY()
+
+	/** Aggression level [0,1]: 0=passive, 1=aggressive */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float Aggression = 0.5f;
+
+	/** Cover preference [0,1]: 0=ignore cover, 1=prioritize cover */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float CoverPreference = 0.5f;
+
+	/** Formation spread [0,1]: 0=tight formation, 1=spread out */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float SpreadDistance = 0.5f;
+
+	/** Risk tolerance [0,1]: 0=retreat early, 1=fight to death */
+	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
+	float RiskTolerance = 0.5f;
+
+	FTacticalParameters() = default;
+	FTacticalParameters(float InAggression, float InCover, float InSpread, float InRisk)
+		: Aggression(InAggression)
+		, CoverPreference(InCover)
+		, SpreadDistance(InSpread)
+		, RiskTolerance(InRisk)
+	{}
+
+	/** Clamp all values to [0,1] range */
+	void Clamp()
+	{
+		Aggression = FMath::Clamp(Aggression, 0.0f, 1.0f);
+		CoverPreference = FMath::Clamp(CoverPreference, 0.0f, 1.0f);
+		SpreadDistance = FMath::Clamp(SpreadDistance, 0.0f, 1.0f);
+		RiskTolerance = FMath::Clamp(RiskTolerance, 0.0f, 1.0f);
+	}
+};
+
+/**
+ * Combat parameters for target selection and engagement (v8.0)
+ * RL selects discrete combat actions (no learned aiming, only target priority)
+ */
+USTRUCT(BlueprintType)
+struct GAMEAI_PROJECT_API FCombatParameters
+{
+	GENERATED_BODY()
+
+	/** Target priority selection (2 discrete choices) */
+	UPROPERTY(BlueprintReadWrite, Category = "Combat")
+	ETargetPriority Priority = ETargetPriority::Closest;
+
+	FCombatParameters() = default;
+	explicit FCombatParameters(ETargetPriority InPriority)
+		: Priority(InPriority)
+	{}
+};
+
+/**
+ * Macro action space for v8.0 (Tactical Parameters + Combat Parameters)
+ * v8.0: MCTS assigns strategies, RL outputs tactical and combat parameters
  */
 USTRUCT(BlueprintType)
 struct FMacroAction
 {
 	GENERATED_BODY()
 
-	/** Strategy: High-level approach to current Mission */
+	/** v8.0: Tactical parameters for EQS weight modulation (4 continuous values) */
 	UPROPERTY(BlueprintReadWrite, Category = "Action")
-	EStrategyType Strategy = EStrategyType::Assault;
+	FTacticalParameters TacticalParams;
 
-	FMacroAction() : Strategy(EStrategyType::Assault) {}
-	explicit FMacroAction(EStrategyType InStrategy) : Strategy(InStrategy) {}
+	/** v8.0: Combat parameters for target selection (2 discrete choices) */
+	UPROPERTY(BlueprintReadWrite, Category = "Action")
+	FCombatParameters CombatParams;
+
+	FMacroAction() = default;
+	FMacroAction(FTacticalParameters InTactical, FCombatParameters InCombat)
+		: TacticalParams(InTactical)
+		, CombatParams(InCombat)
+	{}
 };
 
 /**
@@ -277,7 +358,7 @@ struct GAMEAI_PROJECT_API FRLPolicyConfig
 
 	/** Input size (observation features) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
-	int32 InputSize = 68;  // v7.0: 64 base + 4 mission context
+	int32 InputSize = 50;  // v8.0: 46 base + 4 strategy context
 
 	/** Policy output size (strategy logits) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")

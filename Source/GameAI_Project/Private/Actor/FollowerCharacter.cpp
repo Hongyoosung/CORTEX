@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actor/FollowerCharacter.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Combat/HealthComponent.h"
-#include "Combat/WeaponComponent.h"
+#include "Combat/Components/HealthComponent.h"
+#include "Combat/Components/WeaponComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "AIController.h"
 
@@ -47,25 +47,6 @@ void AFollowerCharacter::BeginPlay()
 void AFollowerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	// DIAGNOSTIC: Track if controller gets lost during gameplay (only check every 60 frames to reduce spam)
-	static int32 TickCounter = 0;
-	if (++TickCounter % 60 == 0)
-	{
-		static TMap<AFollowerCharacter*, AController*> LastKnownController;
-		AController* CurrentController = GetController();
-		AController* InPreviousController = LastKnownController.FindRef(this);
-
-		if (InPreviousController != CurrentController)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[FollowerChar] ❌ CONTROLLER CHANGED on '%s'! Was='%s', Now='%s'"),
-				*GetName(),
-				*GetNameSafe(InPreviousController),
-				*GetNameSafe(CurrentController));
-
-			LastKnownController.Add(this, CurrentController);
-		}
-	}
 }
 
 //------------------------------------------------------------------------------

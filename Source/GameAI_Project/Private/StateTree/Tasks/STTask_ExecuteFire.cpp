@@ -3,8 +3,8 @@
 #include "StateTree/Tasks/STTask_ExecuteFire.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Combat/WeaponComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Combat/Components/WeaponComponent.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
 
@@ -68,18 +68,18 @@ void FSTTask_ExecuteFire::ExecuteFire(FStateTreeExecutionContext& Context) const
 		return;
 	}
 
-	// v6.0: Get current strategy from appropriate source
-	// CRITICAL FIX: Read strategy from correct source based on training mode
-	EStrategyType CurrentStrategy;
-	if (SharedContext.bScholaActionReceived)
+	// v8.0: Get assigned strategy from MCTS (via Mission type)
+	// Strategy is NO LONGER in FMacroAction - MCTS assigns strategies, RL controls tactical params
+	EStrategyType CurrentStrategy = EStrategyType::Assault; // Default fallback
+
+	if (SharedContext.FollowerComponent)
 	{
-		// Schola training mode: Actions come from Python via TacticalActuator
-		CurrentStrategy = SharedContext.CurrentAction.Strategy;
+		// v8.0: Strategy comes from MCTS mission assignment, NOT from RL
+		CurrentStrategy = SharedContext.FollowerComponent->GetAssignedStrategy();
 	}
 	else
 	{
-		// Normal/Inference mode: Actions come from RL policy or fallback heuristic
-		CurrentStrategy = SharedContext.FollowerComponent->GetCurrentStrategy();
+		UE_LOG(LogTemp, Warning, TEXT("[ExecuteFire] No FollowerComponent - using default Assault strategy"));
 	}
 
 	// Retreat strategy = hold fire

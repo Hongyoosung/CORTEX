@@ -276,7 +276,7 @@ Source/GameAI_Project/
 │   ├── TeamLeaderComponent.h/cpp         # ✅ Continuous planning
 │   ├── FollowerAgentComponent.h/cpp      # ✅ Confidence-weighted execution
 │   ├── StrategicCommand.h                # ✅ Confidence fields added
-│   └── TeamCommunicationManager.h/cpp    # ✅ MCTS stats messaging
+│   
 ├── Observation/
 │   ├── ObservationElement.h/cpp          # ✅ ToFeatureVector()
 │   └── TeamObservation.h/cpp             # ✅ Team aggregation

@@ -8,7 +8,6 @@
 #include "LeaderCharacter.generated.h"
 
 class UTeamLeaderComponent;
-class UMissionManager;
 
 /**
  * Leader Character
@@ -84,9 +83,6 @@ public:
 	/** Team leader component (strategic MCTS decision-making) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components")
 	UTeamLeaderComponent* TeamLeaderComponent;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components")
-	UMissionManager* MissionManager;
 
 	//--------------------------------------------------------------------------
 	// COMBAT PROPERTIES

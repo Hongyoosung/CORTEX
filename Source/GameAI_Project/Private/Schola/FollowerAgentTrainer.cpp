@@ -4,8 +4,8 @@
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/TacticalRewardProvider.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Combat/HealthComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Combat/Components/HealthComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 
 AFollowerAgentTrainer::AFollowerAgentTrainer()
@@ -24,6 +24,7 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 	ScholaAgent = InAgent;
 	FollowerAgent = InAgent->FollowerAgent;
 	RewardProvider = InAgent->RewardProvider;
+	AgentHealthComponent = InAgent->HealthComponent;
 
 	// Verify components
 	if (!FollowerAgent)
@@ -38,7 +39,7 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[FollowerTrainer] Components verified: FollowerAgent=%s, RewardProvider=%s, bIsAlive=%d"),
-		*FollowerAgent->GetName(), *RewardProvider->GetName(), FollowerAgent->bIsAlive ? 1 : 0);
+		*FollowerAgent.Get()->GetName(), *RewardProvider->GetName(), AgentHealthComponent.Get()->bIsAlive ? 1 : 0);
 
 	// Get the controlled pawn first
 	APawn* ControlledPawn = InAgent->GetControlledPawn();
@@ -118,9 +119,21 @@ float AFollowerAgentTrainer::ComputeReward()
 
 EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 {
-	// CRITICAL FIX: Episode termination is now environment-driven, NOT agent-driven
-	// Check if SimulationManager says the episode is ending (team annihilation or timeout)
-	// This ensures all agents terminate together when the episode ends
+	// v8.5 VECTORIZED TRAINING: Per-environment episode termination
+	// Check if THIS AGENT'S ENVIRONMENT has finished, not all environments
+
+	// DIAGNOSTIC: Track ComputeStatus() calls to verify it's being invoked
+	static int32 CallCounter = 0;
+	static int32 RunningCounter = 0;
+	static int32 CompletedCounter = 0;
+	static int32 TruncatedCounter = 0;
+	CallCounter++;
+
+	if (CallCounter % 100 == 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[ComputeStatus DIAGNOSTIC] Total calls: %d (Running: %d, Completed: %d, Truncated: %d)"),
+			CallCounter, RunningCounter, CompletedCounter, TruncatedCounter);
+	}
 
 	if (!ScholaAgent || !ScholaAgent->ScholaEnvironment)
 	{
@@ -138,26 +151,42 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 
 	ASimulationManagerGameMode* SimManager = Env->SimulationManager;
 
-	// Check if episode is ending (set by SimulationManager when team is annihilated or timeout)
-	if (SimManager->IsEpisodeEnding())
+	// v8.5 CRITICAL FIX: Get the EnvironmentID for THIS agent's environment
+	int32 EnvironmentID = Env->EnvironmentID;
+
+	// Check per-environment termination flags
+	bool bShouldTerminate = SimManager->IsEnvironmentEpisodeEnding(EnvironmentID) ||
+	                       SimManager->GetEnvironmentLastTerminated(EnvironmentID);
+
+	// Check if THIS environment's episode is ending
+	if (bShouldTerminate)
 	{
 		// Determine if it was a timeout (truncated) or team annihilation (completed)
-		bool bWasTimeout = (SimManager->GetMaxStepsPerEpisode() > 0 && SimManager->GetCurrentStep() >= SimManager->GetMaxStepsPerEpisode()) ||
-						   (SimManager->GetMaxEpisodeDuration() > 0.0f && (GetWorld()->GetTimeSeconds() - SimManager->GetEpisodeStartTime()) >= SimManager->GetMaxEpisodeDuration());
+		bool bWasTimeout = SimManager->GetEnvironmentLastTimeout(EnvironmentID);
 
 		if (bWasTimeout)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Episode TRUNCATED (timeout)"), *TrainerConfiguration.Name);
+			TruncatedCounter++;
+			UE_LOG(LogTemp, Warning, TEXT("[ENV %d TERMINATION] %s: Episode TRUNCATED (timeout) - Total: %d"),
+				EnvironmentID, *TrainerConfiguration.Name, TruncatedCounter);
 			return EAgentTrainingStatus::Truncated;
 		}
 		else
 		{
-			UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Episode COMPLETED (team annihilation)"), *TrainerConfiguration.Name);
+			CompletedCounter++;
+			UE_LOG(LogTemp, Warning, TEXT("[ENV %d TERMINATION] %s: Episode COMPLETED (team elim) - Total: %d"),
+				EnvironmentID, *TrainerConfiguration.Name, CompletedCounter);
 			return EAgentTrainingStatus::Completed;
 		}
 	}
 
-	// Episode is still running
+	// Episode is still running for THIS environment
+	RunningCounter++;
+	if (CallCounter % 100 == 0)
+	{
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[ENV %d] %s: Status=Running (step %d)"),
+			EnvironmentID, *TrainerConfiguration.Name, EpisodeSteps);
+	}
 	return EAgentTrainingStatus::Running;
 }
 
@@ -170,13 +199,33 @@ void AFollowerAgentTrainer::GetInfo(TMap<FString, FString>& Info)
 
 	if (FollowerAgent)
 	{
-		Info.Add(TEXT("is_alive"), FollowerAgent->bIsAlive ? TEXT("true") : TEXT("false"));
+		Info.Add(TEXT("is_alive"), AgentHealthComponent.Get()->bIsAlive ? TEXT("true") : TEXT("false"));
 	}
 
 	if (RewardProvider)
 	{
 		Info.Add(TEXT("current_reward"), FString::SanitizeFloat(RewardProvider->GetReward()));
 	}
+
+	// DIAGNOSTIC: Add current training status to info
+	EAgentTrainingStatus CurrentStatus = State.TrainingStatus;
+	FString StatusString;
+	switch (CurrentStatus)
+	{
+		case EAgentTrainingStatus::Running:
+			StatusString = TEXT("Running");
+			break;
+		case EAgentTrainingStatus::Completed:
+			StatusString = TEXT("Completed");
+			break;
+		case EAgentTrainingStatus::Truncated:
+			StatusString = TEXT("Truncated");
+			break;
+		default:
+			StatusString = TEXT("Unknown");
+			break;
+	}
+	Info.Add(TEXT("training_status"), StatusString);
 }
 
 void AFollowerAgentTrainer::ResetTrainer()
@@ -214,8 +263,17 @@ void AFollowerAgentTrainer::ResetTrainer()
 void AFollowerAgentTrainer::OnCompletion()
 {
 	// Called when episode ends
-	UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s - Episode completed (Total reward: %.2f, Steps: %d)"),
-		*TrainerConfiguration.Name, EpisodeReward, EpisodeSteps);
+	// DIAGNOSTIC: Enhanced logging to track episode completion
+	EAgentTrainingStatus FinalStatus = State.TrainingStatus;
+	FString StatusString = (FinalStatus == EAgentTrainingStatus::Completed) ? TEXT("Completed") :
+		(FinalStatus == EAgentTrainingStatus::Truncated) ? TEXT("Truncated") : TEXT("Unknown");
+
+	UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ EPISODE COMPLETION: %s"), *TrainerConfiguration.Name);
+	UE_LOG(LogTemp, Warning, TEXT("║ Status: %s"), *StatusString);
+	UE_LOG(LogTemp, Warning, TEXT("║ Total Reward: %.2f"), EpisodeReward);
+	UE_LOG(LogTemp, Warning, TEXT("║ Total Steps: %d"), EpisodeSteps);
+	UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════════════════════════╝"));
 }
 
 void AFollowerAgentTrainer::OnPossess(APawn* InPawn)

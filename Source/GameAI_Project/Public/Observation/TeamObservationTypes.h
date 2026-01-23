@@ -17,16 +17,4 @@ enum class EEngagementRange : uint8
 };
 
 
-/**
- * Mission phase classification
- */
-UENUM(BlueprintType)
-enum class EMissionPhase : uint8
-{
-    Preparation     UMETA(DisplayName = "Preparation"),
-    Approach        UMETA(DisplayName = "Approach"),
-    Engagement      UMETA(DisplayName = "Engagement"),
-    Retreat         UMETA(DisplayName = "Retreat"),
-    Complete        UMETA(DisplayName = "Complete"),
-    Failed          UMETA(DisplayName = "Failed")
-};
+// v8.0: EMissionPhase removed - no longer used in strategy-based architecture

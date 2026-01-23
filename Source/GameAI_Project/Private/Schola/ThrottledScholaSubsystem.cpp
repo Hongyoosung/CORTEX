@@ -34,8 +34,8 @@ void UThrottledScholaSubsystem::Tick(float DeltaTime)
 
 			static int32 DecisionCounter = 0;
 			DecisionCounter++;
-			UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v7.5] ✅ Decision #%d allowed (elapsed=%.3fs)"),
-				DecisionCounter, ElapsedTime);
+			/*UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v7.5] ✅ Decision #%d allowed (elapsed=%.3fs)"),
+				DecisionCounter, ElapsedTime);*/
 		}
 		// else: Throttled, don't collect states this frame
 	}
@@ -69,7 +69,31 @@ void UThrottledScholaSubsystem::Tick(float DeltaTime)
 			}
 
 			// 3. Collect new observations
+			// v8.0 TIMING FIX: Measure observation collection overhead
+			double CollectStartTime = FPlatformTime::Seconds();
 			this->GymConnector->CollectEnvironmentStates();
+			double CollectEndTime = FPlatformTime::Seconds();
+			double CollectionOverheadMS = (CollectEndTime - CollectStartTime) * 1000.0;
+
+			// Track timing metrics
+			DecisionCount++;
+			TotalCollectionOverhead += CollectionOverheadMS;
+			MaxCollectionOverhead = FMath::Max(MaxCollectionOverhead, CollectionOverheadMS);
+
+			// Log timing diagnostics every 100 decisions
+			if (bEnableTimingDiagnostics && DecisionCount % 100 == 0)
+			{
+				double AvgOverheadMS = TotalCollectionOverhead / DecisionCount;
+				UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════════════════════════╗"));
+				UE_LOG(LogTemp, Warning, TEXT("║ TIMING DIAGNOSTICS (Decision #%d)"), DecisionCount);
+				UE_LOG(LogTemp, Warning, TEXT("║ Observation Collection Overhead:"));
+				UE_LOG(LogTemp, Warning, TEXT("║   Average: %.2f ms"), AvgOverheadMS);
+				UE_LOG(LogTemp, Warning, TEXT("║   Max: %.2f ms"), MaxCollectionOverhead);
+				UE_LOG(LogTemp, Warning, TEXT("║   Last: %.2f ms"), CollectionOverheadMS);
+				UE_LOG(LogTemp, Warning, TEXT("║ Timing Discrepancy Per Episode (60s):"));
+				UE_LOG(LogTemp, Warning, TEXT("║   ~%.2f seconds lost to observation collection"), AvgOverheadMS * (60.0f / DecisionInterval) / 1000.0);
+				UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════════════════════════╝"));
+			}
 
 			// 4. Submit to Python (calls Respond(), sends observation, clears CurrExchange)
 			// CRITICAL: Check connector is still running before submit

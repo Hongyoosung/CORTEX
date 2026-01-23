@@ -1,7 +1,8 @@
 #include "Core/SimulationManagerGameMode.h"
-#include "Team/TeamLeaderComponent.h"
-#include "Team/FollowerAgentComponent.h"
-#include "Combat/HealthComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Team/ObjectiveActor.h"
+#include "Combat/Components/HealthComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -12,9 +13,6 @@ ASimulationManagerGameMode::ASimulationManagerGameMode()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.1f; // 10 Hz
-	
-	// Default to false - wait for external signal (e.g. from Python via Schola)
-	bAutoStartSimulation = false;
 }
 
 void ASimulationManagerGameMode::BeginPlay()
@@ -35,6 +33,23 @@ void ASimulationManagerGameMode::BeginPlay()
 		}
 	}
 
+	// Bind all ObjectiveActor defeat events for episode termination
+	TArray<AActor*> FoundObjectives;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
+
+	for (AActor* ObjActor : FoundObjectives)
+	{
+		AObjectiveActor* Objective = Cast<AObjectiveActor>(ObjActor);
+		if (Objective)
+		{
+			Objective->OnObjectiveDefeated.AddUniqueDynamic(this, &ASimulationManagerGameMode::OnObjectiveDefeated);
+			UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound OnObjectiveDefeated for '%s' (Team %d)"),
+				*Objective->GetName(), Objective->OwnerTeamID);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound %d ObjectiveActor defeat delegates"), FoundObjectives.Num());
+
 	if (bAutoStartSimulation)
 	{
 		StartSimulation();
@@ -45,24 +60,116 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (bSimulationRunning && !bEpisodeEnding)
+	// v8.5 VECTORIZED TRAINING: Check termination per-environment instead of globally
+	if (bSimulationRunning)
 	{
-		// Auto-increment step counter (each tick = 1 step)
+		// Increment global step counter (legacy, kept for backward compatibility)
 		CurrentStep++;
 
-		// Check for max steps termination
-		if (MaxStepsPerEpisode > 0 && CurrentStep >= MaxStepsPerEpisode)
+		// [DIAGNOSTIC] Log tick frequency every 100 ticks
+		static int32 TickCounter = 0;
+		TickCounter++;
+		if (TickCounter % 100 == 0)
 		{
-			CheckEpisodeTermination();
+			UE_LOG(LogTemp, VeryVerbose, TEXT("[TICK DIAGNOSTIC] Tick #%d, DeltaTime=%.3fs, TickInterval=%.3fs"),
+				TickCounter, DeltaTime, PrimaryActorTick.TickInterval);
 		}
 
-		// Check for max duration termination (10 minutes by default, matches Python MAX_EPISODE_DURATION)
-		if (MaxEpisodeDuration > 0.0f)
+		// v8.5 CRITICAL FIX: Accumulate game time per environment (ONCE per environment per tick)
+		// Previous bug: Loop iterated over TeamToEnvironmentMap (8 teams), causing each environment's
+		// time to be incremented 2x per tick (once per team). This caused episodes to end at 2x speed.
+		TSet<int32> ProcessedEnvironments;  // Track which environments we've updated this tick
+
+		for (auto& Pair : TeamToEnvironmentMap)
 		{
-			float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
-			if (EpisodeElapsed >= MaxEpisodeDuration)
+			int32 EnvID = Pair.Value;
+
+			// Skip if we already processed this environment this tick
+			if (ProcessedEnvironments.Contains(EnvID))
 			{
-				CheckEpisodeTermination();
+				continue;
+			}
+			ProcessedEnvironments.Add(EnvID);
+
+			// Skip environments that are already ending
+			if (IsEnvironmentEpisodeEnding(EnvID))
+			{
+				continue;
+			}
+
+			// Increment step counter for this environment
+			int32* EnvSteps = EnvironmentSteps.Find(EnvID);
+			if (EnvSteps)
+			{
+				(*EnvSteps)++;
+			}
+
+			// Accumulate game time for this environment (NOW ONLY ONCE PER TICK)
+			float* EnvGameTime = EnvironmentEpisodeGameTimes.Find(EnvID);
+			if (!EnvGameTime)
+			{
+				EnvironmentEpisodeGameTimes.Add(EnvID, 0.0f);
+				EnvGameTime = EnvironmentEpisodeGameTimes.Find(EnvID);
+			}
+			if (EnvGameTime)
+			{
+				float OldTime = *EnvGameTime;
+				*EnvGameTime += DeltaTime;
+
+				// [DIAGNOSTIC] Log time accumulation every 5 seconds
+				if (FMath::FloorToInt(*EnvGameTime / 5.0f) > FMath::FloorToInt(OldTime / 5.0f))
+				{
+					UE_LOG(LogTemp, Log, TEXT("[ENV %d TIME] Accumulated time: %.1fs (Steps: %d, MaxDuration: %.1fs, MaxSteps: %d)"),
+						EnvID, *EnvGameTime, EnvSteps ? *EnvSteps : 0, MaxEpisodeDuration, MaxStepsPerEpisode);
+				}
+			}
+
+			// Check for max duration termination (per-environment)
+			if (MaxEpisodeDuration > 0.0f && EnvGameTime && *EnvGameTime >= MaxEpisodeDuration)
+			{
+				float* EnvStartTime = EnvironmentEpisodeStartTimes.Find(EnvID);
+				float WallClockElapsed = EnvStartTime ? (GetWorld()->GetTimeSeconds() - *EnvStartTime) : 0.0f;
+
+				UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
+				UE_LOG(LogTemp, Error, TEXT("║ [ENV %d TIMEOUT] EPISODE ENDING DUE TO MAX DURATION               ║"), EnvID);
+				UE_LOG(LogTemp, Error, TEXT("║   Reason: TIME LIMIT REACHED                                      ║"));
+				UE_LOG(LogTemp, Error, TEXT("║   Accumulated GameTime: %.1fs                                     ║"), *EnvGameTime);
+				UE_LOG(LogTemp, Error, TEXT("║   MaxEpisodeDuration: %.1fs                                       ║"), MaxEpisodeDuration);
+				UE_LOG(LogTemp, Error, TEXT("║   Wall Clock Elapsed: %.1fs                                       ║"), WallClockElapsed);
+				UE_LOG(LogTemp, Error, TEXT("║   Steps Taken: %d                                                  ║"), EnvSteps ? *EnvSteps : 0);
+				UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
+
+				// End episode for this environment only
+				// Find teams in this environment
+				TArray<int32> TeamsInEnv;
+				for (auto& TeamPair : TeamToEnvironmentMap)
+				{
+					if (TeamPair.Value == EnvID)
+					{
+						TeamsInEnv.Add(TeamPair.Key);
+					}
+				}
+
+				if (TeamsInEnv.Num() >= 2)
+				{
+					// Timeout: no winner
+					UE_LOG(LogTemp, Warning, TEXT("[ENV %d TIMEOUT] Ending episode with no winner (timeout)"), EnvID);
+					EndEpisode(-1, -1, EnvID);
+				}
+			}
+
+			// Check for max steps termination (per-environment)
+			if (MaxStepsPerEpisode > 0 && EnvSteps && *EnvSteps >= MaxStepsPerEpisode)
+			{
+				UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
+				UE_LOG(LogTemp, Error, TEXT("║ [ENV %d MAX STEPS] EPISODE ENDING DUE TO MAX STEPS                ║"), EnvID);
+				UE_LOG(LogTemp, Error, TEXT("║   Reason: STEP LIMIT REACHED                                      ║"));
+				UE_LOG(LogTemp, Error, TEXT("║   Steps Taken: %d                                                  ║"), *EnvSteps);
+				UE_LOG(LogTemp, Error, TEXT("║   MaxStepsPerEpisode: %d                                           ║"), MaxStepsPerEpisode);
+				UE_LOG(LogTemp, Error, TEXT("║   Accumulated GameTime: %.1fs                                     ║"), EnvGameTime ? *EnvGameTime : 0.0f);
+				UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
+
+				EndEpisode(-1, -1, EnvID);
 			}
 		}
 
@@ -98,8 +205,6 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 				}
 			}
 		}
-
-		UpdateStatistics();
 
 		// Episode termination is now event-driven via OnAgentDied()
 		// No per-tick checking needed
@@ -154,6 +259,58 @@ bool ASimulationManagerGameMode::RegisterTeam(
 		ActorToTeamMap.Add(LeaderActor, TeamID);
 	}
 
+	//--------------------------------------------------------------------------
+	// v8.5: VECTORIZED TRAINING - Auto-configure enemy relationships
+	//--------------------------------------------------------------------------
+	// Environment pairing pattern:
+	//   - Environment 0: Team 0 vs Team 1
+	//   - Environment 1: Team 2 vs Team 3
+	//   - Environment 2: Team 4 vs Team 5
+	//   - Environment 3: Team 6 vs Team 7
+	//
+	// Logic: Use XOR with 1 to flip last bit (0↔1, 2↔3, 4↔5, 6↔7)
+	// When a team registers, check if its paired enemy exists and create mutual enemy relationship
+	//--------------------------------------------------------------------------
+
+	// XOR with 1 flips last bit: 0→1, 1→0, 2→3, 3→2, etc.
+	int32 PairedEnemyTeamID = TeamID ^ 1;
+	int32 EnvironmentID = TeamID / 2;
+
+	UE_LOG(LogTemp, Warning, TEXT("[SimManager v8.5] Registering Team %d (Env %d). Paired enemy: Team %d"),
+		TeamID, EnvironmentID, PairedEnemyTeamID);
+
+	// Check if paired enemy team is already registered
+	if (RegisteredTeams.Contains(PairedEnemyTeamID))
+	{
+		// Both teams exist → establish mutual enemy relationship
+		SetMutualEnemies(TeamID, PairedEnemyTeamID);
+
+		// CRITICAL: Verify enemy relationship was actually set
+		const FTeamInfo* TeamInfo = RegisteredTeams.Find(TeamID);
+		const FTeamInfo* EnemyInfo = RegisteredTeams.Find(PairedEnemyTeamID);
+
+		bool bTeamHasEnemy = TeamInfo && TeamInfo->EnemyTeamIDs.Contains(PairedEnemyTeamID);
+		bool bEnemyHasTeam = EnemyInfo && EnemyInfo->EnemyTeamIDs.Contains(TeamID);
+
+		if (bTeamHasEnemy && bEnemyHasTeam)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SimManager v8.5] ✅ Enemy relationship confirmed: Team %d ↔ Team %d (Env %d)"),
+				TeamID, PairedEnemyTeamID, EnvironmentID);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[SimManager v8.5] ❌ FAILED to set enemy relationship: Team %d ↔ Team %d (Team→Enemy: %s, Enemy→Team: %s)"),
+				TeamID, PairedEnemyTeamID,
+				bTeamHasEnemy ? TEXT("OK") : TEXT("MISSING"),
+				bEnemyHasTeam ? TEXT("OK") : TEXT("MISSING"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("[SimManager v8.5] Team %d registered. Waiting for Team %d to establish enemy relationship (Env %d)"),
+			TeamID, PairedEnemyTeamID, EnvironmentID);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("SimulationManager: Registered team %d (%s)"), TeamID, *TeamName);
 	return true;
 }
@@ -185,18 +342,36 @@ bool ASimulationManagerGameMode::RegisterTeamMember(int32 TeamID, AActor* Agent)
 		return false;
 	}
 
+	// CRITICAL FIX: Check if already registered to prevent duplicate registration
+	int32* ExistingTeamID = ActorToTeamMap.Find(Agent);
+	if (ExistingTeamID)
+	{
+		if (*ExistingTeamID == TeamID)
+		{
+			// Already registered to this team - skip duplicate registration
+			UE_LOG(LogTemp, Log, TEXT("[DUPLICATE REGISTRATION BLOCKED] %s already registered to Team %d, skipping"),
+				*Agent->GetName(), TeamID);
+			return true;
+		}
+		else
+		{
+			// Moving to a different team - unregister from old team first
+			UE_LOG(LogTemp, Warning, TEXT("[TEAM CHANGE] %s moving from Team %d to Team %d"),
+				*Agent->GetName(), *ExistingTeamID, TeamID);
+			UnregisterTeamMember(*ExistingTeamID, Agent);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("[NEW REGISTRATION] %s being registered to Team %d (first time)"),
+			*Agent->GetName(), TeamID);
+	}
+
 	FTeamInfo* TeamInfo = RegisteredTeams.Find(TeamID);
 	if (!TeamInfo)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Cannot register member - team %d not found"), TeamID);
 		return false;
-	}
-
-	// Remove from old team if exists
-	int32* OldTeamID = ActorToTeamMap.Find(Agent);
-	if (OldTeamID)
-	{
-		UnregisterTeamMember(*OldTeamID, Agent);
 	}
 
 	// Add to new team
@@ -226,7 +401,32 @@ bool ASimulationManagerGameMode::RegisterTeamMember(int32 TeamID, AActor* Agent)
 		UE_LOG(LogTemp, Log, TEXT("SimulationManager: Bound OnDeath for %s"), *Agent->GetName());
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("SimulationManager: Registered %s to team %d"), *Agent->GetName(), TeamID);
+	// [DIAGNOSTIC] Count total agents across all teams
+	int32 TotalAgents = 0;
+	for (const auto& TeamPair : RegisteredTeams)
+	{
+		TotalAgents += TeamPair.Value.TeamMembers.Num();
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[AGENT REGISTRATION] Registered %s to Team %d. Total agents across all teams: %d"),
+		*Agent->GetName(), TeamID, TotalAgents);
+
+	// [DIAGNOSTIC] Log per-team agent counts every 8 registrations (once per team in 4v4 setup)
+	if (TotalAgents % 8 == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
+		UE_LOG(LogTemp, Warning, TEXT("║ [AGENT COUNT] Current Team Sizes:                                 ║"));
+		for (const auto& TeamPair : RegisteredTeams)
+		{
+			int32 MemberCount = TeamPair.Value.TeamMembers.Num();
+			int32 EnvID = GetEnvironmentIDForTeam(TeamPair.Key);
+			UE_LOG(LogTemp, Warning, TEXT("║   Team %d (Env %d): %d agents                                      ║"),
+				TeamPair.Key, EnvID, MemberCount);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("║ TOTAL: %d agents registered                                       ║"), TotalAgents);
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
+	}
+
 	return true;
 }
 
@@ -252,6 +452,28 @@ void ASimulationManagerGameMode::UnregisterTeamMember(int32 TeamID, AActor* Agen
 
 	ActorToTeamMap.Remove(Agent);
 	SpawnTransforms.Remove(Agent);
+}
+
+void ASimulationManagerGameMode::RegisterTeamEnvironment(int32 TeamID, int32 EnvironmentID)
+{
+	// Check if already registered (idempotent)
+	if (int32* ExistingEnvID = TeamToEnvironmentMap.Find(TeamID))
+	{
+		if (*ExistingEnvID == EnvironmentID)
+		{
+			UE_LOG(LogTemp, VeryVerbose, TEXT("SimulationManager: Team %d already registered to Environment %d, skipping"),
+				TeamID, EnvironmentID);
+			return;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Team %d already registered to Environment %d, changing to %d"),
+				TeamID, *ExistingEnvID, EnvironmentID);
+		}
+	}
+
+	TeamToEnvironmentMap.Add(TeamID, EnvironmentID);
+	UE_LOG(LogTemp, Log, TEXT("SimulationManager: Registered Team %d to Environment %d"), TeamID, EnvironmentID);
 }
 
 int32 ASimulationManagerGameMode::GetTeamIDForActor(AActor* Agent) const
@@ -563,12 +785,6 @@ FSimulationStats ASimulationManagerGameMode::GetSimulationStats() const
 // INTERNAL
 //------------------------------------------------------------------------------
 
-void ASimulationManagerGameMode::UpdateStatistics()
-{
-	// Statistics are computed on-demand in GetSimulationStats()
-	// This function can be used for periodic updates if needed
-}
-
 void ASimulationManagerGameMode::DrawDebugInformation()
 {
 	UWorld* World = GetWorld();
@@ -614,12 +830,47 @@ void ASimulationManagerGameMode::DrawDebugInformation()
 }
 
 //------------------------------------------------------------------------------
+// v8.5 VECTORIZED TRAINING: Per-Environment Episode State Queries
+//------------------------------------------------------------------------------
+
+bool ASimulationManagerGameMode::IsEnvironmentEpisodeEnding(int32 EnvironmentID) const
+{
+	const bool* bEnding = EnvironmentEpisodeEnding.Find(EnvironmentID);
+	return bEnding ? *bEnding : false;
+}
+
+bool ASimulationManagerGameMode::GetEnvironmentLastTerminated(int32 EnvironmentID) const
+{
+	const bool* bTerminated = EnvironmentLastTerminated.Find(EnvironmentID);
+	return bTerminated ? *bTerminated : false;
+}
+
+bool ASimulationManagerGameMode::GetEnvironmentLastTimeout(int32 EnvironmentID) const
+{
+	const bool* bTimeout = EnvironmentLastTimeout.Find(EnvironmentID);
+	return bTimeout ? *bTimeout : false;
+}
+
+void ASimulationManagerGameMode::SetEnvironmentTerminationFlags(int32 EnvironmentID, bool bEnding, bool bTerminated, bool bTimeout)
+{
+	EnvironmentEpisodeEnding.Add(EnvironmentID, bEnding);
+	EnvironmentLastTerminated.Add(EnvironmentID, bTerminated);
+	EnvironmentLastTimeout.Add(EnvironmentID, bTimeout);
+}
+
+int32 ASimulationManagerGameMode::GetEnvironmentIDForTeam(int32 TeamID) const
+{
+	const int32* EnvID = TeamToEnvironmentMap.Find(TeamID);
+	return EnvID ? *EnvID : -1;
+}
+
+//------------------------------------------------------------------------------
 // EPISODE MANAGEMENT
 //------------------------------------------------------------------------------
 
 void ASimulationManagerGameMode::OnAgentDied(const FDeathEventData& DeathEvent)
 {
-	if (!DeathEvent.DeadActor || bEpisodeEnding)
+	if (!DeathEvent.DeadActor)
 	{
 		return;
 	}
@@ -631,8 +882,77 @@ void ASimulationManagerGameMode::OnAgentDied(const FDeathEventData& DeathEvent)
 		*DeathEvent.DeadActor->GetName(), TeamID, AliveCount,
 		DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("Unknown"));
 
-	// Check if this death causes episode termination
-	CheckEpisodeTermination();
+	// v8.5 VECTORIZED TRAINING: Check termination for the environment this team belongs to
+	int32 EnvironmentID = GetEnvironmentIDForTeam(TeamID);
+	if (EnvironmentID >= 0 && !IsEnvironmentEpisodeEnding(EnvironmentID))
+	{
+		CheckEpisodeTermination();
+	}
+}
+
+void ASimulationManagerGameMode::OnObjectiveDefeated(int32 DefeatedTeamID)
+{
+	// v8.5 VECTORIZED TRAINING: Determine which environment this affects
+	int32 EnvironmentID = GetEnvironmentIDForTeam(DefeatedTeamID);
+
+	if (EnvironmentID < 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[OnObjectiveDefeated] Could not determine EnvironmentID for Team %d"), DefeatedTeamID);
+		EnvironmentID = 0;
+	}
+
+	// Check if this environment's episode is already ending
+	if (IsEnvironmentEpisodeEnding(EnvironmentID))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ENV %d] OnObjectiveDefeated: Episode already ending, skipping"), EnvironmentID);
+		return;
+	}
+
+	// Find winner/loser within this environment
+	int32 WinningTeamID = -1;
+
+	// Get all teams in this environment
+	for (auto& Pair : TeamToEnvironmentMap)
+	{
+		int32 TeamID = Pair.Key;
+		int32 TeamEnvID = Pair.Value;
+
+		if (TeamEnvID == EnvironmentID && TeamID != DefeatedTeamID)
+		{
+			WinningTeamID = TeamID;
+			break;
+		}
+	}
+
+	float* EnvStartTime = EnvironmentEpisodeStartTimes.Find(EnvironmentID);
+	float EpisodeElapsed = EnvStartTime ? (GetWorld()->GetTimeSeconds() - *EnvStartTime) : 0.0f;
+	float* EnvGameTime = EnvironmentEpisodeGameTimes.Find(EnvironmentID);
+	int32* EnvSteps = EnvironmentSteps.Find(EnvironmentID);
+
+	UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Error, TEXT("║ [ENV %d OBJECTIVE DEFEAT] EPISODE ENDING                          ║"), EnvironmentID);
+	UE_LOG(LogTemp, Error, TEXT("║   Reason: OBJECTIVE DESTROYED                                     ║"));
+	UE_LOG(LogTemp, Error, TEXT("║   Defeated Team: %d                                                ║"), DefeatedTeamID);
+	UE_LOG(LogTemp, Error, TEXT("║   Winner: Team %d                                                  ║"), WinningTeamID);
+	UE_LOG(LogTemp, Error, TEXT("║   Episode Duration: %.1fs                                         ║"), EpisodeElapsed);
+	UE_LOG(LogTemp, Error, TEXT("║   Accumulated GameTime: %.1fs                                     ║"), EnvGameTime ? *EnvGameTime : 0.0f);
+	UE_LOG(LogTemp, Error, TEXT("║   Steps Taken: %d                                                  ║"), EnvSteps ? *EnvSteps : 0);
+	UE_LOG(LogTemp, Error, TEXT("║   Continuous Training: %s                                          ║"),
+		bEnableContinuousTraining ? TEXT("ENABLED (will continue)") : TEXT("DISABLED (will end episode)"));
+	UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
+
+	// CONTINUOUS TRAINING MODE: Award bonus and continue
+	if (bEnableContinuousTraining && WinningTeamID != -1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("🏆 [ENV %d CONTINUOUS] Team %d captured objective! - CONTINUING EPISODE"), EnvironmentID, WinningTeamID);
+		AwardObjectiveCaptureBonus(WinningTeamID);
+	}
+	// TRADITIONAL MODE: End episode on objective capture
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ENV %d OBJECTIVE CAPTURE] Winner: Team %d - ENDING EPISODE"), EnvironmentID, WinningTeamID);
+		EndEpisode(WinningTeamID, DefeatedTeamID, EnvironmentID);
+	}
 }
 
 bool ASimulationManagerGameMode::IsTeamEliminated(int32 TeamID) const
@@ -680,106 +1000,192 @@ int32 ASimulationManagerGameMode::GetAliveAgentCount(int32 TeamID) const
 
 void ASimulationManagerGameMode::CheckEpisodeTermination()
 {
-	if (bEpisodeEnding)
+	// v8.5 VECTORIZED TRAINING: Check termination per-environment
+	// Group teams by environment and check elimination status
+
+	// Build map of EnvironmentID -> Teams
+	TMap<int32, TArray<int32>> EnvironmentTeams;
+	for (auto& Pair : TeamToEnvironmentMap)
 	{
-		return;
+		int32 TeamID = Pair.Key;
+		int32 EnvID = Pair.Value;
+
+		if (!EnvironmentTeams.Contains(EnvID))
+		{
+			EnvironmentTeams.Add(EnvID, TArray<int32>());
+		}
+		EnvironmentTeams[EnvID].Add(TeamID);
 	}
 
-	// Check max steps
-	if (MaxStepsPerEpisode > 0 && CurrentStep >= MaxStepsPerEpisode)
+	// Check each environment independently
+	for (auto& EnvPair : EnvironmentTeams)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode %d - Max steps reached (%d)"),
-			CurrentEpisode, MaxStepsPerEpisode);
-		EndEpisode(-1, -1); // Draw
-		return;
-	}
+		int32 EnvID = EnvPair.Key;
+		TArray<int32>& TeamsInEnv = EnvPair.Value;
 
-	// Check max duration (10 minutes by default, matches Python MAX_EPISODE_DURATION)
-	if (MaxEpisodeDuration > 0.0f)
-	{
-		float EpisodeElapsed = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
-		if (EpisodeElapsed >= MaxEpisodeDuration)
+		// Skip if this environment's episode is already ending
+		if (IsEnvironmentEpisodeEnding(EnvID))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode %d - Max duration reached (%.1fs)"),
-				CurrentEpisode, EpisodeElapsed);
-			EndEpisode(-1, -1); // Draw (timeout)
-			return;
+			continue;
 		}
-	}
 
-	// Check for team elimination
-	TArray<int32> AllTeamIDs = GetAllTeamIDs();
-	TArray<int32> AliveTeams;
-	TArray<int32> EliminatedTeams;
+		// Check team elimination for this environment
+		TArray<int32> AliveTeams;
+		TArray<int32> EliminatedTeams;
 
-	for (int32 TeamID : AllTeamIDs)
-	{
-		int32 AliveCount = GetAliveAgentCount(TeamID);
-		bool bEliminated = IsTeamEliminated(TeamID);
-
-		UE_LOG(LogTemp, Log, TEXT("CheckEpisodeTermination: Team %d has %d alive agents (Eliminated: %s)"),
-			TeamID, AliveCount, bEliminated ? TEXT("YES") : TEXT("NO"));
-
-		if (bEliminated)
+		for (int32 TeamID : TeamsInEnv)
 		{
-			EliminatedTeams.Add(TeamID);
+			int32 AliveCount = GetAliveAgentCount(TeamID);
+			bool bEliminated = IsTeamEliminated(TeamID);
+
+			if (bEliminated)
+			{
+				EliminatedTeams.Add(TeamID);
+			}
+			else
+			{
+				AliveTeams.Add(TeamID);
+			}
 		}
-		else
+
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[ENV %d] CheckTermination: %d alive, %d eliminated (Total: %d)"),
+			EnvID, AliveTeams.Num(), EliminatedTeams.Num(), TeamsInEnv.Num());
+
+		// Handle team elimination for this environment
+		if (AliveTeams.Num() <= 1 && TeamsInEnv.Num() > 1)
 		{
-			AliveTeams.Add(TeamID);
-		}
-	}
+			int32 WinningTeamID = AliveTeams.Num() == 1 ? AliveTeams[0] : -1;
+			int32 LosingTeamID = EliminatedTeams.Num() > 0 ? EliminatedTeams[0] : -1;
 
-	UE_LOG(LogTemp, Log, TEXT("CheckEpisodeTermination: %d teams alive, %d eliminated (Total: %d)"),
-		AliveTeams.Num(), EliminatedTeams.Num(), AllTeamIDs.Num());
+			float* EnvStartTime = EnvironmentEpisodeStartTimes.Find(EnvID);
+			float EpisodeElapsed = EnvStartTime ? (GetWorld()->GetTimeSeconds() - *EnvStartTime) : 0.0f;
+			float* EnvGameTime = EnvironmentEpisodeGameTimes.Find(EnvID);
+			int32* EnvSteps = EnvironmentSteps.Find(EnvID);
 
-	// Handle team elimination
-	if (AliveTeams.Num() <= 1 && AllTeamIDs.Num() > 1)
-	{
-		int32 WinningTeamID = AliveTeams.Num() == 1 ? AliveTeams[0] : -1;
-		int32 LosingTeamID = EliminatedTeams.Num() > 0 ? EliminatedTeams[0] : -1;
+			UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
+			UE_LOG(LogTemp, Error, TEXT("║ [ENV %d TEAM ELIMINATION] EPISODE ENDING                          ║"), EnvID);
+			UE_LOG(LogTemp, Error, TEXT("║   Reason: TEAM ANNIHILATION                                       ║"));
+			UE_LOG(LogTemp, Error, TEXT("║   Winner: Team %d                                                  ║"), WinningTeamID);
+			UE_LOG(LogTemp, Error, TEXT("║   Loser: Team %d                                                   ║"), LosingTeamID);
+			UE_LOG(LogTemp, Error, TEXT("║   Episode Duration: %.1fs                                         ║"), EpisodeElapsed);
+			UE_LOG(LogTemp, Error, TEXT("║   Accumulated GameTime: %.1fs                                     ║"), EnvGameTime ? *EnvGameTime : 0.0f);
+			UE_LOG(LogTemp, Error, TEXT("║   Steps Taken: %d                                                  ║"), EnvSteps ? *EnvSteps : 0);
+			UE_LOG(LogTemp, Error, TEXT("║   Continuous Training: %s                                          ║"),
+				bEnableContinuousTraining ? TEXT("ENABLED (will respawn)") : TEXT("DISABLED (will end episode)"));
+			UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
 
-		// CONTINUOUS TRAINING MODE: Respawn losing team instead of ending episode
-		if (bEnableContinuousTraining && WinningTeamID != -1 && LosingTeamID != -1)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("🔄 SimulationManager: Team %d eliminated! Team %d wins this round (Continuous Training)"),
-				LosingTeamID, WinningTeamID);
+			// CONTINUOUS TRAINING MODE: Respawn losing team instead of ending episode
+			if (bEnableContinuousTraining && WinningTeamID != -1 && LosingTeamID != -1)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("🔄 [ENV %d] Team %d eliminated! Team %d wins (Continuous Training) - RESPAWNING"),
+					EnvID, LosingTeamID, WinningTeamID);
 
-			// Award objective capture bonus to winning team
-			AwardObjectiveCaptureBonus(WinningTeamID);
+				AwardObjectiveCaptureBonus(WinningTeamID);
+				ScheduleTeamRespawn(LosingTeamID, RespawnDelay);
+			}
+			// TRADITIONAL MODE: End episode on team elimination
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[ENV %d ELIMINATION] Team %d eliminated! Winner: Team %d - ENDING EPISODE"),
+					EnvID, LosingTeamID, WinningTeamID);
 
-			// Schedule losing team to respawn
-			ScheduleTeamRespawn(LosingTeamID, RespawnDelay);
-		}
-		// TRADITIONAL MODE: End episode on team elimination
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Episode %d - Team %d eliminated! Winner: %d"),
-				CurrentEpisode, LosingTeamID, WinningTeamID);
-
-			EndEpisode(WinningTeamID, LosingTeamID);
+				EndEpisode(WinningTeamID, LosingTeamID, EnvID);
+			}
 		}
 	}
 }
 
-void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTeamID)
+void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTeamID, int32 EnvironmentID)
 {
-	if (bEpisodeEnding)
+	// v8.5 VECTORIZED TRAINING: Per-environment episode termination
+	// If EnvironmentID not provided, try to determine from teams
+	if (EnvironmentID < 0 && WinningTeamID >= 0)
 	{
+		int32* FoundEnvID = TeamToEnvironmentMap.Find(WinningTeamID);
+		if (FoundEnvID)
+		{
+			EnvironmentID = *FoundEnvID;
+		}
+	}
+	if (EnvironmentID < 0 && LosingTeamID >= 0)
+	{
+		int32* FoundEnvID = TeamToEnvironmentMap.Find(LosingTeamID);
+		if (FoundEnvID)
+		{
+			EnvironmentID = *FoundEnvID;
+		}
+	}
+
+	// Fallback to environment 0 if still not determined
+	if (EnvironmentID < 0)
+	{
+		EnvironmentID = 0;
+		UE_LOG(LogTemp, Warning, TEXT("[EndEpisode] Could not determine EnvironmentID, using default: 0"));
+	}
+
+	// Check if this environment is already ending
+	if (IsEnvironmentEpisodeEnding(EnvironmentID))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[EndEpisode] ENV %d already ending, skipping"), EnvironmentID);
 		return;
 	}
 
+	// Determine if timeout
+	bool bIsTimeout = (WinningTeamID == -1 && LosingTeamID == -1);
+
+	// v8.5: Set per-environment termination flags
+	SetEnvironmentTerminationFlags(EnvironmentID, true, true, bIsTimeout);
+
+	// Also update global flags for backward compatibility
 	bEpisodeEnding = true;
-	float EpisodeDuration = GetWorld()->GetTimeSeconds() - EpisodeStartTime;
+	bLastEpisodeWasTerminated = true;
+	bLastEpisodeWasTimeout = bIsTimeout;
+
+	// Calculate episode duration for this environment
+	float* EnvStartTime = EnvironmentEpisodeStartTimes.Find(EnvironmentID);
+	float EpisodeDuration = EnvStartTime ? (GetWorld()->GetTimeSeconds() - *EnvStartTime) : 0.0f;
+
+	// If EnvironmentID not provided, try to determine from teams
+	if (EnvironmentID < 0 && WinningTeamID >= 0)
+	{
+		int32* FoundEnvID = TeamToEnvironmentMap.Find(WinningTeamID);
+		if (FoundEnvID)
+		{
+			EnvironmentID = *FoundEnvID;
+		}
+	}
+	if (EnvironmentID < 0 && LosingTeamID >= 0)
+	{
+		int32* FoundEnvID = TeamToEnvironmentMap.Find(LosingTeamID);
+		if (FoundEnvID)
+		{
+			EnvironmentID = *FoundEnvID;
+		}
+	}
+
+	// Fallback to environment 0 if still not determined
+	if (EnvironmentID < 0)
+	{
+		EnvironmentID = 0;
+		UE_LOG(LogTemp, Warning, TEXT("[EndEpisode] Could not determine EnvironmentID, using default: 0"));
+	}
+
+	// Get episode number from per-environment tracking
+	int32 EpisodeNumber = CurrentEpisode;  // Fallback to global
+	int32* EnvEpisode = EnvironmentEpisodes.Find(EnvironmentID);
+	if (EnvEpisode)
+	{
+		EpisodeNumber = *EnvEpisode;
+	}
 
 	// Build episode result
-	LastEpisodeResult.EpisodeNumber = CurrentEpisode;
+	LastEpisodeResult.EpisodeNumber = EpisodeNumber;
 	LastEpisodeResult.WinningTeamID = WinningTeamID;
 	LastEpisodeResult.LosingTeamID = LosingTeamID;
 	LastEpisodeResult.EpisodeDuration = EpisodeDuration;
 	LastEpisodeResult.TotalSteps = CurrentStep;
 
-	UE_LOG(LogTemp, Warning, TEXT("===== EPISODE %d ENDED ====="), CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("===== ENV %d: EPISODE %d ENDED ====="), EnvironmentID, EpisodeNumber);
 	UE_LOG(LogTemp, Warning, TEXT("  Winner: Team %d"), WinningTeamID);
 	UE_LOG(LogTemp, Warning, TEXT("  Loser: Team %d"), LosingTeamID);
 	UE_LOG(LogTemp, Warning, TEXT("  Duration: %.2fs"), EpisodeDuration);
@@ -821,25 +1227,19 @@ void ASimulationManagerGameMode::EndEpisode(int32 WinningTeamID, int32 LosingTea
 	}
 
 	// Broadcast episode ended event
-	OnEpisodeEnded.Broadcast(LastEpisodeResult);
-
-	// Auto-restart if enabled
-	if (bAutoRestartEpisode)
-	{
-		GetWorldTimerManager().SetTimer(
-			EpisodeRestartTimerHandle,
-			this,
-			&ASimulationManagerGameMode::StartNewEpisode,
-			EpisodeRestartDelay,
-			false
-		);
-
-		UE_LOG(LogTemp, Log, TEXT("SimulationManager: New episode starting in %.1fs"), EpisodeRestartDelay);
-	}
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] Broadcasting OnEpisodeEnded(EnvID=%d) to bound listeners..."),
+		EnvironmentID);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] OnEpisodeEnded.IsBound() = %s"),
+		OnEpisodeEnded.IsBound() ? TEXT("TRUE") : TEXT("FALSE"));
+	OnEpisodeEnded.Broadcast(EnvironmentID, LastEpisodeResult);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END] OnEpisodeEnded.Broadcast() completed"));
 }
 
-void ASimulationManagerGameMode::StartNewEpisode()
+void ASimulationManagerGameMode::StartNewEpisode(int32 EnvironmentID, int32 EnvironmentEpisodeNumber)
 {
+	UE_LOG(LogTemp, Warning, TEXT("[StartNewEpisode] Called (EnvID: %d, Episode: %d)"),
+		EnvironmentID, EnvironmentEpisodeNumber);
+
 	// CRITICAL: Early validation to prevent crashes during reset
 	if (RegisteredTeams.Num() == 0)
 	{
@@ -849,16 +1249,56 @@ void ASimulationManagerGameMode::StartNewEpisode()
 		return;
 	}
 
+	if (EnvironmentID < 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("===== EPISODE START FAILED ====="));
+		UE_LOG(LogTemp, Error, TEXT("Invalid EnvironmentID: %d"), EnvironmentID);
+		return;
+	}
+
 	// Clear timer
 	GetWorldTimerManager().ClearTimer(EpisodeRestartTimerHandle);
 
-	// Increment episode counter
-	CurrentEpisode++;
+	// v8.5 VECTORIZED TRAINING: Per-environment episode tracking
+	EnvironmentEpisodes.Add(EnvironmentID, EnvironmentEpisodeNumber);
+	EnvironmentSteps.Add(EnvironmentID, 0);
+	EnvironmentEpisodeStartTimes.Add(EnvironmentID, GetWorld()->GetTimeSeconds());
+	EnvironmentEpisodeGameTimes.Add(EnvironmentID, 0.0f);
+
+	// v8.5: Clear per-environment termination flags for this environment
+	SetEnvironmentTerminationFlags(EnvironmentID, false, false, false);
+
+	// Reset global state (used by legacy code, but per-environment tracking is preferred)
 	CurrentStep = 0;
 	EpisodeStartTime = GetWorld()->GetTimeSeconds();
-	bEpisodeEnding = false;
+	EpisodeGameTime = 0.0f;  // v8.0 TIMING FIX: Reset accumulated game time
+	bEpisodeEnding = false;  // LEGACY: Keep for backward compatibility
+	bLastEpisodeWasTerminated = false;  // LEGACY: Keep for backward compatibility
+	bLastEpisodeWasTimeout = false;  // LEGACY: Keep for backward compatibility
 
-	UE_LOG(LogTemp, Warning, TEXT("===== EPISODE %d STARTED ====="), CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [EPISODE START] ENV %d: EPISODE %d                                ║"), EnvironmentID, EnvironmentEpisodeNumber);
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════════════╣"));
+	UE_LOG(LogTemp, Warning, TEXT("║ EPISODE CONFIGURATION:                                            ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║   MaxEpisodeDuration: %.1fs (0 = unlimited)                       ║"), MaxEpisodeDuration);
+	UE_LOG(LogTemp, Warning, TEXT("║   MaxStepsPerEpisode: %d (0 = unlimited)                          ║"), MaxStepsPerEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("║   Tick Interval: %.2fs (%.1f Hz)                                  ║"), PrimaryActorTick.TickInterval, 1.0f / PrimaryActorTick.TickInterval);
+	UE_LOG(LogTemp, Warning, TEXT("║   bEnableContinuousTraining: %s                                    ║"), bEnableContinuousTraining ? TEXT("TRUE") : TEXT("FALSE"));
+	UE_LOG(LogTemp, Warning, TEXT("║                                                                   ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ EXPECTED BEHAVIOR:                                                ║"));
+	if (MaxEpisodeDuration > 0.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║   Episode will TIMEOUT at %.1fs if no team wins                   ║"), MaxEpisodeDuration);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║   No time limit - episode runs until team elimination/objective  ║"));
+	}
+	if (MaxStepsPerEpisode > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║   Episode will TRUNCATE at step %d                                ║"), MaxStepsPerEpisode);
+	}
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
 
 	// Reset agent health and positions
 	for (auto& Pair : RegisteredTeams)
@@ -891,9 +1331,6 @@ void ASimulationManagerGameMode::StartNewEpisode()
 			UHealthComponent* HealthComp = Member->FindComponentByClass<UHealthComponent>();
 			bool bWasDead = HealthComp ? HealthComp->IsDead() : false;
 
-			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Processing %s (Team %d) - WasDead: %s"),
-				*Member->GetName(), TeamID, bWasDead ? TEXT("YES") : TEXT("NO"));
-
 			// Reset to spawn position
 			FTransform* SpawnTransform = SpawnTransforms.Find(Member);
 			if (SpawnTransform)
@@ -910,8 +1347,6 @@ void ASimulationManagerGameMode::StartNewEpisode()
 			if (HealthComp)
 			{
 				HealthComp->ResetHealth();
-				UE_LOG(LogTemp, Log, TEXT("  → Reset health (Alive: %s)"),
-					HealthComp->IsAlive() ? TEXT("YES") : TEXT("NO"));
 			}
 
 			// Reset combat stats (kill count, etc.)
@@ -925,13 +1360,105 @@ void ASimulationManagerGameMode::StartNewEpisode()
 			if (FollowerComp)
 			{
 				FollowerComp->MarkAsAlive();
-				UE_LOG(LogTemp, Log, TEXT("  → Marked alive & cleared experiences"));
 			}
 		}
 	}
 
+	// v8.0: Reset all ObjectiveActors in the world
+	// CRITICAL: Without this, objectives retain durability damage from previous episodes
+	TArray<AActor*> FoundObjectives;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
+
+	for (AActor* ObjActor : FoundObjectives)
+	{
+		AObjectiveActor* Objective = Cast<AObjectiveActor>(ObjActor);
+		if (Objective)
+		{
+			Objective->ResetDurability();
+			UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset ObjectiveActor '%s' (Team %d) to full durability"),
+				*Objective->GetName(), Objective->OwnerTeamID);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset %d ObjectiveActor(s)"), FoundObjectives.Num());
+
 	// Broadcast episode started event
-	OnEpisodeStarted.Broadcast(CurrentEpisode);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] Broadcasting OnEpisodeStarted(EnvID=%d, Episode=%d) to bound listeners..."),
+		EnvironmentID, EnvironmentEpisodeNumber);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.IsBound() = %s"),
+		OnEpisodeStarted.IsBound() ? TEXT("TRUE") : TEXT("FALSE"));
+	OnEpisodeStarted.Broadcast(EnvironmentID, EnvironmentEpisodeNumber);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.Broadcast() completed"));
+
+	// [DIAGNOSTIC] Final agent count verification
+	// CRITICAL FIX: Only log for THIS environment, not all environments
+	// This prevents duplicate global logs when multiple environments call StartNewEpisode()
+
+	// Count agents in THIS environment only
+	int32 ThisEnvAgentCount = 0;
+	int32 ThisEnvAliveCount = 0;
+	TMap<int32, int32> TeamAgentCounts;  // TeamID -> Agent count (for detailed logging)
+
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
+	UE_LOG(LogTemp, Warning, TEXT("║ [EPISODE READY] ENV %d EPISODE %d - AGENT COUNT VERIFICATION     ║"), EnvironmentID, EnvironmentEpisodeNumber);
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════════════════════════════════╣"));
+
+	// Iterate through teams in THIS environment
+	for (const auto& TeamPair : RegisteredTeams)
+	{
+		int32 TeamID = TeamPair.Key;
+		int32 TeamEnvID = GetEnvironmentIDForTeam(TeamID);
+
+		// Skip teams not in this environment
+		if (TeamEnvID != EnvironmentID)
+		{
+			continue;
+		}
+
+		const FTeamInfo& TeamInfo = TeamPair.Value;
+		int32 TeamAgentCount = TeamInfo.TeamMembers.Num();
+		int32 TeamAliveCount = GetAliveAgentCount(TeamID);
+
+		ThisEnvAgentCount += TeamAgentCount;
+		ThisEnvAliveCount += TeamAliveCount;
+		TeamAgentCounts.Add(TeamID, TeamAgentCount);
+
+		UE_LOG(LogTemp, Warning, TEXT("║   Team %d: %d agents (%d alive)                                    ║"),
+			TeamID, TeamAgentCount, TeamAliveCount);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("║                                                                   ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ ENV %d TOTAL: %d agents (%d alive)                                ║"), EnvironmentID, ThisEnvAgentCount, ThisEnvAliveCount);
+
+	// Expected agent count check for THIS environment
+	int32 ExpectedAgentsThisEnv = 8;  // 4v4 (2 teams × 4 followers each)
+	int32 MissingAgents = ExpectedAgentsThisEnv - ThisEnvAgentCount;
+
+	if (ThisEnvAgentCount != ExpectedAgentsThisEnv)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ⚠️  WARNING: Expected %d agents, but found %d!                    ║"),
+			ExpectedAgentsThisEnv, ThisEnvAgentCount);
+		UE_LOG(LogTemp, Error, TEXT("║     Missing %d agents - checking per-team breakdown...             ║"),
+			MissingAgents);
+
+		// Detailed per-team diagnostic
+		for (const auto& TeamCountPair : TeamAgentCounts)
+		{
+			int32 TeamID = TeamCountPair.Key;
+			int32 Count = TeamCountPair.Value;
+			if (Count != 4)
+			{
+				UE_LOG(LogTemp, Error, TEXT("║     → Team %d has %d agents (expected 4) - MISSING %d!            ║"),
+					TeamID, Count, 4 - Count);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("║ ✅ Agent count matches expected: %d agents                         ║"), ThisEnvAgentCount);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
 }
 
 //------------------------------------------------------------------------------
@@ -1018,8 +1545,6 @@ void ASimulationManagerGameMode::RespawnTeam(int32 TeamID)
 		{
 			HealthComp->ResetHealth();
 			HealthComp->ResetCombatStats();
-			UE_LOG(LogTemp, Log, TEXT("  → %s: Reset health (%.0f/%.0f)"),
-				*Member->GetName(), HealthComp->GetCurrentHealth(), HealthComp->GetMaxHealth());
 		}
 
 		// Mark agent as alive (syncs FollowerAgentComponent state)
@@ -1027,7 +1552,6 @@ void ASimulationManagerGameMode::RespawnTeam(int32 TeamID)
 		if (FollowerComp)
 		{
 			FollowerComp->MarkAsAlive();
-			UE_LOG(LogTemp, Log, TEXT("  → %s: Marked alive & cleared experiences"), *Member->GetName());
 		}
 
 		// Restart StateTree
@@ -1105,108 +1629,4 @@ AActor* ASimulationManagerGameMode::FindObjectiveActor()
 	}
 
 	return nullptr;
-}
-
-//==============================================================================
-// v6.0 Phase 13: Debug Console Commands
-//==============================================================================
-
-void ASimulationManagerGameMode::ToggleMCTSDebug()
-{
-	int32 ToggledCount = 0;
-
-	for (const auto& Pair : RegisteredTeams)
-	{
-		UTeamLeaderComponent* Leader = Pair.Value.TeamLeader;
-		if (Leader)
-		{
-			Leader->bEnableDebugDrawing = !Leader->bEnableDebugDrawing;
-			ToggledCount++;
-
-			UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Team '%s' MCTS Debug: %s"),
-				*Pair.Value.TeamName,
-				Leader->bEnableDebugDrawing ? TEXT("ON") : TEXT("OFF"));
-		}
-	}
-
-	if (ToggledCount > 0)
-	{
-		UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Toggled MCTS visualization for %d teams"), ToggledCount);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[v6.0 Debug] No teams found to toggle MCTS visualization"));
-	}
-}
-
-void ASimulationManagerGameMode::ToggleRLDebug()
-{
-	int32 ToggledCount = 0;
-
-	for (const auto& Pair : RegisteredTeams)
-	{
-		const FTeamInfo& TeamInfo = Pair.Value;
-
-		for (AActor* Agent : TeamInfo.TeamMembers)
-		{
-			if (!Agent) continue;
-
-			UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
-			if (FollowerComp)
-			{
-				FollowerComp->bEnableDebugDrawing = !FollowerComp->bEnableDebugDrawing;
-				ToggledCount++;
-			}
-		}
-	}
-
-	if (ToggledCount > 0)
-	{
-		UE_LOG(LogTemp, Display, TEXT("[v6.0 Debug] Toggled RL Strategy visualization for %d agents"), ToggledCount);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[v6.0 Debug] No agents found to toggle RL visualization"));
-	}
-}
-
-void ASimulationManagerGameMode::PrintMCTSStats()
-{
-	UE_LOG(LogTemp, Display, TEXT("=== v6.0 MCTS Statistics ==="));
-
-	for (const auto& Pair : RegisteredTeams)
-	{
-		const FTeamInfo& TeamInfo = Pair.Value;
-		UTeamLeaderComponent* Leader = TeamInfo.TeamLeader;
-
-		if (!Leader) continue;
-
-		UE_LOG(LogTemp, Display, TEXT(""));
-		UE_LOG(LogTemp, Display, TEXT("Team: %s (ID: %d)"), *TeamInfo.TeamName, Pair.Key);
-		UE_LOG(LogTemp, Display, TEXT("  Followers: %d alive / %d total"),
-			Leader->GetAliveFollowers().Num(),
-			Leader->GetFollowerCount());
-		UE_LOG(LogTemp, Display, TEXT("  MCTS Running: %s"), Leader->IsMCTSRunning() ? TEXT("Yes") : TEXT("No"));
-		UE_LOG(LogTemp, Display, TEXT("  Last MCTS Time: %.2f seconds ago"),
-			GetWorld()->GetTimeSeconds() - Leader->GetLastMCTSDecisionTime());
-		UE_LOG(LogTemp, Display, TEXT("  Current Assignments:"));
-
-		for (const auto& Assignment : Leader->CurrentMissions)
-		{
-			AActor* Agent = Assignment.Key;
-			UMission* Mission = Assignment.Value;
-
-			if (Agent && Mission)
-			{
-				FString MissionType = UEnum::GetValueAsString(Mission->Type);
-				UE_LOG(LogTemp, Display, TEXT("    - %s → %s (Priority: %d)"),
-					*Agent->GetName(),
-					*MissionType,
-					Mission->Priority);
-			}
-		}
-	}
-
-	UE_LOG(LogTemp, Display, TEXT(""));
-	UE_LOG(LogTemp, Display, TEXT("=== End MCTS Statistics ==="));
 }

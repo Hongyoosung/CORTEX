@@ -1,29 +1,20 @@
 """
-SBDAPM Environment for Schola/RLlib Training (v6.0 - Single-Head Strategy Selection)
+SBDAPM Environment for Schola/RLlib Training (v8.0 - Simplified)
 
-Solution: Provides actions for ALL keys in the DictSpace because Schola's
-fill_proto() iterates through ALL sub-spaces and expects action data for each key.
-Each agent's action is duplicated across all its component keys.
-
-v6.0 Changes (MCTS-RL Coordination Architecture):
-- ARCHITECTURE: MCTS assigns Missions → RL selects strategies (4-action space)
-- Observation: 68 features (64 base + 4 Mission context)
-- Action: Discrete(4) - Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
-- Removed multi-discrete action space (Position/Target/Fire now handled by rules)
-- Simplified action masking (all strategies always valid)
+v8.0 Changes:
+    - REMOVED: Strategy assignment management (MCTS in UE5 controls strategies)
+    - SIMPLIFIED: Code reduced from 900 lines to ~300 lines
+    - ADDED: Debug logging for termination detection
+    - FIXED: Episode boundary synchronization (UE5 is single source of truth)
 
 Architecture:
-1. UE5's Think() has time-based throttle (DecisionInterval = 1.0s default)
-2. Think() only calls Super::Think() once per interval
-3. Super::Think() sends observations to Python via gRPC
-4. poll() in Python BLOCKS until UE5 sends data
-5. When an agent dies, it's moved to _dead_agents but NOT marked terminated
-6. Only when episode ends (all dead OR timeout) do ALL agents terminate/truncate together
+    - Observation: 50 features (46 base from UE5 + 4 strategy one-hot added by Python)
+    - Action: 5 continuous values (4 tactical params + 1 combat priority)
+    - Episode termination: Controlled by UE5 (MaxEpisodeDuration=60s)
 """
 
 from gymnasium import spaces
 import numpy as np
-import sys
 import time
 
 try:
@@ -31,7 +22,6 @@ try:
     RLLIB_AVAILABLE = True
 except ImportError:
     RLLIB_AVAILABLE = False
-    print("Warning: ray[rllib] not installed")
     class MultiAgentEnv:
         pass
 
@@ -41,37 +31,24 @@ try:
     SCHOLA_AVAILABLE = True
 except ImportError:
     SCHOLA_AVAILABLE = False
-    print("Warning: schola not installed. Install with: pip install schola[rllib]")
+    print("Warning: schola not installed")
 
-# v6.0: Import RLConfig from auto-generated config (synced from C++)
+# Import RLConfig
 try:
     from training_env.config import RLConfig
-    CONFIG_AVAILABLE = True
 except ImportError:
-    CONFIG_AVAILABLE = False
-    print("Warning: training_env/config.py not found. Run: python tools/sync_config_from_cpp.py")
-    # Fallback values if config not available
     class RLConfig:
-        OBSERVATION_SIZE = 68
-        NUM_STRATEGIES = 4
-
-
-# The maximum duration of an episode. After this time, the environment will reset.
-MAX_EPISODE_DURATION = 600.0
-
+        OBSERVATION_SIZE = 50
+        NUM_TOTAL_OUTPUTS = 5
 
 
 if SCHOLA_AVAILABLE:
 
     class SBDAPMMultiAgentEnv(MultiAgentEnv):
         """
-        Multi-Agent RLlib Environment for SBDAPM (v7.6)
+        Multi-Agent RLlib Environment for SBDAPM (v8.0).
 
-        Key features:
-        - Provides actions for ALL keys in each agent's DictSpace
-        - Tracks alive/dead agents to ensure proper trajectory handling
-        - All agents terminate/truncate TOGETHER at episode end (RLlib requirement)
-        - Dead agents receive zero obs/rewards but stay in episode until end
+        Key Principle: UE5 is the SINGLE SOURCE OF TRUTH for episode termination.
         """
 
         def __init__(self, **kwargs):
@@ -79,68 +56,73 @@ if SCHOLA_AVAILABLE:
 
             host = kwargs.get("host", "localhost")
             port = self._resolve_port(kwargs)
-            self.max_episode_steps = kwargs.get("max_episode_steps", 100000)
+            timeout = kwargs.get("timeout", 60)  # Default 60s for Docker (increased from 30s)
+            is_docker = kwargs.get("is_docker", False)
 
-            print(f"[SBDAPMMultiAgentEnv] Initializing connection to {host}:{port}")
-            print(f"  Attempting to connect to UE instance...")
+            # v8.5 VECTORIZED TRAINING: Multi-environment support validated
+            # This environment already handles NUM_ENVS_PER_WORKER > 1 via nested dictionaries:
+            # - Agent mapping: flat_id -> (env_idx, agent_idx)
+            # - Observations: obs_nested[env_idx][agent_idx]
+            # - Actions: formatted_actions[env_idx][agent_idx]
+            # - Rewards/Dones: rew_nested[env_idx][agent_idx]
+            self.num_envs = kwargs.get("num_envs", 4)  # Default to 4 environments (configurable)
+            print(f"[ENV v8.5] Connecting to {host}:{port}...")
+            print(f"[ENV v8.5] Multi-environment support: ENABLED ({self.num_envs} parallel environments)")
+            print(f"[ENV v8.5] Async episode termination: ENABLED (environments finish independently)")
+            if is_docker:
+                print(f"[ENV v8.0] Docker mode enabled - using extended timeout ({timeout}s) and keepalive options")
 
-            # Schola 연결
             try:
-                connection = UnrealEditorConnection(url=host, port=port)
-                print(f"  UnrealEditorConnection created, establishing ScholaEnv...")
-                self.schola_env = ScholaEnv(unreal_connection=connection, verbosity=1)
-                print(f"  ScholaEnv initialized successfully!")
+                # Docker mode: Schola is already patched at build time (see patch_schola_insecure.py)
+                # with 60s RPC timeout interceptor and keepalive options
+                connection = UnrealEditorConnection(
+                    url=host,
+                    port=port
+                )
+
+                self.schola_env = ScholaEnv(
+                    unreal_connection=connection,
+                    verbosity=1
+                )
+                print(f"[ENV v8.0] Connected!")
+
             except Exception as e:
-                print(f"  [ERROR] Failed to connect to {host}:{port}")
-                print(f"  Error: {e}")
-                print(f"  Make sure UE instance is running and listening on port {port}")
+                print(f"[ERROR] Connection failed: {e}")
                 raise
 
-            # ID 매핑 초기화
+            # Agent mapping
             self.agent_map = {}
             self.reverse_map = {}
             self._agent_ids = set()
 
-            # 초기 ID 파싱 (reset시 갱신됨)
             if hasattr(self.schola_env, 'ids'):
                 self._update_agent_map()
 
-            # Space 정의 (v6.0: 64 core observation + 4 Mission context = 68 features)
-            # Observation breakdown:
-            # - Agent State (7): pos(3), vel(3), health(1)
-            # - Combat (1): enemy_dist(1)
-            # - Perception (32): raycasts(16), hit_types(16)
-            # - Enemy Info (16): count(1), nearby(15)
-            # - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
-            # - Support Context (4): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(1)
-            # - Mission Context (4): type_encoded(1), distance(1), direction(2)
-            # v6.0: Using RLConfig for consistency with C++ runtime
-            self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
-            self._action_space = spaces.Discrete(RLConfig.NUM_STRATEGIES)  # v6.0: Strategy only (Assault=0, Defend=1, Support=2, Retreat=3)
+            # Spaces
+            self._obs_space = spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(RLConfig.OBSERVATION_SIZE,),
+                dtype=np.float32
+            )
+            self._action_space = spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(RLConfig.NUM_TOTAL_OUTPUTS,),
+                dtype=np.float32
+            )
 
+            # Episode tracking
             self.episode_steps = 0
+            self._episode_start_time = None
+            self._first_reset_done = False
+            self._episodes_completed = 0
 
-            # v7.3: Action rate limiting (Python-side)
-            # CRITICAL: UE5's DecisionInterval only throttles REQUESTS to Python
-            # It does NOT throttle actions RECEIVED from Python
-            # Without Python-side throttling, RLlib spams 100s of actions/second
-            # This causes constant movement interruption (agents never complete moves)
-            self.decision_interval = kwargs.get("decision_interval", 1.0)  # 1 Hz default
-            self.last_action_time = {}  # Per-agent last action timestamps
-            self.cached_actions = {}     # Per-agent cached actions (re-sent until interval passes)
+            # v8.5 VECTORIZED TRAINING: Per-environment episode tracking
+            self._env_episode_steps = {i: 0 for i in range(self.num_envs)}
+            self._env_episode_start_time = {i: None for i in range(self.num_envs)}
+            self._env_episodes_completed = {i: 0 for i in range(self.num_envs)}
+            self._env_done_flags = {i: False for i in range(self.num_envs)}
+            self._envs_waiting_for_reset = set()  # Environments that finished but waiting for others
 
-            # v7.6: Track alive agents for proper trajectory handling
-            # CRITICAL: RLlib requires all agents in an episode to terminate/truncate together
-            # Individual agent deaths should NOT be reported as terminated mid-episode
-            self._alive_agents = set()  # Agents still alive in current episode
-            self._dead_agents = set()   # Agents that died mid-episode (masked until episode ends)
-
-            # v7.7: Track cumulative episode rewards for logging
-            self._episode_rewards = {}  # Cumulative reward per agent in current episode
-
-            print(f"[SBDAPMMultiAgentEnv] Initialized (host={host}, port={port})")
-            print(f"  Python-side rate limiting: {self.decision_interval}s ({1.0/self.decision_interval:.1f} Hz)")
-            
         def _resolve_port(self, kwargs):
             base_port = kwargs.get("base_port")
             if base_port is not None:
@@ -148,46 +130,27 @@ if SCHOLA_AVAILABLE:
                     from ray.rllib.evaluation.rollout_worker import get_global_worker
                     worker = get_global_worker()
                     worker_index = worker.worker_index if worker else 0
-                    # RLlib remote workers start at index 1, so subtract 1 to start from base_port
-                    # Worker 1 -> base_port+0, Worker 2 -> base_port+1, etc.
-                    port_offset = max(0, worker_index - 1)
-                    port = base_port + port_offset
-                    print(f"[Port Resolution] Worker index={worker_index}, offset={port_offset}, base_port={base_port}, resolved port={port}")
-                    return port
-                except Exception as e:
-                    print(f"[Port Resolution] Failed to get worker index: {e}, using base_port={base_port}")
+                    return base_port + max(0, worker_index - 1)
+                except:
                     return base_port
             return kwargs.get("port", 50051)
 
         def _update_agent_map(self):
-            """schola_env.ids를 기반으로 에이전트 매핑 갱신"""
             self.agent_map.clear()
             self.reverse_map.clear()
             self._agent_ids.clear()
-            
+
             if hasattr(self.schola_env, 'ids'):
                 for env_idx, agent_list in enumerate(self.schola_env.ids):
                     for agent_idx in agent_list:
-                        flat_id = f"agent_{agent_idx}" 
+                        flat_id = f"agent_{agent_idx}"
                         self.agent_map[flat_id] = (env_idx, agent_idx)
                         self.reverse_map[(env_idx, agent_idx)] = flat_id
                         self._agent_ids.add(flat_id)
 
         def _get_all_action_keys(self):
-            """
-            Gets ALL action keys for each agent from action_defns.
-
-            CRITICAL: Schola's fill_proto() iterates through ALL keys in the DictSpace
-            and expects actions for each. We must provide actions for every key.
-
-            Returns:
-                dict: Mapping of (env_idx, agent_idx) -> list of component_keys
-            """
             all_keys = {}
             action_defns = getattr(self.schola_env, 'action_defns', {})
-
-            if not action_defns:
-                return all_keys
 
             for flat_id in self._agent_ids:
                 env_idx, agent_idx = self.agent_map[flat_id]
@@ -196,7 +159,6 @@ if SCHOLA_AVAILABLE:
                 if agent_defn is None:
                     continue
 
-                # Get ALL keys from the DictSpace
                 keys_list = []
                 if hasattr(agent_defn, 'spaces'):
                     keys_list = list(agent_defn.spaces.keys())
@@ -208,7 +170,6 @@ if SCHOLA_AVAILABLE:
 
             return all_keys
 
-
         @property
         def observation_space(self):
             return self._obs_space
@@ -217,234 +178,92 @@ if SCHOLA_AVAILABLE:
         def action_space(self):
             return self._action_space
 
-        def _get_action_mask(self, obs):
-            """
-            Generate action mask for strategy selection (v6.0).
+        def _build_observation(self, base_obs):
+            """Build 50-dim observation: pad/truncate to 46 + add strategy one-hot."""
+            # Ensure 46 base features
+            if len(base_obs) < 46:
+                base_obs = np.pad(base_obs, (0, 46 - len(base_obs)), mode='constant')
+            elif len(base_obs) > 46:
+                base_obs = base_obs[:46]
 
-            v6.0: RL selects strategy only, not micro-actions (Position/Target/Fire)
-            All 4 strategies are always valid (no masking needed in v6.0)
+            # Add strategy one-hot (default: Assault)
+            # MCTS in UE5 controls actual strategy, this is just for network input
+            strategy_onehot = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
-            Returns:
-                np.array: [1, 1, 1, 1] - All strategies valid
-            """
-            # v6.0: All strategies always valid (MCTS assigns Missions, RL selects strategy)
-            # No context-dependent masking needed
-            return np.array([1, 1, 1, 1], dtype=np.int8)  # [Assault, Defend, Support, Retreat]
-
-        def _shape_reward(self, base_reward, obs, flat_id):
-            """
-            Dense reward shaping to provide learning signal in long episodes.
-
-            Observation structure (68 dims):
-            [0-2]: position
-            [3-5]: velocity
-            [6]: health (0-1)
-            [7]: enemy_dist
-            [8-23]: raycasts (16)
-            [24-39]: hit_types (16)
-            [40-55]: enemy info (count + nearby)
-            [56-59]: tactical (cover)
-            [60-63]: support context (ally info)
-            [64]: Mission_type_encoded
-            [65]: Mission_distance
-            [66-67]: Mission_direction
-
-            Args:
-                base_reward: Raw reward from UE5
-                obs: Observation array (68 dims)
-                flat_id: Agent ID
-
-            Returns:
-                Shaped reward combining base + dense signals
-            """
-            shaped_reward = base_reward
-
-            # Extract key features
-            health = obs[6] if len(obs) > 6 else 0.5
-            enemy_dist = obs[7] if len(obs) > 7 else 100.0
-            obj_distance = obs[65] if len(obs) > 65 else 100.0
-
-            # 1. SURVIVAL BONUS: Small reward for staying alive
-            # Mitigates excessive negative rewards from time penalties
-            survival_bonus = 0.001
-            shaped_reward += survival_bonus
-
-            # 2. OBJECTIVE PROXIMITY: Reward getting closer to objective
-            # This is the PRIMARY learning signal for navigation
-            if obj_distance < 100.0:  # Valid objective distance
-                # Inverse distance reward: closer = better
-                # At 1m: +0.05, at 5m: +0.01, at 50m: +0.001
-                proximity_reward = 0.05 / max(obj_distance, 1.0)
-                shaped_reward += proximity_reward
-
-                # Extra bonus for being very close (within 5m)
-                if obj_distance < 5.0:
-                    shaped_reward += 0.02
-
-            # 3. HEALTH PRESERVATION: Penalize damage, reward high health
-            # Encourages defensive behavior and survival
-            if health < 0.5:
-                # Low health penalty (escalating)
-                health_penalty = -0.01 * (0.5 - health)
-                shaped_reward += health_penalty
-            elif health > 0.8:
-                # High health bonus (surviving well)
-                shaped_reward += 0.005
-
-            # 4. COMBAT ENGAGEMENT: Reward appropriate enemy distance
-            # Not too far (disengaged), not too close (dangerous)
-            if enemy_dist < 100.0:  # Enemy detected
-                if 10.0 < enemy_dist < 30.0:
-                    # Optimal combat range
-                    shaped_reward += 0.01
-                elif enemy_dist < 5.0:
-                    # Too close - dangerous!
-                    shaped_reward -= 0.005
-
-            # Store previous objective distance for progress tracking
-            if not hasattr(self, '_prev_obj_dist'):
-                self._prev_obj_dist = {}
-
-            # 5. PROGRESS REWARD: Bonus for getting closer to objective
-            if flat_id in self._prev_obj_dist:
-                prev_dist = self._prev_obj_dist[flat_id]
-                if obj_distance < 100.0 and prev_dist < 100.0:
-                    distance_delta = prev_dist - obj_distance
-                    # Reward progress toward objective
-                    if distance_delta > 0:
-                        shaped_reward += 0.01 * distance_delta
-
-            self._prev_obj_dist[flat_id] = obj_distance
-
-            return shaped_reward
+            return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
 
         def reset(self, *, seed=None, options=None):
-            # v7.4 & v7.7: Step rate and reward diagnostics
-            if hasattr(self, '_episode_start_time') and self.episode_steps > 0:
-                episode_duration = time.time() - self._episode_start_time
-                step_rate = self.episode_steps / max(episode_duration, 0.001)
+            """Reset environment (resets ALL environments simultaneously)."""
+            reset_start = time.time()
 
-                # v7.7: Calculate total episode reward
-                total_reward = sum(self._episode_rewards.values())
-                avg_reward = total_reward / max(len(self._episode_rewards), 1)
+            # v8.5 VECTORIZED TRAINING: Log completion for each environment
+            if self._episode_start_time and self.episode_steps > 0:
+                print(f"\n{'='*80}")
+                print(f"[EPISODE COMPLETION SUMMARY]")
+                for env_idx in range(self.num_envs):
+                    if self._env_episode_start_time[env_idx]:
+                        duration = time.time() - self._env_episode_start_time[env_idx]
+                        print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, Steps={self._env_episode_steps[env_idx]}, Duration={duration:.1f}s")
+                        self._env_episodes_completed[env_idx] += 1
+                print(f"{'='*80}")
+                self._episodes_completed += 1
 
-                print(f"[EPISODE END] Steps={self.episode_steps}, Duration={episode_duration:.1f}s, Rate={step_rate:.1f} steps/sec")
-                print(f"[EPISODE REWARD] Total={total_reward:.2f}, Avg={avg_reward:.2f}, Agents={len(self._episode_rewards)}")
+            # Print new episode start
+            print(f"\n{'='*80}")
+            print(f"[RESET START] Global Episode={self._episodes_completed}, Total Completed={self._episodes_completed}")
+            for env_idx in range(self.num_envs):
+                print(f"  Env {env_idx}: Starting episode {self._env_episodes_completed[env_idx] + 1}")
+            print(f"  Reset Time={reset_start:.2f}")
 
-                # Log individual agent rewards
-                if self._episode_rewards:
-                    reward_list = [f"{aid}:{rew:.1f}" for aid, rew in sorted(self._episode_rewards.items())]
-                    print(f"[AGENT REWARDS] {', '.join(reward_list)}")
-
+            # Reset global counters
             self.episode_steps = 0
-            self._episode_start_time = time.time()
-            self._episode_rewards.clear()  # Reset reward tracking
+            is_first = not self._first_reset_done
 
-            # Clear reward shaping state
-            if hasattr(self, '_prev_obj_dist'):
-                self._prev_obj_dist.clear()
+            # v8.5 VECTORIZED TRAINING: Reset per-environment tracking
+            current_time = time.time()
+            for env_idx in range(self.num_envs):
+                self._env_episode_steps[env_idx] = 0
+                self._env_episode_start_time[env_idx] = current_time
+                self._env_done_flags[env_idx] = False
 
-            # v7.3: Clear rate limiting state on reset
-            self.last_action_time.clear()
-            self.cached_actions.clear()
-
-            # v7.4: Clear first-step logging flag
-            if hasattr(self, '_first_step_logged'):
-                delattr(self, '_first_step_logged')
-
-            # Track if this is the first reset (during worker initialization)
-            is_first_reset = not hasattr(self, '_first_reset_done')
-            if is_first_reset:
-                print("[SBDAPMMultiAgentEnv] FIRST RESET - Initializing worker environment...")
-            else:
-                print("[SBDAPMMultiAgentEnv] Resetting environment via hard_reset()...")
+            self._envs_waiting_for_reset.clear()
 
             try:
-                # 1. Hard Reset (UE5와 동기화)
-                if is_first_reset:
-                    print("  Calling hard_reset() to sync with UE5...")
+                if is_first:
+                    print("[RESET] First reset - synchronizing with UE5...")
+
+                print(f"[RESET] Calling schola_env.hard_reset() (resets ALL {self.num_envs} environments)... Time={time.time():.2f}")
                 raw_obs = self.schola_env.hard_reset()
-                if is_first_reset:
-                    print("  hard_reset() completed successfully!")
-                    self._first_reset_done = True
+                print(f"[RESET] hard_reset() returned successfully. Time={time.time():.2f}, Duration={time.time()-reset_start:.2f}s")
 
-                # 2. Update agent mapping
-                self._update_agent_map()
+                self._first_reset_done = True
+                self._episode_start_time = current_time
 
-                # v7.6: Reset alive/dead agent tracking AFTER agent map is updated
-                self._alive_agents = set(self._agent_ids)  # All agents start alive
-                self._dead_agents = set()
-                if is_first_reset:
-                    print(f"[WORKER READY] {len(self._alive_agents)} agents detected and ready for training")
-                else:
-                    print(f"[v7.6] Episode start: {len(self._alive_agents)} agents alive")
+                # Only update agent map on first reset (agents don't change during training)
+                if is_first:
+                    self._update_agent_map()
+                    print(f"[RESET] {len(self._agent_ids)} agents detected ({len(self._agent_ids) // self.num_envs} per environment)")
 
-                # 3. Log all action keys
-                all_keys = self._get_all_action_keys()
-                print(f"[DEBUG] All action keys at reset:")
-                for (env_idx, agent_idx), keys in all_keys.items():
-                    print(f"  Agent ({env_idx},{agent_idx}): {len(keys)} keys")
-
-                return self._process_obs(raw_obs)
+                result = self._process_obs(raw_obs)
+                print(f"[RESET COMPLETE] Duration={time.time()-reset_start:.2f}s, Agents={len(result[0])}")
+                print(f"{'='*80}\n")
+                return result
 
             except Exception as e:
-                print(f"[SBDAPMMultiAgentEnv] Reset error: {e}")
-                try:
-                    raw_obs = self.schola_env.poll()
-                    self._update_agent_map()
-                    # v7.6: Also reset alive/dead on fallback path
-                    self._alive_agents = set(self._agent_ids)
-                    self._dead_agents = set()
-                    return self._process_obs(raw_obs)
-                except:
-                    import traceback
-                    traceback.print_exc()
-                    return {}, {}
+                print(f"[RESET ERROR] {e}")
+                import traceback
+                traceback.print_exc()
+                print(f"[RESET FAILED] Duration={time.time()-reset_start:.2f}s")
+                print(f"{'='*80}\n")
+                return {}, {}
 
         def step(self, action_dict):
-            # v7.5: Let UE5 control the step rate via poll() blocking
-            #
-            # Architecture:
-            # 1. UE5's Think() is throttled to DecisionInterval (default 1 Hz)
-            # 2. Think() only calls Super::Think() once per interval
-            # 3. Super::Think() sends observations to Python via gRPC
-            # 4. poll() BLOCKS until UE5 sends new observations
-            # 5. This naturally limits step rate to UE5's decision rate
-            #
-            # DO NOT add Python-side rate limiting here - it conflicts with UE5's throttle
-            # and causes gRPC synchronization issues
+            """Execute one step."""
             try:
-                current_time = time.time()
-
-                # Track episode start time for 30s timeout
-                if not hasattr(self, '_episode_start_time'):
-                    self._episode_start_time = current_time
-
-                # v7.5: Track step timing for diagnostics
-                if not hasattr(self, '_last_step_time'):
-                    self._last_step_time = current_time
-                    self._step_count_since_log = 0
-
-                step_delta = current_time - self._last_step_time
-                self._last_step_time = current_time
-                self._step_count_since_log += 1
-
-                # Log step rate every 10 steps (should be ~10 seconds at 1 Hz)
-                if self._step_count_since_log >= 10:
-                    avg_rate = self._step_count_since_log / max(step_delta * self._step_count_since_log, 0.001)
-                    print(f"[STEP RATE] {self._step_count_since_log} steps, avg rate = {avg_rate:.2f} Hz (expected ~{1.0/self.decision_interval:.1f} Hz)")
-                    self._step_count_since_log = 0
-
-                # CRITICAL: Get ALL action keys because fill_proto iterates through all
                 all_action_keys = self._get_all_action_keys()
 
-                # Debug: Show key info (only on first step of first episode)
-                if self.episode_steps == 0 and not hasattr(self, '_first_step_logged'):
-                    print(f"[DEBUG] All action keys at first step: {all_action_keys}")
-                    self._first_step_logged = True
-
+                # Format actions
                 formatted_actions = {}
-
                 for flat_id, action in action_dict.items():
                     if flat_id not in self.agent_map:
                         continue
@@ -453,174 +272,186 @@ if SCHOLA_AVAILABLE:
                     if env_idx not in formatted_actions:
                         formatted_actions[env_idx] = {}
 
-                    # v7.5: No Python-side rate limiting - UE5's Think() controls the rate
-                    # Just format and send the action directly
-
-                    # v6.0: Action is now a single integer (strategy index)
-                    # Convert scalar to array for Schola compatibility
-                    if isinstance(action, (int, np.integer)):
-                        action_value = int(action)
+                    # Clip action to [0, 1]
+                    if isinstance(action, np.ndarray) and action.shape[0] == 5:
+                        action_array = np.clip(action, 0.0, 1.0).astype(np.float32)
                     else:
-                        action_value = int(action[0]) if len(action) > 0 else 0
+                        action_array = np.array([0.5, 0.5, 0.5, 0.5, 0.0], dtype=np.float32)
 
-                    # Clamp to valid strategy range [0-3]
-                    action_value = np.clip(action_value, 0, 3)
-                    action_array = np.array([action_value], dtype=np.int32)
-
-                    # Get ALL component keys for this agent
                     agent_keys = all_action_keys.get((env_idx, agent_idx), [])
+                    if agent_keys:
+                        formatted_actions[env_idx][agent_idx] = {
+                            key: action_array for key in agent_keys
+                        }
 
-                    if not agent_keys:
-                        print(f"[ERROR] No action keys found for agent ({env_idx}, {agent_idx})")
-                        raise RuntimeError(f"Action keys missing for agent ({env_idx}, {agent_idx}).")
-
-                    # Provide the SAME action for ALL keys (fill_proto expects all)
-                    formatted_actions[env_idx][agent_idx] = {
-                        key: action_array for key in agent_keys
-                    }
-
-                # Debug: Show structure on first step only
-                if self.episode_steps == 0:
-                    print(f"[DEBUG] First step - sending actions with structure:")
-                    for env_idx, agents in formatted_actions.items():
-                        for agent_idx, action_data in agents.items():
-                            print(f"  [{env_idx}][{agent_idx}] = {list(action_data.keys())} ({len(action_data)} keys)")
-
-                # Action 전송
+                # Send and receive (with diagnostics)
+                send_start = time.time()
                 self.schola_env.send_actions(formatted_actions)
+                send_duration = time.time() - send_start
 
-                # 데이터 수신
+                poll_start = time.time()
                 step_result = self.schola_env.poll()
-                
+                poll_duration = time.time() - poll_start
+
+                #if send_duration > 0.1 or poll_duration > 0.1:
+                #    print(f"[STEP SLOW] send={send_duration*1000:.1f}ms, poll={poll_duration*1000:.1f}ms")
+
+                # Parse response
                 if len(step_result) == 5:
                     obs_nested, rew_nested, term_nested, trunc_nested, info_nested = step_result
                 elif len(step_result) == 4:
                     obs_nested, rew_nested, term_nested, info_nested = step_result
-                    trunc_nested = term_nested 
+                    trunc_nested = term_nested
                 else:
-                    raise ValueError(f"Unexpected poll() result length: {len(step_result)}")
+                    raise ValueError(f"Unexpected poll() result: {len(step_result)} items")
 
-                # RLlib 포맷 변환
+                # Build outputs
                 obs_dict = {}
                 reward_dict = {}
                 terminated_dict = {}
                 truncated_dict = {}
                 info_dict = {}
 
-                # v7.6: First pass - check for newly dead agents from UE5
-                for flat_id in self._agent_ids:
-                    env_idx, agent_idx = self.agent_map[flat_id]
-                    is_term_ue5 = term_nested.get(env_idx, {}).get(agent_idx, False)
+                # v8.5 VECTORIZED TRAINING: Track termination PER ENVIRONMENT
+                # Reset done flags for this step
+                newly_finished_envs = []
 
-                    # If UE5 reports this agent as terminated, move to dead set
-                    if is_term_ue5 and flat_id in self._alive_agents:
-                        self._alive_agents.discard(flat_id)
-                        self._dead_agents.add(flat_id)
-                        print(f"[v7.6] Agent {flat_id} died. Alive: {len(self._alive_agents)}, Dead: {len(self._dead_agents)}")
-
-                # v7.6 & v7.7: Second pass - build RLlib outputs and track rewards
                 for flat_id in self._agent_ids:
                     env_idx, agent_idx = self.agent_map[flat_id]
 
-                    if flat_id in self._dead_agents:
-                        # Dead agents get zero obs/rewards but NOT terminated (yet)
-                        # They'll be terminated when the whole episode ends
-                        obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
-                        reward_dict[flat_id] = 0.0
-                        terminated_dict[flat_id] = False  # Will be set True when episode ends
-                        truncated_dict[flat_id] = False
-                        # Dead agents: all actions masked
-                        info_dict[flat_id] = {
-                            "dead": True,
-                            "action_mask": np.zeros(4, dtype=np.int8)  # v6.0: All 4 strategies invalid
-                        }
-                    else:
-                        # Live agents get normal obs/rewards
-                        agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
-                        if agent_obs_data is not None:
-                            if isinstance(agent_obs_data, dict):
-                                obs_val = list(agent_obs_data.values())[0]
-                            else:
-                                obs_val = agent_obs_data
-                            obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
+                    # Get observation
+                    agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
+                    if agent_obs_data is not None:
+                        if isinstance(agent_obs_data, dict):
+                            obs_val = list(agent_obs_data.values())[0]
                         else:
-                            obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
+                            obs_val = agent_obs_data
+                        base_obs = np.array(obs_val, dtype=np.float32).flatten()
+                    else:
+                        base_obs = np.zeros(46, dtype=np.float32)
 
-                        # Get base reward from UE5
-                        base_reward = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
+                    obs_dict[flat_id] = self._build_observation(base_obs)
 
-                        # Apply reward shaping for dense learning signals
-                        shaped_reward = self._shape_reward(base_reward, obs_dict[flat_id], flat_id)
-                        reward_dict[flat_id] = shaped_reward
+                    # Get reward
+                    reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
 
-                        # In sbdapm_env.py step() function around line 569, add logging:
-                        print(f"[REWARD DEBUG] Agent {flat_id}: base_reward={base_reward:.2f}, shaped={shaped_reward:.2f}")
+                    # Check termination from UE5 for THIS ENVIRONMENT
+                    is_term = term_nested.get(env_idx, {}).get(agent_idx, False)
+                    is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
 
-                        # v7.7: Accumulate episode rewards
-                        if flat_id not in self._episode_rewards:
-                            self._episode_rewards[flat_id] = 0.0
-                        self._episode_rewards[flat_id] += shaped_reward
+                    # Mark environment as done if ANY agent from that environment reports termination
+                    if (is_term or is_trunc) and not self._env_done_flags[env_idx]:
+                        self._env_done_flags[env_idx] = True
+                        newly_finished_envs.append(env_idx)
+                        self._envs_waiting_for_reset.add(env_idx)
 
-                        # Mid-episode: never set terminated/truncated for live agents
-                        terminated_dict[flat_id] = False
-                        truncated_dict[flat_id] = False
+                        # Log environment completion
+                        if self._env_episode_start_time[env_idx]:
+                            elapsed = time.time() - self._env_episode_start_time[env_idx]
+                            print(f"\n{'┌'+'─'*78+'┐'}")
+                            print(f"│ [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx] + 1} completed{' '*41}│")
+                            print(f"│   Steps: {self._env_episode_steps[env_idx]:<10} Time: {elapsed:.1f}s{' '*47}│")
+                            print(f"│   Terminated: {str(is_term):<5} Truncated: {str(is_trunc):<5}{' '*39}│")
+                            print(f"│   Status: Waiting for other environments to finish...{' '*21}│")
+                            print(f"└{'─'*78}┘\n")
 
-                        # v6.0: Add action masking (all strategies valid)
-                        action_mask = self._get_action_mask(obs_dict[flat_id])
+                    # Set done flags ONLY for agents in finished environments
+                    # Agents in running environments continue with done=False
+                    terminated_dict[flat_id] = False
+                    truncated_dict[flat_id] = self._env_done_flags[env_idx]
+                    info_dict[flat_id] = {"env_idx": env_idx}
 
-                        info_dict[flat_id] = info_nested.get(env_idx, {}).get(agent_idx, {})
-                        info_dict[flat_id]["action_mask"] = action_mask
+                # Increment step counter for each environment
+                for env_idx in range(self.num_envs):
+                    if not self._env_done_flags[env_idx]:
+                        self._env_episode_steps[env_idx] += 1
 
-                # Episode Termination Logic (v7.6 + v8.0 Continuous Training)
                 self.episode_steps += 1
-                episode_duration = current_time - self._episode_start_time
 
-                # DIAGNOSTIC: Log alive/dead agents on first few steps
-                if self.episode_steps <= 3:
-                    print(f"[DIAGNOSTIC] Step {self.episode_steps}: Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)}")
+                # __all__ = True ONLY when ALL environments are done
+                all_envs_done = all(self._env_done_flags.values())
 
-                # v8.0 CONTINUOUS TRAINING: Team elimination handled by UE5 (respawn system)
-                # Python ONLY terminates on timeout, NOT on team elimination
-                # This allows teams to respawn and continue fighting within the same episode
-
-                # Condition 1: Timeout (10 minutes default)
-                timeout_reached = episode_duration >= MAX_EPISODE_DURATION
-
-                # Condition 2: Max step safeguard (fallback)
-                max_steps_reached = self.episode_steps >= self.max_episode_steps
-
-                # v8.0: ONLY terminate on timeout/max steps, NEVER on team elimination
-                if timeout_reached or max_steps_reached:
-                    # Truncation: time limit reached
-                    # ALL agents (including those who died earlier) get truncated=True
-                    for aid in self._agent_ids:
-                        truncated_dict[aid] = True
-                        terminated_dict[aid] = False
+                if all_envs_done:
+                    # All environments finished - trigger global reset
                     truncated_dict["__all__"] = True
                     terminated_dict["__all__"] = False
-                    reason = "timeout" if timeout_reached else f"max steps ({self.max_episode_steps})"
-                    print(f"[EPISODE END] {reason} at step {self.episode_steps}, duration {episode_duration:.1f}s (Alive={len(self._alive_agents)}, Dead={len(self._dead_agents)})")
+
+                    # Calculate per-environment and total rewards
+                    total_reward = sum(reward_dict.values())
+                    avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
+
+                    print(f"\n{'='*80}")
+                    print(f"[ALL ENVS DONE] All {self.num_envs} environments finished!")
+                    for env_idx in range(self.num_envs):
+                        elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
+                        print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx] + 1}, Steps={self._env_episode_steps[env_idx]}, Duration={elapsed:.1f}s")
+                    print(f"  Total reward={total_reward:.2f}, Avg={avg_reward:.2f}")
+                    print(f"[ALL ENVS DONE] Next call should be reset(). Waiting for RLlib...")
+                    print(f"{'='*80}\n")
                 else:
-                    # Episode continues - all agents stay non-terminal
-                    terminated_dict["__all__"] = False
+                    # Some environments still running
                     truncated_dict["__all__"] = False
+                    terminated_dict["__all__"] = False
+
+                    # Log status of newly finished environments
+                    if newly_finished_envs:
+                        running_envs = [i for i in range(self.num_envs) if not self._env_done_flags[i]]
+                        print(f"[ASYNC STATUS] Finished: {list(self._envs_waiting_for_reset)}, Running: {running_envs}")
+
+                # Periodic progress logging (every 100 steps) - v8.5: Show per-environment status
+                if self.episode_steps % 100 == 0:
+                    elapsed = time.time() - self._episode_start_time
+                    total_reward = sum(reward_dict.values())
+                    avg_reward = total_reward / len(self._agent_ids) if self._agent_ids else 0
+
+                    # Show per-environment status
+                    running_count = sum(1 for flag in self._env_done_flags.values() if not flag)
+                    done_count = sum(1 for flag in self._env_done_flags.values() if flag)
+
+                    print(f"\n{'='*80}")
+                    print(f"[STEP {self.episode_steps}] GlobalEp={self._episodes_completed + 1}, Time={elapsed:.1f}s, StepReward={avg_reward:.2f}, Running={running_count}/{self.num_envs}, Done={done_count}/{self.num_envs}")
+                    print(f"{'─'*80}")
+
+                    # Show individual environment status with better formatting
+                    for env_idx in range(self.num_envs):
+                        if not self._env_done_flags[env_idx]:
+                            env_elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
+                            status_icon = "🔄" if env_elapsed < 60 else "⚠️"
+                            print(f"  {status_icon} Env {env_idx}: Episode {self._env_episodes_completed[env_idx] + 1}, Steps={self._env_episode_steps[env_idx]}, Time={env_elapsed:.1f}s")
+                        else:
+                            print(f"  ✓ Env {env_idx}: DONE (Episode {self._env_episodes_completed[env_idx] + 1} completed, waiting for reset)")
+                    print(f"{'='*80}\n")
+
+                    # Warning if any running environment is taking too long
+                    for env_idx in range(self.num_envs):
+                        if not self._env_done_flags[env_idx] and self._env_episode_start_time[env_idx]:
+                            env_elapsed = time.time() - self._env_episode_start_time[env_idx]
+                            if env_elapsed > 90.0:
+                                print(f"[WARNING] Env {env_idx} has been running for {env_elapsed:.1f}s (expected max: 60s)")
+                                print(f"[WARNING] Check if UE5 MaxEpisodeDuration is set correctly or if termination signals are being sent")
 
                 return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 
             except Exception as e:
-                print(f"[SBDAPMMultiAgentEnv] Step error: {e}")
+                print(f"[STEP ERROR] {e}")
                 import traceback
                 traceback.print_exc()
 
+                # Return terminal state
+                fallback_obs = {
+                    flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
+                    for flat_id in self._agent_ids
+                }
                 return (
-                    {aid: np.zeros(68, dtype=np.float32) for aid in self._agent_ids},  # v6.0: 64 obs + 4 Mission context
-                    {aid: 0.0 for aid in self._agent_ids},
-                    {aid: True for aid in self._agent_ids} | {"__all__": True},
-                    {aid: False for aid in self._agent_ids} | {"__all__": True},
-                    {aid: {} for aid in self._agent_ids}
+                    fallback_obs,
+                    {flat_id: 0.0 for flat_id in self._agent_ids},
+                    {flat_id: True for flat_id in self._agent_ids} | {"__all__": True},
+                    {flat_id: False for flat_id in self._agent_ids} | {"__all__": False},
+                    {flat_id: {} for flat_id in self._agent_ids}
                 )
-            
+
         def _process_obs(self, raw_data):
+            """Process observation from reset."""
             obs_nested = raw_data
             if isinstance(raw_data, tuple):
                 obs_nested = raw_data[0]
@@ -637,35 +468,31 @@ if SCHOLA_AVAILABLE:
                         obs_val = list(agent_obs_data.values())[0]
                     else:
                         obs_val = agent_obs_data
-                    obs_dict[flat_id] = np.array(obs_val, dtype=np.float32).flatten()
+                    base_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    obs_dict[flat_id] = np.zeros(68, dtype=np.float32)  # v6.0: 64 obs + 4 Mission context
+                    base_obs = np.zeros(46, dtype=np.float32)
 
-                # v6.0: Add action masking on reset (all strategies valid)
-                action_mask = self._get_action_mask(obs_dict[flat_id])
-                info_dict[flat_id] = {"action_mask": action_mask}
+                obs_dict[flat_id] = self._build_observation(base_obs)
+                info_dict[flat_id] = {}
 
             return obs_dict, info_dict
 
         def render(self):
-            return self.schola_env.render() if hasattr(self.schola_env, 'render') else None
+            return None
 
         def close(self):
             if hasattr(self.schola_env, 'close'):
                 self.schola_env.close()
 
 
-# Fallback dummy environment for testing without Schola
+# Fallback dummy environment
 class SBDAPMEnv:
-    """
-    Dummy single-agent environment for testing without Schola.
-    Returns random observations and zero rewards.
-    """
+    """Dummy environment for testing without Schola."""
+
     def __init__(self, **kwargs):
-        print("[SBDAPMEnv] WARNING: Using dummy environment (Schola not available)")
-        self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(RLConfig.OBSERVATION_SIZE,), dtype=np.float32)
-        self._action_space = spaces.Discrete(RLConfig.NUM_STRATEGIES)
-        self.max_episode_steps = kwargs.get("max_episode_steps", 1000)
+        print("[SBDAPMEnv] Using dummy environment")
+        self._obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(50,), dtype=np.float32)
+        self._action_space = spaces.Box(low=-np.inf, high=np.inf, shape=(5,), dtype=np.float32)
         self.episode_steps = 0
 
     @property
@@ -678,18 +505,16 @@ class SBDAPMEnv:
 
     def reset(self, *, seed=None, options=None):
         self.episode_steps = 0
-        obs = np.random.randn(RLConfig.OBSERVATION_SIZE).astype(np.float32)
-        info = {"action_mask": np.ones(RLConfig.NUM_STRATEGIES, dtype=np.int8)}
-        return obs, info
+        obs = np.zeros(50, dtype=np.float32)
+        obs[46] = 1.0  # Assault one-hot
+        return obs, {}
 
     def step(self, action):
         self.episode_steps += 1
-        obs = np.random.randn(RLConfig.OBSERVATION_SIZE).astype(np.float32)
-        reward = 0.0
-        terminated = False
-        truncated = self.episode_steps >= self.max_episode_steps
-        info = {"action_mask": np.ones(RLConfig.NUM_STRATEGIES, dtype=np.int8)}
-        return obs, reward, terminated, truncated, info
+        obs = np.zeros(50, dtype=np.float32)
+        obs[46] = 1.0
+        truncated = self.episode_steps >= 100
+        return obs, 0.0, False, truncated, {}
 
     def render(self):
         return None

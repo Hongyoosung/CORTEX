@@ -4,7 +4,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
+#include "Core/SimulationManagerGameMode.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
@@ -56,8 +57,11 @@ void AObjectiveActor::BeginPlay()
 		true   // Loop
 	);
 
-	UE_LOG(LogTemp, Log, TEXT("[OBJECTIVE] '%s' initialized: TeamID=%d, Durability=%.1f, Radius=%.1f"),
-		*GetName(), OwnerTeamID, CurrentDurability, CaptureRadius);
+	// DIAGNOSTIC: Enhanced logging for multi-environment debugging
+	int32 EnvironmentID = OwnerTeamID / 2;
+	FVector Location = GetActorLocation();
+	UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE SPAWN] '%s' - TeamID: %d, EnvironmentID: %d, Durability: %.1f, Radius: %.1f, Location: %s"),
+		*GetName(), OwnerTeamID, EnvironmentID, CurrentDurability, CaptureRadius, *Location.ToString());
 }
 
 void AObjectiveActor::Tick(float DeltaTime)
@@ -205,13 +209,8 @@ void AObjectiveActor::OnDefeat()
 		*GetName(), OwnerTeamID);
 
 	// Broadcast defeat event to game mode for episode reset
-	AGameModeBase* GameMode = UGameplayStatics::GetGameMode(this);
-	if (GameMode)
-	{
-		// Game mode should handle episode reset logic
-		// TODO: Implement GameMode->OnObjectiveDefeated(OwnerTeamID);
-		UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE] Game mode found, should trigger episode reset"));
-	}
+	OnObjectiveDefeated.Broadcast(OwnerTeamID);
+	UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE] Defeat event broadcast for Team %d"), OwnerTeamID);
 
 	// Visual feedback (disable mesh or change material)
 	if (PillarMesh)
@@ -261,6 +260,47 @@ bool AObjectiveActor::IsAgentInVolume(AActor* Agent) const
 	}
 
 	return CaptureVolume->IsOverlappingActor(Agent);
+}
+
+//------------------------------------------------------------------------------
+// v8.5: Multi-Environment Support - Proper Hostile Team Detection
+//------------------------------------------------------------------------------
+
+bool AObjectiveActor::IsHostileTo(int32 AgentTeamID) const
+{
+	// CRITICAL FIX (v8.5 Vectorized Training):
+	// Simple "OwnerTeamID != AgentTeamID" check FAILS in multi-environment setups
+	//
+	// Problem: With 4 environments (Team 0 vs 1, Team 2 vs 3, Team 4 vs 5, Team 6 vs 7),
+	//          an objective owned by Team 0 would incorrectly consider ALL other teams
+	//          (including Team 2, 3, 4, 5, 6, 7 from different environments) as hostile.
+	//
+	// Solution: Use SimulationManager's enemy relationship system (FTeamInfo::EnemyTeamIDs)
+	//           Only teams explicitly marked as enemies should be considered hostile.
+
+	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(
+		UGameplayStatics::GetGameMode(GetWorld())
+	);
+
+	if (!SimManager)
+	{
+		// Fallback: If no SimulationManager, use simple check (single-environment mode)
+		UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE] '%s': No SimulationManager found, using fallback hostile check"),
+			*GetName());
+		return OwnerTeamID != AgentTeamID;
+	}
+
+	// Query SimulationManager's enemy relationship system
+	// This respects per-environment team configurations
+	bool bIsHostile = SimManager->AreTeamsEnemies(OwnerTeamID, AgentTeamID);
+
+	UE_LOG(LogTemp, Verbose, TEXT("[OBJECTIVE v8.5] '%s' (Team %d) checking agent Team %d: %s"),
+		*GetName(),
+		OwnerTeamID,
+		AgentTeamID,
+		bIsHostile ? TEXT("HOSTILE") : TEXT("Friendly/Neutral"));
+
+	return bIsHostile;
 }
 
 void AObjectiveActor::UpdateMaterial()

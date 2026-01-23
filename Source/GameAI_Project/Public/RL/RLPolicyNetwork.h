@@ -16,31 +16,36 @@ class INNERuntime;
 class INNERuntimeGPU;
 
 /**
- * Neural Network-based RL Policy for Strategy Selection (v6.0 Single-Head)
+ * Neural Network-based RL Policy for Tactical Parameter Control (v8.0 Multi-Head)
  *
- * v7.0 Architecture (Single-Head):
- *   Input Layer:  68 features (64 base + 4 mission context)
+ * v8.0 Architecture (Multi-Head):
+ *   Input Layer:  50 features (46 base + 4 strategy one-hot from MCTS)
  *   Shared Trunk: 128 → 128 → 64 (ReLU)
- *   ├─ Policy Head:  4 strategy logits (Assault, Defend, Support, Retreat)
- *   └─ Critic Head:  1 value estimate (for MCTS leaf evaluation)
+ *   ├─ Assault Head:  [4] tactical parameters (Aggression, Cover, Spread, Risk)
+ *   ├─ Defend Head:   [4] tactical parameters
+ *   ├─ Support Head:  [4] tactical parameters
+ *   ├─ Retreat Head:  [4] tactical parameters
+ *   ├─ Combat Head:   [2] target priority logits (Closest, LowestHP)
+ *   └─ Critic Head:   [1] state value estimate
  *
- * v7.0 Changes:
- *   - Single-head architecture: Simplified action space (4 strategies only)
- *   - Mission-aware: Observation includes mission context (4 features)
- *   - Batched inference: Process multiple agents in single forward pass
- *   - MCTS integration: Assigns missions, RL selects strategies
- *   - Rules-based execution: Strategy → Position/Target mapping is deterministic
+ * v8.0 Changes:
+ *   - MCTS assigns strategies, RL outputs tactical parameters (not strategy selection)
+ *   - Strategy-specific policy heads for guaranteed differentiation
+ *   - Tactical parameters modulate EQS weights for spatial reasoning
+ *   - Combat head learns target priority selection
  *
- * v5.0 → v7.0 Migration:
- *   - MCTS: Strategy assignment → Mission assignment
- *   - RL: Multi-head (44 actions) → Single-head (4 strategies)
- *   - Execution: RL micro-actions → Rules-based execution
+ * Observation Space (46 base features):
+ *   - Agent State (4): pos(3), health(1)
+ *   - Combat (1): enemy_dist(1)
+ *   - Perception (16): raycasts(16)
+ *   - Support Context (5): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(2)
+ *   - Enemy Info (16): count(1), nearby(15)
+ *   - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
  *
  * Usage:
- *   1. Load trained policy: LoadPolicy("Models/cortex_policy_v6.onnx")
- *   2. Get strategy: GetStrategy(Observation, MissionContext)
- *   3. Batched inference: GetStrategiesBatched(Observations, MissionContexts)
- *   4. MCTS value query: GetStateValue(Observation, MissionContext)
+ *   1. Get macro action: GetMacroAction(Observation, AssignedStrategy)
+ *   2. Batched inference: GetMacroActionsBatched(Observations, Strategies)
+ *   3. MCTS value query: GetStateValueV8(Observation, Strategy)
  */
 UCLASS(BlueprintType, Blueprintable)
 class GAMEAI_PROJECT_API URLPolicyNetwork : public UObject
@@ -52,88 +57,91 @@ public:
 
 
 	// ========================================
-	// v6.0 API: Strategy Selection (Single Agent)
+	// v8.0 API: Tactical Parameters + Combat Control (Multi-Head)
 	// ========================================
 
 	/**
-	 * Get strategy for current observation + Mission (v6.0)
+	 * Get tactical parameters and combat parameters for current observation + assigned strategy (v8.0)
 	 * @param Observation - Agent's 64-feature observation
-	 * @param MissionContext - Assigned Mission context (4 features)
-	 * @return Selected strategy (Assault/Defend/Support/Retreat)
+	 * @param AssignedStrategy - Strategy assigned by MCTS (determines which head to use)
+	 * @return Macro action with tactical and combat parameters
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
-	EStrategyType GetStrategy(const FObservationElement& Observation, const FMissionContext& MissionContext);
+	UFUNCTION(BlueprintCallable, Category = "RL|v8")
+	FMacroAction GetMacroAction(const FObservationElement& Observation, EStrategyType AssignedStrategy);
 
 	/**
-	 * Get state value estimate (used by MCTS for leaf evaluation) (v6.0)
+	 * Get state value estimate (used by PPO training) (v8.0)
 	 * @param Observation - Agent's 64-feature observation
-	 * @param MissionContext - Assigned Mission context (4 features)
+	 * @param AssignedStrategy - Strategy assigned by MCTS
 	 * @return Value estimate [-1, 1]
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
-	float GetStateValue(const FObservationElement& Observation, const FMissionContext& MissionContext);
+	UFUNCTION(BlueprintCallable, Category = "RL|v8")
+	float GetStateValueV8(const FObservationElement& Observation, EStrategyType AssignedStrategy);
 
 	// ========================================
-	// v6.0 API: Batched Inference (Performance Critical)
+	// v8.0 API: Batched Inference (Performance Critical)
 	// ========================================
 
 	/**
-	 * Get strategies for multiple agents in single network call (v6.0)
-	 * PERFORMANCE: 2.6× faster than sequential calls (8ms → 3ms for 4 agents)
+	 * Get macro actions for multiple agents in single network call (v8.0)
+	 * PERFORMANCE: Batched inference is 2-3× faster than sequential calls
 	 * @param Observations - Array of agent observations
-	 * @param MissionContexts - Array of Mission contexts (same size as Observations)
-	 * @return Array of strategies (same size as input)
+	 * @param AssignedStrategies - Array of strategies assigned by MCTS (same size as Observations)
+	 * @return Array of macro actions (same size as input)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
-	TArray<EStrategyType> GetStrategiesBatched(
+	UFUNCTION(BlueprintCallable, Category = "RL|v8")
+	TArray<FMacroAction> GetMacroActionsBatched(
 		const TArray<FObservationElement>& Observations,
-		const TArray<FMissionContext>& MissionContexts
-	);
-
-	/**
-	 * Get state values for multiple agents in single network call (v6.0)
-	 * Used by MCTS for evaluating multiple agent-Mission assignments
-	 * @param Observations - Array of agent observations
-	 * @param MissionContexts - Array of Mission contexts
-	 * @return Array of value estimates [-1, 1]
-	 */
-	UFUNCTION(BlueprintCallable, Category = "RL|v6")
-	TArray<float> GetStateValuesBatched(
-		const TArray<FObservationElement>& Observations,
-		const TArray<FMissionContext>& MissionContexts
+		const TArray<EStrategyType>& AssignedStrategies
 	);
 
 
 private:
 	// ========================================
-	// v6.0: Network Input/Output Helpers
+	// v8.0: Network Input/Output Helpers
 	// ========================================
 
 	/**
-	 * Build 68-feature input from observation + Mission context (v6.0)
+	 * Build 50-feature input from observation + assigned strategy (v8.0)
+	 * @param Observation - Agent's 46-feature observation
+	 * @param AssignedStrategy - Strategy assigned by MCTS (one-hot encoded)
+	 * @return 50-element vector (46 base + 4 strategy one-hot)
 	 */
-	TArray<float> BuildNetworkInput(const FObservationElement& Observation, const FMissionContext& MissionContext) const;
+	TArray<float> BuildNetworkInputV8(const FObservationElement& Observation, EStrategyType AssignedStrategy) const;
 
 	/**
-	 * Network output structure (v6.0)
+	 * Network output structure (v8.0 Multi-Head)
 	 */
-	struct FNetworkOutput {
-		TArray<float> PolicyLogits;  // [4] - Strategy logits
-		float Value;                  // State value estimate
+	struct FNetworkOutputV8 {
+		TArray<float> AssaultTactical;   // [4] - Tactical params for Assault
+		TArray<float> DefendTactical;    // [4] - Tactical params for Defend
+		TArray<float> SupportTactical;   // [4] - Tactical params for Support
+		TArray<float> RetreatTactical;   // [4] - Tactical params for Retreat
+		TArray<float> CombatLogits;      // [2] - Combat priority logits [Closest, LowestHP]
+		float Value;                     // State value estimate
 	};
 
 	/**
-	 * Forward pass through single-head network (v6.0)
+	 * Forward pass through multi-head network (v8.0)
 	 * @param InputFeatures - 68-element input vector
-	 * @return Policy logits (4) and value (1)
+	 * @return All strategy heads, combat head, and value head outputs
 	 */
-	FNetworkOutput ForwardPassV6(const TArray<float>& InputFeatures);
+	FNetworkOutputV8 ForwardPassV8(const TArray<float>& InputFeatures);
 
 	/**
-	 * Sample strategy from logits (v6.0)
+	 * Select appropriate tactical parameters based on assigned strategy (v8.0)
+	 * @param NetworkOutput - Output from multi-head network
+	 * @param AssignedStrategy - Strategy assigned by MCTS
+	 * @return Tactical parameters from the appropriate strategy head
 	 */
-	EStrategyType SampleStrategy(const TArray<float>& Logits) const;
+	FTacticalParameters SelectTacticalParameters(const FNetworkOutputV8& NetworkOutput, EStrategyType AssignedStrategy) const;
 
+	/**
+	 * Sample combat priority from logits (v8.0)
+	 * @param CombatLogits - 2-element logit vector [Closest, LowestHP]
+	 * @return Sampled combat priority
+	 */
+	ETargetPriority SampleCombatPriority(const TArray<float>& CombatLogits) const;
 
 	/**
 	 * Softmax activation function

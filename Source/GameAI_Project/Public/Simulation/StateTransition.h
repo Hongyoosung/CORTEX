@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Team/Mission.h"
 #include "RL/RLTypes.h"
 #include "StateTransition.generated.h"
 
@@ -214,12 +213,6 @@ struct FActionEncoding
 		: TargetLocationNormalized(FVector::ZeroVector)
 		, bHasTargetActor(false)
 	{}
-
-	// Encode Mission to feature vector
-	static FActionEncoding EncodeMission(const UMission* Mission);
-
-	/** v6.0: Encode strategy action (simplified from 8D to 1D discrete) */
-	static TArray<float> EncodeAction(const FMacroAction& Action);
 
 	// Flatten to single feature vector
 	TArray<float> Flatten() const;

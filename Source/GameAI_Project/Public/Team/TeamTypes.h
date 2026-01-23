@@ -16,12 +16,6 @@ enum class EStrategicEvent : uint8
 	UnderFire			UMETA(DisplayName = "Under Heavy Fire"),
 	EnemyKilled			UMETA(DisplayName = "Enemy Killed"),
 
-	// Mission events
-	MissionComplete   UMETA(DisplayName = "Mission Completed"),
-	MissionFailed     UMETA(DisplayName = "Mission Failed"),
-	ReinforcementsArrived UMETA(DisplayName = "Reinforcements Arrived"),
-	TimeRunningOut      UMETA(DisplayName = "Time Running Out"),
-
 	// Custom
 	Custom              UMETA(DisplayName = "Custom Event")
 };

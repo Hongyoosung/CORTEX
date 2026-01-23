@@ -4,24 +4,24 @@
 
 #include "CoreMinimal.h"
 #include "Team/TeamTypes.h"
+#include "RL/RLTypes.h"
 
 class FTeamMCTSNode;
-class UMission;
 
 /**
- * Team-level MCTS Node for strategic command search
+ * v8.0: Team-level MCTS Node for strategic assignment search
  *
  * Represents a state in the team command space where each follower
- * has been assigned a strategic command. The MCTS algorithm searches
- * this space to find optimal command combinations.
+ * has been assigned a strategy (Assault/Defend/Support/Retreat) + target objective.
+ * The MCTS algorithm searches this space to find optimal strategy assignments.
  */
 class GAMEAI_PROJECT_API FTeamMCTSNode : public TSharedFromThis<FTeamMCTSNode>
 {
 public:
 	FTeamMCTSNode();
 
-	/** Initialize node with parent and Mission assignment (v3.0) */
-	void Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, UMission*>& InMissions);
+	/** Initialize node with parent and strategy assignment (v8.0) */
+	void Initialize(TSharedPtr<FTeamMCTSNode> InParent, const TMap<AActor*, FStrategyAssignment>& InAssignments);
 
 	/** Check if this node is fully expanded (all actions tried) */
 	bool IsFullyExpanded() const;
@@ -38,8 +38,8 @@ public:
 	/** Backpropagate reward from simulation */
 	void Backpropagate(float Reward);
 
-	/** Get the Mission assignment for this node (v3.0) */
-	TMap<TObjectPtr<AActor>, TObjectPtr<UMission>> GetMissions() const { return Missions; }
+	/** Get the strategy assignment for this node (v8.0) */
+	TMap<TObjectPtr<AActor>, FStrategyAssignment> GetStrategyAssignments() const { return StrategyAssignments; }
 
 	/** Calculate UCT value for this node */
 	float CalculateUCTValue(float ExplorationParam) const;
@@ -63,8 +63,8 @@ public:
 	/** Critical section for thread-safe updates (parallel MCTS) */
 	mutable FCriticalSection NodeMutex;
 
-	/** Mission assignment for this node (follower -> Mission) (v3.0) */
-	TMap<TObjectPtr<AActor>, TObjectPtr<UMission>> Missions;
+	/** Strategy assignment for this node (follower -> strategy assignment) (v8.0) */
+	TMap<TObjectPtr<AActor>, FStrategyAssignment> StrategyAssignments;
 
 	/** Total reward accumulated from simulations */
 	float TotalReward;
@@ -75,8 +75,8 @@ public:
 	/** Depth of this node in the tree (0 = root) */
 	int32 Depth;
 
-	/** List of untried Mission combinations (v3.0) */
-	TArray<TMap<AActor*, UMission*>> UntriedActions;
+	/** List of untried strategy assignment combinations (v8.0) */
+	TArray<TMap<AActor*, FStrategyAssignment>> UntriedActions;
 
 	/** Action priors from RL policy (v3.0 Sprint 4)
 	 * Parallel array to UntriedActions - guides MCTS exploration

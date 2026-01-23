@@ -3,7 +3,7 @@
 #include "StateTree/Tasks/STTask_ExecuteAiming.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -32,17 +32,22 @@ EStateTreeRunStatus FSTTask_ExecuteAiming::Tick(FStateTreeExecutionContext& Cont
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// v6.0: Get current strategy (simplified action space)
+	// v8.0: FMacroAction contains TacticalParams and CombatParams (no Strategy field)
+	// Strategy is assigned by MCTS via Mission type, not RL
+	// Detect significant parameter changes instead of strategy changes
 	const FMacroAction& CurrentAction = SharedContext.CurrentAction;
 	const FMacroAction& PreviousAction = InstanceData.PreviousMacroAction;
 
-	// Detect strategy changes
-	bool bStrategyChanged = (CurrentAction.Strategy != PreviousAction.Strategy);
+	// v8.0: Detect tactical parameter changes (instead of strategy changes)
+	bool bParamsChanged =
+		FMath::Abs(CurrentAction.TacticalParams.Aggression - PreviousAction.TacticalParams.Aggression) > 0.1f ||
+		FMath::Abs(CurrentAction.TacticalParams.CoverPreference - PreviousAction.TacticalParams.CoverPreference) > 0.1f ||
+		CurrentAction.CombatParams.Priority != PreviousAction.CombatParams.Priority;
 
-	// v6.0: Always execute aiming (target selection is handled by STTask_ExecuteFire)
+	// v8.0: Always execute aiming (target selection is handled by STTask_ExecuteFire)
 	ExecuteAiming(Context, DeltaTime);
 
-	if (bStrategyChanged)
+	if (bParamsChanged)
 	{
 		InstanceData.PreviousMacroAction = CurrentAction;
 	}
@@ -101,16 +106,5 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, f
 
 		InstanceData.AIController->SetControlRotation(DesiredRotation);
 		InstanceData.AIController->SetFocus(SharedContext.PrimaryTarget);
-	}
-	// Otherwise face Mission direction
-	else if (InstanceData.AIController && SharedContext.CurrentMission && !SharedContext.CurrentMission->TargetLocation.IsNearlyZero())
-	{
-		FVector MissionLocation = SharedContext.CurrentMission->TargetLocation;
-		FVector PawnLocation = Pawn->GetActorLocation();
-		FVector DirectionToMission = (MissionLocation - PawnLocation).GetSafeNormal();
-		FRotator DesiredRotation = DirectionToMission.Rotation();
-
-		InstanceData.AIController->SetControlRotation(DesiredRotation);
-		InstanceData.AIController->ClearFocus(EAIFocusPriority::Gameplay);
 	}
 }

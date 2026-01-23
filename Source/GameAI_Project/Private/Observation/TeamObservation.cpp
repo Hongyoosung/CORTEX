@@ -1,6 +1,6 @@
 #include "Observation/TeamObservation.h"
 #include "Simulation/StateTransition.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 
 TArray<float> FTeamObservation::ToFeatureVector() const
 {
@@ -61,17 +61,7 @@ TArray<float> FTeamObservation::ToFeatureVector() const
     Features.Add(ThreatLevel / 10.0f);
 
     // ========================================
-    // MISSION CONTEXT (5 features)
-    // ========================================
-
-    Features.Add(FMath::Clamp(DistanceToObjective / 10000.0f, 0.0f, 1.0f));
-    Features.Add(static_cast<float>(MissionType) / 6.0f);
-    Features.Add(FMath::Clamp(MissionTimeRemaining / 600.0f, 0.0f, 1.0f));
-    Features.Add(static_cast<float>(MissionPhase) / 5.0f);
-    Features.Add(EstimatedDifficulty / 10.0f);
-
-    // ========================================
-    // INDIVIDUAL FOLLOWER OBSERVATIONS (N × 71)
+    // INDIVIDUAL FOLLOWER OBSERVATIONS (N × 66)
     // ========================================
 
     for (const FObservationElement& FollowerObs : FollowerObservations)
@@ -119,13 +109,6 @@ void FTeamObservation::Reset()
     KillDeathRatio = 1.0f;
     TimeInCurrentState = 0.0f;
     ThreatLevel = 0.0f;
-
-    // Mission Context
-    DistanceToObjective = 0.0f;
-    MissionType = EMissionType::None;
-    MissionTimeRemaining = 0.0f;
-    MissionPhase = EMissionPhase::Approach;
-    EstimatedDifficulty = 5.0f;
 
     // Follower Observations
     FollowerObservations.Empty();

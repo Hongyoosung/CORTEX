@@ -3,12 +3,14 @@
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/TacticalObserver.h"
 #include "Schola/TacticalRewardProvider.h"
-#include "Schola/TacticalActuator.h"
-#include "Team/FollowerAgentComponent.h"
+#include "Schola/CombinedTacticalActuator.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Inference/InferenceComponent.h"
-#include "Combat/HealthComponent.h"
-#include "Perception/AgentPerceptionComponent.h"
+#include "Combat/Components/HealthComponent.h"
+#include "Combat/Components/AgentPerceptionComponent.h"
 #include "GameFramework/Pawn.h"
+#include "Core/SimulationManagerGameMode.h"
+#include "Kismet/GameplayStatics.h"
 
 UScholaAgentComponent::UScholaAgentComponent()
 {
@@ -84,15 +86,13 @@ void UScholaAgentComponent::BeginPlay()
 	}
 
 	// Bind to health events for critical triggers (damaged, health low)
-	UHealthComponent* HealthComp = Owner->FindComponentByClass<UHealthComponent>();
-	if (HealthComp)
+	HealthComponent = Owner->FindComponentByClass<UHealthComponent>();
+	if (HealthComponent)
 	{
-		HealthComp->OnDamageTaken.AddDynamic(this, &UScholaAgentComponent::OnDamageTakenEventHandler);
+		HealthComponent->OnDamageTaken.AddDynamic(this, &UScholaAgentComponent::OnDamageTakenEventHandler);
 		UE_LOG(LogTemp, Log, TEXT("[SCHOLA EVENT] '%s': Bound to health events for event-driven decisions"),
 			*Owner->GetName());
 	}
-
-	
 
 	// Note: gRPC server is now managed by ScholaCombatEnvironment
 	// This component will be auto-registered by the environment during initialization
@@ -204,23 +204,34 @@ float UScholaAgentComponent::GetCurrentReward() const
 
 void UScholaAgentComponent::ConfigureActuators()
 {
-	if (!TacticalActuator || !FollowerAgent)
+	if (!FollowerAgent)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent]: FollowerAgent is null, cannot configure actuators!"));
 		return;
 	}
 
-	// Link actuator to follower agent
-	TacticalActuator->FollowerAgent = FollowerAgent;
-	TacticalActuator->bAutoFindFollower = false;
-	TacticalActuator->InitializeActuator();
-
-	// Add to InferenceComponent's actuators array if not already present (this class IS the InferenceComponent)
-	if (!this->Actuators.Contains(TacticalActuator))
+	// v8.0: Configure CombinedTacticalActuator (5 continuous values: 4 tactical + 1 combat priority)
+	if (CombinedTacticalActuator)
 	{
-		this->Actuators.Add(TacticalActuator);
+		CombinedTacticalActuator->FollowerAgent = FollowerAgent;
+		CombinedTacticalActuator->bAutoFindFollower = false;
+		CombinedTacticalActuator->InitializeActuator();
+
+		if (!this->Actuators.Contains(CombinedTacticalActuator))
+		{
+			this->Actuators.Add(CombinedTacticalActuator);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: CombinedTacticalActuator configured (Box([0,1]^5))"),
+			*GetOwner()->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent v8.0] %s: CombinedTacticalActuator is null!"),
+			*GetOwner()->GetName());
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: TacticalActuator configured (7D actions)"),
+	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent v8.0] %s: v8.0 action space configured (5 continuous)"),
 		*GetOwner()->GetName());
 }
 
@@ -259,9 +270,6 @@ void UScholaAgentComponent::ResetEpisode()
 	// Reset decision timer
 	TimeSinceLastDecision = 0.0f;
 	LastDecisionTime = 0.0;
-
-	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: Episode reset"),
-		*GetOwner()->GetName());
 }
 
 void UScholaAgentComponent::Think()

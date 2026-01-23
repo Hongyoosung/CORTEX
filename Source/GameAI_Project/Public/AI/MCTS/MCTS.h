@@ -8,34 +8,36 @@
 #include "AI/MCTS/TeamMCTSNode.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
 #include "Observation/TeamObservation.h"
-#include "Team/Mission.h"
+#include "RL/RLTypes.h"
 #include "MCTS.generated.h"
 
+// Forward declarations
+class AObjectiveActor;
+
 /**
- * Monte Carlo Tree Search (MCTS) for team-level mission assignment (v7.0)
+ * v8.0: Monte Carlo Tree Search (MCTS) for team-level strategy assignment
  *
- * v7.0 NAMING: Mission = strategic goal, Objective = physical base (AObjectiveActor)
+ * v8.0 Architecture:
+ * - MCTS solves STRATEGY ASSIGNMENT (which agents → which strategies + objectives)
+ * - RL handles TACTICAL PARAMETERS (continuous control: aggression, cover, spread, risk)
+ * - EQS handles SPATIAL REASONING (position selection using RL-modulated weights)
+ * - Rules handle COMBAT EXECUTION (auto-targeting + auto-firing)
  *
- * v6.0 Architecture Change:
- * - MCTS now solves MISSION ASSIGNMENT (which agents → which missions)
- * - RL handles STRATEGY SELECTION (how to execute assigned mission)
- * - Rules handle EXECUTION (deterministic position/target/fire logic)
+ * Key Changes from v7.0:
+ * - v7.0: MCTS assigned missions (removed in v8.0 - redundant with strategies)
+ * - v8.0: MCTS assigns strategies (Assault/Defend/Support/Retreat) + target objectives
+ * - RL learns tactical parameter control (4 continuous outputs, not discrete strategy)
+ * - Action space: 4 agents × 4 strategies × 2 objectives = simpler than v7.0
  *
- * Key Differences from v5.0:
- * - v5.0: MCTS assigned strategies (Assault/Defend/Support/Retreat) to agents
- * - v6.0: MCTS assigns missions (Assault Base A, Defend Base B, Support Agent3) to agents
- * - RL learns strategy adaptation based on mission + observation
- * - Smaller MCTS action space: 4 agents × 3 missions vs. 4^4 strategy combinations
- *
- * Evaluation Function (v6.0):
- * - PRIMARY: RL value estimates (learned heuristic for each agent-mission pair)
- * - SECONDARY: Coordination heuristics (team cohesion, mission coverage, capability match)
- * - Replaces v5.0 hand-coded strategic heuristics with learned value function
+ * Evaluation Function (v8.0):
+ * - PRIMARY: RL value estimates for each agent-strategy-objective combination
+ * - SECONDARY: Coordination heuristics (team composition, objective coverage)
+ * - Leverages RL critic head for learned value function
  *
  * Performance:
  * - 30-50ms per search (500 simulations)
  * - ~2-4ms per RL value query (batched for multiple agents)
- * - Async execution (doesn't block RL strategy selection)
+ * - Async execution (doesn't block RL tactical parameter updates)
  */
 
 
@@ -58,87 +60,89 @@ public:
     void InitializeTeamMCTS(int32 InMaxSimulations = 500, float InExplorationParam = 1.41f);
 
     //--------------------------------------------------------------------------
-    // v7.0 API: MISSION ASSIGNMENT
+    // v8.0 API: STRATEGY ASSIGNMENT
     //--------------------------------------------------------------------------
 
     /**
-     * Run MCTS to find best agent-to-mission assignment (v7.0)
+     * Run MCTS to find best agent-to-strategy assignment (v8.0)
      * @param Agents - Available agents
-     * @param Missions - Available missions (strategic goals, not physical objectives)
+     * @param Objectives - Available objectives (physical bases: AObjectiveActor)
      * @param Simulations - Number of MCTS simulations (default: 500)
      * @param CachedObservations - Pre-cached observations (for thread safety in async execution)
-     * @return Best assignment found (with expected value and visit count)
+     * @return Best strategy assignments (agent -> FStrategyAssignment map)
      */
-    UFUNCTION(BlueprintCallable, Category = "MCTS|v7")
-    FMissionAssignment RunMissionAssignment(
+    UFUNCTION(BlueprintCallable, Category = "MCTS|v8")
+    TMap<AActor*, FStrategyAssignment> RunStrategyAssignment(
         const TArray<AActor*>& Agents,
-        const TArray<UMission*>& Missions,
+        const TArray<AObjectiveActor*>& Objectives,
         int32 Simulations,
         const TMap<AActor*, FObservationElement>& InCachedObservations
     );
 
 private:
     //--------------------------------------------------------------------------
-    // v6.0: MCTS CORE PHASES
+    // v8.0: MCTS CORE PHASES
     //--------------------------------------------------------------------------
 
     /**
-     * MCTS Selection Phase: Traverse tree using UCT until leaf node (v6.0)
+     * MCTS Selection Phase: Traverse tree using UCT until leaf node (v8.0)
      */
     TSharedPtr<FTeamMCTSNode> Selection(TSharedPtr<FTeamMCTSNode> Root);
 
     /**
-     * MCTS Expansion Phase: Add new child node (v6.0)
+     * MCTS Expansion Phase: Add new child node (v8.0)
      */
     TSharedPtr<FTeamMCTSNode> Expansion(TSharedPtr<FTeamMCTSNode> Node);
 
     /**
-     * MCTS Simulation Phase: Evaluate assignment (v6.0)
+     * MCTS Simulation Phase: Evaluate strategy assignment (v8.0)
      */
     float Simulation(TSharedPtr<FTeamMCTSNode> Node);
 
     /**
-     * MCTS Backpropagation Phase: Update ancestors (v6.0)
+     * MCTS Backpropagation Phase: Update ancestors (v8.0)
      */
     void Backpropagation(TSharedPtr<FTeamMCTSNode> Node, float Value);
 
     //--------------------------------------------------------------------------
-    // v7.0: ASSIGNMENT EVALUATION (RL-GUIDED)
+    // v8.0: ASSIGNMENT EVALUATION (RL-GUIDED)
     //--------------------------------------------------------------------------
 
     /**
-     * Evaluate assignment using RL value estimates + heuristics (v7.0)
-     * @param Assignment - Agent-to-mission mapping
+     * Evaluate strategy assignment using RL value estimates + heuristics (v8.0)
+     * @param Assignments - Agent-to-strategy assignment map
      * @return Value estimate [-1, 1]
      */
-    float EvaluateAssignment(const FMissionAssignment& Assignment);
+    float EvaluateStrategyAssignment(const TMap<AActor*, FStrategyAssignment>& Assignments);
 
     /**
-     * Generate possible assignments from current node (v7.0)
+     * Generate possible strategy assignments from current node (v8.0)
      */
-    TArray<FMissionAssignment> GeneratePossibleAssignments(const FMissionAssignment& CurrentAssignment);
+    TArray<TMap<AActor*, FStrategyAssignment>> GeneratePossibleStrategyAssignments(
+        const TMap<AActor*, FStrategyAssignment>& CurrentAssignments
+    );
 
     //--------------------------------------------------------------------------
-    // v7.0: COORDINATION HEURISTICS
+    // v8.0: COORDINATION HEURISTICS
     //--------------------------------------------------------------------------
 
     /**
-     * Team cohesion score: Agents on same mission should be near each other (v7.0)
-     * @return Score [0, 1] - Higher = better cohesion
+     * Team composition score: Balanced mix of strategies (v8.0)
+     * @return Score [0, 1] - Higher = better composition (e.g., not all assault)
      */
-    float TeamCohesionScore(const FMissionAssignment& Assignment) const;
+    float TeamCompositionScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const;
 
     /**
-     * Mission coverage score: All high-priority missions have agents (v7.0)
-     * @return Score [0, 1] - Higher = better coverage
+     * Objective coverage score: Both objectives have adequate coverage (v8.0)
+     * @return Score [0, 1] - Higher = better coverage (both friendly/hostile covered)
      */
-    float MissionCoverageScore(const FMissionAssignment& Assignment) const;
+    float ObjectiveCoverageScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const;
 
     /**
-     * Capability match score: Right agents for the job (v7.0)
-     * @return Score [0, 1] - Higher = better match
+     * Strategy synergy score: Compatible strategies work together (v8.0)
+     * @return Score [0, 1] - Higher = better synergy (e.g., Assault + Support together)
      */
-    float CapabilityMatchScore(const FMissionAssignment& Assignment) const;
+    float StrategySynergyScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const;
 
 public:
     //--------------------------------------------------------------------------
@@ -191,15 +195,15 @@ public:
 private:
 
     //--------------------------------------------------------------------------
-    // v7.0: ASSIGNMENT STATE
+    // v8.0: ASSIGNMENT STATE
     //--------------------------------------------------------------------------
 
-    /** Current agents available for assignment (v7.0) */
+    /** Current agents available for assignment (v8.0) */
     TArray<AActor*> AvailableAgents;
 
-    /** Current missions available for assignment (v7.0) */
-    TArray<UMission*> AvailableMissions;
+    /** Current objectives available for assignment (v8.0) */
+    TArray<AObjectiveActor*> AvailableObjectives;
 
-    /** Pre-cached observations for thread-safe async execution (v6.0 fix) */
+    /** Pre-cached observations for thread-safe async execution (v8.0) */
     TMap<AActor*, FObservationElement> CachedObservations;
 };

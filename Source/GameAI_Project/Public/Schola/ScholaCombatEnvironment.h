@@ -64,7 +64,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoDiscoverAgents = true;
 
-	/** Team IDs to include in training (empty = all teams) */
+	/** Team IDs to include in training (empty = all teams) - v8.5 Vectorized Training: Use this to isolate environments */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	TArray<int32> TrainingTeamIDs;
 
@@ -87,11 +87,13 @@ public:
 	/** Has InternalRegisterAgents been called this session? */
 	bool bAgentsRegistered = false;
 
-	/** Is this the primary environment instance? (singleton enforcement) */
-	bool bIsPrimaryEnvironment = false;
+	/** Unique ID for this environment instance (0, 1, 2, 3...) - v8.5 Vectorized Training */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	int32 EnvironmentID = -1;
 
-	/** Static reference to the primary environment (singleton) */
-	static AScholaCombatEnvironment* PrimaryEnvironmentInstance;
+	/** Current episode number for this environment (independent per environment) */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	int32 CurrentEpisode = -1;
 
 	//--------------------------------------------------------------------------
 	// UTILITY
@@ -105,20 +107,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	bool RegisterAgent(UScholaAgentComponent* Agent);
 
-	/** DEPRECATED: ScholaManagerSubsystem handles server startup automatically (v5.0) */
-	UFUNCTION(BlueprintCallable, Category = "Schola", meta = (DeprecatedFunction, DeprecationMessage = "ScholaManagerSubsystem handles server startup automatically"))
-	bool StartTrainingServer();
 
-	/** DEPRECATED: ScholaManagerSubsystem handles server shutdown automatically (v5.0) */
-	UFUNCTION(BlueprintCallable, Category = "Schola", meta = (DeprecatedFunction, DeprecationMessage = "ScholaManagerSubsystem handles server shutdown automatically"))
-	void StopTrainingServer();
-
-	/** Bind to SimulationManager episode events */
+	/** Bind to SimulationManager episode events - includes EnvironmentID for filtering */
 	UFUNCTION()
-	void OnEpisodeStarted(int32 EpisodeNumber);
+	void OnEpisodeStarted(int32 BroadcastEnvID, int32 EpisodeNumber);
 
 	UFUNCTION()
-	void OnEpisodeEnded(const FEpisodeResult& Result);
+	void OnEpisodeEnded(int32 BroadcastEnvID, const FEpisodeResult& Result);
 
 private:
 	/** Validate agent for training (has required components) */

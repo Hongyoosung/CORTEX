@@ -8,6 +8,7 @@
 #include "ScholaAgentComponent.generated.h"
 
 class UFollowerAgentComponent;
+class UHealthComponent;
 class UTacticalObserver;
 class UTacticalRewardProvider;
 struct FDamageEventData;
@@ -71,13 +72,16 @@ public:
 	UPROPERTY(EditAnywhere, Instanced, Category = "Schola|Components")
 	UTacticalRewardProvider* RewardProvider = nullptr;
 
-	/** Tactical actuator (8-dimensional actions) */
+	/** v8.0: Combined tactical actuator (5 continuous values: 4 tactical params + 1 combat priority) */
 	UPROPERTY(EditAnywhere, Instanced, Category = "Schola|Components")
-	class UTacticalActuator* TacticalActuator = nullptr;
+	class UCombinedTacticalActuator* CombinedTacticalActuator = nullptr;
 
 	/** Reference to follower agent component (auto-found) */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	UFollowerAgentComponent* FollowerAgent = nullptr;
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|Components")
+	TObjectPtr<UFollowerAgentComponent> FollowerAgent = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|Components")
+	TObjectPtr<UHealthComponent> HealthComponent = nullptr;
 
 	/** Reference to Schola environment (set by environment during registration) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
@@ -128,7 +132,7 @@ private:
 	/** Configure reward provider */
 	void ConfigureRewardProvider();
 
-	/** Configure actuators (TacticalActuator) */
+	/** Configure v8.0 actuator (CombinedTacticalActuator) */
 	void ConfigureActuators();
 
 	//--------------------------------------------------------------------------

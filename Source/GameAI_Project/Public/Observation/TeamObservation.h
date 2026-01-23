@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "ObservationElement.h"
 #include "TeamObservationTypes.h"
-#include "Team/Mission.h"
 #include "TeamObservation.generated.h"
 
 /**
@@ -152,17 +151,9 @@ struct GAMEAI_PROJECT_API FTeamObservation
     UPROPERTY(BlueprintReadOnly, Category = "Team|Mission")
     float DistanceToObjective = 0.0f;
 
-    /** Current Mission type */
-    UPROPERTY(BlueprintReadOnly, Category = "Team|Mission")
-    EMissionType MissionType = EMissionType::None;
-
     /** Mission time remaining (0 = no limit) */
     UPROPERTY(BlueprintReadOnly, Category = "Team|Mission")
     float MissionTimeRemaining = 0.0f;
-
-    /** Current mission phase */
-    UPROPERTY(BlueprintReadOnly, Category = "Team|Mission")
-    EMissionPhase MissionPhase = EMissionPhase::Approach;
 
     /** Estimated mission difficulty (0-10) */
     UPROPERTY(BlueprintReadOnly, Category = "Team|Mission")

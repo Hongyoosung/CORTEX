@@ -23,5 +23,10 @@ class RLConfig:
     MAX_VELOCITY_NORMALIZATION = 1200.0
     NUM_STRATEGIES = 4
     NUM_TARGETS = 11
-    OBSERVATION_SIZE = 68
+    OBSERVATION_SIZE = 50  # v8.0: 46 base + 4 strategy one-hot (added by Python wrapper)
+
+    # v8.0 Action Space Constants (Python training-specific)
+    NUM_TACTICAL_PARAMS = 4  # Aggression, CoverPref, Spread, Risk
+    NUM_COMBAT_CHOICES = 2   # Closest, LowestHP (for reference)
+    NUM_TOTAL_OUTPUTS = 5    # 4 tactical + 1 combat priority (continuous)
 

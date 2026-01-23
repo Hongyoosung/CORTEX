@@ -1,8 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actor/LeaderCharacter.h"
-#include "Team/TeamLeaderComponent.h"
-#include "Team/MissionManager.h"
+#include "Team/Components/TeamLeaderComponent.h"
 
 ALeaderCharacter::ALeaderCharacter()
 {
@@ -10,9 +9,6 @@ ALeaderCharacter::ALeaderCharacter()
 
 	// Create team leader component
 	TeamLeaderComponent = CreateDefaultSubobject<UTeamLeaderComponent>(TEXT("TeamLeaderComponent"));
-
-	// Create Mission manager component
-	MissionManager = CreateDefaultSubobject<UMissionManager>(TEXT("MissionManagerComponent"));
 }
 
 void ALeaderCharacter::BeginPlay()

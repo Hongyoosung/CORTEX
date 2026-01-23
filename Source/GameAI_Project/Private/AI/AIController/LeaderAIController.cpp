@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AI/AIController/LeaderAIController.h"
-#include "Team/TeamLeaderComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 
