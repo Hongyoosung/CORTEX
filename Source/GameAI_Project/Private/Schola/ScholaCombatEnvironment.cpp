@@ -159,11 +159,12 @@ void AScholaCombatEnvironment::ResetEnvironment()
 		SimulationManager->StartSimulation();
 	}
 
-	// CRITICAL: Clear the persistent termination flag BEFORE starting new episode
-	// This flag was set in EndEpisode() and persists during ResetCompletedEnvironments()
-	// so agents could report their termination status to Python.
-	// Now that reset() has been called, we can clear it.
-	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Clearing bLastEpisodeWasTerminated flag..."));
+	// v8.5 VECTORIZED TRAINING: Clear per-environment termination flags
+	// These flags were set in EndEpisode() and persist until Python calls reset()
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Clearing per-environment termination flags for Env %d..."), EnvironmentID);
+	SimulationManager->SetEnvironmentTerminationFlags(EnvironmentID, false, false, false);
+
+	// Also clear global flags for backward compatibility
 	SimulationManager->SetLastEpisodeWasTerminated(false);
 	SimulationManager->SetLastEpisodeWasTimeout(false);
 
@@ -301,28 +302,9 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 		TrainersCreated, TrainersFailed);
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Note: Schola may discover CDO components - Python wrapper handles filtering"));
 
-	// v8.5 VECTORIZED TRAINING: Register team-to-environment mappings
-	if (SimulationManager && IsValid(SimulationManager))
-	{
-		TSet<int32> RegisteredTeamIDs;
-		for (UScholaAgentComponent* Agent : RegisteredAgents)
-		{
-			if (!Agent || !Agent->GetOwner()) continue;
-
-			UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
-			if (FollowerComp && FollowerComp->TeamLeader)
-			{
-				int32 TeamID = FollowerComp->TeamLeader->TeamID;
-				if (!RegisteredTeamIDs.Contains(TeamID))
-				{
-					SimulationManager->RegisterTeamEnvironment(TeamID, EnvironmentID);
-					RegisteredTeamIDs.Add(TeamID);
-					UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv #%d] Registered Team %d to this environment"),
-						EnvironmentID, TeamID);
-				}
-			}
-		}
-	}
+	// REMOVED REDUNDANT CODE: Team-to-environment mappings are now handled by TeamLeaderComponent::BeginPlay()
+	// TeamLeaderComponent::BeginPlay() line 60 calls SimManager->RegisterTeamEnvironment() immediately
+	// This redundant loop was causing confusion and potential race conditions
 
 	bAgentsRegistered = true;
 }

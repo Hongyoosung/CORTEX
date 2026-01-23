@@ -183,9 +183,6 @@ void UHealthComponent::ResetHealth()
 	TimeOfLastDamage = -999.0f;
 
 	OnHealthChanged.Broadcast(CurrentHealth, MaxHealth);
-
-	UE_LOG(LogTemp, Log, TEXT("🔄 %s health reset → %.1f/%.1f"),
-		*GetOwner()->GetName(), CurrentHealth, MaxHealth);
 }
 
 void UHealthComponent::Kill(AActor* Killer)

@@ -583,8 +583,6 @@ void UFollowerStateTreeComponent::OnFollowerRespawned()
 	Context.bIsAlive = true;
 	AActor* Owner = GetOwner();
 
-	UE_LOG(LogTemp, Warning, TEXT("🔄 Follower '%s' Respawned: Restarting StateTree"), *GetNameSafe(Owner));
-
 	// Stop StateTree if running (clears dead state)
 	if (IsStateTreeRunning())
 	{

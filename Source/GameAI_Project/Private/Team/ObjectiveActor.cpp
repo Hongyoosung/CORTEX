@@ -57,8 +57,11 @@ void AObjectiveActor::BeginPlay()
 		true   // Loop
 	);
 
-	UE_LOG(LogTemp, Log, TEXT("[OBJECTIVE] '%s' initialized: TeamID=%d, Durability=%.1f, Radius=%.1f"),
-		*GetName(), OwnerTeamID, CurrentDurability, CaptureRadius);
+	// DIAGNOSTIC: Enhanced logging for multi-environment debugging
+	int32 EnvironmentID = OwnerTeamID / 2;
+	FVector Location = GetActorLocation();
+	UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE SPAWN] '%s' - TeamID: %d, EnvironmentID: %d, Durability: %.1f, Radius: %.1f, Location: %s"),
+		*GetName(), OwnerTeamID, EnvironmentID, CurrentDurability, CaptureRadius, *Location.ToString());
 }
 
 void AObjectiveActor::Tick(float DeltaTime)

@@ -270,9 +270,6 @@ void UScholaAgentComponent::ResetEpisode()
 	// Reset decision timer
 	TimeSinceLastDecision = 0.0f;
 	LastDecisionTime = 0.0;
-
-	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: Episode reset"),
-		*GetOwner()->GetName());
 }
 
 void UScholaAgentComponent::Think()

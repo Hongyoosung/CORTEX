@@ -340,6 +340,4 @@ void UObservationBuilderComponent::ResetEpisode()
 	CachedCoverLocation = FVector::ZeroVector;
 	CachedCoverDistance = 9999.0f;
 	LastCoverQueryTime = 0.0f;
-
-	UE_LOG(LogTemp, Log, TEXT("[ObservationBuilder] '%s': Episode reset"), *GetOwner()->GetName());
 }

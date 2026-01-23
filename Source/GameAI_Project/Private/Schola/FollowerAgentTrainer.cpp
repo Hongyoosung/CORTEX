@@ -119,9 +119,8 @@ float AFollowerAgentTrainer::ComputeReward()
 
 EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 {
-	// CRITICAL FIX: Episode termination is now environment-driven, NOT agent-driven
-	// Check if SimulationManager says the episode is ending (team annihilation or timeout)
-	// This ensures all agents terminate together when the episode ends
+	// v8.5 VECTORIZED TRAINING: Per-environment episode termination
+	// Check if THIS AGENT'S ENVIRONMENT has finished, not all environments
 
 	// DIAGNOSTIC: Track ComputeStatus() calls to verify it's being invoked
 	static int32 CallCounter = 0;
@@ -152,39 +151,41 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 
 	ASimulationManagerGameMode* SimManager = Env->SimulationManager;
 
-	// CRITICAL FIX: Check both bEpisodeEnding AND bLastEpisodeWasTerminated
-	// bEpisodeEnding is cleared in StartNewEpisode(), but bLastEpisodeWasTerminated persists
-	// until all agents have reported their status to Python
-	bool bShouldTerminate = SimManager->IsEpisodeEnding() || SimManager->GetLastEpisodeWasTerminated();
+	// v8.5 CRITICAL FIX: Get the EnvironmentID for THIS agent's environment
+	int32 EnvironmentID = Env->EnvironmentID;
 
-	// Check if episode is ending (set by SimulationManager when team is annihilated or timeout)
+	// Check per-environment termination flags
+	bool bShouldTerminate = SimManager->IsEnvironmentEpisodeEnding(EnvironmentID) ||
+	                       SimManager->GetEnvironmentLastTerminated(EnvironmentID);
+
+	// Check if THIS environment's episode is ending
 	if (bShouldTerminate)
 	{
 		// Determine if it was a timeout (truncated) or team annihilation (completed)
-		// Use the cached timeout flag from EndEpisode()
-		bool bWasTimeout = SimManager->GetLastEpisodeWasTimeout();
+		bool bWasTimeout = SimManager->GetEnvironmentLastTimeout(EnvironmentID);
 
 		if (bWasTimeout)
 		{
 			TruncatedCounter++;
-			UE_LOG(LogTemp, Warning, TEXT("[TERMINATION SIGNAL] %s: Episode TRUNCATED (timeout) - Sending to Python (Total truncated: %d)"),
-				*TrainerConfiguration.Name, TruncatedCounter);
+			UE_LOG(LogTemp, Warning, TEXT("[ENV %d TERMINATION] %s: Episode TRUNCATED (timeout) - Total: %d"),
+				EnvironmentID, *TrainerConfiguration.Name, TruncatedCounter);
 			return EAgentTrainingStatus::Truncated;
 		}
 		else
 		{
 			CompletedCounter++;
-			UE_LOG(LogTemp, Warning, TEXT("[TERMINATION SIGNAL] %s: Episode COMPLETED (team annihilation) - Sending to Python (Total completed: %d)"),
-				*TrainerConfiguration.Name, CompletedCounter);
+			UE_LOG(LogTemp, Warning, TEXT("[ENV %d TERMINATION] %s: Episode COMPLETED (team elim) - Total: %d"),
+				EnvironmentID, *TrainerConfiguration.Name, CompletedCounter);
 			return EAgentTrainingStatus::Completed;
 		}
 	}
 
-	// Episode is still running
+	// Episode is still running for THIS environment
 	RunningCounter++;
 	if (CallCounter % 100 == 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[FollowerTrainer] %s: Status=Running (step %d)"), *TrainerConfiguration.Name, EpisodeSteps);
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[ENV %d] %s: Status=Running (step %d)"),
+			EnvironmentID, *TrainerConfiguration.Name, EpisodeSteps);
 	}
 	return EAgentTrainingStatus::Running;
 }

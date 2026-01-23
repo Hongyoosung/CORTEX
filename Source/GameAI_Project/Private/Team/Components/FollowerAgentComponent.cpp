@@ -85,6 +85,9 @@ void UFollowerAgentComponent::BeginPlay()
 			TArray<AActor*> FoundActors;
 			UGameplayStatics::GetAllActorsWithTag(GetWorld(), TeamLeaderTag, FoundActors);
 
+			UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Searching for TeamLeader by tag '%s' - found %d actors"),
+				*GetOwner()->GetName(), *TeamLeaderTag.ToString(), FoundActors.Num());
+
 			if (FoundActors.Num() > 0)
 			{
 				TeamLeaderActor = FoundActors[0];
@@ -92,20 +95,25 @@ void UFollowerAgentComponent::BeginPlay()
 
 				if (TeamLeader)
 				{
-					UE_LOG(LogTemp, Log, TEXT("[FollowerAgent] '%s': Auto-found TeamLeader on actor '%s' by tag '%s'"),
-						*GetOwner()->GetName(), *TeamLeaderActor->GetName(), *TeamLeaderTag.ToString());
+					UE_LOG(LogTemp, Log, TEXT("[FollowerAgent] '%s': ✓ Auto-found TeamLeader on actor '%s' by tag '%s' (TeamID: %d)"),
+						*GetOwner()->GetName(), *TeamLeaderActor->GetName(), *TeamLeaderTag.ToString(), TeamLeader->TeamID);
 				}
 				else
 				{
-					UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Found actor with tag '%s' but no TeamLeaderComponent"),
-						*GetOwner()->GetName(), *TeamLeaderTag.ToString());
+					UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ Found actor '%s' with tag '%s' but NO TeamLeaderComponent!"),
+						*GetOwner()->GetName(), *TeamLeaderActor->GetName(), *TeamLeaderTag.ToString());
 				}
 			}
 			else
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': No actor found with tag '%s'"),
+				UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ No actor found with tag '%s' - cannot register!"),
 					*GetOwner()->GetName(), *TeamLeaderTag.ToString());
 			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ TeamLeaderTag is NONE - cannot auto-find leader!"),
+				*GetOwner()->GetName());
 		}
 	}
 
@@ -134,15 +142,36 @@ void UFollowerAgentComponent::BeginPlay()
 	}
 
 	// Auto-register with team leader
-	if (bAutoRegisterWithLeader && TeamLeader)
+	if (bAutoRegisterWithLeader)
 	{
-		RegisterWithTeamLeader();
+		if (TeamLeader)
+		{
+			bool bIsRegistered = RegisterWithTeamLeader();
+			if (!bIsRegistered)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ FAILED to register with TeamLeader '%s'!"),
+					*GetOwner()->GetName(), *TeamLeader->TeamName);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ NO TEAM LEADER FOUND! Cannot register."),
+				*GetOwner()->GetName());
+			UE_LOG(LogTemp, Error, TEXT("    → TeamLeaderActor: %s"), TeamLeaderActor ? *TeamLeaderActor->GetName() : TEXT("NOT SET"));
+			UE_LOG(LogTemp, Error, TEXT("    → TeamLeaderTag: %s"), *TeamLeaderTag.ToString());
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Auto-register disabled (bAutoRegisterWithLeader=false)"),
+			*GetOwner()->GetName());
 	}
 
 	// Initialize strategy update timestamp
 	LastStrategyUpdateTime = FPlatformTime::Seconds();
 
-	UE_LOG(LogTemp, Log, TEXT("[FollowerAgent v8.0 REFACTORED] Initialized on %s"), *GetOwner()->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[FollowerAgent v8.0 REFACTORED] Initialized on %s (TeamLeader: %s)"),
+		*GetOwner()->GetName(), TeamLeader ? *TeamLeader->TeamName : TEXT("NONE"));
 }
 
 void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -254,22 +283,8 @@ bool UFollowerAgentComponent::RegisterWithTeamLeader()
 		UE_LOG(LogTemp, Log, TEXT("[FollowerAgent] '%s': Registered with TeamLeader '%s'"),
 			*GetOwner()->GetName(), *TeamLeader->TeamName);
 
-		// Also register with SimulationManager
-		ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
-		if (SimManager)
-		{
-			bool bSimRegistered = SimManager->RegisterTeamMember(TeamLeader->TeamID, GetOwner());
-			if (bSimRegistered)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("✅ Follower '%s': Registered with SimulationManager (TeamID: %d)"),
-					*GetOwner()->GetName(), TeamLeader->TeamID);
-			}
-			else
-			{
-				UE_LOG(LogTemp, Error, TEXT("❌ Follower '%s': Failed to register with SimulationManager (TeamID: %d)"),
-					*GetOwner()->GetName(), TeamLeader->TeamID);
-			}
-		}
+		// NOTE: SimulationManager registration is now handled by TeamLeader->RegisterFollower()
+		// This eliminates duplicate registration calls and simplifies the flow
 	}
 
 	return bSuccess;
@@ -469,8 +484,6 @@ void UFollowerAgentComponent::MarkAsAlive()
 	{
 		StateTreeComp->OnFollowerRespawned();
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Respawn complete"), *GetOwner()->GetName());
 }
 
 bool UFollowerAgentComponent::GetIsAlive() const
@@ -594,8 +607,6 @@ void UFollowerAgentComponent::ResetEpisode()
 			TeamLeader->ClearKnownEnemies();
 		}
 	}
-
-	UE_LOG(LogTemp, Log, TEXT("[FollowerAgent v8.0] '%s': Episode reset"), *GetOwner()->GetName());
 }
 
 void UFollowerAgentComponent::OnEpisodeEnded(float EpisodeReward)

@@ -58,8 +58,6 @@ void URLAgentComponent::ProvideReward(float Reward, bool bTerminal)
 void URLAgentComponent::ResetEpisode()
 {
 	AccumulatedReward = 0.0f;
-
-	UE_LOG(LogTemp, Log, TEXT("[RLAgent] '%s': Episode reset"), *GetOwner()->GetName());
 }
 
 void URLAgentComponent::OnEpisodeEnded(float EpisodeReward)

@@ -417,12 +417,39 @@ public:
 	float GetMaxEpisodeDuration() const { return MaxEpisodeDuration; }
 
 
+	/** DEPRECATED: Use per-environment versions */
 	FORCEINLINE bool GetLastEpisodeWasTerminated() const { return bLastEpisodeWasTerminated; }
 
+	/** DEPRECATED: Use per-environment versions */
 	FORCEINLINE bool GetLastEpisodeWasTimeout() const { return bLastEpisodeWasTimeout; }
 
+	/** DEPRECATED: Use per-environment versions */
 	void SetLastEpisodeWasTerminated(bool bTerminated) { bLastEpisodeWasTerminated = bTerminated; }
+
+	/** DEPRECATED: Use per-environment versions */
 	void SetLastEpisodeWasTimeout(bool bTimeout) { bLastEpisodeWasTimeout = bTimeout; }
+
+	/**
+	 * v8.5 VECTORIZED TRAINING: Per-environment episode state queries
+	 */
+
+	/** Check if a specific environment's episode is ending */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	bool IsEnvironmentEpisodeEnding(int32 EnvironmentID) const;
+
+	/** Check if a specific environment's last episode was terminated */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	bool GetEnvironmentLastTerminated(int32 EnvironmentID) const;
+
+	/** Check if a specific environment's last episode was a timeout */
+	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
+	bool GetEnvironmentLastTimeout(int32 EnvironmentID) const;
+
+	/** Set per-environment termination flags */
+	void SetEnvironmentTerminationFlags(int32 EnvironmentID, bool bEnding, bool bTerminated, bool bTimeout);
+
+	/** Get environment ID for a team */
+	int32 GetEnvironmentIDForTeam(int32 TeamID) const;
 
 	/**
 	 * Schedule a team to respawn after delay (for continuous training)
@@ -613,14 +640,21 @@ private:
 	/** Pending restart timer handle */
 	FTimerHandle EpisodeRestartTimerHandle;
 
-	/** Is episode transition in progress */
+	/** DEPRECATED: Global episode ending flag - Use EnvironmentEpisodeEnding map for multi-env training */
 	bool bEpisodeEnding = false;
 
-	/** Was the last episode terminated? (persists until all agents report status) */
+	/** DEPRECATED: Global termination flag - Use EnvironmentLastTerminated map for multi-env training */
 	bool bLastEpisodeWasTerminated = false;
 
-	/** Was last episode a timeout (truncated) or team elimination (completed)? */
+	/** DEPRECATED: Global timeout flag - Use EnvironmentLastTimeout map for multi-env training */
 	bool bLastEpisodeWasTimeout = false;
+
+	/** v8.5 VECTORIZED TRAINING: Per-environment episode state tracking */
+	TMap<int32, bool> EnvironmentEpisodeEnding;  // EnvironmentID → Is episode ending?
+	TMap<int32, bool> EnvironmentLastTerminated;  // EnvironmentID → Was last episode terminated?
+	TMap<int32, bool> EnvironmentLastTimeout;  // EnvironmentID → Was last episode a timeout?
+	TMap<int32, float> EnvironmentEpisodeStartTimes;  // EnvironmentID → Episode start time
+	TMap<int32, float> EnvironmentEpisodeGameTimes;  // EnvironmentID → Accumulated game time
 
 	//--------------------------------------------------------------------------
 	// CONTINUOUS TRAINING STATE (Respawn System)

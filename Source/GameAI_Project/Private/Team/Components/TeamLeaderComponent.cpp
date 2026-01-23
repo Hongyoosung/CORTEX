@@ -15,6 +15,7 @@
 #include "RL/Components/RewardCalculator.h"
 #include "Kismet/GameplayStatics.h"
 #include "Combat/Components/HealthComponent.h"
+#include "TimerManager.h"
 
 //==============================================================================
 // v8.0: TEAM LEADER COMPONENT
@@ -47,6 +48,18 @@ void UTeamLeaderComponent::BeginPlay()
 			{
 				UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Registered with SimulationManager (TeamID: %d)"),
 					*TeamName, TeamID);
+
+				// CRITICAL FIX: Register team-environment mapping IMMEDIATELY after team registration
+				// This must happen BEFORE objective discovery and follower registration
+				// Environment mapping: EnvironmentID = TeamID / 2
+				//   - Team 0, 1 → Environment 0
+				//   - Team 2, 3 → Environment 1
+				//   - Team 4, 5 → Environment 2
+				//   - Team 6, 7 → Environment 3
+				int32 EnvironmentID = TeamID / 2;
+				SimManager->RegisterTeamEnvironment(TeamID, EnvironmentID);
+				UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Registered Team %d to Environment %d"),
+					*TeamName, TeamID, EnvironmentID);
 			}
 			else
 			{
@@ -60,10 +73,21 @@ void UTeamLeaderComponent::BeginPlay()
 		}
 	}
 
-	// Auto-discover objectives from level (v8.0 - Strategy Assignment)
-	DiscoverWorldObjectives();
+	// RACE CONDITION FIX: Delay objective discovery to allow GameMode to setup enemy relationships
+	// GameMode Blueprint has a 0.2s delay before calling "Set Mutual Enemies"
+	// We delay discovery by 0.3s to ensure enemy setup is complete
+	FTimerHandle DelayedDiscoveryTimer;
+	GetWorld()->GetTimerManager().SetTimer(
+		DelayedDiscoveryTimer,
+		[this]()
+		{
+			DiscoverWorldObjectives();
+		},
+		0.3f,  // 0.3s delay (after GameMode's 0.2s delay)
+		false  // No loop
+	);
 
-	UE_LOG(LogTemp, Log, TEXT("TeamLeaderComponent: Initialized team '%s'"), *TeamName);
+	UE_LOG(LogTemp, Log, TEXT("TeamLeaderComponent: Initialized team '%s' (objective discovery scheduled for 0.3s delay)"), *TeamName);
 }
 
 void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -367,13 +391,16 @@ bool UTeamLeaderComponent::RegisterFollower(AActor* Follower)
 
 	if (Followers.Num() >= MaxFollowers)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Max followers reached (%d)"), *TeamName, MaxFollowers);
+		UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': CANNOT REGISTER %s - Max followers reached (%d/%d)!"),
+			*TeamName, *Follower->GetName(), Followers.Num(), MaxFollowers);
+		UE_LOG(LogTemp, Error, TEXT("    Current followers: %s"),
+			*FString::JoinBy(Followers, TEXT(", "), [](AActor* A) { return A->GetName(); }));
 		return false;
 	}
 
 	if (Followers.Contains(Follower))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Follower %s already registered"),
+		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Follower %s already registered (duplicate call ignored)"),
 			*TeamName, *Follower->GetName());
 		return false;
 	}
