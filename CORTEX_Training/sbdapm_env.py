@@ -114,7 +114,6 @@ if SCHOLA_AVAILABLE:
             self.episode_steps = 0
             self._episode_start_time = None
             self._first_reset_done = False
-            self._episodes_completed = 0
 
             # v8.5 VECTORIZED TRAINING: Per-environment episode tracking
             self._env_episode_steps = {i: 0 for i in range(self.num_envs)}
@@ -143,7 +142,9 @@ if SCHOLA_AVAILABLE:
             if hasattr(self.schola_env, 'ids'):
                 for env_idx, agent_list in enumerate(self.schola_env.ids):
                     for agent_idx in agent_list:
-                        flat_id = f"agent_{agent_idx}"
+                        # Include environment ID to ensure unique agent identifiers across all environments
+                        # Format: "agent_<env_idx>_<agent_idx>" (e.g., "agent_0_1", "agent_3_2")
+                        flat_id = f"agent_{env_idx}_{agent_idx}"
                         self.agent_map[flat_id] = (env_idx, agent_idx)
                         self.reverse_map[(env_idx, agent_idx)] = flat_id
                         self._agent_ids.add(flat_id)
@@ -206,11 +207,9 @@ if SCHOLA_AVAILABLE:
                         print(f"  Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, Steps={self._env_episode_steps[env_idx]}, Duration={duration:.1f}s")
                         self._env_episodes_completed[env_idx] += 1
                 print(f"{'='*80}")
-                self._episodes_completed += 1
 
             # Print new episode start
             print(f"\n{'='*80}")
-            print(f"[RESET START] Global Episode={self._episodes_completed}, Total Completed={self._episodes_completed}")
             for env_idx in range(self.num_envs):
                 print(f"  Env {env_idx}: Starting episode {self._env_episodes_completed[env_idx]}")
             print(f"  Reset Time={reset_start:.2f}")
@@ -313,8 +312,13 @@ if SCHOLA_AVAILABLE:
                 info_dict = {}
 
                 # v8.5 VECTORIZED TRAINING: Track termination PER ENVIRONMENT
-                # Reset done flags for this step
+                # Note: Episode timeouts are handled by UE5
+                # (SimulationManagerGameMode::MaxEpisodeDuration)
+                # Python receives termination signals via term_nested/trunc_nested from Schola
                 newly_finished_envs = []
+
+                # DEBUG: Track termination signals per environment
+                env_termination_signals = {env_idx: {'term': False, 'trunc': False} for env_idx in range(self.num_envs)}
 
                 for flat_id in self._agent_ids:
                     env_idx, agent_idx = self.agent_map[flat_id]
@@ -339,6 +343,11 @@ if SCHOLA_AVAILABLE:
                     is_term = term_nested.get(env_idx, {}).get(agent_idx, False)
                     is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
 
+                    # Track if any agent in this environment reported termination
+                    if is_term or is_trunc:
+                        env_termination_signals[env_idx]['term'] = env_termination_signals[env_idx]['term'] or is_term
+                        env_termination_signals[env_idx]['trunc'] = env_termination_signals[env_idx]['trunc'] or is_trunc
+                    
                     # Mark environment as done if ANY agent from that environment reports termination
                     if (is_term or is_trunc) and not self._env_done_flags[env_idx]:
                         self._env_done_flags[env_idx] = True
@@ -348,10 +357,11 @@ if SCHOLA_AVAILABLE:
                         # Log environment completion
                         if self._env_episode_start_time[env_idx]:
                             elapsed = time.time() - self._env_episode_start_time[env_idx]
+                            termination_reason = "Team Eliminated" if is_term else "Timeout" if is_trunc else "Unknown"
                             print(f"\n{'┌'+'─'*78+'┐'}")
-                            print(f"│ [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx] + 1} completed{' '*41}│")
+                            print(f"│ [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} completed ( {termination_reason}){' '*(44-len(termination_reason))}│")
+                            print(f"│   Agent: {flat_id} (env={env_idx}, agent={agent_idx}){' '*35}│")
                             print(f"│   Steps: {self._env_episode_steps[env_idx]:<10} Time: {elapsed:.1f}s{' '*47}│")
-                            print(f"│   Terminated: {str(is_term):<5} Truncated: {str(is_trunc):<5}{' '*39}│")
                             print(f"│   Status: Waiting for other environments to finish...{' '*21}│")
                             print(f"└{'─'*78}┘\n")
 
@@ -360,6 +370,13 @@ if SCHOLA_AVAILABLE:
                     terminated_dict[flat_id] = False
                     truncated_dict[flat_id] = self._env_done_flags[env_idx]
                     info_dict[flat_id] = {"env_idx": env_idx}
+
+                # DEBUG: Log termination signals received in this step
+                if newly_finished_envs:
+                    print(f"[TERMINATION DEBUG] Step {self.episode_steps}: Newly finished environments = {newly_finished_envs}")
+                    for env_idx in newly_finished_envs:
+                        signals = env_termination_signals[env_idx]
+                        print(f"  Env {env_idx}: terminated={signals['term']}, truncated={signals['trunc']}")
 
                 # Increment step counter for each environment
                 for env_idx in range(self.num_envs):
@@ -409,7 +426,7 @@ if SCHOLA_AVAILABLE:
                     done_count = sum(1 for flag in self._env_done_flags.values() if flag)
 
                     print(f"\n{'='*80}")
-                    print(f"[STEP {self.episode_steps}] GlobalEp={self._episodes_completed + 1}, Time={elapsed:.1f}s, StepReward={avg_reward:.2f}, Running={running_count}/{self.num_envs}, Done={done_count}/{self.num_envs}")
+                    print(f"[PROGRESS] Step={self.episode_steps}, Elapsed={elapsed:.1f}s, Total Reward={total_reward:.2f}, Avg Reward={avg_reward:.2f}")
                     print(f"{'─'*80}")
 
                     # Show individual environment status with better formatting
@@ -417,7 +434,7 @@ if SCHOLA_AVAILABLE:
                         if not self._env_done_flags[env_idx]:
                             env_elapsed = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
                             status_icon = "🔄" if env_elapsed < 60 else "⚠️"
-                            print(f"  {status_icon} Env {env_idx}: Episode {self._env_episodes_completed[env_idx] + 1}, Steps={self._env_episode_steps[env_idx]}, Time={env_elapsed:.1f}s")
+                            print(f"  {status_icon} Env {env_idx}: Episode {self._env_episodes_completed[env_idx]}, Steps={self._env_episode_steps[env_idx]}, Time={env_elapsed:.1f}s")
                         else:
                             print(f"  ✓ Env {env_idx}: DONE (Episode {self._env_episodes_completed[env_idx] + 1} completed, waiting for reset)")
                     print(f"{'='*80}\n")

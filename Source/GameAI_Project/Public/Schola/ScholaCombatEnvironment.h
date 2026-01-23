@@ -93,7 +93,7 @@ public:
 
 	/** Current episode number for this environment (independent per environment) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	int32 CurrentEpisode = -1;
+	int32 CurrentEpisode = 0;
 
 	//--------------------------------------------------------------------------
 	// UTILITY

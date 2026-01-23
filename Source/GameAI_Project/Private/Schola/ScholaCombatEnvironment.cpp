@@ -27,13 +27,34 @@ void AScholaCombatEnvironment::BeginPlay()
 	// NOTE: Do NOT call Super::BeginPlay() yet - we need to set up first
 
 	// ===== v8.5 VECTORIZED TRAINING: Multi-Environment Support =====
-	// Assign unique environment ID based on spawn order
+	// CRITICAL FIX: Reset GlobalEnvCounter on first environment spawn in new PIE session
+	// Count existing environments to detect new world session (all environments spawn together)
 	static int32 GlobalEnvCounter = 0;
+
+	// Count how many ScholaCombatEnvironment actors already exist in BeginPlay state
+	int32 ExistingEnvCount = 0;
+	for (TActorIterator<AScholaCombatEnvironment> It(GetWorld()); It; ++It)
+	{
+		// Only count environments that have already been assigned an ID
+		if (*It != this && (*It)->EnvironmentID >= 0)
+		{
+			ExistingEnvCount++;
+		}
+	}
+
+	// If no other environments exist with valid IDs, this is the first spawn in a new session
+	if (ExistingEnvCount == 0)
+	{
+		GlobalEnvCounter = 0;
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] New PIE session detected - reset GlobalEnvCounter to 0"));
+	}
+
 	EnvironmentID = GlobalEnvCounter++;
 
 	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv] Environment #%d initialized: %s                    ║"), EnvironmentID, *GetName());
 	UE_LOG(LogTemp, Warning, TEXT("║ Vectorized Training: Multiple environments supported          ║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Existing environments found: %d                                ║"), ExistingEnvCount);
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════╝"));
 
 	// Reset registration flag for new PIE session
@@ -116,12 +137,9 @@ void AScholaCombatEnvironment::InitializeEnvironment()
 
 void AScholaCombatEnvironment::ResetEnvironment()
 {
-	// v8.5 VECTORIZED TRAINING FIX: Increment per-environment episode counter
-	CurrentEpisode++;
 
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET #%d] ResetEnvironment() called on %s"), EnvironmentID, *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET #%d] Episode %d starting (Environment-local counter)"), EnvironmentID, CurrentEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
 
 	// CRITICAL FIX: Validate SimulationManager before proceeding
@@ -151,8 +169,6 @@ void AScholaCombatEnvironment::ResetEnvironment()
 
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] %d teams registered"), AllTeamIDs.Num());
 
-	// CRITICAL FIX: Ensure simulation is running before starting new episode
-	// This ensures agents can send observations immediately after reset
 	if (!SimulationManager->IsSimulationRunning())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Simulation not running - starting simulation before reset"));
@@ -168,19 +184,16 @@ void AScholaCombatEnvironment::ResetEnvironment()
 	SimulationManager->SetLastEpisodeWasTerminated(false);
 	SimulationManager->SetLastEpisodeWasTimeout(false);
 
-	// CRITICAL FIX: Re-bind episode events to ensure delegates persist across episodes
-	// This prevents the delegate binding loss that causes episode desync
+
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Re-validating episode event bindings..."));
 	BindEpisodeEvents();
 
-	// Start new episode (this will reset agents and trigger OnEpisodeStarted event)
-	// OnEpisodeStarted will reset LastDecisionTime in all ScholaAgentComponents
-	// This ensures Think() can send observations immediately, preventing poll() from blocking
-	// v8.5 VECTORIZED TRAINING: Pass EnvironmentID to enable per-environment episode tracking
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Calling StartNewEpisode(EnvID=%d, Episode=%d)..."),
 		EnvironmentID, CurrentEpisode);
 	SimulationManager->StartNewEpisode(EnvironmentID, CurrentEpisode);
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] StartNewEpisode() completed successfully"));
+
+	CurrentEpisode++;
 
 	// Verify simulation is still running after reset
 	if (!SimulationManager->IsSimulationRunning())

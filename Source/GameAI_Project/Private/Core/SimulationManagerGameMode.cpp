@@ -1240,6 +1240,7 @@ void ASimulationManagerGameMode::StartNewEpisode(int32 EnvironmentID, int32 Envi
 	UE_LOG(LogTemp, Warning, TEXT("[StartNewEpisode] Called (EnvID: %d, Episode: %d)"),
 		EnvironmentID, EnvironmentEpisodeNumber);
 
+
 	// CRITICAL: Early validation to prevent crashes during reset
 	if (RegisteredTeams.Num() == 0)
 	{
@@ -1382,17 +1383,6 @@ void ASimulationManagerGameMode::StartNewEpisode(int32 EnvironmentID, int32 Envi
 
 	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset %d ObjectiveActor(s)"), FoundObjectives.Num());
 
-	// Broadcast episode started event
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] Broadcasting OnEpisodeStarted(EnvID=%d, Episode=%d) to bound listeners..."),
-		EnvironmentID, EnvironmentEpisodeNumber);
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.IsBound() = %s"),
-		OnEpisodeStarted.IsBound() ? TEXT("TRUE") : TEXT("FALSE"));
-	OnEpisodeStarted.Broadcast(EnvironmentID, EnvironmentEpisodeNumber);
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.Broadcast() completed"));
-
-	// [DIAGNOSTIC] Final agent count verification
-	// CRITICAL FIX: Only log for THIS environment, not all environments
-	// This prevents duplicate global logs when multiple environments call StartNewEpisode()
 
 	// Count agents in THIS environment only
 	int32 ThisEnvAgentCount = 0;

@@ -38,7 +38,7 @@ class GAMEAI_PROJECT_API UScholaAgentComponent : public UInferenceComponent
 	GENERATED_BODY()
 
 public:
-	UScholaAgentComponent();
+	UScholaAgentComponent(const FObjectInitializer& ObjectInitializer);
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
