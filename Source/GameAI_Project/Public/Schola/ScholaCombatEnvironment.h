@@ -68,6 +68,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	TArray<int32> TrainingTeamIDs;
 
+	/**
+	 * Team-to-Environment mapping (TeamID → LogicalEnvironmentID)
+	 * Example: {0→0, 1→0, 2→1, 3→1, 4→2, 5→2, 6→3, 7→3}
+	 * If empty, uses default mapping: TeamID / 2
+	 *
+	 * This allows flexible grouping of teams into logical environments:
+	 * - Env 0: Teams 0,1 (default 4v4)
+	 * - Env 1: Teams 2,3 (default 4v4)
+	 * - Env 2: Teams 4,5 (custom grouping)
+	 * - Env 3: Teams 6,7 (custom grouping)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	TMap<int32, int32> TeamToEnvironmentMap;
+
 	//--------------------------------------------------------------------------
 	// STATE
 	//--------------------------------------------------------------------------
@@ -87,13 +101,13 @@ public:
 	/** Has InternalRegisterAgents been called this session? */
 	bool bAgentsRegistered = false;
 
-	/** Unique ID for this environment instance (0, 1, 2, 3...) - v8.5 Vectorized Training */
+	/** Physical environment actor ID (always 0 for single-actor architecture) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	int32 EnvironmentID = -1;
+	int32 EnvironmentID = 0;
 
-	/** Current episode number for this environment (independent per environment) */
+	/** Episode counters per logical environment (4 environments = 4 counters) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	int32 CurrentEpisode = 0;
+	TMap<int32, int32> LogicalEnvironmentEpisodes;
 
 	//--------------------------------------------------------------------------
 	// UTILITY
@@ -107,6 +121,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	bool RegisterAgent(UScholaAgentComponent* Agent);
 
+	/** Get logical environment ID for a team (uses TeamToEnvironmentMap or default TeamID/2) */
+	UFUNCTION(BlueprintCallable, Category = "Schola")
+	int32 GetLogicalEnvironmentID(int32 TeamID) const;
 
 	/** Bind to SimulationManager episode events - includes EnvironmentID for filtering */
 	UFUNCTION()

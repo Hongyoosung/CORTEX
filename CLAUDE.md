@@ -242,77 +242,7 @@ RETREAT_WEIGHTS = {
 };
 ```
 
-**Reward Components:**
 
-```cpp
-// Objective progress (strategy-dependent interpretation)
-float CalculateObjectiveReward(const FAgentState& State)
-{
-    if (State.DistanceToObjective < State.LastDistanceToObjective)
-        return 0.1f;  // Moving closer (scaled by strategy weight)
-    return 0.0f;
-}
-
-// Combat effectiveness (kills, damage dealt)
-float CalculateCombatReward(const FAgentState& State)
-{
-    float Reward = 0.0f;
-    if (State.DealtDamage)
-        Reward += State.DamageAmount / 10.0f;
-    if (State.KilledEnemy)
-        Reward += 10.0f;  // Base kill reward
-    if (State.TargetWasLowestHP)
-        Reward += 2.0f;   // Bonus for efficient targeting
-    return Reward;
-}
-
-// Survival (death penalty)
-float CalculateSurvivalReward(const FAgentState& State)
-{
-    if (State.Died)
-        return -10.0f;  // Base death penalty (scaled by strategy weight)
-    return 0.0f;
-}
-
-// Cover usage (tactical positioning)
-float CalculateCoverReward(const FAgentState& State)
-{
-    if (State.InCover)
-        return 0.1f;  // Continuous cover bonus
-    return 0.0f;
-}
-
-// Team coordination (proximity to allies, formation)
-float CalculateCoordinationReward(const FAgentState& State)
-{
-    float Reward = 0.0f;
-    if (State.AllyState)
-    {
-        float Distance = GetDistance(State.Position, State.AllyState.Position);
-        if (200 < Distance && Distance < 800)  // Optimal support range
-            Reward += 0.1f;
-    }
-    return Reward;
-}
-```
-
-**Volume-Based Objective Rewards (v7.0 Legacy):**
-
-```cpp
-// Defense role (friendly objective)
-if (AgentInFriendlyVolume)
-    Reward += 0.05f;  // +0.05 per step (~0.5/sec at 10Hz)
-
-if (KilledEnemy && AgentInFriendlyVolume)
-    Reward += 5.0f;   // +5.0 for defending kills
-
-// Assault role (hostile objective)
-if (AgentInEnemyVolume)
-    Reward += 0.1f;   // +0.1 per step (~1.0/sec at 10Hz)
-
-if (EnemyObjective.IsDefeated())
-    Reward += 100.0f; // +100.0 for mission success
-```
 
 **Files:** `RL/RewardCalculator.h/cpp`
 
@@ -322,20 +252,6 @@ if (EnemyObjective.IsDefeated())
 
 **Purpose:** MCTS-based strategy assignment
 
-**MCTS Action Space:**
-
-```cpp
-// Each node in MCTS tree represents a strategy assignment
-struct FStrategyAssignment
-{
-    TMap<AActor*, FStrategyAssignmentData> AgentAssignments;
-    // Example:
-    // Agent1 → {Strategy: Assault, Objective: EnemyBase}
-    // Agent2 → {Strategy: Assault, Objective: EnemyBase}
-    // Agent3 → {Strategy: Defend, Objective: FriendlyBase}
-    // Agent4 → {Strategy: Support, Objective: Agent1}
-};
-```
 
 **Evaluation Function:**
 
@@ -379,30 +295,6 @@ FObservationElement BuildObservation(AActor* Agent, AObjectiveActor* TargetObjec
 
 class AObjectiveActor : public AActor
 
-**Durability Mechanics:**
-
-```cpp
-// Decline logic (10Hz timer)
-if (HostileAgentsInVolume.Num() > 0)
-{
-    float DeclineRate = HostileAgentsInVolume.Num() * DamagePerAgentPerSecond;
-    CurrentDurability -= DeclineRate * DeltaTime;
-    // Default: 2.0 damage/sec per hostile agent
-}
-
-// Recovery logic
-if (HostileAgentsInVolume.Num() == 0 && CurrentDurability < MaxDurability)
-{
-    CurrentDurability += RecoveryPerSecond * DeltaTime;
-    // Default: 1.0 durability/sec recovery
-}
-
-// Defeat condition
-if (CurrentDurability <= 0.0f)
-{
-    OnDefeat(); // Broadcast to GameMode → Episode reset
-}
-```
 
 **Files:** `Team/ObjectiveActor.h/cpp`, `Team/ObjectiveManager.h/cpp`
 
@@ -471,154 +363,10 @@ struct FCombatParameters
 9. **Async MCTS, sync RL** (MCTS doesn't block RL execution)
 10. **Objectives are physical actors** (durability-based capture)
 
-### Clear Interfaces
-
-```cpp
-// MCTS → RL (value query)
-interface IValueEstimator
-{
-    float GetStateValue(Observation, Strategy);
-};
-
-// Leader → Follower (command)
-interface IStrategyReceiver
-{
-    void ReceiveStrategyAssignment(FStrategyAssignment);
-};
-
-// RL → EQS (parameter application)
-interface ITacticalExecutor
-{
-    void ApplyTacticalParameters(FTacticalParameters);
-};
-```
 
 ---
 
-## Performance Optimization
 
-### Batched Inference (4 Agents → 1 Network Call)
-
-**Problem:** Naïve approach = 4 agents × 2ms = 8ms per update
-
-**Solution:** Batch all agents into single forward pass
-
-```cpp
-// Batch inference for all agents
-TArray<FTacticalParameters> GetTacticalParametersBatched(
-    TArray<FObservationElement> Observations,
-    TArray<EStrategyType> Strategies)
-{
-    // Build batched input tensor [4, 72]
-    FTensor BatchedInput = BuildBatchedTensor(Observations, Strategies);
-
-    // Single ONNX forward pass (2-4ms for 4 agents)
-    FTensor BatchedOutput = ONNXRuntime->Run(BatchedInput);
-
-    // Parse outputs per agent
-    TArray<FTacticalParameters> Results;
-    for (int i = 0; i < 4; i++)
-    {
-        Results.Add(ParseTacticalParams(BatchedOutput, i, Strategies[i]));
-    }
-
-    return Results;
-}
-```
-
-**Performance:**
-```
-Naive (sequential): 4 × 2ms = 8ms
-Batched (parallel):  1 × 3ms = 3ms
-Speedup: 2.6× faster
-```
-
-### Event-Driven Updates
-
-**Problem:** Running RL inference every tick (60 FPS) = too expensive
-
-**Solution:** Only update parameters on significant events or periodic timeout
-
-```cpp
-bool UFollowerAgentComponent::ShouldUpdateParameters() const
-{
-    bool HealthChanged = FMath::Abs(CurrentHealth - LastParamHealth) > 0.2f;
-    bool NewEnemyDetected = PerceivedEnemies.Num() > LastEnemyCount;
-    bool StrategyChanged = CurrentStrategy != LastStrategy;
-    bool Timeout = TicksSinceLastUpdate > 12;  // 5 Hz fallback
-
-    return HealthChanged || NewEnemyDetected || StrategyChanged || Timeout;
-}
-```
-
-**Performance Impact:**
-```
-Before (every tick):  60 FPS × 3ms = 180ms/sec
-After (event-driven): ~5 updates/sec × 3ms = 15ms/sec
-Reduction: 92% lower inference cost
-```
-
-### Async MCTS Execution
-
-```cpp
-// MCTS runs on background thread
-FGraphEventRef MCTSTask = FFunctionGraphTask::CreateAndDispatchWhenReady(
-    [this]()
-    {
-        // Run MCTS (30-50ms, doesn't block main thread)
-        FStrategyAssignment BestAssignment = MCTS->RunSearch(CurrentState);
-
-        // Store result (thread-safe)
-        FScopeLock Lock(&AssignmentMutex);
-        PendingAssignment = BestAssignment;
-        bHasPendingAssignment = true;
-    },
-    TStatId(),
-    nullptr,
-    ENamedThreads::AnyBackgroundThreadNormalTask
-);
-
-// Main thread: Apply assignment when ready
-void UTeamLeaderComponent::TickComponent(float DeltaTime, ...)
-{
-    if (bHasPendingAssignment)
-    {
-        FScopeLock Lock(&AssignmentMutex);
-        ApplyAssignment(PendingAssignment);
-        bHasPendingAssignment = false;
-    }
-}
-```
-
----
-
-## Training & Curriculum
-
-### Curriculum Learning Schedule
-
-**Phase 1: Single Strategy Training (Episodes 0-1000)**
-```
-All agents use same strategy
-Goal: Learn basic tactical parameter meanings
-Example: All agents assigned Assault
-Learns: High aggression → close to enemies, low cover → exposed positions
-```
-
-**Phase 2: Mixed Strategy Training (Episodes 1000-3000)**
-```
-MCTS explores simple 2-2 splits
-Goal: Differentiate strategy behaviors
-Example: 2 agents Assault, 2 agents Defend
-Learns: Different parameter profiles per strategy
-```
-
-**Phase 3: Dynamic Strategy Assignment (Episodes 3000+)**
-```
-MCTS freely assigns strategies based on game state
-Goal: Adaptive tactics, strategy coordination
-Example: 3 Assault, 1 Support (dynamic based on health)
-Learns: Context-dependent parameter adaptation
-```
 
 ### Reward Shaping
 
@@ -646,8 +394,6 @@ if episode_complete:
 **Quantitative Metrics:**
 - [ ] Inference latency: <20ms/sec (4 agents batched at 5 Hz)
 - [ ] Training convergence: <6,000 episodes
-- [ ] Win rate vs v7.0: >60%
-- [ ] Win rate vs random parameters: >90%
 
 **Behavioral Metrics - Tactical Parameters:**
 - [ ] Assault: High Aggression (>0.7), Low CoverPref (<0.4)
@@ -665,52 +411,6 @@ if episode_complete:
 
 ## Implementation Status
 
-### v8.0 Implementation Progress
-
-**Week 1: Action Space & Network Redesign ✅ COMPLETED**
-- [x] Define `FTacticalParameters` struct
-- [x] Define `FCombatParameters` struct
-- [x] Update `FMacroAction` to include tactical and combat parameters
-- [x] Implement separate strategy-specific policy heads
-- [x] Update ONNX export/import logic for multi-head architecture
-- [x] Add strategy routing logic
-- [x] Remove v7.0 strategy selection from RL action space
-
-**Week 2: EQS Integration & Combat Execution ✅ COMPLETED**
-- [x] Implement `STTask_ExecuteTacticalMovement_v8.cpp`
-- [x] Add `ApplyTacticalParameters()` function
-- [x] Modify EQS queries to accept RL-controlled weights
-- [x] Implement parameter-to-EQS weight mapping
-- [x] Implement `ExecuteCombat()` with learned target priority
-- [x] Add target selection logic (Closest, LowestHP)
-- [x] Performance validation: <20ms/sec with combat
-
-**Week 3: Unified Reward System ✅ COMPLETED**
-- [x] Implement `StrategyRewardCalculator` class
-- [x] Define strategy-specific weight profiles
-- [x] Add combat reward components
-- [x] Add TensorBoard logging for reward breakdown
-- [x] Update `RewardCalculator.cpp` with new reward structure
-- [x] Implement separate reward tracking for tactical vs combat
-- [x] Remove v7.0 reward calculation logic
-
-**Week 4: Training Pipeline 🔄 IN PROGRESS**
-- [x] Update Python training environment (4 continuous + 2 discrete)
-- [x] Implement multi-head policy network
-- [x] Configure PPO for hybrid action space
-- [x] Implement curriculum learning schedule
-- [ ] Run initial training (1,000-2,000 episodes baseline)
-- [ ] Monitor strategy-specific parameter profiles
-- [ ] Monitor combat choice differentiation
-
-**Week 5: Extended Training & Validation**
-- [ ] Continue training to 4,000-6,000 episodes
-- [ ] Hyperparameter sweep (learning rate, reward weights)
-- [ ] Monitor convergence (loss, win rate, behavioral metrics)
-- [ ] Validate strategy-specific behaviors
-- [ ] Validate combat effectiveness
-- [ ] Head-to-head: v8.0 vs v7.0 (100 matches)
-- [ ] GO/NO-GO: If >60% win rate → Merge to main
 
 ---
 
@@ -755,138 +455,11 @@ python tools/sync_config_from_cpp.py
 
 ---
 
-## Debug Visualization
-
-### In-Game Debug Commands
-
-```cpp
-// Console commands
-ToggleMCTSDebug     // Show MCTS strategy assignments
-ToggleRLDebug       // Show RL tactical parameters
-PrintMCTSStats      // Log MCTS performance metrics
-PrintRLStats        // Log RL inference latency
-```
-
-### Visual Debugging
-
-**MCTS Assignments:**
-- Yellow arrows: Agent → Objective
-- Text labels: Strategy name + expected value
-- Color-coded spheres: Strategy type
-
-**RL Tactical Parameters:**
-```cpp
-void UFollowerAgentComponent::DebugDrawTacticalState()
-{
-    // Draw parameter values
-    DrawDebugString(World, Location + FVector(0,0,200),
-        FString::Printf(TEXT("Aggression: %.2f"), TacticalParams.Aggression),
-        nullptr, FColor::Red, 0.0f, true);
-
-    DrawDebugString(World, Location + FVector(0,0,180),
-        FString::Printf(TEXT("Cover: %.2f"), TacticalParams.CoverPreference),
-        nullptr, FColor::Blue, 0.0f, true);
-
-    DrawDebugString(World, Location + FVector(0,0,160),
-        FString::Printf(TEXT("Spread: %.2f"), TacticalParams.SpreadDistance),
-        nullptr, FColor::Green, 0.0f, true);
-
-    DrawDebugString(World, Location + FVector(0,0,140),
-        FString::Printf(TEXT("Risk: %.2f"), TacticalParams.RiskTolerance),
-        nullptr, FColor::Yellow, 0.0f, true);
-}
-```
-
----
 
 ## Profiling & Benchmarking
 
 ### Unreal Insights Targets
 
-**Performance Benchmarks (4v4 scenario):**
-| Component | Target | Measurement Method |
-|-----------|--------|-------------------|
-| MCTS Assignment | < 50ms | Insights: `MCTSComponent::RunMCTS` |
-| Batched RL Inference | < 4ms | Insights: `RLPolicyNetwork::GetTacticalParametersBatched` |
-| EQS Queries | < 2ms (4 agents) | Insights: `EnvQueryManager::RunQuery` |
-| StateTree Execution | < 2ms (4 agents) | Insights: `StateTreeComponent::Tick` |
-| **Total AI Frame** | **< 20ms/sec** | Insights: `GameMode::TickAI` |
-
-**Memory Budget:**
-| Component | Target | Actual |
-|-----------|--------|--------|
-| MCTS Tree | < 1MB | TBD |
-| RL Network Weights | < 500KB | 458KB ✅ |
-| Observations (4 agents) | < 20KB | TBD |
-| **Total AI Memory** | **< 2MB** | TBD |
-
----
-
-## Future Extensions
-
-### v8.5: Learned Targeting (Deferred)
-
-**Motivation:** If positioning <70% predictive of win rate, add learned aiming
-
-**Extended Action Space:**
-```cpp
-struct FCombatParametersExtended
-{
-    ETargetPriority Priority;      // Closest, LowestHP, MostThreatening
-    EEngagementStyle Style;        // Aggressive, Suppressive, HoldFire
-    FVector2D AimOffset;           // [-1,1] horizontal/vertical aim offset
-};
-```
-
-**Complexity:** 4 continuous tactical + 2 continuous aim + 2 discrete combat = ~8 action dimensions
-
-### v9.0: Raw Movement Control (Research)
-
-**Motivation:** Maximum emergent behavior, no EQS constraints
-
-**Action Space:**
-```cpp
-enum class EMovementPrimitive : uint8
-{
-    Forward, Backward, Left, Right,
-    ForwardLeft, ForwardRight, BackwardLeft, BackwardRight,
-    Stop
-};
-```
-
-**Challenges:**
-- 9× action space complexity vs v8.0
-- Requires extensive exploration (10,000+ episodes)
-- No graceful degradation (random movements may be invalid)
-
----
-
-## Common Workflows
-
-### Adding a New Tactical Parameter
-
-1. Add to `FTacticalParameters` struct (`RL/RLTypes.h:220`)
-2. Update network output size (`RLPolicyNetwork.cpp`)
-3. Add EQS weight mapping (`STTask_ExecuteTacticalMovement_v8.cpp:594`)
-4. Update reward calculation if needed (`RewardCalculator.cpp`)
-5. Retrain model with new action space
-6. Update expected behavioral metrics
-
-### Tuning Strategy Reward Weights
-
-1. Edit weight profiles in `RewardCalculator.cpp:290`
-2. Run short training (500 episodes) to test
-3. Check TensorBoard for parameter distributions
-4. If differentiation insufficient, increase weight contrast
-5. Repeat until parameter profiles converge to expectations
-
-### Debugging Low Win Rate
-
-1. Check `ToggleMCTSDebug` - Are strategy assignments reasonable?
-2. Check `ToggleRLDebug` - Do tactical parameters match strategy?
-3. Check TensorBoard reward breakdown - Which components negative?
-4. Profile inference latency - Is batching working?
-5. Review episode replays - Visual inspection of tactics
 
 ---
 
@@ -915,6 +488,3 @@ enum class EMovementPrimitive : uint8
 ---
 
 **Version:** v8.0 (Tactical Parameters Architecture)
-**Last Updated:** 2026-01-15
-**Status:** Week 4 Training Pipeline In Progress
-**Next Milestone:** Initial training (1,000-2,000 episodes) → Behavioral validation

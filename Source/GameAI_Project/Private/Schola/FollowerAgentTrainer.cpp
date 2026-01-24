@@ -5,6 +5,7 @@
 #include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/TacticalRewardProvider.h"
 #include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 
@@ -151,10 +152,23 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 
 	ASimulationManagerGameMode* SimManager = Env->SimulationManager;
 
-	// v8.5 CRITICAL FIX: Get the EnvironmentID for THIS agent's environment
-	int32 EnvironmentID = Env->EnvironmentID;
+	// v8.5 CRITICAL FIX: Get the LOGICAL EnvironmentID for THIS agent's team
+	// Step 1: Get agent's TeamID
+	int32 InTeamID = -1;
+	if (FollowerAgent && FollowerAgent->TeamLeader)
+	{
+		InTeamID = FollowerAgent->TeamLeader->TeamID;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeStatus: Cannot determine TeamID! FollowerAgent or TeamLeader is NULL!"));
+		return EAgentTrainingStatus::Running;
+	}
 
-	// Check per-environment termination flags
+	// Step 2: Map TeamID to LogicalEnvironmentID (Teams 0,1→Env0 | Teams 2,3→Env1 | etc.)
+	int32 EnvironmentID = Env->GetLogicalEnvironmentID(InTeamID);
+
+	// Check per-environment termination flags (NOW checking the correct environment!)
 	bool bShouldTerminate = SimManager->IsEnvironmentEpisodeEnding(EnvironmentID) ||
 	                       SimManager->GetEnvironmentLastTerminated(EnvironmentID);
 
@@ -206,6 +220,20 @@ void AFollowerAgentTrainer::GetInfo(TMap<FString, FString>& Info)
 	{
 		Info.Add(TEXT("current_reward"), FString::SanitizeFloat(RewardProvider->GetReward()));
 	}
+
+	// v8.5 VECTORIZED TRAINING: Pass logical environment ID to Python
+	// Python uses this to group agents by logical environment for episode detection
+	int32 LogicalEnvID = -1;
+	if (ScholaAgent && ScholaAgent->ScholaEnvironment)
+	{
+		AScholaCombatEnvironment* Env = Cast<AScholaCombatEnvironment>(ScholaAgent->ScholaEnvironment);
+		if (Env && FollowerAgent && FollowerAgent->TeamLeader)
+		{
+			int32 InTeamID = FollowerAgent->TeamLeader->TeamID;
+			LogicalEnvID = Env->GetLogicalEnvironmentID(InTeamID);
+		}
+	}
+	Info.Add(TEXT("logical_env_id"), FString::FromInt(LogicalEnvID));
 
 	// DIAGNOSTIC: Add current training status to info
 	EAgentTrainingStatus CurrentStatus = State.TrainingStatus;
