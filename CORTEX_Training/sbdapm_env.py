@@ -83,7 +83,7 @@ if SCHOLA_AVAILABLE:
                 self.schola_env = ScholaEnv(
                     unreal_connection=connection,
                     verbosity=1,
-                    auto_reset_type=AutoResetType.SAME_STEP
+                    auto_reset_type=AutoResetType.SAME_STEP  # 🔥 FIX: Async episode handling
                 )
                 print(f"[ENV v8.0] Connected!")
 
@@ -306,23 +306,74 @@ if SCHOLA_AVAILABLE:
                     return {}, {}
             
             else:
-                # ✅ 이후 리셋: Schola의 AutoReset이 자동 처리하므로
-                # 다음 poll()에서 새 에피소드 관측값을 받음
-                print(f"RESET: AutoReset mode - returning last observations (Time={time.time():.2f})")
-                
-                # 환경별 카운터 리셋
+                # 🔥 FIX: Poll for new episode observations from AutoReset
+                print(f"RESET: AutoReset mode - polling for new episode observations (Time={time.time():.2f})")
+
+                # Reset per-environment episode tracking
                 current_time = time.time()
                 for env_idx in range(self.num_envs):
                     self._env_episode_steps[env_idx] = 0
                     self._env_episode_start_time[env_idx] = current_time
                     self._env_done_flags[env_idx] = False
 
-                # ✅ 마지막 관측값 반환 (Schola가 자동 리셋 처리)
-                fallback_obs = {
-                    flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
-                    for flat_id in self._agent_ids
-                }
-                return fallback_obs, {flat_id: {} for flat_id in self._agent_ids}
+                try:
+                    # 🔥 CRITICAL FIX: Send dummy actions to trigger new episode, then poll
+                    # AutoResetType.NEXT_STEP requires send_actions() → poll() cycle to get new episode data
+
+                    # Send dummy actions (zeros) to all agents to trigger episode restart
+                    allactionkeys = self._get_all_action_keys()
+                    dummy_actions = {}
+                    for flat_id in self._agent_ids:
+                        env_idx, agent_idx = self.agent_map[flat_id]
+                        if env_idx not in dummy_actions:
+                            dummy_actions[env_idx] = {}
+                        agent_keys = allactionkeys.get((env_idx, agent_idx), [])
+                        if agent_keys:
+                            dummy_action = np.array([0.5, 0.5, 0.5, 0.5, 0.0], dtype=np.float32)
+                            dummy_actions[env_idx][agent_idx] = {key: dummy_action for key in agent_keys}
+
+                    print(f"RESET: Sending dummy actions to trigger new episode...")
+                    print(f"  Sending actions for {len(dummy_actions)} physical environments")
+                    self.schola_env.send_actions(dummy_actions)
+                    print(f"RESET: send_actions() completed")
+
+                    # Now poll for new episode observations
+                    poll_start = time.time()
+                    print(f"RESET: Polling for new episode data... (THIS MAY BLOCK IF UE5 NOT RESPONDING)")
+                    rawobs = self.schola_env.poll()
+                    poll_duration = time.time() - poll_start
+                    print(f"RESET: poll() completed in {poll_duration:.2f}s")
+
+                    if poll_duration > 5.0:
+                        print(f"⚠️⚠️⚠️  CRITICAL: poll() took {poll_duration:.1f}s (expected <1s)")
+                        print(f"  This indicates UE5 episode restart is very slow or blocked!")
+                        print(f"  Check UE5 logs for:")
+                        print(f"    - [EPISODE END] messages")
+                        print(f"    - [SCHOLA RESET] ResetEnvironment() logs")
+                        print(f"    - [EPISODE START] OnEpisodeStarted broadcast")
+
+                    # Extract observations (poll returns 4 or 5-tuple)
+                    if isinstance(rawobs, tuple):
+                        obs_nested = rawobs[0]
+                    else:
+                        obs_nested = rawobs
+
+                    result = self._process_obs(obs_nested)
+                    print(f"RESET: New episode observations received, Agents={len(result[0])}, Duration={time.time()-reset_start:.2f}s")
+                    print("=" * 80)
+                    return result
+
+                except Exception as e:
+                    print(f"RESET ERROR during poll: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+                    # Fallback to zero observations (better than hanging)
+                    fallback_obs = {
+                        flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
+                        for flat_id in self._agent_ids
+                    }
+                    return fallback_obs, {flat_id: {} for flat_id in self._agent_ids}
 
         def step(self, actiondict):
             """Execute one step - RLlib standard async pattern"""
@@ -349,7 +400,28 @@ if SCHOLA_AVAILABLE:
                 
                 # Send actions and poll
                 self.schola_env.send_actions(formattedactions)
+
+                # 🔥 DEBUG: Monitor poll() duration to detect blocking
+                poll_start_time = time.time()
+
+                # 🔥 DIAGNOSTIC: Log before potentially blocking poll()
+                any_env_at_milestone = any(self._env_episode_steps[i] % 100 == 0 for i in range(self.num_envs))
+                if any_env_at_milestone:
+                    current_max_step = max(self._env_episode_steps.values())
+                    print(f"[STEP {current_max_step}] About to call poll()...")
+
+                    # 🔥 FIX: Warn if approaching known deadlock boundaries (multiples of 1000)
+                    if current_max_step % 1000 == 0:
+                        print(f"⚠️  WARNING: Step {current_max_step} is a training batch boundary!")
+                        print(f"   If poll() blocks here, RLlib training update may be interfering with gRPC")
+
                 step_result = self.schola_env.poll()
+                poll_duration = time.time() - poll_start_time
+
+                if poll_duration > 2.0:
+                    print(f"⚠️  WARNING: step poll() took {poll_duration:.1f}s (expected <0.5s)")
+                    print(f"    Env steps: {list(self._env_episode_steps.values())}")
+                    print(f"    Done flags: {list(self._env_done_flags.values())}")
                 
                 # Parse result
                 if len(step_result) == 5:
@@ -458,9 +530,12 @@ if SCHOLA_AVAILABLE:
                     if all_done and not self._env_done_flags.get(env_idx, False):
                         episode_duration = time.time() - self._env_episode_start_time[env_idx]
                         training_elapsed = time.time() - self._training_start_time
-                        print(f"[ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} completed")
+                        print("="*80)
+                        print(f"🏁 [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} FINISHED")
                         print(f"  Episode Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
                         print(f"  Training Elapsed: {training_elapsed:.1f}s")
+                        print(f"  🔥 CRITICAL: UE5 should now trigger episode restart via AutoReset")
+                        print("="*80)
                         self._env_episodes_completed[env_idx] += 1
                         self._env_done_flags[env_idx] = True
 

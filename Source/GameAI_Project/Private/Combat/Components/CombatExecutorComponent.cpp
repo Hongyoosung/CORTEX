@@ -4,6 +4,7 @@
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Combat/Components/WeaponComponent.h"
+#include "RL/Components/RewardCalculator.h"
 #include "AIController.h"
 #include "Team/TeamTypes.h"
 
@@ -19,6 +20,7 @@ void UCombatExecutorComponent::BeginPlay()
 	// Cache components
 	CachedHealthComponent = GetOwner()->FindComponentByClass<UHealthComponent>();
 	CachedPerceptionComponent = GetOwner()->FindComponentByClass<UAgentPerceptionComponent>();
+	RewardCalculator = GetOwner()->FindComponentByClass<URewardCalculator>();
 
 	// Bind to HealthComponent events for RL reward integration
 	if (CachedHealthComponent)

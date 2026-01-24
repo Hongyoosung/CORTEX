@@ -58,11 +58,11 @@ public:
 
 	/** Team leader for event signaling (optional, can be set externally) */
 	UPROPERTY(BlueprintReadWrite, Category = "Combat|Config")
-	UTeamLeaderComponent* TeamLeader = nullptr;
+	TObjectPtr<UTeamLeaderComponent> TeamLeader = nullptr;
 
 	/** Reward calculator for combat rewards (optional, can be set externally) */
 	UPROPERTY(BlueprintReadWrite, Category = "Combat|Config")
-	URewardCalculator* RewardCalculator = nullptr;
+	TObjectPtr<URewardCalculator> RewardCalculator = nullptr;
 
 	/** Is agent alive? (required for combat execution) */
 	UPROPERTY(BlueprintReadWrite, Category = "Combat|Config")

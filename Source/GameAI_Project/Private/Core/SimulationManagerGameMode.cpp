@@ -1449,6 +1449,13 @@ void ASimulationManagerGameMode::StartNewEpisode(int32 EnvironmentID, int32 Envi
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
+
+	// 🔥 CRITICAL FIX: Broadcast OnEpisodeStarted so agents send new observations to Python
+	// Without this, Python's poll() after reset() blocks indefinitely waiting for observations
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] Broadcasting OnEpisodeStarted(EnvID=%d, Episode=%d)..."),
+		EnvironmentID, EnvironmentEpisodeNumber);
+	OnEpisodeStarted.Broadcast(EnvironmentID, EnvironmentEpisodeNumber);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE START] OnEpisodeStarted.Broadcast() completed - agents can now send observations"));
 }
 
 //------------------------------------------------------------------------------

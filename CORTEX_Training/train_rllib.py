@@ -204,7 +204,7 @@ class SBDAPMConfig:
 
     # PPO hyperparameters
     LEARNING_RATE = 5e-5
-    TRAIN_BATCH_SIZE = 32000  # v8.5 VECTORIZED: 32 agents (4 envs × 8) → 4× data volume
+    TRAIN_BATCH_SIZE = 33600  # v8.5 FIX: Avoid exact 1000-step boundary (32 agents × 1050 steps)
     SGD_MINIBATCH_SIZE = 2048 # v8.5 VECTORIZED: Scaled proportionally (32000 / 16)
     NUM_SGD_ITER = 15
     GAMMA = 0.99
@@ -269,7 +269,7 @@ def create_ppo_config():
         .debugging(log_level="WARN")
         .reporting(
             metrics_num_episodes_for_smoothing=10,
-            min_sample_timesteps_per_iteration=100,
+            min_sample_timesteps_per_iteration=1000,  # FIX: Reduce training frequency (was 100)
         )
     )
     

@@ -10,6 +10,8 @@ UExternalGymConnector::UExternalGymConnector()
 void UExternalGymConnector::SubmitEnvironmentStates()
 {
 	this->SendState(this->TrainingState);
+
+	UE_LOG(LogSchola, Warning, TEXT("Submitted Environment States to External Gym Connector"));
 }
 
 FTrainingStateUpdate* UExternalGymConnector::ResolveEnvironmentStateUpdate()
