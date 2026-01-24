@@ -12,14 +12,12 @@
 #include "Core/SimulationManagerGameMode.h"
 #include "Kismet/GameplayStatics.h"
 
-UScholaAgentComponent::UScholaAgentComponent()
+UScholaAgentComponent::UScholaAgentComponent(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
 
-	// CRITICAL FIX: Hide CDO from TObjectIterator scans
-	// Schola's base class discovers components via TObjectIterator, which includes CDOs
-	// This causes a 5-component discovery (4 agents + 1 CDO) vs 4-entry id_manager mismatch
 	if (HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
 	{
 		// Disable ticking on CDO (should never execute anyway)
