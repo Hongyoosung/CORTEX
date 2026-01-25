@@ -151,10 +151,33 @@ void UCombatExecutorComponent::ExecuteCombat(const FCombatParameters& CombatPara
 	}
 
 	// ========================================
-	// Line-of-sight check before firing
+	// Facing check before firing
+	// Prevents agents from firing while moving backwards
 	// ========================================
 	FVector OwnerLocation = GetOwner()->GetActorLocation();
 	FVector TargetLocation = Target->GetActorLocation();
+	FVector DirectionToTarget = (TargetLocation - OwnerLocation).GetSafeNormal();
+	FVector AgentForward = GetOwner()->GetActorForwardVector();
+
+	// Calculate angle between forward vector and target direction
+	float DotProduct = FVector::DotProduct(AgentForward, DirectionToTarget);
+	float AngleToTarget = FMath::Acos(DotProduct) * (180.0f / PI);
+
+	// Only proceed if agent is facing target within tolerance
+	if (AngleToTarget > MaxFacingAngleToFire)
+	{
+		// Agent not facing target yet - SetFocus will rotate, but don't fire yet
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[COMBAT v8.0] '%s': Not facing target '%s' (%.1f° > %.1f°), holding fire"),
+			*GetOwner()->GetName(),
+			*Target->GetName(),
+			AngleToTarget,
+			MaxFacingAngleToFire);
+		return;
+	}
+
+	// ========================================
+	// Line-of-sight check before firing
+	// ========================================
 
 	// Eye-level adjustment for accurate LOS check
 	FVector StartLocation = OwnerLocation + FVector(0, 0, 150.0f);
@@ -196,17 +219,18 @@ void UCombatExecutorComponent::ExecuteCombat(const FCombatParameters& CombatPara
 	if (WeaponComp->CanFire())
 	{
 		// Calculate fire direction
-		FVector FireDirection = (TargetLocation - OwnerLocation).GetSafeNormal();
+		FVector FireDirection = DirectionToTarget;
 
 		// Fire in direction (no auto-aim assistance for RL agents)
 		bool bFired = WeaponComp->FireInDirection(FireDirection);
 
 		if (bFired)
 		{
-			UE_LOG(LogTemp, VeryVerbose, TEXT("[COMBAT v8.0] '%s' → '%s': Fired (Priority: %s, clear LOS)"),
+			UE_LOG(LogTemp, VeryVerbose, TEXT("[COMBAT v8.0] '%s' → '%s': Fired (Priority: %s, angle: %.1f°, clear LOS)"),
 				*GetOwner()->GetName(),
 				*Target->GetName(),
-				*UEnum::GetValueAsString(CombatParams.Priority));
+				*UEnum::GetValueAsString(CombatParams.Priority),
+				AngleToTarget);
 		}
 	}
 }

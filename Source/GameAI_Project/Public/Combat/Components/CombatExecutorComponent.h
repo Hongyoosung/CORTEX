@@ -68,6 +68,10 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category = "Combat|Config")
 	bool bIsAlive = true;
 
+	/** Maximum angle (degrees) between forward vector and target for firing */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config")
+	float MaxFacingAngleToFire = 15.0f;
+
 private:
 	//--------------------------------------------------------------------------
 	// COMBAT EVENT HANDLERS

@@ -204,8 +204,8 @@ class SBDAPMConfig:
 
     # PPO hyperparameters
     LEARNING_RATE = 5e-5
-    TRAIN_BATCH_SIZE = 80640  # v8.6: 4 envs × 8 agents × 2520 steps (avoids all 1000-step boundaries)
-    SGD_MINIBATCH_SIZE = 2048 # v8.5 VECTORIZED: Scaled proportionally (32000 / 16)
+    TRAIN_BATCH_SIZE = 32000  # v8.6 ASYNC: 4 envs × 8 agents × 1000 steps = policy update every 1000 env steps
+    SGD_MINIBATCH_SIZE = 2048 # Minibatch size for SGD updates
     NUM_SGD_ITER = 15
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
@@ -245,24 +245,25 @@ def create_env_config():
 
 def create_ppo_config():
     """Create RLlib PPO configuration - Fixed based on ppo.py source."""
-    
+    from episode_logger_callback import EpisodeLoggerCallback
+
     # 1. Config 객체 생성
     config = PPOConfig()
-    
+
     # 2. Environment 설정
     config = config.environment(
         env="sbdapm_env_async",
         env_config=create_env_config(),
         disable_env_checking=True,
     )
-    
+
     # 3. Framework 및 Runner 설정
     config = config.framework("torch")
     config = config.env_runners(
         num_env_runners=SBDAPMConfig.NUM_WORKERS,
         num_envs_per_env_runner=SBDAPMConfig.NUM_ENVS_PER_WORKER,
         rollout_fragment_length=256,
-        batch_mode="truncate_episodes",
+        batch_mode="complete_episodes",  # FIX: Change to complete_episodes for proper episode tracking
     )
     
     # 4. Multi-agent 설정
@@ -272,15 +273,19 @@ def create_ppo_config():
         count_steps_by="agent_steps",
     )
     
-    # 5. Debugging & Reporting
+    # 5. Callbacks (Episode Logging)
+    config = config.callbacks(EpisodeLoggerCallback)
+
+    # 6. Debugging & Reporting
     config = config.debugging(log_level="WARN")
     config = config.reporting(
         metrics_num_episodes_for_smoothing=10,
-        min_sample_timesteps_per_iteration=80640,  # v8.6: Match TRAIN_BATCH_SIZE (update every 2520 env steps)
+        min_sample_timesteps_per_iteration=32000,  # v8.6 ASYNC: Match TRAIN_BATCH_SIZE (update every 1000 env steps)
     )
 
-    # 6. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
+    # 7. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
     config = config.training(
+        train_batch_size=SBDAPMConfig.TRAIN_BATCH_SIZE,  # FIX: Add train_batch_size
         lambda_=SBDAPMConfig.GAE_LAMBDA,
         clip_param=SBDAPMConfig.CLIP_PARAM,
         vf_clip_param=10.0,
@@ -532,16 +537,36 @@ def train(args):
         if i == 0 or (i + 1) % 10 == 0:
             print(f"\n  [ITERATION {i+1} DETAILS]")
             if episodes_completed_this_iter:
-                print(f"    Reward: mean={reward:.2f}, min={reward_min:.2f}, max={reward_max:.2f}")
+                print(f"    Episode Reward: mean={reward:.2f}, min={reward_min:.2f}, max={reward_max:.2f}")
                 print(f"    Episode length: {ep_len:.1f} steps")
                 print(f"    Episodes this iteration: {episodes}")
+
+                # Show custom metrics from callback (per-agent and per-env rewards)
+                custom_metrics = env_results.get("custom_metrics", {})
+                if custom_metrics:
+                    agent_reward_mean = custom_metrics.get("agent_reward_mean_mean", None)
+                    agent_reward_std = custom_metrics.get("agent_reward_std_mean", None)
+                    env_reward_mean = custom_metrics.get("env_reward_mean_mean", None)
+
+                    if agent_reward_mean is not None:
+                        print(f"    Per-Agent Reward: mean={agent_reward_mean:.2f}, std={agent_reward_std:.2f}")
+                    if env_reward_mean is not None:
+                        print(f"    Per-Env Reward: mean={env_reward_mean:.2f}")
             else:
                 print(f"    No episodes completed this iteration (still collecting samples)")
             print(f"    Agent steps this iteration: {agent_steps}")
             print(f"    Cumulative: {cumulative_episodes} episodes, {cumulative_steps} steps")
-            learner_info = result.get('info', {}).get('learner', {}).get('default_policy', {}).get('learner_stats', {})
-            total_loss = learner_info.get('total_loss', 'N/A')
-            print(f"    Policy loss: {total_loss}")
+
+            # Show learner stats
+            learner_info = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {})
+            if learner_info:
+                total_loss = learner_info.get('total_loss', 'N/A')
+                vf_loss = learner_info.get('vf_loss', 'N/A')
+                policy_loss = learner_info.get('policy_loss', 'N/A')
+                kl = learner_info.get('kl', 'N/A')
+                entropy = learner_info.get('entropy', 'N/A')
+                print(f"    Loss: total={total_loss:.4f}, policy={policy_loss:.4f}, vf={vf_loss:.4f}" if isinstance(total_loss, float) else f"    Loss: {total_loss}")
+                print(f"    KL divergence: {kl:.6f}, Entropy: {entropy:.4f}" if isinstance(kl, float) else "")
             print()
 
         # Checkpoint

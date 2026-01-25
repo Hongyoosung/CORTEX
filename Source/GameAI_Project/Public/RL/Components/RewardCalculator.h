@@ -24,14 +24,18 @@ namespace RewardConfig {
 	// === BASE REWARD COMPONENT VALUES ===
 	// These are scaled by strategy-specific weights
 
-	// Objective progress (v8.0: volume-based)
-	constexpr float OBJECTIVE_ADVANCE_REWARD = 0.1f;       // Moving closer per step
-	constexpr float OBJECTIVE_VOLUME_REWARD = 0.1f;        // Inside volume per step
+	// Objective progress (v8.0: REBALANCED - prioritize objectives over combat)
+	constexpr float OBJECTIVE_ADVANCE_REWARD = 0.5f;       // Moving closer per step (was 0.1f)
+	constexpr float OBJECTIVE_VOLUME_REWARD = 1.0f;        // Inside volume per step (was 0.1f) - 10× increase
+	constexpr float OBJECTIVE_CAPTURE_REWARD = 100.0f;     // NEW: Completing objective capture
+	constexpr float OBJECTIVE_PROGRESS_REWARD = 50.0f;     // NEW: Incremental capture progress (per 1.0 delta)
+	constexpr float MATCH_WIN_REWARD = 200.0f;             // NEW: Terminal reward for winning match
+	constexpr float MATCH_LOSS_PENALTY = -100.0f;          // NEW: Terminal penalty for losing match
 
-	// Combat effectiveness
-	constexpr float DAMAGE_REWARD_SCALE = 0.1f;            // Per 1 damage dealt
-	constexpr float KILL_REWARD_BASE = 10.0f;              // Base kill reward
-	constexpr float KILL_REWARD_EFFICIENT = 12.0f;         // Efficient target selection
+	// Combat effectiveness (REBALANCED - reduced to prevent combat spam)
+	constexpr float DAMAGE_REWARD_SCALE = 0.05f;           // Per 1 damage dealt (was 0.1f) - 50% reduction
+	constexpr float KILL_REWARD_BASE = 5.0f;               // Base kill reward (was 10.0f) - 50% reduction
+	constexpr float KILL_REWARD_EFFICIENT = 6.0f;          // Efficient target selection (was 12.0f) - 50% reduction
 
 	// Survival
 	constexpr float DEATH_PENALTY = -10.0f;                // Base death penalty
@@ -39,11 +43,12 @@ namespace RewardConfig {
 	// Cover usage
 	constexpr float COVER_BONUS = 0.1f;                    // Per step in cover
 
-	// Team coordination
-	constexpr float FORMATION_BONUS = 0.1f;                // Per step in formation
+	// Team coordination (INCREASED - incentivize teamwork)
+	constexpr float FORMATION_BONUS = 0.3f;                // Per step in formation (was 0.1f) - 3× increase
+	constexpr float COMBINED_FIRE_REWARD = 20.0f;          // Combined fire on same target (was 10.0f in code) - 2× increase
 
-	// v8.0: Tactical parameter effectiveness
-	constexpr float TACTICAL_EFFECTIVENESS_BONUS = 0.15f;  // Per step when parameters match outcomes
+	// v8.0: Tactical parameter effectiveness (INCREASED - improve parameter learning)
+	constexpr float TACTICAL_EFFECTIVENESS_BONUS = 0.5f;   // Per step when parameters match outcomes (was 0.15f) - 3.3× increase
 
 	// === STRATEGY-SPECIFIC WEIGHT PROFILES ===
 	// Mirrored from Python training_env/unified_reward.py
@@ -398,6 +403,12 @@ private:
 
 	/** Current tactical parameters from RL (for effectiveness reward calculation) */
 	FTacticalParameters CurrentTacticalParams;
+
+	/** v8.0 REBALANCED: Track objective capture progress for incremental rewards */
+	float PreviousCaptureProgress = 0.0f;
+
+	/** Track if capture completion reward was already given (prevent duplicate rewards) */
+	bool bCaptureCompletionRewarded = false;
 
 public:
 	/** Get last reward breakdown for TensorBoard logging */

@@ -40,6 +40,32 @@ void URewardCalculator::BeginPlay()
 	// Reset state
 	AccumulatedIndividualReward = 0.0f;
 	AccumulatedCoordinationReward = 0.0f;
+
+	// v8.0 REBALANCED: Initialize capture progress tracking
+	PreviousCaptureProgress = 0.0f;
+	bCaptureCompletionRewarded = false;
+
+	// Initialize capture progress from objective (if available)
+	if (FollowerComponent)
+	{
+		AObjectiveActor* Objective = FollowerComponent->GetTargetObjective();
+		if (Objective)
+		{
+			int32 AgentTeamID = FollowerComponent->GetTeamID();
+			bool bIsHostile = Objective->IsHostileTo(AgentTeamID);
+
+			if (bIsHostile)
+			{
+				// For hostile objectives, track capture progress (inverse of durability)
+				PreviousCaptureProgress = 1.0f - Objective->GetDurabilityPercent();
+			}
+			else
+			{
+				// For friendly objectives, track durability directly
+				PreviousCaptureProgress = Objective->GetDurabilityPercent();
+			}
+		}
+	}
 }
 
 void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -206,26 +232,84 @@ float URewardCalculator::CalculateObjectiveProgressComponent(
 	float Reward = 0.0f;
 
 	AObjectiveActor* ObjectiveActor = FollowerComponent->GetTargetObjective();
-	
+
 	if (!ObjectiveActor || !GetOwner())
 	{
 		return 0.0f;
 	}
 
+	// Determine if attacking or defending this objective
+	int32 AgentTeamID = FollowerComponent->GetTeamID();
+	bool bIsHostileObjective = ObjectiveActor->IsHostileTo(AgentTeamID);
+
 	// Check if agent is in objective volume
 	bool bIsInVolume = ObjectiveActor->IsAgentInVolume(GetOwner());
 
-	// Volume retention reward (continuous while inside)
+	// ========================================
+	// v8.0 REBALANCED: Volume retention reward (continuous while inside)
+	// ========================================
 	if (bIsInVolume)
 	{
-		Reward += RewardConfig::OBJECTIVE_VOLUME_REWARD;  // +0.1 per step
+		Reward += RewardConfig::OBJECTIVE_VOLUME_REWARD;  // +1.0 per step (was 0.1)
 	}
 
+	// ========================================
+	// v8.0 REBALANCED: Incremental capture progress reward
+	// Track durability changes for attacking objectives
+	// ========================================
+	if (bIsHostileObjective)
+	{
+		// For hostile objectives: Reward when durability DECREASES (we're capturing it)
+		// Capture progress = (1.0 - durability) ranges from 0.0 (full health) to 1.0 (destroyed)
+		float CurrentCaptureProgress = 1.0f - ObjectiveActor->GetDurabilityPercent();
+		float ProgressDelta = CurrentCaptureProgress - PreviousCaptureProgress;
+
+		if (ProgressDelta > 0.0f)
+		{
+			// Incremental progress reward (scaled by delta)
+			Reward += ProgressDelta * RewardConfig::OBJECTIVE_PROGRESS_REWARD;  // +50.0 per 1.0 delta
+
+			UE_LOG(LogTemp, Log, TEXT("[REWARD v8.0] '%s': Objective capture progress +%.2f%% → Reward +%.2f"),
+				*GetOwner()->GetName(), ProgressDelta * 100.0f, ProgressDelta * RewardConfig::OBJECTIVE_PROGRESS_REWARD);
+		}
+
+		// Terminal reward for full capture (durability = 0)
+		if (CurrentCaptureProgress >= 0.99f && !bCaptureCompletionRewarded)
+		{
+			Reward += RewardConfig::OBJECTIVE_CAPTURE_REWARD;  // +100.0 for completing capture
+			bCaptureCompletionRewarded = true;
+
+			UE_LOG(LogTemp, Warning, TEXT("[REWARD v8.0] 🎯 '%s': OBJECTIVE CAPTURED! Terminal reward +%.1f"),
+				*GetOwner()->GetName(), RewardConfig::OBJECTIVE_CAPTURE_REWARD);
+		}
+
+		// Update previous progress
+		PreviousCaptureProgress = CurrentCaptureProgress;
+	}
+	else
+	{
+		// For friendly objectives: Reward for maintaining/recovering durability
+		float CurrentDurability = ObjectiveActor->GetDurabilityPercent();
+		float DurabilityDelta = CurrentDurability - PreviousCaptureProgress;
+
+		if (DurabilityDelta > 0.0f && bIsInVolume)
+		{
+			// Reward defense efforts (recovery while inside volume)
+			Reward += DurabilityDelta * RewardConfig::OBJECTIVE_PROGRESS_REWARD * 0.5f;  // +25.0 per 1.0 recovery
+		}
+
+		// Update previous durability
+		PreviousCaptureProgress = CurrentDurability;
+	}
+
+	// ========================================
+	// v8.0 REBALANCED: Distance-based approach reward
+	// ========================================
 	float currentDistance = FVector::Dist(CurrentObs.Position, ObjectiveActor->GetActorLocation());
 	float prevDistance = FVector::Dist(PrevObs.Position, ObjectiveActor->GetActorLocation());
 	if ((currentDistance < prevDistance) && !bIsInVolume)
 	{
-		Reward += RewardConfig::OBJECTIVE_ADVANCE_REWARD;  // +0.1 per step when advancing
+		Reward += RewardConfig::OBJECTIVE_ADVANCE_REWARD;  // +0.5 per step when advancing (was 0.1)
 	}
 
 	return Reward;
@@ -454,7 +538,32 @@ void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
 		EStrategyType PreviousStrategy = CurrentStrategy;
 		CurrentStrategy = Strategy;
 
-		UE_LOG(LogTemp, Log, TEXT("[REWARD] Strategy updated: %s → %s (reward weights may change)"),
+		// v8.0 REBALANCED: Reset capture progress tracking on strategy change
+		// (target objective might have changed)
+		PreviousCaptureProgress = 0.0f;
+		bCaptureCompletionRewarded = false;
+
+		// Re-initialize capture progress from new objective
+		if (FollowerComponent)
+		{
+			AObjectiveActor* Objective = FollowerComponent->GetTargetObjective();
+			if (Objective)
+			{
+				int32 AgentTeamID = FollowerComponent->GetTeamID();
+				bool bIsHostile = Objective->IsHostileTo(AgentTeamID);
+
+				if (bIsHostile)
+				{
+					PreviousCaptureProgress = 1.0f - Objective->GetDurabilityPercent();
+				}
+				else
+				{
+					PreviousCaptureProgress = Objective->GetDurabilityPercent();
+				}
+			}
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[REWARD v8.0] Strategy updated: %s → %s (reward weights + capture tracking reset)"),
 			*UEnum::GetValueAsString(PreviousStrategy),
 			*UEnum::GetValueAsString(Strategy));
 	}
@@ -536,8 +645,8 @@ void URewardCalculator::RegisterCombinedFire(AActor* Target)
 	// If 2+ agents firing at same target, award bonus
 	if (ExistingCount >= 1) // This agent + 1 other = combined fire
 	{
-		AccumulatedCoordinationReward += 10.0f; // +10 for combined fire
-		UE_LOG(LogTemp, Log, TEXT("[REWARD] Combined fire on %s: +10"), *Target->GetName());
+		AccumulatedCoordinationReward += RewardConfig::COMBINED_FIRE_REWARD; // +20.0 for combined fire (was 10.0)
+		UE_LOG(LogTemp, Log, TEXT("[REWARD v8.0] Combined fire on %s: +%.1f"), *Target->GetName(), RewardConfig::COMBINED_FIRE_REWARD);
 	}
 
 	// Add this record

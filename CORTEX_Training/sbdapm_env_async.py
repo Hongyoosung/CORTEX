@@ -120,6 +120,10 @@ if SCHOLA_AVAILABLE:
             self.info_buffer = {}
             self.buffer_lock = threading.Lock()
 
+            # Auto-reset detection
+            self.reset_event_queue = queue.Queue()  # Signals when UE5 auto-resets an environment
+            self.prev_env_done_states = {i: False for i in range(self.num_envs)}
+
             # gRPC Thread
             self.grpc_thread = None
             self.stop_event = threading.Event()
@@ -134,6 +138,9 @@ if SCHOLA_AVAILABLE:
             self._env_done_flags = {i: False for i in range(self.num_envs)}
             self._logical_env_map_initialized = False
             self._agent_logical_env = {}
+
+            # Reward tracking per agent (cumulative per episode)
+            self._agent_episode_rewards = {}
 
             # Performance metrics
             self.poll_durations = deque(maxlen=100)
@@ -294,7 +301,7 @@ if SCHOLA_AVAILABLE:
                     if not self._logical_env_map_initialized:
                         self._update_logical_env_map(info_nested)
 
-                    # 5. Build observation/reward/done dictionaries
+                    # 5. Build observation/reward/done/info dictionaries
                     obs_dict = {}
                     reward_dict = {}
                     terminated_dict = {}
@@ -334,7 +341,32 @@ if SCHOLA_AVAILABLE:
                     terminated_dict['__all__'] = all_agents_done
                     truncated_dict['__all__'] = all_agents_done
 
-                    # 6. Update buffers (thread-safe)
+                    # 6. Detect auto-reset events (per logical environment)
+                    for env_idx in range(self.num_envs):
+                        env_agents = self._get_agents_for_logical_env(env_idx)
+                        if not env_agents:
+                            continue
+
+                        # Check if this environment is currently done
+                        current_env_done = all(
+                            terminated_dict.get(aid, False) or truncated_dict.get(aid, False)
+                            for aid in env_agents
+                        )
+
+                        # Detect transition: was done → now not done (auto-reset occurred)
+                        prev_done = self.prev_env_done_states.get(env_idx, False)
+                        if prev_done and not current_env_done:
+                            # UE5 auto-reset detected! Signal to main thread
+                            try:
+                                self.reset_event_queue.put(env_idx, block=False)
+                                print(f"[gRPC Thread] Auto-reset detected for Env {env_idx}")
+                            except queue.Full:
+                                print(f"[gRPC Thread] Warning: Reset event queue full for Env {env_idx}")
+
+                        # Update previous state
+                        self.prev_env_done_states[env_idx] = current_env_done
+
+                    # 7. Update buffers (thread-safe)
                     with self.buffer_lock:
                         self.obs_buffer = obs_dict
                         self.reward_buffer = reward_dict
@@ -396,11 +428,20 @@ if SCHOLA_AVAILABLE:
                     self._env_episode_start_time[env_idx] = current_time
                     self._env_done_flags[env_idx] = False
 
+                # Initialize reward tracking for all agents
+                for flat_id in self._agent_ids:
+                    self._agent_episode_rewards[flat_id] = 0.0
+
                 # Hard reset (synchronous for first reset only)
                 rawobs = self.schola_env.hard_reset()
                 self._first_reset_done = True
 
                 self._update_agent_map()
+
+                # Initialize reward tracking after agent map is built
+                for flat_id in self._agent_ids:
+                    self._agent_episode_rewards[flat_id] = 0.0
+
                 result = self._process_obs(rawobs)
 
                 # Start async gRPC thread AFTER first reset
@@ -464,7 +505,30 @@ if SCHOLA_AVAILABLE:
             gRPC thread: Handles actual send_actions/poll.
             """
             try:
-                # 1. Format actions
+                # 1. Process auto-reset events from gRPC thread
+                while not self.reset_event_queue.empty():
+                    try:
+                        reset_env_idx = self.reset_event_queue.get_nowait()
+
+                        # Increment episode counter (previous episode completed)
+                        self._env_episodes_completed[reset_env_idx] += 1
+                        next_episode = self._env_episodes_completed[reset_env_idx]
+
+                        # Reset episode tracking for this environment
+                        self._env_episode_steps[reset_env_idx] = 0
+                        self._env_episode_start_time[reset_env_idx] = time.time()
+                        self._env_done_flags[reset_env_idx] = False
+
+                        # Reset reward tracking for this environment's agents
+                        env_agents = self._get_agents_for_logical_env(reset_env_idx)
+                        for aid in env_agents:
+                            self._agent_episode_rewards[aid] = 0.0
+
+                        print(f"[STEP] Processed auto-reset for Env {reset_env_idx} (Episode {next_episode} starting)")
+                    except queue.Empty:
+                        break
+
+                # 2. Format actions
                 allactionkeys = self._get_all_action_keys()
                 formattedactions = {}
 
@@ -484,7 +548,7 @@ if SCHOLA_AVAILABLE:
                     if agentkeys:
                         formattedactions[envidx][agentidx] = {key: actionarray for key in agentkeys}
 
-                # 2. Queue actions (non-blocking)
+                # 3. Queue actions (non-blocking)
                 try:
                     self.action_queue.put(formattedactions, block=False)
                 except queue.Full:
@@ -495,7 +559,7 @@ if SCHOLA_AVAILABLE:
                     except:
                         print("[STEP] Warning: Failed to queue actions")
 
-                # 3. Read latest observations from buffer (non-blocking)
+                # 4. Read latest observations from buffer (non-blocking)
                 with self.buffer_lock:
                     obs_dict = self.obs_buffer.copy() if self.obs_buffer else {}
                     reward_dict = self.reward_buffer.copy() if self.reward_buffer else {}
@@ -504,13 +568,18 @@ if SCHOLA_AVAILABLE:
                     truncated_dict = truncated_dict.copy()
                     info_dict = self.info_buffer.copy() if self.info_buffer else {}
 
-                # 4. Update episode tracking
+                # 5. Update episode tracking and reward accumulation
                 for env_idx in range(self.num_envs):
                     if not self._env_done_flags.get(env_idx, False):
                         self._env_episode_steps[env_idx] += 1
 
-                    # Check if environment finished
+                    # Accumulate rewards for agents in this environment
                     env_agents = self._get_agents_for_logical_env(env_idx)
+                    for aid in env_agents:
+                        if aid in reward_dict:
+                            self._agent_episode_rewards[aid] = self._agent_episode_rewards.get(aid, 0.0) + reward_dict[aid]
+
+                    # Check if environment finished
                     if env_agents:
                         all_done = all(
                             terminated_dict.get(aid, False) or truncated_dict.get(aid, False)
@@ -518,12 +587,27 @@ if SCHOLA_AVAILABLE:
                         )
                         if all_done and not self._env_done_flags.get(env_idx, False):
                             episode_duration = time.time() - self._env_episode_start_time[env_idx]
-                            print(f"🏁 [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} finished "
-                                  f"(Duration={episode_duration:.1f}s, Steps={self._env_episode_steps[env_idx]})")
-                            self._env_episodes_completed[env_idx] += 1
+
+                            # Calculate total reward for this environment
+                            env_total_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
+
+                            print("=" * 80)
+                            print(f"🏁 [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} finished")
+                            print(f"  Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
+                            print(f"  Total Reward: {env_total_reward:.2f}")
+                            print(f"  Agent Rewards:")
+                            for aid in env_agents[:4]:  # Show first 4 agents to avoid spam
+                                agent_reward = self._agent_episode_rewards.get(aid, 0.0)
+                                print(f"    {aid}: {agent_reward:.2f}")
+                            if len(env_agents) > 4:
+                                print(f"    ... and {len(env_agents) - 4} more agents")
+                            print("=" * 80)
+
+                            # NOTE: Episode counter incremented in auto-reset handler, not here
+                            # This prevents race conditions with async UE5 auto-reset
                             self._env_done_flags[env_idx] = True
 
-                # 5. Periodic logging
+                # 6. Periodic logging (detailed per-environment status)
                 should_log = any(
                     self._env_episode_steps[i] % 100 == 0 and self._env_episode_steps[i] > 0
                     for i in range(self.num_envs)
@@ -533,12 +617,33 @@ if SCHOLA_AVAILABLE:
                         i for i in range(self.num_envs)
                         if self._env_episode_steps[i] % 100 == 0 and self._env_episode_steps[i] > 0
                     )
+
+                    print("=" * 80)
+                    print(f"[PROGRESS] Step Milestone={self._env_episode_steps[first_milestone_env]}")
+
+                    # Summary of all environments (using global training time)
+                    training_elapsed = time.time() - self._training_start_time
+                    for summary_env_idx in range(self.num_envs):
+                        episode_time = time.time() - self._env_episode_start_time[summary_env_idx] if self._env_episode_start_time[summary_env_idx] else 0
+
+                        # Calculate current rewards for THIS logical environment
+                        env_agents = self._get_agents_for_logical_env(summary_env_idx)
+                        env_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
+
+                        status = "⚡" if episode_time < 60 else "🔥"
+                        done_flag = "✅ DONE" if self._env_done_flags.get(summary_env_idx, False) else "▶️ ACTIVE"
+                        print(f"  {status} Env {summary_env_idx}: {done_flag}, Episode {self._env_episodes_completed[summary_env_idx]}, "
+                              f"Steps={self._env_episode_steps[summary_env_idx]}, EpisodeTime={episode_time:.1f}s, "
+                              f"CurrentReward={env_reward:.2f}")
+
+                    # Performance metrics
                     avg_poll = np.mean(self.poll_durations) if self.poll_durations else 0
                     avg_send = np.mean(self.send_durations) if self.send_durations else 0
-                    print(f"[PROGRESS] Step {self._env_episode_steps[first_milestone_env]} "
-                          f"(Avg poll={avg_poll*1000:.1f}ms, send={avg_send*1000:.1f}ms)")
+                    print(f"  📊 Total Training Elapsed: {training_elapsed:.1f}s")
+                    print(f"  ⏱️ Avg poll={avg_poll*1000:.1f}ms, send={avg_send*1000:.1f}ms")
+                    print("=" * 80)
 
-                # 6. Fallback if no observations yet
+                # 7. Fallback if no observations yet
                 if not obs_dict:
                     obs_dict = {
                         flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
