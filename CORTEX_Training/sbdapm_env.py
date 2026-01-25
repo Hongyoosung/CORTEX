@@ -83,7 +83,7 @@ if SCHOLA_AVAILABLE:
                 self.schola_env = ScholaEnv(
                     unreal_connection=connection,
                     verbosity=1,
-                    auto_reset_type=AutoResetType.SAME_STEP  # 🔥 FIX: Async episode handling
+                    auto_reset_type=AutoResetType.SAME_STEP # 🔥 FIX: Async episode handling
                 )
                 print(f"[ENV v8.0] Connected!")
 

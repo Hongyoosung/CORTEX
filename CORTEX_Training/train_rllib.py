@@ -204,7 +204,7 @@ class SBDAPMConfig:
 
     # PPO hyperparameters
     LEARNING_RATE = 5e-5
-    TRAIN_BATCH_SIZE = 33600  # v8.5 FIX: Avoid exact 1000-step boundary (32 agents × 1050 steps)
+    TRAIN_BATCH_SIZE = 80640  # v8.6: 4 envs × 8 agents × 2520 steps (avoids all 1000-step boundaries)
     SGD_MINIBATCH_SIZE = 2048 # v8.5 VECTORIZED: Scaled proportionally (32000 / 16)
     NUM_SGD_ITER = 15
     GAMMA = 0.99
@@ -244,47 +244,61 @@ def create_env_config():
 
 
 def create_ppo_config():
-    """Create RLlib PPO configuration - v8.5 Async Vectorized."""
-    config = (
-        PPOConfig()
-        .environment(
-            env="sbdapm_env",
-            env_config=create_env_config(),
-            disable_env_checking=True,
-            # 🔥 비동기 에피소드 처리
-        )
-        .framework("torch")
-        .env_runners(
-            num_env_runners=SBDAPMConfig.NUM_WORKERS,
-            num_envs_per_env_runner=SBDAPMConfig.NUM_ENVS_PER_WORKER,
-            # 🔥 각 환경에서 수집할 스텝 수
-            rollout_fragment_length=200,  # 200 스텝마다 배치 생성
-            batch_mode="truncate_episodes",
-        )
-        .multi_agent(
-            policies={"shared_policy"},
-            policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "shared_policy",
-            count_steps_by="agent_steps",
-        )
-        .debugging(log_level="WARN")
-        .reporting(
-            metrics_num_episodes_for_smoothing=10,
-            min_sample_timesteps_per_iteration=1000,  # FIX: Reduce training frequency (was 100)
-        )
+    """Create RLlib PPO configuration - Fixed based on ppo.py source."""
+    
+    # 1. Config 객체 생성
+    config = PPOConfig()
+    
+    # 2. Environment 설정
+    config = config.environment(
+        env="sbdapm_env_async",
+        env_config=create_env_config(),
+        disable_env_checking=True,
     )
     
-    # PPO hyperparameters
-    config.lr = SBDAPMConfig.LEARNING_RATE
-    config.train_batch_size = SBDAPMConfig.TRAIN_BATCH_SIZE
-    config.sgd_minibatch_size = SBDAPMConfig.SGD_MINIBATCH_SIZE
-    config.num_sgd_iter = SBDAPMConfig.NUM_SGD_ITER
-    config.gamma = SBDAPMConfig.GAMMA
-    config.lambda_ = SBDAPMConfig.GAE_LAMBDA
-    config.clip_param = SBDAPMConfig.CLIP_PARAM
-    config.entropy_coeff = SBDAPMConfig.ENTROPY_COEFF
-    config.vf_loss_coeff = SBDAPMConfig.VF_LOSS_COEFF
+    # 3. Framework 및 Runner 설정
+    config = config.framework("torch")
+    config = config.env_runners(
+        num_env_runners=SBDAPMConfig.NUM_WORKERS,
+        num_envs_per_env_runner=SBDAPMConfig.NUM_ENVS_PER_WORKER,
+        rollout_fragment_length=256,
+        batch_mode="truncate_episodes",
+    )
     
-    # Model
+    # 4. Multi-agent 설정
+    config = config.multi_agent(
+        policies={"shared_policy"},
+        policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "shared_policy",
+        count_steps_by="agent_steps",
+    )
+    
+    # 5. Debugging & Reporting
+    config = config.debugging(log_level="WARN")
+    config = config.reporting(
+        metrics_num_episodes_for_smoothing=10,
+        min_sample_timesteps_per_iteration=80640,  # v8.6: Match TRAIN_BATCH_SIZE (update every 2520 env steps)
+    )
+
+    # 6. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
+    config = config.training(
+        lambda_=SBDAPMConfig.GAE_LAMBDA,
+        clip_param=SBDAPMConfig.CLIP_PARAM,
+        vf_clip_param=10.0,
+        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,
+        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,
+        use_gae=True,
+        use_critic=True,
+        use_kl_loss=True,
+        kl_coeff=0.2,
+        kl_target=0.01,
+    )
+
+    # PPO 고유 설정 (ppo.py __init__에 정의됨)
+    config.num_epochs = SBDAPMConfig.NUM_SGD_ITER
+    config.minibatch_size = SBDAPMConfig.SGD_MINIBATCH_SIZE
+    config.shuffle_batch_per_epoch = True
+    
+    # 9. Model configuration
     config.model = {
         "custom_model": "multi_head_tactical_policy",
         "custom_model_config": {
@@ -298,20 +312,23 @@ def create_ppo_config():
 
 
 
+
+
+
 def register_env():
     """Register custom environment with Ray."""
     from ray.tune.registry import register_env
 
     if SCHOLA_AVAILABLE:
         def env_creator(config):
-            from sbdapm_env import SBDAPMMultiAgentEnv
-            return SBDAPMMultiAgentEnv(**config)
+            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
+            return SBDAPMAsyncMultiAgentEnv(**config)
     else:
         def env_creator(config):
-            from sbdapm_env import SBDAPMEnv
-            return SBDAPMEnv(**config)
+            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
+            return SBDAPMAsyncMultiAgentEnv(**config)
 
-    register_env("sbdapm_env", env_creator)
+    register_env("sbdapm_env_async", env_creator)
 
 
 def register_custom_model():
