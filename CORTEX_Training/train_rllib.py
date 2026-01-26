@@ -145,6 +145,11 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         # Shared Value Head
         self.value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
 
+        # v8.8: Log-std clamping bounds (prevents entropy explosion)
+        log_std_config = model_config.get("custom_model_config", {})
+        self.log_std_min = log_std_config.get("log_std_min", -2.0)
+        self.log_std_max = log_std_config.get("log_std_max", 0.5)
+
         self._last_features = None
 
     @override(TorchModelV2)
@@ -176,7 +181,11 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
 
         combat_mean = self.combat_mean_head(features)
         means = torch.cat([tactical_means, combat_mean], dim=-1)
-        log_stds = self.log_std_head(features)
+
+        # v8.8: Clamp log_std to prevent entropy explosion
+        log_stds_raw = self.log_std_head(features)
+        log_stds = torch.clamp(log_stds_raw, self.log_std_min, self.log_std_max)
+
         output = torch.cat([means, log_stds], dim=-1)
 
         return output, state
@@ -203,15 +212,20 @@ class SBDAPMConfig:
     HIDDEN_LAYERS = [256, 256, 128]
 
     # PPO hyperparameters
-    LEARNING_RATE = 5e-5
+    LEARNING_RATE = 3e-5  # v8.8: Reduced from 5e-5 to improve stability
+    LEARNING_RATE_END = 1e-6  # v8.8: Final LR for schedule
     TRAIN_BATCH_SIZE = 32000  # v8.6 ASYNC: 4 envs × 8 agents × 1000 steps = policy update every 1000 env steps
     SGD_MINIBATCH_SIZE = 2048 # Minibatch size for SGD updates
-    NUM_SGD_ITER = 15
+    NUM_SGD_ITER = 10
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.01
+    ENTROPY_COEFF = 0.001  # v8.8: Reduced from 0.01 to prevent entropy explosion
     VF_LOSS_COEFF = 1.5
+
+    # v8.8: Log-std clamping to prevent entropy explosion
+    LOG_STD_MIN = -2.0  # Minimum log_std (σ_min ≈ 0.135)
+    LOG_STD_MAX = 0.5   # Maximum log_std (σ_max ≈ 1.65)
 
     # Training
     NUM_WORKERS = 0  # Windows: single process
@@ -263,7 +277,7 @@ def create_ppo_config():
         num_env_runners=SBDAPMConfig.NUM_WORKERS,
         num_envs_per_env_runner=SBDAPMConfig.NUM_ENVS_PER_WORKER,
         rollout_fragment_length=256,
-        batch_mode="complete_episodes",  # FIX: Change to complete_episodes for proper episode tracking
+        batch_mode="truncate_episodes", 
     )
     
     # 4. Multi-agent 설정
@@ -284,8 +298,16 @@ def create_ppo_config():
     )
 
     # 7. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
+    # v8.8: Added lr and lr_schedule to fix policy instability
     config = config.training(
-        train_batch_size=SBDAPMConfig.TRAIN_BATCH_SIZE,  # FIX: Add train_batch_size
+        lr=SBDAPMConfig.LEARNING_RATE,  # v8.8: CRITICAL FIX - was missing!
+        lr_schedule=[  # v8.8: Linear decay schedule for stability
+            (0, SBDAPMConfig.LEARNING_RATE),
+            (500000, SBDAPMConfig.LEARNING_RATE * 0.5),  # 50% at 500k steps
+            (1000000, SBDAPMConfig.LEARNING_RATE * 0.2),  # 20% at 1M steps
+            (2000000, SBDAPMConfig.LEARNING_RATE_END),  # Final LR at 2M steps
+        ],
+        train_batch_size=SBDAPMConfig.TRAIN_BATCH_SIZE,
         lambda_=SBDAPMConfig.GAE_LAMBDA,
         clip_param=SBDAPMConfig.CLIP_PARAM,
         vf_clip_param=10.0,
@@ -309,6 +331,9 @@ def create_ppo_config():
         "custom_model_config": {
             "obs_dim": RLConfig.OBSERVATION_SIZE,
             "hidden_layers": SBDAPMConfig.HIDDEN_LAYERS,
+            # v8.8: Log-std clamping bounds to prevent entropy explosion
+            "log_std_min": SBDAPMConfig.LOG_STD_MIN,
+            "log_std_max": SBDAPMConfig.LOG_STD_MAX,
         },
         "max_seq_len": 20,
     }
@@ -416,13 +441,18 @@ def train(args):
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
 
     print("=" * 60)
-    print("CORTEX v8.5 Vectorized Training")
+    print("CORTEX v8.8 Stabilized Training")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
     print(f"  UE5 Environments: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS}")
     print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
     print(f"  Iterations: {args.iterations}")
+    print()
+    print("  v8.8 Stability Fixes:")
+    print(f"    Learning Rate: {SBDAPMConfig.LEARNING_RATE} → {SBDAPMConfig.LEARNING_RATE_END} (scheduled)")
+    print(f"    Entropy Coeff: {SBDAPMConfig.ENTROPY_COEFF} (reduced from 0.01)")
+    print(f"    Log-Std Bounds: [{SBDAPMConfig.LOG_STD_MIN}, {SBDAPMConfig.LOG_STD_MAX}] (clamped)")
     print()
 
     # Cleanup any existing Ray
@@ -557,7 +587,7 @@ def train(args):
             print(f"    Agent steps this iteration: {agent_steps}")
             print(f"    Cumulative: {cumulative_episodes} episodes, {cumulative_steps} steps")
 
-            # Show learner stats
+            # Show learner stats (v8.8: Enhanced monitoring for stability diagnostics)
             learner_info = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {})
             if learner_info:
                 total_loss = learner_info.get('total_loss', 'N/A')
@@ -565,8 +595,20 @@ def train(args):
                 policy_loss = learner_info.get('policy_loss', 'N/A')
                 kl = learner_info.get('kl', 'N/A')
                 entropy = learner_info.get('entropy', 'N/A')
+                cur_kl_coeff = learner_info.get('cur_kl_coeff', 'N/A')
+
                 print(f"    Loss: total={total_loss:.4f}, policy={policy_loss:.4f}, vf={vf_loss:.4f}" if isinstance(total_loss, float) else f"    Loss: {total_loss}")
-                print(f"    KL divergence: {kl:.6f}, Entropy: {entropy:.4f}" if isinstance(kl, float) else "")
+                if isinstance(kl, float) and isinstance(entropy, float):
+                    print(f"    KL divergence: {kl:.6f}, Entropy: {entropy:.4f}")
+                    # v8.8: Warn if KL or entropy are concerning
+                    if kl > 0.02:
+                        print(f"    ⚠️ WARNING: KL divergence ({kl:.4f}) > 0.02 - policy updates may be too aggressive")
+                    if entropy > 7.0:
+                        print(f"    ⚠️ WARNING: Entropy ({entropy:.2f}) > 7.0 - possible exploration collapse")
+                    elif entropy < 1.0:
+                        print(f"    ⚠️ WARNING: Entropy ({entropy:.2f}) < 1.0 - possible premature convergence")
+                if isinstance(cur_kl_coeff, float):
+                    print(f"    Current KL coefficient: {cur_kl_coeff:.4f}")
             print()
 
         # Checkpoint

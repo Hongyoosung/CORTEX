@@ -1,5 +1,5 @@
 """
-SBDAPM Async Environment with Message Queuing (v8.6)
+SBDAPM Async Environment with Message Queuing (v8.7)
 
 This version implements ASYNC architecture to prevent poll() blocking during policy updates:
 
@@ -13,6 +13,13 @@ Key Features:
     2. Action Queue: Actions are queued and sent asynchronously
     3. Observation Buffer: Latest observations always available
     4. No Deadlocks: UE5 communication never blocks training
+    5. v8.7: Episode completion queuing to fix reward logging race condition
+
+v8.7 Changes:
+    - Added episode_completion_queue to capture episode end state BEFORE auto-reset
+    - Step() now returns terminal state when episode completes, ensuring RLlib's
+      on_episode_end callback is triggered with correct rewards
+    - Fixed issue where iteration updates showed 0.00 reward despite episodes completing
 
 Usage:
     In train_rllib.py, replace:
@@ -74,9 +81,9 @@ if SCHOLA_AVAILABLE:
             is_docker = kwargs.get("is_docker", False)
 
             self.num_envs = kwargs.get("num_envs", 4)
-            print(f"[ENV v8.6 ASYNC] Connecting to {host}:{port}...")
-            print(f"[ENV v8.6 ASYNC] Multi-environment: {self.num_envs} parallel UE5 envs")
-            print(f"[ENV v8.6 ASYNC] Architecture: ASYNC with message queuing")
+            print(f"[ENV v8.7 ASYNC] Connecting to {host}:{port}...")
+            print(f"[ENV v8.7 ASYNC] Multi-environment: {self.num_envs} parallel UE5 envs")
+            print(f"[ENV v8.7 ASYNC] Architecture: ASYNC with message queuing + episode completion queue")
 
             # Connect to UE5
             try:
@@ -86,7 +93,7 @@ if SCHOLA_AVAILABLE:
                     verbosity=1,
                     auto_reset_type=AutoResetType.SAME_STEP
                 )
-                print(f"[ENV v8.6 ASYNC] Connected!")
+                print(f"[ENV v8.7 ASYNC] Connected!")
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
                 raise
@@ -123,6 +130,12 @@ if SCHOLA_AVAILABLE:
             # Auto-reset detection
             self.reset_event_queue = queue.Queue()  # Signals when UE5 auto-resets an environment
             self.prev_env_done_states = {i: False for i in range(self.num_envs)}
+
+            # Episode completion tracking (v8.7: Fix for episode boundary race condition)
+            # When gRPC thread detects episode end, it queues the completion BEFORE auto-reset
+            # Main thread then returns __all__=True so RLlib's on_episode_end is triggered
+            self.episode_completion_queue = queue.Queue()  # (env_idx, final_rewards_dict, final_steps)
+            self.pending_episode_completion = {}  # env_idx -> (final_rewards, final_obs, final_info)
 
             # gRPC Thread
             self.grpc_thread = None
@@ -171,7 +184,7 @@ if SCHOLA_AVAILABLE:
                         self.reverse_map[(physical_env_idx, schola_agent_idx)] = flat_id
                         self._agent_ids.add(flat_id)
 
-            print(f"[ENV v8.6 ASYNC] Agent map: {len(self._agent_ids)} agents")
+            print(f"[ENV v8.7 ASYNC] Agent map: {len(self._agent_ids)} agents")
 
         def _update_logical_env_map(self, info_nested):
             """Update agent-to-logical-env mapping from UE5 info dict."""
@@ -201,7 +214,7 @@ if SCHOLA_AVAILABLE:
                 env_counts[logical_env_id] = env_counts.get(logical_env_id, 0) + 1
 
             self._logical_env_map_initialized = True
-            print(f"[ENV v8.6 ASYNC] Logical env mapping: {dict(sorted(env_counts.items()))}")
+            print(f"[ENV v8.7 ASYNC] Logical env mapping: {dict(sorted(env_counts.items()))}")
 
         def _get_agents_for_logical_env(self, logical_env_idx):
             """Get all agent IDs belonging to a logical environment."""
@@ -331,7 +344,13 @@ if SCHOLA_AVAILABLE:
                         is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
                         terminated_dict[flat_id] = is_term
                         truncated_dict[flat_id] = is_trunc
-                        info_dict[flat_id] = {"env_id": env_idx}
+
+                        # Add logical_env_id to info for callback tracking
+                        logical_env_id = self._agent_logical_env.get(flat_id, agent_idx // 8)
+                        info_dict[flat_id] = {
+                            "env_id": env_idx,
+                            "logical_env_id": logical_env_id
+                        }
 
                     # Check if all agents done
                     all_agents_done = all(
@@ -341,7 +360,8 @@ if SCHOLA_AVAILABLE:
                     terminated_dict['__all__'] = all_agents_done
                     truncated_dict['__all__'] = all_agents_done
 
-                    # 6. Detect auto-reset events (per logical environment)
+                    # 6. Detect episode completion AND auto-reset events (per logical environment)
+                    # v8.7: Queue episode completion BEFORE auto-reset overwrites the data
                     for env_idx in range(self.num_envs):
                         env_agents = self._get_agents_for_logical_env(env_idx)
                         if not env_agents:
@@ -353,8 +373,25 @@ if SCHOLA_AVAILABLE:
                             for aid in env_agents
                         )
 
-                        # Detect transition: was done → now not done (auto-reset occurred)
                         prev_done = self.prev_env_done_states.get(env_idx, False)
+
+                        # Detect transition: was NOT done → now done (episode just completed)
+                        # Queue the completion data BEFORE auto-reset can overwrite it
+                        if current_env_done and not prev_done:
+                            # Episode just completed! Capture final state
+                            final_rewards = {aid: reward_dict.get(aid, 0.0) for aid in env_agents}
+                            final_obs = {aid: obs_dict.get(aid) for aid in env_agents}
+                            final_info = {aid: info_dict.get(aid, {}) for aid in env_agents}
+                            try:
+                                self.episode_completion_queue.put(
+                                    (env_idx, final_rewards, final_obs, final_info),
+                                    block=False
+                                )
+                                print(f"[gRPC Thread] Episode completion queued for Env {env_idx}")
+                            except queue.Full:
+                                print(f"[gRPC Thread] Warning: Episode completion queue full for Env {env_idx}")
+
+                        # Detect transition: was done → now not done (auto-reset occurred)
                         if prev_done and not current_env_done:
                             # UE5 auto-reset detected! Signal to main thread
                             try:
@@ -393,14 +430,14 @@ if SCHOLA_AVAILABLE:
                 if not self.grpc_ready.wait(timeout=5.0):
                     raise RuntimeError("gRPC thread failed to start")
 
-                print(f"[ENV v8.6 ASYNC] gRPC thread started successfully")
+                print(f"[ENV v8.7 ASYNC] gRPC thread started successfully")
 
         def _stop_grpc_thread(self):
             """Stop async gRPC communication thread."""
             if self.grpc_thread and self.grpc_thread.is_alive():
                 self.stop_event.set()
                 self.grpc_thread.join(timeout=2.0)
-                print(f"[ENV v8.6 ASYNC] gRPC thread stopped")
+                print(f"[ENV v8.7 ASYNC] gRPC thread stopped")
 
         # === RLlib Interface (Main Thread) ===
 
@@ -503,8 +540,89 @@ if SCHOLA_AVAILABLE:
             Execute one step.
             Main thread: Queues actions and reads latest buffers (non-blocking).
             gRPC thread: Handles actual send_actions/poll.
+
+            v8.7: Episode completion is now properly signaled to RLlib BEFORE auto-reset.
             """
             try:
+                # 0. Check for pending episode completions (v8.7)
+                # If we have pending completions, return terminal state so RLlib sees __all__=True
+                while not self.episode_completion_queue.empty():
+                    try:
+                        env_idx, final_rewards, final_obs, final_info = self.episode_completion_queue.get_nowait()
+                        self.pending_episode_completion[env_idx] = (final_rewards, final_obs, final_info)
+                        print(f"[STEP] Episode completion pending for Env {env_idx}")
+                    except queue.Empty:
+                        break
+
+                # If we have pending episode completions, return terminal state
+                # This ensures RLlib's on_episode_end callback is triggered
+                if self.pending_episode_completion:
+                    # Get agents from all pending completions
+                    pending_envs = list(self.pending_episode_completion.keys())
+
+                    # Read current buffer to get base data
+                    with self.buffer_lock:
+                        obs_dict = self.obs_buffer.copy() if self.obs_buffer else {}
+                        reward_dict = self.reward_buffer.copy() if self.reward_buffer else {}
+                        info_dict = self.info_buffer.copy() if self.info_buffer else {}
+
+                    # Override with terminal state for pending environments
+                    terminated_dict = {flat_id: False for flat_id in self._agent_ids}
+                    truncated_dict = {flat_id: False for flat_id in self._agent_ids}
+
+                    for env_idx in pending_envs:
+                        final_rewards, final_obs, final_info = self.pending_episode_completion[env_idx]
+                        env_agents = self._get_agents_for_logical_env(env_idx)
+
+                        for aid in env_agents:
+                            # Use final state from queued completion
+                            if aid in final_obs and final_obs[aid] is not None:
+                                obs_dict[aid] = final_obs[aid]
+                            if aid in final_rewards:
+                                reward_dict[aid] = final_rewards[aid]
+                            if aid in final_info:
+                                info_dict[aid] = final_info[aid]
+                            terminated_dict[aid] = True
+                            truncated_dict[aid] = False
+
+                        # Log episode completion with proper rewards
+                        episode_duration = time.time() - self._env_episode_start_time.get(env_idx, time.time())
+                        env_total_reward = sum(self._agent_episode_rewards.get(aid, 0.0) + final_rewards.get(aid, 0.0)
+                                               for aid in env_agents)
+
+                        print("=" * 80)
+                        print(f"🏁 [ENV {env_idx} EPISODE COMPLETE] Episode {self._env_episodes_completed[env_idx]}")
+                        print(f"  Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
+                        print(f"  Total Reward: {env_total_reward:.2f}")
+                        print(f"  Agent Rewards (final step):")
+                        for aid in list(env_agents)[:4]:
+                            agent_reward = self._agent_episode_rewards.get(aid, 0.0)
+                            print(f"    {aid}: {agent_reward:.2f}")
+                        if len(env_agents) > 4:
+                            print(f"    ... and {len(env_agents) - 4} more agents")
+                        print("=" * 80)
+
+                        # Clear pending completion for this env
+                        del self.pending_episode_completion[env_idx]
+
+                    # Mark all as done if ALL environments have pending completions
+                    # (In practice, this may be per-env done, but RLlib expects __all__)
+                    all_done = all(terminated_dict.get(aid, False) or truncated_dict.get(aid, False)
+                                   for aid in self._agent_ids)
+                    terminated_dict['__all__'] = all_done
+                    truncated_dict['__all__'] = all_done
+
+                    # Fill missing agents with zeros
+                    for flat_id in self._agent_ids:
+                        if flat_id not in obs_dict:
+                            obs_dict[flat_id] = self._build_observation(np.zeros(46, dtype=np.float32))
+                        if flat_id not in reward_dict:
+                            reward_dict[flat_id] = 0.0
+                        if flat_id not in info_dict:
+                            info_dict[flat_id] = {}
+
+                    return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
+
                 # 1. Process auto-reset events from gRPC thread
                 while not self.reset_event_queue.empty():
                     try:
@@ -568,6 +686,13 @@ if SCHOLA_AVAILABLE:
                     truncated_dict = truncated_dict.copy()
                     info_dict = self.info_buffer.copy() if self.info_buffer else {}
 
+                    # Ensure logical_env_id is in info (may be missing if buffer just initialized)
+                    for flat_id in info_dict:
+                        if "logical_env_id" not in info_dict[flat_id]:
+                            env_idx, agent_idx = self.agent_map.get(flat_id, (0, 0))
+                            logical_env_id = self._agent_logical_env.get(flat_id, agent_idx // 8)
+                            info_dict[flat_id]["logical_env_id"] = logical_env_id
+
                 # 5. Update episode tracking and reward accumulation
                 for env_idx in range(self.num_envs):
                     if not self._env_done_flags.get(env_idx, False):
@@ -579,32 +704,15 @@ if SCHOLA_AVAILABLE:
                         if aid in reward_dict:
                             self._agent_episode_rewards[aid] = self._agent_episode_rewards.get(aid, 0.0) + reward_dict[aid]
 
-                    # Check if environment finished
+                    # Check if environment finished (backup detection, primary is via episode_completion_queue)
                     if env_agents:
                         all_done = all(
                             terminated_dict.get(aid, False) or truncated_dict.get(aid, False)
                             for aid in env_agents
                         )
                         if all_done and not self._env_done_flags.get(env_idx, False):
-                            episode_duration = time.time() - self._env_episode_start_time[env_idx]
-
-                            # Calculate total reward for this environment
-                            env_total_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
-
-                            print("=" * 80)
-                            print(f"🏁 [ENV {env_idx} DONE] Episode {self._env_episodes_completed[env_idx]} finished")
-                            print(f"  Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
-                            print(f"  Total Reward: {env_total_reward:.2f}")
-                            print(f"  Agent Rewards:")
-                            for aid in env_agents[:4]:  # Show first 4 agents to avoid spam
-                                agent_reward = self._agent_episode_rewards.get(aid, 0.0)
-                                print(f"    {aid}: {agent_reward:.2f}")
-                            if len(env_agents) > 4:
-                                print(f"    ... and {len(env_agents) - 4} more agents")
-                            print("=" * 80)
-
-                            # NOTE: Episode counter incremented in auto-reset handler, not here
-                            # This prevents race conditions with async UE5 auto-reset
+                            # v8.7: Primary logging now happens in pending_episode_completion handler
+                            # This is a backup in case buffer shows done before queue is processed
                             self._env_done_flags[env_idx] = True
 
                 # 6. Periodic logging (detailed per-environment status)
@@ -709,8 +817,8 @@ if SCHOLA_AVAILABLE:
 
         def close(self):
             """Clean shutdown."""
-            print("[ENV v8.6 ASYNC] Closing environment...")
+            print("[ENV v8.7 ASYNC] Closing environment...")
             self._stop_grpc_thread()
             if hasattr(self.schola_env, 'close'):
                 self.schola_env.close()
-            print("[ENV v8.6 ASYNC] Closed")
+            print("[ENV v8.7 ASYNC] Closed")
