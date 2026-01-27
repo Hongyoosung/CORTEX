@@ -298,8 +298,15 @@ def create_ppo_config():
         count_steps_by="agent_steps",
     )
     
-    # 5. Callbacks (Episode Logging)
-    config = config.callbacks(EpisodeLoggerCallback)
+    # 5. Callbacks (Episode Logging + Policy Update Pause)
+    # v9.0: Added PolicyUpdatePauseCallback to prevent episode desync during training
+    from policy_update_pause_callback import PolicyUpdatePauseCallback
+    from ray.rllib.algorithms.callbacks import MultiCallbacks
+
+    config = config.callbacks(MultiCallbacks([
+        EpisodeLoggerCallback,
+        PolicyUpdatePauseCallback
+    ]))
 
     # 6. Debugging & Reporting
     config = config.debugging(log_level="WARN")
