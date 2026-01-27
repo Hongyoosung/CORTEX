@@ -56,7 +56,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bEnableTraining = true;
 
-	/** gRPC server port for Python RLlib communication */
+	/**
+	 * gRPC server port for Python RLlib communication
+	 * NOTE: Only ONE environment actor should have bEnableTraining=true in multi-actor setup
+	 * The others will be discovered automatically via CollectEnvironments()
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	int32 ServerPort = 50051;
 
@@ -64,22 +68,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoDiscoverAgents = true;
 
-	/** Team IDs to include in training (empty = all teams) - v8.5 Vectorized Training: Use this to isolate environments */
+	/**
+	 * Team IDs managed by THIS environment actor
+	 * Example for 4-actor setup (32 agents, 8 teams):
+	 *   - Actor 0: [0, 1] → Env 0 (Teams 0,1 = 4v4)
+	 *   - Actor 1: [2, 3] → Env 1 (Teams 2,3 = 4v4)
+	 *   - Actor 2: [4, 5] → Env 2 (Teams 4,5 = 4v4)
+	 *   - Actor 3: [6, 7] → Env 3 (Teams 6,7 = 4v4)
+	 *
+	 * CRITICAL: Each actor must have UNIQUE team IDs (no overlap)
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	TArray<int32> TrainingTeamIDs;
 
 	/**
-	 * Team-to-Environment mapping (TeamID → LogicalEnvironmentID)
-	 * Example: {0→0, 1→0, 2→1, 3→1, 4→2, 5→2, 6→3, 7→3}
-	 * If empty, uses default mapping: TeamID / 2
-	 *
-	 * This allows flexible grouping of teams into logical environments:
-	 * - Env 0: Teams 0,1 (default 4v4)
-	 * - Env 1: Teams 2,3 (default 4v4)
-	 * - Env 2: Teams 4,5 (custom grouping)
-	 * - Env 3: Teams 6,7 (custom grouping)
+	 * DEPRECATED: Team-to-Environment mapping (use TrainingTeamIDs instead)
+	 * In multi-actor architecture, each actor IS its own environment.
+	 * Use TrainingTeamIDs to specify which teams this actor manages.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|Deprecated", meta = (DeprecationMessage = "Use TrainingTeamIDs instead"))
 	TMap<int32, int32> TeamToEnvironmentMap;
 
 	//--------------------------------------------------------------------------
@@ -101,10 +108,6 @@ public:
 	/** Has InternalRegisterAgents been called this session? */
 	bool bAgentsRegistered = false;
 
-	/** Physical environment actor ID (always 0 for single-actor architecture) */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	int32 EnvironmentID = 0;
-
 	/** Episode counters per logical environment (4 environments = 4 counters) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	TMap<int32, int32> LogicalEnvironmentEpisodes;
@@ -112,6 +115,10 @@ public:
 	//--------------------------------------------------------------------------
 	// UTILITY
 	//--------------------------------------------------------------------------
+
+	/** Get the environment ID assigned by Schola */
+	UFUNCTION(BlueprintCallable, Category = "Schola")
+	int32 GetEnvId() const { return EnvId; }
 
 	/** Discover all ScholaAgentComponents in level */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
@@ -121,11 +128,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	bool RegisterAgent(UScholaAgentComponent* Agent);
 
-	/** Get logical environment ID for a team (uses TeamToEnvironmentMap or default TeamID/2) */
-	UFUNCTION(BlueprintCallable, Category = "Schola")
-	int32 GetLogicalEnvironmentID(int32 TeamID) const;
-
-	/** Bind to SimulationManager episode events - includes EnvironmentID for filtering */
+	/** Bind to SimulationManager episode events */
 	UFUNCTION()
 	void OnEpisodeStarted(int32 BroadcastEnvID, int32 EpisodeNumber);
 

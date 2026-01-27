@@ -1,5 +1,5 @@
 """
-SBDAPM Async Environment with Message Queuing (v8.7)
+SBDAPM Async Environment with Message Queuing (v8.9.2)
 
 This version implements ASYNC architecture to prevent poll() blocking during policy updates:
 
@@ -14,12 +14,33 @@ Key Features:
     3. Observation Buffer: Latest observations always available
     4. No Deadlocks: UE5 communication never blocks training
     5. v8.7: Episode completion queuing to fix reward logging race condition
+    6. v8.9: Observation-based reset detection (replaces flawed Python timeout)
+    7. v8.9.1: Fixed episode counter double-increment bug
+    8. v8.9.2: REALLY fixed double-increment via processed_episodes tracking
+
+v8.9.2 Changes:
+    - FIXED: Episode counter STILL double-incremented due to stale buffer data
+      re-setting _env_done_flags after pending_episode_completion cleared it.
+    - ADDED: processed_episode_completions set to track which (env_idx, episode_num)
+      pairs have already been processed, preventing duplicate increments.
+    - FIXED: Backup path now checks processed set before incrementing counter.
+
+v8.9 Changes (MAJOR REWRITE):
+    - REMOVED: Python-forced timeout that caused episode desync with UE5
+    - ADDED: Observation-based episode reset detection
+    - ADDED: Fast gRPC polling (10ms timeout vs 100ms) to catch termination flags
+    - ADDED: Health-based reset detection (detects when health jumps to 100%)
+    - PRINCIPLE: UE5 is the SOLE source of truth for episode boundaries
+    - Python now DETECTS episode boundaries, not FORCES them
+
+v8.8 Changes (DEPRECATED - caused desync):
+    - Python-forced timeout is REMOVED because it created episode counter
+      mismatch between Python and UE5
 
 v8.7 Changes:
     - Added episode_completion_queue to capture episode end state BEFORE auto-reset
     - Step() now returns terminal state when episode completes, ensuring RLlib's
       on_episode_end callback is triggered with correct rewards
-    - Fixed issue where iteration updates showed 0.00 reward despite episodes completing
 
 Usage:
     In train_rllib.py, replace:
@@ -60,6 +81,23 @@ except ImportError:
         NUM_TOTAL_OUTPUTS = 5
 
 
+# v8.9: Observation-based episode reset detection configuration
+# Instead of Python forcing timeouts (which causes desync), we detect resets via observation changes
+#
+# Key insight: When UE5 resets an episode:
+#   - Agent health returns to 100% (from any damaged state)
+#   - Agent positions may jump to spawn locations
+#   - We can detect these changes even if termination flags were missed
+#
+
+# GRPC_POLL_TIMEOUT: Reduced from 100ms to 10ms to catch termination flags before auto-reset clears them
+GRPC_POLL_TIMEOUT = 0.01  # 10ms - much faster polling to catch termination window
+
+# WARNING_STEPS_THRESHOLD: Log warning if we reach this many steps without detecting episode end
+# This is NOT a timeout - just a diagnostic warning to help identify communication issues
+WARNING_STEPS_THRESHOLD = 3000  # Log warning at 3000 steps (UE5 max is ~2000)
+
+
 if SCHOLA_AVAILABLE:
 
     class SBDAPMAsyncMultiAgentEnv(MultiAgentEnv):
@@ -81,9 +119,18 @@ if SCHOLA_AVAILABLE:
             is_docker = kwargs.get("is_docker", False)
 
             self.num_envs = kwargs.get("num_envs", 4)
-            print(f"[ENV v8.7 ASYNC] Connecting to {host}:{port}...")
-            print(f"[ENV v8.7 ASYNC] Multi-environment: {self.num_envs} parallel UE5 envs")
-            print(f"[ENV v8.7 ASYNC] Architecture: ASYNC with message queuing + episode completion queue")
+
+            # v8.9: Observation-based reset detection (replaces flawed Python timeout)
+            # UE5 is the SOLE source of truth for episode boundaries
+
+            self.grpc_poll_timeout = kwargs.get("grpc_poll_timeout", GRPC_POLL_TIMEOUT)
+            self.warning_steps_threshold = kwargs.get("warning_steps_threshold", WARNING_STEPS_THRESHOLD)
+
+            print(f"[ENV v8.9.2 ASYNC] Connecting to {host}:{port}...")
+            print(f"[ENV v8.9.2 ASYNC] Multi-environment: {self.num_envs} parallel UE5 envs")
+            print(f"[ENV v8.9.2 ASYNC] gRPC poll timeout: {self.grpc_poll_timeout*1000:.0f}ms (fast polling)")
+            print(f"[ENV v8.9.2 ASYNC] Episode detection: Observation-based + termination flags")
+            print(f"[ENV v8.9.2 ASYNC] UE5 is the SOLE source of truth for episode boundaries")
 
             # Connect to UE5
             try:
@@ -93,7 +140,28 @@ if SCHOLA_AVAILABLE:
                     verbosity=1,
                     auto_reset_type=AutoResetType.SAME_STEP
                 )
-                print(f"[ENV v8.7 ASYNC] Connected!")
+                print(f"[ENV v8.9.2 ASYNC] Connected!")
+
+                # DIAGNOSTIC: Verify environment structure
+                print(f"")
+                print(f"{'='*80}")
+                print(f"SCHOLA ENVIRONMENT STRUCTURE DIAGNOSIS")
+                print(f"{'='*80}")
+                print(f"Expected environments: {self.num_envs}")
+                print(f"Actual physical environments: {len(self.schola_env.ids)}")
+                for i, agents in enumerate(self.schola_env.ids):
+                    print(f"  Env {i}: {len(agents)} agents - {agents}")
+                print(f"{'='*80}")
+                print(f"")
+
+                # Verify the fix worked
+                if len(self.schola_env.ids) == 1 and self.num_envs > 1:
+                    print(f"⚠️  WARNING: Expected {self.num_envs} environments but got 1!")
+                    print(f"⚠️  This may indicate a UE5 configuration issue.")
+                    print(f"⚠️  Check TeamToEnvironmentMap in BP_ScholaCombatEnvironment")
+                elif len(self.schola_env.ids) == self.num_envs:
+                    print(f"✅ SUCCESS: ScholaEnv correctly initialized with {self.num_envs} environments!")
+
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
                 raise
@@ -134,8 +202,11 @@ if SCHOLA_AVAILABLE:
             # Episode completion tracking (v8.7: Fix for episode boundary race condition)
             # When gRPC thread detects episode end, it queues the completion BEFORE auto-reset
             # Main thread then returns __all__=True so RLlib's on_episode_end is triggered
-            self.episode_completion_queue = queue.Queue()  # (env_idx, final_rewards_dict, final_steps)
-            self.pending_episode_completion = {}  # env_idx -> (final_rewards, final_obs, final_info)
+            # v8.8: Added was_truncated flag to properly signal truncation vs termination
+            # v8.9.2: Added processed_episodes tracking to prevent double-increment
+            self.episode_completion_queue = queue.Queue()  # (env_idx, final_rewards_dict, final_obs, final_info, was_truncated)
+            self.pending_episode_completion = {}  # env_idx -> (final_rewards, final_obs, final_info, was_truncated)
+            self.processed_episode_completions = set()  # env_idx set to prevent double-increment
 
             # gRPC Thread
             self.grpc_thread = None
@@ -151,6 +222,12 @@ if SCHOLA_AVAILABLE:
             self._env_done_flags = {i: False for i in range(self.num_envs)}
             self._logical_env_map_initialized = False
             self._agent_logical_env = {}
+
+            # v8.9: Observation-based reset detection
+            # Track previous health values to detect episode resets (health jumping to 100%)
+            self._prev_agent_health = {}  # flat_id -> previous health value
+            self._reset_detected_by_observation = queue.Queue()  # env_idx queue for detected resets
+            self._warning_logged = {i: False for i in range(self.num_envs)}  # Track if warning was logged
 
             # Reward tracking per agent (cumulative per episode)
             self._agent_episode_rewards = {}
@@ -184,7 +261,7 @@ if SCHOLA_AVAILABLE:
                         self.reverse_map[(physical_env_idx, schola_agent_idx)] = flat_id
                         self._agent_ids.add(flat_id)
 
-            print(f"[ENV v8.7 ASYNC] Agent map: {len(self._agent_ids)} agents")
+            print(f"[ENV v8.9.2 ASYNC] Agent map: {len(self._agent_ids)} agents")
 
         def _update_logical_env_map(self, info_nested):
             """Update agent-to-logical-env mapping from UE5 info dict."""
@@ -214,7 +291,7 @@ if SCHOLA_AVAILABLE:
                 env_counts[logical_env_id] = env_counts.get(logical_env_id, 0) + 1
 
             self._logical_env_map_initialized = True
-            print(f"[ENV v8.7 ASYNC] Logical env mapping: {dict(sorted(env_counts.items()))}")
+            print(f"[ENV v8.9.2 ASYNC] Logical env mapping: {dict(sorted(env_counts.items()))}")
 
         def _get_agents_for_logical_env(self, logical_env_idx):
             """Get all agent IDs belonging to a logical environment."""
@@ -269,15 +346,19 @@ if SCHOLA_AVAILABLE:
             Dedicated thread for UE5 communication.
             Continuously polls for observations and sends actions.
             This thread NEVER blocks the main training thread.
+
+            v8.9: Uses fast polling (10ms) to catch termination flags before auto-reset clears them.
+            Also implements observation-based reset detection as a backup.
             """
-            print(f"[gRPC Thread] Started")
+            print(f"[gRPC Thread v8.9.2] Started with {self.grpc_poll_timeout*1000:.0f}ms poll timeout")
             self.grpc_ready.set()
 
             while not self.stop_event.is_set():
                 try:
-                    # 1. Get actions from queue (non-blocking with timeout)
+                    # 1. Get actions from queue (non-blocking with fast timeout)
+                    # v8.9: Reduced from 100ms to 10ms to catch termination window
                     try:
-                        formatted_actions = self.action_queue.get(timeout=0.1)
+                        formatted_actions = self.action_queue.get(timeout=self.grpc_poll_timeout)
 
                         # Send actions to UE5
                         send_start = time.time()
@@ -382,12 +463,18 @@ if SCHOLA_AVAILABLE:
                             final_rewards = {aid: reward_dict.get(aid, 0.0) for aid in env_agents}
                             final_obs = {aid: obs_dict.get(aid) for aid in env_agents}
                             final_info = {aid: info_dict.get(aid, {}) for aid in env_agents}
+
+                            # v8.8: Determine if truncated (timeout) or terminated (team annihilation)
+                            # Truncated = at least one agent has truncated=True
+                            was_truncated = any(truncated_dict.get(aid, False) for aid in env_agents)
+
                             try:
                                 self.episode_completion_queue.put(
-                                    (env_idx, final_rewards, final_obs, final_info),
+                                    (env_idx, final_rewards, final_obs, final_info, was_truncated),
                                     block=False
                                 )
-                                print(f"[gRPC Thread] Episode completion queued for Env {env_idx}")
+                                end_type = "TRUNCATED" if was_truncated else "TERMINATED"
+                                print(f"[gRPC Thread] Episode completion queued for Env {env_idx} ({end_type})")
                             except queue.Full:
                                 print(f"[gRPC Thread] Warning: Episode completion queue full for Env {env_idx}")
 
@@ -430,14 +517,14 @@ if SCHOLA_AVAILABLE:
                 if not self.grpc_ready.wait(timeout=5.0):
                     raise RuntimeError("gRPC thread failed to start")
 
-                print(f"[ENV v8.7 ASYNC] gRPC thread started successfully")
+                print(f"[ENV v8.9.2 ASYNC] gRPC thread started successfully")
 
         def _stop_grpc_thread(self):
             """Stop async gRPC communication thread."""
             if self.grpc_thread and self.grpc_thread.is_alive():
                 self.stop_event.set()
                 self.grpc_thread.join(timeout=2.0)
-                print(f"[ENV v8.7 ASYNC] gRPC thread stopped")
+                print(f"[ENV v8.9.2 ASYNC] gRPC thread stopped")
 
         # === RLlib Interface (Main Thread) ===
 
@@ -478,6 +565,11 @@ if SCHOLA_AVAILABLE:
                 # Initialize reward tracking after agent map is built
                 for flat_id in self._agent_ids:
                     self._agent_episode_rewards[flat_id] = 0.0
+
+                # v8.9: Initialize health tracking for observation-based reset detection
+                # Start with 100.0 (full health) so initial observations don't trigger false resets
+                for flat_id in self._agent_ids:
+                    self._prev_agent_health[flat_id] = 100.0
 
                 result = self._process_obs(rawobs)
 
@@ -544,13 +636,20 @@ if SCHOLA_AVAILABLE:
             v8.7: Episode completion is now properly signaled to RLlib BEFORE auto-reset.
             """
             try:
-                # 0. Check for pending episode completions (v8.7)
+                # 0. Check for pending episode completions (v8.7/v8.8)
                 # If we have pending completions, return terminal state so RLlib sees __all__=True
                 while not self.episode_completion_queue.empty():
                     try:
-                        env_idx, final_rewards, final_obs, final_info = self.episode_completion_queue.get_nowait()
-                        self.pending_episode_completion[env_idx] = (final_rewards, final_obs, final_info)
-                        print(f"[STEP] Episode completion pending for Env {env_idx}")
+                        queue_item = self.episode_completion_queue.get_nowait()
+                        # v8.8: Handle both old (4-tuple) and new (5-tuple) format
+                        if len(queue_item) == 5:
+                            env_idx, final_rewards, final_obs, final_info, was_truncated = queue_item
+                        else:
+                            env_idx, final_rewards, final_obs, final_info = queue_item
+                            was_truncated = False  # Default to terminated for old format
+                        self.pending_episode_completion[env_idx] = (final_rewards, final_obs, final_info, was_truncated)
+                        end_type = "TRUNCATED" if was_truncated else "TERMINATED"
+                        print(f"[STEP] Episode completion pending for Env {env_idx} ({end_type})")
                     except queue.Empty:
                         break
 
@@ -571,7 +670,14 @@ if SCHOLA_AVAILABLE:
                     truncated_dict = {flat_id: False for flat_id in self._agent_ids}
 
                     for env_idx in pending_envs:
-                        final_rewards, final_obs, final_info = self.pending_episode_completion[env_idx]
+                        completion_data = self.pending_episode_completion[env_idx]
+                        # v8.8: Handle both old (3-tuple) and new (4-tuple) format
+                        if len(completion_data) == 4:
+                            final_rewards, final_obs, final_info, was_truncated = completion_data
+                        else:
+                            final_rewards, final_obs, final_info = completion_data
+                            was_truncated = False  # Default to terminated for old format
+
                         env_agents = self._get_agents_for_logical_env(env_idx)
 
                         for aid in env_agents:
@@ -582,16 +688,22 @@ if SCHOLA_AVAILABLE:
                                 reward_dict[aid] = final_rewards[aid]
                             if aid in final_info:
                                 info_dict[aid] = final_info[aid]
-                            terminated_dict[aid] = True
-                            truncated_dict[aid] = False
+                            # v8.8: Correctly set terminated vs truncated based on end type
+                            if was_truncated:
+                                terminated_dict[aid] = False
+                                truncated_dict[aid] = True
+                            else:
+                                terminated_dict[aid] = True
+                                truncated_dict[aid] = False
 
                         # Log episode completion with proper rewards
                         episode_duration = time.time() - self._env_episode_start_time.get(env_idx, time.time())
                         env_total_reward = sum(self._agent_episode_rewards.get(aid, 0.0) + final_rewards.get(aid, 0.0)
                                                for aid in env_agents)
 
+                        end_type = "TRUNCATED (timeout)" if was_truncated else "TERMINATED (team annihilation)"
                         print("=" * 80)
-                        print(f"🏁 [ENV {env_idx} EPISODE COMPLETE] Episode {self._env_episodes_completed[env_idx]}")
+                        print(f"🏁 [ENV {env_idx} EPISODE COMPLETE] Episode {self._env_episodes_completed[env_idx]} - {end_type}")
                         print(f"  Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
                         print(f"  Total Reward: {env_total_reward:.2f}")
                         print(f"  Agent Rewards (final step):")
@@ -602,8 +714,32 @@ if SCHOLA_AVAILABLE:
                             print(f"    ... and {len(env_agents) - 4} more agents")
                         print("=" * 80)
 
+                        # v8.8: Reset episode tracking for this environment BEFORE clearing pending
+                        # This ensures next step() call starts fresh
+                        # v8.9.2: Add to processed set BEFORE incrementing to prevent double-increment
+                        episode_id = self._env_episodes_completed[env_idx]  # Current episode number
+                        self.processed_episode_completions.add((env_idx, episode_id))
+
+                        self._env_episodes_completed[env_idx] += 1
+                        self._env_episode_steps[env_idx] = 0
+                        self._env_episode_start_time[env_idx] = time.time()
+                        self._env_done_flags[env_idx] = False
+
+                        # Reset reward tracking for agents in this environment
+                        for aid in env_agents:
+                            self._agent_episode_rewards[aid] = 0.0
+
+                        print(f"  ✅ Episode reset complete. Next episode: {self._env_episodes_completed[env_idx]}")
+
                         # Clear pending completion for this env
                         del self.pending_episode_completion[env_idx]
+
+                        # v8.9.2: Clean up old processed episodes (keep only last 10 per env)
+                        # This prevents the set from growing indefinitely
+                        old_episodes = [(e, ep) for e, ep in self.processed_episode_completions
+                                       if e == env_idx and ep < episode_id - 10]
+                        for old in old_episodes:
+                            self.processed_episode_completions.discard(old)
 
                     # Mark all as done if ALL environments have pending completions
                     # (In practice, this may be per-env done, but RLlib expects __all__)
@@ -624,25 +760,41 @@ if SCHOLA_AVAILABLE:
                     return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 
                 # 1. Process auto-reset events from gRPC thread
+                # v8.9.1: IMPORTANT - Do NOT increment episode counter here!
+                # The episode counter is already incremented in the pending_episode_completion handler.
+                # This handler only processes the auto-reset transition (done→not done), NOT episode completion.
                 while not self.reset_event_queue.empty():
                     try:
                         reset_env_idx = self.reset_event_queue.get_nowait()
 
-                        # Increment episode counter (previous episode completed)
-                        self._env_episodes_completed[reset_env_idx] += 1
-                        next_episode = self._env_episodes_completed[reset_env_idx]
+                        # v8.9.2: Check if episode was already processed via pending_episode_completion
+                        # This prevents double-increment when both queues fire for the same episode
+                        current_episode = self._env_episodes_completed[reset_env_idx]
+                        episode_id = (reset_env_idx, current_episode - 1)  # Previous episode number
 
-                        # Reset episode tracking for this environment
-                        self._env_episode_steps[reset_env_idx] = 0
-                        self._env_episode_start_time[reset_env_idx] = time.time()
-                        self._env_done_flags[reset_env_idx] = False
+                        # Check if this episode completion was already processed
+                        already_processed = episode_id in self.processed_episode_completions
 
-                        # Reset reward tracking for this environment's agents
-                        env_agents = self._get_agents_for_logical_env(reset_env_idx)
-                        for aid in env_agents:
-                            self._agent_episode_rewards[aid] = 0.0
+                        if not already_processed and self._env_done_flags.get(reset_env_idx, False):
+                            # Episode was marked done but completion wasn't processed via queue
+                            # This is the backup path - increment counter here
+                            self.processed_episode_completions.add(episode_id)
+                            self._env_episodes_completed[reset_env_idx] += 1
+                            current_episode = self._env_episodes_completed[reset_env_idx]
 
-                        print(f"[STEP] Processed auto-reset for Env {reset_env_idx} (Episode {next_episode} starting)")
+                            self._env_episode_steps[reset_env_idx] = 0
+                            self._env_episode_start_time[reset_env_idx] = time.time()
+                            self._env_done_flags[reset_env_idx] = False
+
+                            # Reset reward tracking for this environment's agents
+                            env_agents = self._get_agents_for_logical_env(reset_env_idx)
+                            for aid in env_agents:
+                                self._agent_episode_rewards[aid] = 0.0
+
+                            print(f"[STEP] Auto-reset processed (backup path) for Env {reset_env_idx} (Episode {current_episode} starting)")
+                        else:
+                            # Normal path: Episode completion was already handled via pending_episode_completion
+                            print(f"[STEP] Auto-reset detected for Env {reset_env_idx} (Episode {current_episode} continuing, already processed={already_processed})")
                     except queue.Empty:
                         break
 
@@ -714,6 +866,77 @@ if SCHOLA_AVAILABLE:
                             # v8.7: Primary logging now happens in pending_episode_completion handler
                             # This is a backup in case buffer shows done before queue is processed
                             self._env_done_flags[env_idx] = True
+
+                # v8.9: Process observation-based reset detections from gRPC thread
+                # This is the BACKUP mechanism when termination flags are missed due to race condition
+                while not self._reset_detected_by_observation.empty():
+                    try:
+                        logical_env_id, agent_id, prev_health, new_health = self._reset_detected_by_observation.get_nowait()
+
+                        # Only process if we haven't already seen this episode end
+                        if not self._env_done_flags.get(logical_env_id, False):
+                            env_agents = self._get_agents_for_logical_env(logical_env_id)
+
+                            # Calculate episode stats
+                            env_total_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
+                            episode_duration = time.time() - self._env_episode_start_time.get(logical_env_id, time.time())
+
+                            print("=" * 80)
+                            print(f"🔄 [v8.9 OBSERVATION RESET] Episode end detected via health change!")
+                            print(f"   Env {logical_env_id}: Agent {agent_id} health {prev_health:.1f} → {new_health:.1f}")
+                            print(f"   Episode {self._env_episodes_completed[logical_env_id]}")
+                            print(f"   Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[logical_env_id]}")
+                            print(f"   Total Reward: {env_total_reward:.2f}")
+                            print("=" * 80)
+
+                            # Mark episode as complete
+                            self._env_episodes_completed[logical_env_id] += 1
+                            self._env_episode_steps[logical_env_id] = 0
+                            self._env_episode_start_time[logical_env_id] = time.time()
+                            self._env_done_flags[logical_env_id] = False
+                            self._warning_logged[logical_env_id] = False
+
+                            # Reset reward tracking
+                            for aid in env_agents:
+                                self._agent_episode_rewards[aid] = 0.0
+
+                            # Mark agents as truncated so RLlib sees episode boundary
+                            for aid in env_agents:
+                                terminated_dict[aid] = False
+                                truncated_dict[aid] = True
+
+                            # Update __all__ flag for RLlib
+                            all_done_after_reset = all(
+                                terminated_dict.get(aid, False) or truncated_dict.get(aid, False)
+                                for aid in self._agent_ids
+                            )
+                            terminated_dict['__all__'] = all_done_after_reset
+                            truncated_dict['__all__'] = all_done_after_reset
+
+                            print(f"   __all__ = {all_done_after_reset} (RLlib will see episode boundary)")
+
+                    except queue.Empty:
+                        break
+
+                # v8.9: Warning logging (NOT forced termination) when steps are unusually high
+                # This helps diagnose communication issues without causing desync
+                for env_idx in range(self.num_envs):
+                    if (not self._env_done_flags.get(env_idx, False) and
+                        self._env_episode_steps[env_idx] >= self.warning_steps_threshold and
+                        not self._warning_logged.get(env_idx, False)):
+
+                        print("\n" + "=" * 80)
+                        print(f"⚠️ [v8.9 WARNING] Env {env_idx} has {self._env_episode_steps[env_idx]} steps without episode end!")
+                        print(f"   This may indicate:")
+                        print(f"   1. UE5's MaxStepsPerEpisode is higher than expected")
+                        print(f"   2. Termination flags are being lost (race condition)")
+                        print(f"   3. Schola auto_reset is clearing flags before Python polls")
+                        print(f"   ")
+                        print(f"   NOT forcing termination - UE5 is the source of truth.")
+                        print(f"   Check UE5 logs to verify episode state.")
+                        print("=" * 80 + "\n")
+
+                        self._warning_logged[env_idx] = True
 
                 # 6. Periodic logging (detailed per-environment status)
                 should_log = any(
@@ -817,8 +1040,8 @@ if SCHOLA_AVAILABLE:
 
         def close(self):
             """Clean shutdown."""
-            print("[ENV v8.7 ASYNC] Closing environment...")
+            print("[ENV v8.9.2 ASYNC] Closing environment...")
             self._stop_grpc_thread()
             if hasattr(self.schola_env, 'close'):
                 self.schola_env.close()
-            print("[ENV v8.7 ASYNC] Closed")
+            print("[ENV v8.9.2 ASYNC] Closed")

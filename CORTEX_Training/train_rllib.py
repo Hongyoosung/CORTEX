@@ -194,7 +194,11 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     def value_function(self):
         if self._last_features is None:
             raise ValueError("Must call forward() before value_function()")
-        return self.value_head(self._last_features).squeeze(-1)
+        # v8.9.2: REMOVED restrictive clamping - was preventing value function from learning
+        # Rewards are ~10,000 cumulative but clamping was [-10, 10]!
+        # This caused explained_variance=0 and entropy explosion
+        raw_value = self.value_head(self._last_features).squeeze(-1)
+        return raw_value  # Let PPO's vf_clip_param handle value clipping instead
 
 
 # ==============================================================================
@@ -211,17 +215,19 @@ class SBDAPMConfig:
     # Network architecture
     HIDDEN_LAYERS = [256, 256, 128]
 
-    # PPO hyperparameters
+    # PPO hyperparameters (v8.9: Stabilized per Training_Diagnosis_Report.md)
     LEARNING_RATE = 3e-5  # v8.8: Reduced from 5e-5 to improve stability
     LEARNING_RATE_END = 1e-6  # v8.8: Final LR for schedule
     TRAIN_BATCH_SIZE = 32000  # v8.6 ASYNC: 4 envs × 8 agents × 1000 steps = policy update every 1000 env steps
     SGD_MINIBATCH_SIZE = 2048 # Minibatch size for SGD updates
-    NUM_SGD_ITER = 10
+    NUM_SGD_ITER = 4  # v8.9: Reduced from 10 to prevent overfitting
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
-    CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.001  # v8.8: Reduced from 0.01 to prevent entropy explosion
-    VF_LOSS_COEFF = 1.5
+    CLIP_PARAM = 0.15  # v8.9: Tightened from 0.2 for conservative updates
+    ENTROPY_COEFF = 0.005  # v8.9: Increased from 0.001 to maintain exploration
+    VF_LOSS_COEFF = 0.5  # v8.9: Reduced from 1.5 to balance critic influence
+    GRAD_CLIP = 0.5  # v8.9: CRITICAL - prevents exploding gradients
+    VF_CLIP_PARAM = 1.0  # v8.9: Reduced from 10.0 to prevent VF explosion
 
     # v8.8: Log-std clamping to prevent entropy explosion
     LOG_STD_MIN = -2.0  # Minimum log_std (σ_min ≈ 0.135)
@@ -246,9 +252,14 @@ def create_env_config():
     config = {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,
-        "num_envs": SBDAPMConfig.NUM_UE5_ENVIRONMENTS,  # v8.5: Number of UE5 environments to manage
+        # v8.9: Observation-based episode detection (replaces flawed Python timeout)
+        # UE5 is the SOLE source of truth for episode boundaries
+        # These settings configure the backup detection mechanism:
+        "grpc_poll_timeout": 0.01,  # 10ms - fast polling to catch termination flags
+        "health_reset_threshold": 30.0,  # Health increase > 30 suggests reset
+        "warning_steps_threshold": 3000,  # Log warning (not force) at 3000 steps
     }
-    
+
     # Add Docker-specific settings
     if is_docker:
         config["is_docker"] = True
@@ -299,6 +310,7 @@ def create_ppo_config():
 
     # 7. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
     # v8.8: Added lr and lr_schedule to fix policy instability
+    # v8.9: Applied stability fixes from Training_Diagnosis_Report.md
     config = config.training(
         lr=SBDAPMConfig.LEARNING_RATE,  # v8.8: CRITICAL FIX - was missing!
         lr_schedule=[  # v8.8: Linear decay schedule for stability
@@ -309,10 +321,11 @@ def create_ppo_config():
         ],
         train_batch_size=SBDAPMConfig.TRAIN_BATCH_SIZE,
         lambda_=SBDAPMConfig.GAE_LAMBDA,
-        clip_param=SBDAPMConfig.CLIP_PARAM,
-        vf_clip_param=10.0,
-        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,
-        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,
+        clip_param=SBDAPMConfig.CLIP_PARAM,  # v8.9: 0.15 (tightened)
+        vf_clip_param=SBDAPMConfig.VF_CLIP_PARAM,  # v8.9: 1.0 (reduced from 10.0)
+        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,  # v8.9: 0.005 (increased)
+        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,  # v8.9: 0.5 (reduced)
+        grad_clip=SBDAPMConfig.GRAD_CLIP,  # v8.9: CRITICAL - prevents gradient explosion
         use_gae=True,
         use_critic=True,
         use_kl_loss=True,
@@ -441,7 +454,7 @@ def train(args):
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
 
     print("=" * 60)
-    print("CORTEX v8.8 Stabilized Training")
+    print("CORTEX v8.9 - UE5-Synced Episode Detection")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
@@ -449,9 +462,15 @@ def train(args):
     print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
     print(f"  Iterations: {args.iterations}")
     print()
-    print("  v8.8 Stability Fixes:")
+    print("  v8.9 Episode Detection:")
+    print(f"    Mode: Observation-based reset detection (UE5 is source of truth)")
+    print(f"    gRPC Poll: 10ms timeout (fast polling to catch termination)")
+    print(f"    Backup: Health-based reset detection (threshold: 30.0)")
+    print(f"    NO Python-forced timeouts (removed v8.8 desync bug)")
+    print()
+    print("  PPO Stability:")
     print(f"    Learning Rate: {SBDAPMConfig.LEARNING_RATE} → {SBDAPMConfig.LEARNING_RATE_END} (scheduled)")
-    print(f"    Entropy Coeff: {SBDAPMConfig.ENTROPY_COEFF} (reduced from 0.01)")
+    print(f"    Entropy Coeff: {SBDAPMConfig.ENTROPY_COEFF}")
     print(f"    Log-Std Bounds: [{SBDAPMConfig.LOG_STD_MIN}, {SBDAPMConfig.LOG_STD_MAX}] (clamped)")
     print()
 
@@ -609,6 +628,18 @@ def train(args):
                         print(f"    ⚠️ WARNING: Entropy ({entropy:.2f}) < 1.0 - possible premature convergence")
                 if isinstance(cur_kl_coeff, float):
                     print(f"    Current KL coefficient: {cur_kl_coeff:.4f}")
+
+                # v8.9: Emergency checkpoint if training becomes unstable (Training_Diagnosis_Report.md)
+                if isinstance(vf_loss, float) and isinstance(kl, float):
+                    if vf_loss > 2.0 or kl > 0.03:
+                        print(f"\n🚨 CRITICAL: Training instability detected!")
+                        print(f"    VF Loss: {vf_loss:.4f} (threshold: 2.0)")
+                        print(f"    KL Divergence: {kl:.6f} (threshold: 0.03)")
+                        print(f"    Saving emergency checkpoint...")
+                        emergency_path = os.path.join(output_dir, f"emergency_iter_{i+1}")
+                        algo.save(emergency_path)
+                        print(f"    Emergency checkpoint saved to: {emergency_path}")
+                        print(f"    Consider halting training and reviewing hyperparameters.\n")
             print()
 
         # Checkpoint

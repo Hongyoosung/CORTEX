@@ -252,19 +252,18 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 	//    High aggression (0.9) → MinDistance = 200cm (2m, close range)
 	//    Low aggression (0.1) → MinDistance = 1000cm (10m, safe distance)
 	float MinDistanceToEnemy = FMath::Lerp(1000.0f, 200.0f, Params.Aggression);
-	float AggressionWeight = Params.Aggression * 2.0f; // [0, 2] range for EQS scoring
+	float AggressionWeight = FMath::Lerp(0.5f, 5.0f, Params.Aggression); // [0.5, 5.0]
 
 	// 2. CoverPreference → Cover weight
 	//    High preference (0.9) → CoverWeight = 5.0 (heavily prioritize cover)
 	//    Low preference (0.1) → CoverWeight = 0.5 (mostly ignore cover)
 	float CoverWeight = FMath::Lerp(0.5f, 5.0f, Params.CoverPreference);
-	float ExposureWeight = (1.0f - Params.CoverPreference) * 3.0f; // Inverse for open positions
 
 	// 3. SpreadDistance → Formation spread
 	//    High spread (0.9) → IdealSpread = 1000cm (10m, dispersed)
 	//    Low spread (0.1) → IdealSpread = 200cm (2m, tight formation)
 	float IdealSpreadDistance = FMath::Lerp(200.0f, 1000.0f, Params.SpreadDistance);
-	float FormationWeight = 3.0f; // Constant weight, distance varies
+	float FormationWeight = FMath::Lerp(5.0f, 1.0f, Params.SpreadDistance); // [5.0, 1.0]
 
 	// Create EQS request with modulated parameters
 	FEnvQueryRequest QueryRequest(Query, Pawn);
@@ -274,7 +273,6 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 	QueryRequest.SetFloatParam(TEXT("MinDistanceToEnemy"), MinDistanceToEnemy);
 	QueryRequest.SetFloatParam(TEXT("AggressionWeight"), AggressionWeight);
 	QueryRequest.SetFloatParam(TEXT("CoverWeight"), CoverWeight);
-	QueryRequest.SetFloatParam(TEXT("ExposureWeight"), ExposureWeight);
 	QueryRequest.SetFloatParam(TEXT("FormationSpread"), IdealSpreadDistance);
 	QueryRequest.SetFloatParam(TEXT("FormationWeight"), FormationWeight);
 
@@ -309,8 +307,17 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 		}
 	}
 
-	/*UE_LOG(LogTemp, Log, TEXT("[TACTICAL v8.0] EQS returned %d positions (Aggression=%.2f → MinDist=%.0fcm, Cover=%.2f → Weight=%.1f)"),
-		Results.Num(), Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);*/
+	UE_LOG(LogTemp, Log, TEXT("[TACTICAL v8.0] EQS returned %d positions (Aggression=%.2f → MinDist=%.0fcm, Cover=%.2f → Weight=%.1f)"),
+		Results.Num(), Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);
+
+	// Log top 5 positions with scores for debugging
+	for (int32 i = 0; i < FMath::Min(5, ItemCount); ++i)
+	{
+		FVector ItemLocation = QueryResult->GetItemAsLocation(i);
+		float ItemScore = QueryResult->GetItemScore(i);
+		UE_LOG(LogTemp, Log, TEXT("  [%d] Pos=%s, Score=%.2f"),
+			i, *ItemLocation.ToCompactString(), ItemScore);
+	}
 
 	return Results;
 }
