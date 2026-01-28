@@ -1,0 +1,102 @@
+--- train_rllib.py (v9.0.2 - async)
++++ train_rllib.py (v10.0 - sync)
+@@ -246,28 +246,18 @@
+
+ def create_env_config():
+     """Create environment configuration."""
+     import os
+     is_docker = os.environ.get("IS_DOCKER", "false").lower() == "true"
+
+     config = {
+         "host": SBDAPMConfig.HOST,
+         "base_port": SBDAPMConfig.PORT,
+-        # v8.9: Observation-based episode detection (replaces flawed Python timeout)
+-        # UE5 is the SOLE source of truth for episode boundaries
+-        # These settings configure the backup detection mechanism:
+-        "grpc_poll_timeout": 0.01,  # 10ms - fast polling to catch termination flags
+-        "health_reset_threshold": 30.0,  # Health increase > 30 suggests reset
+-        "warning_steps_threshold": 3000,  # Log warning (not force) at 3000 steps
+     }
+
+     # Add Docker-specific settings
+     if is_docker:
+         config["is_docker"] = True
+         config["timeout"] = 60  # Extended timeout for Docker networking
+
+     return config
+
+@@ -277,7 +267,7 @@
+
+     # 1. Config 객체 생성
+     config = PPOConfig()
+
+     # 2. Environment 설정
+     config = config.environment(
+-        env="sbdapm_env_async",
++        env="cortex_env",  # v10.0: Changed to synchronous environment
+         env_config=create_env_config(),
+         disable_env_checking=True,
+     )
+@@ -298,16 +288,8 @@
+         count_steps_by="agent_steps",
+     )
+
+-    # 5. Callbacks (Episode Logging + Policy Update Pause)
+-    # v9.0: Added PolicyUpdatePauseCallback to prevent episode desync during training
+-    from policy_update_pause_callback import PolicyUpdatePauseCallback
+-    from ray.rllib.algorithms.callbacks import make_multi_callbacks
+-
+-    MultiCallbacks = make_multi_callbacks(
+-        [EpisodeLoggerCallback,
+-         PolicyUpdatePauseCallback])
+-    config.callbacks(MultiCallbacks)
++    # 5. Callbacks (Episode Logging only)
++    # v10.0: Removed PolicyUpdatePauseCallback - not needed in sync architecture
++    config.callbacks(EpisodeLoggerCallback)
+
+     # 6. Debugging & Reporting
+     config = config.debugging(log_level="WARN")
+@@ -369,13 +351,13 @@
+ def register_env():
+     """Register custom environment with Ray."""
+     from ray.tune.registry import register_env
+
+     if SCHOLA_AVAILABLE:
+         def env_creator(config):
+-            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
+-            return SBDAPMAsyncMultiAgentEnv(**config)
++            from cortex_env import CORTEXSyncMultiAgentEnv
++            return CORTEXSyncMultiAgentEnv(**config)
+     else:
+         def env_creator(config):
+-            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
+-            return SBDAPMAsyncMultiAgentEnv(**config)
++            from cortex_env import CORTEXSyncMultiAgentEnv
++            return CORTEXSyncMultiAgentEnv(**config)
+
+-    register_env("sbdapm_env_async", env_creator)
++    register_env("cortex_env", env_creator)
+@@ -463,7 +445,7 @@
+         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
+
+     print("=" * 60)
+-    print("CORTEX v8.9 - UE5-Synced Episode Detection")
++    print("CORTEX v10.0 - Synchronous Architecture")
+     print("=" * 60)
+     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
+     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
+@@ -471,11 +453,9 @@
+     print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
+     print(f"  Iterations: {args.iterations}")
+     print()
+-    print("  v8.9 Episode Detection:")
+-    print(f"    Mode: Observation-based reset detection (UE5 is source of truth)")
+-    print(f"    gRPC Poll: 10ms timeout (fast polling to catch termination)")
+-    print(f"    Backup: Health-based reset detection (threshold: 30.0)")
+-    print(f"    NO Python-forced timeouts (removed v8.8 desync bug)")
++    print("  v10.0 Synchronous Environment:")
++    print(f"    Architecture: Blocking send/poll (no threads)")
++    print(f"    Policy Updates: Natural pause (RLlib doesn't call step())")
++    print(f"    Episode Boundaries: Direct detection (clean terminal states)")
+     print()
+     print("  PPO Stability:")

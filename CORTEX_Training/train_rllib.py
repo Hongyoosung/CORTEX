@@ -216,18 +216,18 @@ class SBDAPMConfig:
     HIDDEN_LAYERS = [256, 256, 128]
 
     # PPO hyperparameters (v8.9: Stabilized per Training_Diagnosis_Report.md)
-    LEARNING_RATE = 3e-5  # v8.8: Reduced from 5e-5 to improve stability
-    LEARNING_RATE_END = 1e-6  # v8.8: Final LR for schedule
-    TRAIN_BATCH_SIZE = 32000  # v8.6 ASYNC: 4 envs × 8 agents × 1000 steps = policy update every 1000 env steps
-    SGD_MINIBATCH_SIZE = 2048 # Minibatch size for SGD updates
-    NUM_SGD_ITER = 4  # v8.9: Reduced from 10 to prevent overfitting
+    LEARNING_RATE = 3e-5  
+    LEARNING_RATE_END = 1e-6  
+    TRAIN_BATCH_SIZE = 48000  
+    SGD_MINIBATCH_SIZE = 2048 
+    NUM_SGD_ITER = 3  
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
-    CLIP_PARAM = 0.15  # v8.9: Tightened from 0.2 for conservative updates
-    ENTROPY_COEFF = 0.005  # v8.9: Increased from 0.001 to maintain exploration
-    VF_LOSS_COEFF = 0.5  # v8.9: Reduced from 1.5 to balance critic influence
-    GRAD_CLIP = 0.5  # v8.9: CRITICAL - prevents exploding gradients
-    VF_CLIP_PARAM = 1.0  # v8.9: Reduced from 10.0 to prevent VF explosion
+    CLIP_PARAM = 0.15  
+    ENTROPY_COEFF = 0.005  
+    VF_LOSS_COEFF = 0.5  
+    GRAD_CLIP = 0.5  
+    VF_CLIP_PARAM = 1.0  
 
     # v8.8: Log-std clamping to prevent entropy explosion
     LOG_STD_MIN = -2.0  # Minimum log_std (σ_min ≈ 0.135)
@@ -235,8 +235,8 @@ class SBDAPMConfig:
 
     # Training
     NUM_WORKERS = 0  # Windows: single process
-    NUM_ENVS_PER_WORKER = 1  # FIXED: Schola handles vectorization internally via nested dicts
-    NUM_UE5_ENVIRONMENTS = 4  # v8.5: Number of parallel UE5 environments (managed by single Python env)
+    NUM_ENVS_PER_WORKER = 1 
+    NUM_UE5_ENVIRONMENTS = 4 
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
 
@@ -252,12 +252,6 @@ def create_env_config():
     config = {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,
-        # v8.9: Observation-based episode detection (replaces flawed Python timeout)
-        # UE5 is the SOLE source of truth for episode boundaries
-        # These settings configure the backup detection mechanism:
-        "grpc_poll_timeout": 0.01,  # 10ms - fast polling to catch termination flags
-        "health_reset_threshold": 30.0,  # Health increase > 30 suggests reset
-        "warning_steps_threshold": 3000,  # Log warning (not force) at 3000 steps
     }
 
     # Add Docker-specific settings
@@ -277,7 +271,7 @@ def create_ppo_config():
 
     # 2. Environment 설정
     config = config.environment(
-        env="sbdapm_env_async",
+        env="cortex_env",
         env_config=create_env_config(),
         disable_env_checking=True,
     )
@@ -298,15 +292,10 @@ def create_ppo_config():
         count_steps_by="agent_steps",
     )
     
-    # 5. Callbacks (Episode Logging + Policy Update Pause)
-    # v9.0: Added PolicyUpdatePauseCallback to prevent episode desync during training
-    from policy_update_pause_callback import PolicyUpdatePauseCallback
-    from ray.rllib.algorithms.callbacks import MultiCallbacks
 
-    config = config.callbacks(MultiCallbacks([
-        EpisodeLoggerCallback,
-        PolicyUpdatePauseCallback
-    ]))
+    # 5. Callbacks (Episode Logging only)
+    # v10.0: Removed PolicyUpdatePauseCallback - not needed in sync architecture
+    config.callbacks(EpisodeLoggerCallback)
 
     # 6. Debugging & Reporting
     config = config.debugging(log_level="WARN")
@@ -371,14 +360,14 @@ def register_env():
 
     if SCHOLA_AVAILABLE:
         def env_creator(config):
-            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
-            return SBDAPMAsyncMultiAgentEnv(**config)
+            from cortex_env import CORTEXSyncMultiAgentEnv
+            return CORTEXSyncMultiAgentEnv(**config)
     else:
         def env_creator(config):
-            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
-            return SBDAPMAsyncMultiAgentEnv(**config)
+            from cortex_env import CORTEXSyncMultiAgentEnv
+            return CORTEXSyncMultiAgentEnv(**config)
 
-    register_env("sbdapm_env_async", env_creator)
+    register_env("cortex_env", env_creator)
 
 
 def register_custom_model():
@@ -461,7 +450,7 @@ def train(args):
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
 
     print("=" * 60)
-    print("CORTEX v8.9 - UE5-Synced Episode Detection")
+    print("CORTEX v10.0 - Synchronous Architecture")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
@@ -469,11 +458,10 @@ def train(args):
     print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
     print(f"  Iterations: {args.iterations}")
     print()
-    print("  v8.9 Episode Detection:")
-    print(f"    Mode: Observation-based reset detection (UE5 is source of truth)")
-    print(f"    gRPC Poll: 10ms timeout (fast polling to catch termination)")
-    print(f"    Backup: Health-based reset detection (threshold: 30.0)")
-    print(f"    NO Python-forced timeouts (removed v8.8 desync bug)")
+    print("  v10.0 Synchronous Environment:")
+    print(f"    Architecture: Blocking send/poll (no threads)")
+    print(f"    Policy Updates: Natural pause (RLlib doesn't call step())")
+    print(f"    Episode Boundaries: Direct detection (clean terminal states)")
     print()
     print("  PPO Stability:")
     print(f"    Learning Rate: {SBDAPMConfig.LEARNING_RATE} → {SBDAPMConfig.LEARNING_RATE_END} (scheduled)")

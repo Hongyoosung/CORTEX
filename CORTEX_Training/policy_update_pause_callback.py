@@ -1,5 +1,5 @@
 """
-Policy Update Pause Callback for CORTEX v9.0
+Policy Update Pause Callback for CORTEX v9.0.1 (RLlib 2.x+ API)
 
 Pauses environments during policy updates to prevent episode desync.
 
@@ -10,8 +10,8 @@ Key Insight:
     - This creates partial episodes and training data corruption
 
 Solution:
-    - Before policy update: pause() all environments → gRPC threads stop polling
-    - After policy update: resume() all environments → gRPC threads resume
+    - Before policy update: pause() all environments → gRPC threads stop sending actions
+    - After policy update: resume() all environments → gRPC threads resume action sending
     - Result: Clean episode boundaries, no desync, stable training
 
 Usage:
@@ -21,12 +21,15 @@ Usage:
         .environment(...)
         .callbacks(PolicyUpdatePauseCallback)
         .build()
+
+API Reference:
+    - Uses RLlib 2.x+ API: EnvRunner, env_runner_group
+    - Compatible with: Ray 2.0+, RLlib 2.0+
 """
 
 from ray.rllib.algorithms.callbacks import DefaultCallbacks
 from ray.rllib.algorithms.algorithm import Algorithm
-from typing import Dict
-import time
+from typing import Dict, Optional
 
 
 class PolicyUpdatePauseCallback(DefaultCallbacks):
@@ -39,46 +42,53 @@ class PolicyUpdatePauseCallback(DefaultCallbacks):
         3. on_train_result() - Called AFTER training → resume()
     """
 
-    def on_sample_end(self, *, worker, samples, **kwargs):
+    def on_sample_end(self, *, env_runner, **kwargs):
+        if hasattr(env_runner, 'env'):
+            env_runner.env.pause()  
+    
+    def on_train_result(self, *, algorithm, **kwargs):
+        algorithm.env_runner_group.foreach_worker(
+            lambda w: w.env.resume() if hasattr(w, 'env') else None,
+            local_env_runner=True
+        )
+
+    @staticmethod
+    def _safe_pause(env):
         """
-        Called after sample collection completes, BEFORE policy update.
-        Pause environments now to prevent advancement during training.
+        Safely pause environment if it supports pause().
+
+        Args:
+            env: Gym environment instance
         """
         try:
-            # Pause all environments on this worker
-            worker.foreach_env(self._safe_pause)
+            if hasattr(env, 'pause') and callable(env.pause):
+                print(f"[PolicyUpdatePauseCallback] Calling env.pause() on {type(env).__name__}")
+                env.pause()
+                print(f"[PolicyUpdatePauseCallback] env.pause() completed successfully")
+            else:
+                print(f"[PolicyUpdatePauseCallback] ⚠️  env.pause() not available on {type(env).__name__}")
+                print(f"[PolicyUpdatePauseCallback]    Available methods: {[m for m in dir(env) if not m.startswith('_') and callable(getattr(env, m))][:10]}")
         except Exception as e:
-            print(f"[PolicyUpdatePauseCallback] Warning: Failed to pause: {e}")
+            print(f"[PolicyUpdatePauseCallback] ❌ Error calling env.pause(): {e}")
+            import traceback
+            traceback.print_exc()
 
-    def on_train_result(self, *, algorithm: Algorithm, result: Dict, **kwargs):
+    @staticmethod
+    def _safe_resume(env):
         """
-        Called AFTER training iteration completes.
-        Resume all environments to continue episode collection.
+        Safely resume environment if it supports resume().
+
+        Args:
+            env: Gym environment instance
         """
         try:
-            workers = algorithm.workers
-
-            # Resume local worker envs
-            if workers.local_worker():
-                workers.local_worker().foreach_env(self._safe_resume)
-
-            # Resume remote worker envs
-            workers.foreach_worker(
-                lambda w: w.foreach_env(self._safe_resume),
-                local_worker=False
-            )
-
+            if hasattr(env, 'resume') and callable(env.resume):
+                print(f"[PolicyUpdatePauseCallback] Calling env.resume() on {type(env).__name__}")
+                env.resume()
+                print(f"[PolicyUpdatePauseCallback] env.resume() completed successfully")
+            else:
+                print(f"[PolicyUpdatePauseCallback] ⚠️  env.resume() not available on {type(env).__name__}")
         except Exception as e:
-            print(f"[PolicyUpdatePauseCallback] Warning: Failed to resume: {e}")
-
-    def _safe_pause(self, env):
-        """Safely pause environment if it supports pause()."""
-        if hasattr(env, 'pause') and callable(env.pause):
-            env.pause()
-        return env
-
-    def _safe_resume(self, env):
-        """Safely resume environment if it supports resume()."""
-        if hasattr(env, 'resume') and callable(env.resume):
-            env.resume()
-        return env
+            print(f"[PolicyUpdatePauseCallback] ❌ Error calling env.resume(): {e}")
+            import traceback
+            traceback.print_exc()

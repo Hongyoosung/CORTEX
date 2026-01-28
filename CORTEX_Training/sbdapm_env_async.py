@@ -1,5 +1,5 @@
 """
-SBDAPM Async Environment with Policy Update Barrier (v9.0)
+SBDAPM Async Environment with Policy Update Barrier (v9.0.2)
 
 This version implements UE5 PAUSE/RESUME during Python policy updates to prevent episode desync:
 
@@ -15,21 +15,6 @@ Key Features:
     3. Pause/Resume: UE5 blocks during policy updates via pause flag
     4. Episode Completion Queue: Captures final rewards before auto-reset
     5. Clean Episode Boundaries: No partial episodes during training
-
-v9.0 Changes (MAJOR FIX):
-    - ADDED: pause() and resume() methods for policy update barrier
-    - ADDED: _is_paused flag to block gRPC thread during updates
-    - REMOVED: Observation-based reset detection (unnecessary complexity)
-    - REMOVED: processed_episode_completions tracking (band-aid for desync)
-    - SIMPLIFIED: Episode tracking logic (single source of truth)
-    - FIXED: Variable episode lengths caused by async policy updates
-
-Why This Matters:
-    - Before v9.0: Python updates policy (10-30s) while UE5 continues running
-      → Python reconnects mid-episode, sees partial episodes
-      → Training data corrupted with incomplete trajectories
-    - After v9.0: gRPC thread pauses during policy updates
-      → Clean episode boundaries, no desync, stable training
 
 Usage:
     In train_rllib.py:
@@ -97,10 +82,10 @@ if SCHOLA_AVAILABLE:
             self.num_envs = kwargs.get("num_envs", 4)
             self.grpc_poll_timeout = kwargs.get("grpc_poll_timeout", GRPC_POLL_TIMEOUT)
 
-            print(f"[ENV v9.0] Connecting to {host}:{port}...")
-            print(f"[ENV v9.0] Multi-environment: {self.num_envs} parallel UE5 envs")
-            print(f"[ENV v9.0] gRPC poll timeout: {self.grpc_poll_timeout*1000:.0f}ms")
-            print(f"[ENV v9.0] Policy Update Barrier: ENABLED (pause/resume support)")
+            print(f"[ENV v9.0.2] Connecting to {host}:{port}...")
+            print(f"[ENV v9.0.2] Multi-environment: {self.num_envs} parallel UE5 envs")
+            print(f"[ENV v9.0.2] gRPC poll timeout: {self.grpc_poll_timeout*1000:.0f}ms")
+            print(f"[ENV v9.0.2] Policy Update Barrier: UE5 simulation pause (episode timer freeze)")
 
             # Connect to UE5
             try:
@@ -110,13 +95,13 @@ if SCHOLA_AVAILABLE:
                     verbosity=1,
                     auto_reset_type=AutoResetType.SAME_STEP
                 )
-                print(f"[ENV v9.0] Connected!")
+                print(f"[ENV v9.0.2] Connected!")
 
                 # Verify environment structure
                 if len(self.schola_env.ids) == self.num_envs:
-                    print(f"[ENV v9.0] ✅ Verified {self.num_envs} environments with {sum(len(a) for a in self.schola_env.ids)} total agents")
+                    print(f"[ENV v9.0.2] ✅ Verified {self.num_envs} environments with {sum(len(a) for a in self.schola_env.ids)} total agents")
                 else:
-                    print(f"[ENV v9.0] ⚠️  WARNING: Expected {self.num_envs} environments but got {len(self.schola_env.ids)}")
+                    print(f"[ENV v9.0.2] ⚠️  WARNING: Expected {self.num_envs} environments but got {len(self.schola_env.ids)}")
 
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
@@ -166,12 +151,6 @@ if SCHOLA_AVAILABLE:
             self.stop_event = threading.Event()
             self.grpc_ready = threading.Event()
 
-            # v9.0: Policy Update Barrier
-            # Pause flag prevents gRPC thread from polling during policy updates
-            self._is_paused = False
-            self._pause_lock = threading.Lock()
-            self._pause_ack = threading.Event()  # Signals when pause is complete
-
             # Episode tracking
             self._first_reset_done = False
             self._first_action_sent = False  # Track if first action has been sent to avoid poll() before send_actions()
@@ -180,6 +159,11 @@ if SCHOLA_AVAILABLE:
             self._env_episode_start_time = {i: None for i in range(self.num_envs)}
             self._env_episodes_completed = {i: 0 for i in range(self.num_envs)}
             self._env_done_flags = {i: False for i in range(self.num_envs)}
+
+            # v9.0.2: Backup timeout mechanism (safety net if UE5 doesn't send terminal states)
+            # This should rarely trigger now that UE5 simulation pauses during policy updates
+            self._max_episode_steps = 6000  # 60s at 100Hz (UE5 MaxEpisodeDuration=60s)
+            self._force_timeout_enabled = True
 
             # Reward tracking per agent (cumulative per episode)
             self._agent_episode_rewards = {}
@@ -213,7 +197,7 @@ if SCHOLA_AVAILABLE:
                         self.reverse_map[(physical_env_idx, schola_agent_idx)] = flat_id
                         self._agent_ids.add(flat_id)
 
-            print(f"[ENV v9.0] Agent map: {len(self._agent_ids)} agents")
+            print(f"[ENV v9.0.2] Agent map: {len(self._agent_ids)} agents")
 
         def _get_agents_for_env(self, physical_env_idx):
             """Get all agent IDs belonging to a physical Schola environment.
@@ -253,44 +237,7 @@ if SCHOLA_AVAILABLE:
         def action_space(self):
             return self._action_space
 
-        # === POLICY UPDATE BARRIER (v9.0) ===
-
-        def pause(self):
-            """
-            Pause the gRPC polling thread.
-            Called before policy updates to prevent UE5 from advancing during training.
-
-            This ensures clean episode boundaries:
-            - No partial episodes during gradient descent
-            - Consistent episode lengths
-            - No data corruption from async updates
-            """
-            with self._pause_lock:
-                if self._is_paused:
-                    return  # Already paused
-
-                self._is_paused = True
-                self._pause_ack.clear()
-
-            # Wait for gRPC thread to acknowledge pause (max 2s)
-            if not self._pause_ack.wait(timeout=2.0):
-                print("[ENV v9.0] Warning: Pause acknowledgment timeout")
-
-            print("[ENV v9.0] 🛑 PAUSED - Policy update in progress")
-
-        def resume(self):
-            """
-            Resume the gRPC polling thread.
-            Called after policy updates complete.
-            """
-            with self._pause_lock:
-                if not self._is_paused:
-                    return  # Already running
-
-                self._is_paused = False
-                self._pause_ack.clear()
-
-            print("[ENV v9.0] ▶️  RESUMED - Environments active")
+        
 
         def _build_observation(self, base_obs):
             """Build 50-dim observation: pad/truncate to 46 + add strategy one-hot."""
@@ -309,23 +256,17 @@ if SCHOLA_AVAILABLE:
             Dedicated thread for UE5 communication.
             Continuously polls for observations and sends actions.
 
-            v9.0: Respects pause flag to block during policy updates.
-            When paused, thread waits without polling UE5, preventing episode desync.
+            v9.0.2: Full pause during policy updates - UE5 timer is frozen, no polling needed
             """
-            print(f"[gRPC Thread v9.0] Started with {self.grpc_poll_timeout*1000:.0f}ms poll timeout")
+            print(f"[gRPC Thread v9.0.2] Started with {self.grpc_poll_timeout*1000:.0f}ms poll timeout")
             self.grpc_ready.set()
+
+            last_terminal_check = time.time()
 
             while not self.stop_event.is_set():
                 try:
-                    # v9.0: Check if paused (policy update in progress)
-                    if self._is_paused:
-                        # Acknowledge pause and wait
-                        if not self._pause_ack.is_set():
-                            self._pause_ack.set()
-                        time.sleep(0.1)  # Wait while paused
-                        continue
-                    # 1. Get actions from queue (non-blocking with fast timeout)
-                    # v8.9: Reduced from 100ms to 10ms to catch termination window
+
+                    # 1. Get actions from queue and send
                     try:
                         formatted_actions = self.action_queue.get(timeout=self.grpc_poll_timeout)
 
@@ -416,6 +357,14 @@ if SCHOLA_AVAILABLE:
                     terminated_dict['__all__'] = all_agents_done
                     truncated_dict['__all__'] = all_agents_done
 
+                    # v9.0.2: DIAGNOSTIC - Log when ANY agent shows done=True
+                    if time.time() - last_terminal_check > 5.0:
+                        terminated_count = sum(1 for aid in self._agent_ids if terminated_dict.get(aid, False))
+                        truncated_count = sum(1 for aid in self._agent_ids if truncated_dict.get(aid, False))
+                        if terminated_count > 0 or truncated_count > 0:
+                            print(f"[gRPC Thread] Terminal state detected: {terminated_count} terminated, {truncated_count} truncated (all_done={all_agents_done})")
+                        last_terminal_check = time.time()
+
                     # 5. Detect episode completion AND auto-reset events (per physical environment)
                     # v8.7: Queue episode completion BEFORE auto-reset overwrites the data
                     for env_idx in range(self.num_envs):
@@ -492,14 +441,14 @@ if SCHOLA_AVAILABLE:
                 if not self.grpc_ready.wait(timeout=5.0):
                     raise RuntimeError("gRPC thread failed to start")
 
-                print(f"[ENV v9.0] gRPC thread started successfully")
+                print(f"[ENV v9.0.2] gRPC thread started successfully")
 
         def _stop_grpc_thread(self):
             """Stop async gRPC communication thread."""
             if self.grpc_thread and self.grpc_thread.is_alive():
                 self.stop_event.set()
                 self.grpc_thread.join(timeout=2.0)
-                print(f"[ENV v9.0] gRPC thread stopped")
+                print(f"[ENV v9.0.2] gRPC thread stopped")
 
         # === RLlib Interface (Main Thread) ===
 
@@ -788,6 +737,22 @@ if SCHOLA_AVAILABLE:
                             # Backup flag in case buffer shows done before queue is processed
                             self._env_done_flags[env_idx] = True
 
+                    # v9.0.2: Backup force timeout if UE5 doesn't send terminal states
+                    # Should rarely trigger now that pause/resume prevents desync
+                    if self._force_timeout_enabled and self._env_episode_steps[env_idx] >= self._max_episode_steps:
+                        if not self._env_done_flags.get(env_idx, False) and env_idx not in self.pending_episode_completion:
+                            print(f"[STEP] ⚠️ FORCE TIMEOUT: Env {env_idx} reached {self._max_episode_steps} steps without UE5 terminal state!")
+                            print(f"[STEP]   This suggests UE5 timeout is not triggering. Check MaxEpisodeDuration in UE5 GameMode.")
+
+                            # Create artificial episode completion
+                            final_rewards = {aid: reward_dict.get(aid, 0.0) for aid in env_agents}
+                            final_obs = {aid: obs_dict.get(aid, self._build_observation(np.zeros(46, dtype=np.float32))) for aid in env_agents}
+                            final_info = {aid: info_dict.get(aid, {}) for aid in env_agents}
+
+                            # Mark as truncated (timeout)
+                            self.pending_episode_completion[env_idx] = (final_rewards, final_obs, final_info, True)
+                            print(f"[STEP]   Forced timeout for Env {env_idx} - episode will end next step")
+
                 # 6. Periodic logging (detailed per-environment status)
                 should_log = any(
                     self._env_episode_steps[i] % 100 == 0 and self._env_episode_steps[i] > 0
@@ -811,17 +776,22 @@ if SCHOLA_AVAILABLE:
                         env_agents = self._get_agents_for_env(summary_env_idx)
                         env_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
 
+                        # v9.0.2: Show sample agent rewards to verify per-env independence
+                        sample_agents = list(env_agents)[:2]
+                        sample_rewards_str = ", ".join([f"{aid}={self._agent_episode_rewards.get(aid, 0.0):.1f}" for aid in sample_agents])
+
                         status = "⚡" if episode_time < 60 else "🔥"
                         done_flag = "✅ DONE" if self._env_done_flags.get(summary_env_idx, False) else "▶️ ACTIVE"
                         print(f"  {status} Env {summary_env_idx}: {done_flag}, Episode {self._env_episodes_completed[summary_env_idx]}, "
                               f"Steps={self._env_episode_steps[summary_env_idx]}, EpisodeTime={episode_time:.1f}s, "
-                              f"CurrentReward={env_reward:.2f}")
+                              f"CurrentReward={env_reward:.2f} (samples: {sample_rewards_str})")
 
                     # Performance metrics
                     avg_poll = np.mean(self.poll_durations) if self.poll_durations else 0
                     avg_send = np.mean(self.send_durations) if self.send_durations else 0
                     print(f"  📊 Total Training Elapsed: {training_elapsed:.1f}s")
                     print(f"  ⏱️ Avg poll={avg_poll*1000:.1f}ms, send={avg_send*1000:.1f}ms")
+                    print(f"  🎯 Timeout check: {self._max_episode_steps} steps (force_timeout={'ON' if self._force_timeout_enabled else 'OFF'})")
                     print("=" * 80)
 
                 # 7. Fallback if no observations yet
@@ -890,8 +860,8 @@ if SCHOLA_AVAILABLE:
 
         def close(self):
             """Clean shutdown."""
-            print("[ENV v9.0] Closing environment...")
+            print("[ENV v9.0.2] Closing environment...")
             self._stop_grpc_thread()
             if hasattr(self.schola_env, 'close'):
                 self.schola_env.close()
-            print("[ENV v9.0] Closed")
+            print("[ENV v9.0.2] Closed")
