@@ -10,7 +10,7 @@ class UFollowerAgentComponent;
 class UHealthComponent;
 
 /**
- * v8.0 Unified Reward Configuration
+ * v8.10 Unified Reward Configuration (VF Collapse Fix)
  * Strategy-specific behavior emerges from weight profiles, not separate reward functions.
  * All strategies use same reward components with different weights.
  *
@@ -19,6 +19,12 @@ class UHealthComponent;
  * - Easy hyperparameter tuning via weight profiles
  * - TensorBoard-compatible component breakdown
  * - No code duplication
+ *
+ * v8.10 Critical Fix:
+ * - Reward normalization: Clamps total reward to [-10, 10] range
+ * - Prevents value function collapse from multi-modal return distributions
+ * - Required because strategy-specific weights create 100x variance in raw rewards
+ *   (e.g., Assault combat spikes vs Support formation rewards)
  */
 namespace RewardConfig {
 	// === BASE REWARD COMPONENT VALUES ===

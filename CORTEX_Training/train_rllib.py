@@ -142,8 +142,17 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         # Shared Log-Std Head
         self.log_std_head = SlimFC(final_hidden_size, self.action_dim, activation_fn=None)
 
-        # Shared Value Head
-        self.value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        # v8.10 FIX: Strategy-Specific Value Heads (Critical for VF collapse fix)
+        # Each strategy sees different reward distributions:
+        # - Assault: High combat spikes (kills, damage)
+        # - Defend: High survival/cover (steady accumulation)
+        # - Support: High coordination (formation, combined fire)
+        # - Retreat: High survival + objective progress (escape rewards)
+        # Single value head cannot learn all these modes → explained_var = 0
+        self.assault_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        self.defend_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        self.support_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        self.retreat_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
 
         # v8.8: Log-std clamping bounds (prevents entropy explosion)
         log_std_config = model_config.get("custom_model_config", {})
@@ -163,6 +172,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         # Run shared trunk
         features = self.shared_trunk(obs)
         self._last_features = features
+        self._last_strategy_onehot = strategy_onehot  # Store for value_function()
 
         # Route to appropriate strategy head
         tactical_means = torch.zeros(batch_size, 4, device=obs.device)
@@ -194,11 +204,34 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     def value_function(self):
         if self._last_features is None:
             raise ValueError("Must call forward() before value_function()")
-        # v8.9.2: REMOVED restrictive clamping - was preventing value function from learning
-        # Rewards are ~10,000 cumulative but clamping was [-10, 10]!
-        # This caused explained_variance=0 and entropy explosion
-        raw_value = self.value_head(self._last_features).squeeze(-1)
-        return raw_value  # Let PPO's vf_clip_param handle value clipping instead
+
+        # v8.10 FIX: Strategy-specific value function
+        # Route to appropriate value head based on strategy one-hot
+        # This fixes the value function collapse issue where single head
+        # couldn't learn multi-modal return distributions across strategies
+        batch_size = self._last_features.shape[0]
+
+        # Get last observation to extract strategy (stored during forward())
+        if not hasattr(self, '_last_strategy_onehot'):
+            # Fallback: use Assault head if strategy not available
+            return self.assault_value_head(self._last_features).squeeze(-1)
+
+        strategy_onehot = self._last_strategy_onehot
+        values = torch.zeros(batch_size, device=self._last_features.device)
+
+        for i in range(batch_size):
+            strategy_idx = torch.argmax(strategy_onehot[i]).item()
+
+            if strategy_idx == 0:  # Assault
+                values[i] = self.assault_value_head(self._last_features[i:i+1]).squeeze()
+            elif strategy_idx == 1:  # Defend
+                values[i] = self.defend_value_head(self._last_features[i:i+1]).squeeze()
+            elif strategy_idx == 2:  # Support
+                values[i] = self.support_value_head(self._last_features[i:i+1]).squeeze()
+            else:  # Retreat
+                values[i] = self.retreat_value_head(self._last_features[i:i+1]).squeeze()
+
+        return values
 
 
 # ==============================================================================
@@ -215,19 +248,23 @@ class SBDAPMConfig:
     # Network architecture
     HIDDEN_LAYERS = [256, 256, 128]
 
-    # PPO hyperparameters (v8.9: Stabilized per Training_Diagnosis_Report.md)
-    LEARNING_RATE = 3e-5  
-    LEARNING_RATE_END = 1e-6  
-    TRAIN_BATCH_SIZE = 48000  
-    SGD_MINIBATCH_SIZE = 2048 
-    NUM_SGD_ITER = 3  
+    # PPO hyperparameters (v8.10.2: Post-Diagnosis Fix)
+    LEARNING_RATE = 5e-5  # REDUCED from 1e-4 (was too aggressive, causing instability)
+    LEARNING_RATE_END = 1e-5  # Keep final LR the same
+    TRAIN_BATCH_SIZE = 48000
+    SGD_MINIBATCH_SIZE = 2048
+    NUM_SGD_ITER = 3
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
-    CLIP_PARAM = 0.15  
-    ENTROPY_COEFF = 0.005  
-    VF_LOSS_COEFF = 0.5  
-    GRAD_CLIP = 0.5  
-    VF_CLIP_PARAM = 1.0  
+    CLIP_PARAM = 0.15
+
+    # v8.10.2 CORRECTIVE FIXES for Persistent VF Collapse:
+    # ROOT CAUSE: v8.10 hyperparameters were TOO AGGRESSIVE, preventing VF from learning
+    # ISSUE: Entropy RISING (8.53 → 8.98), VF Explained Var = 0.0 after 480k steps
+    ENTROPY_COEFF = 0.01  # REDUCED from 0.02 (was causing excessive exploration)
+    VF_LOSS_COEFF = 1.0   # INCREASED from 0.5 (VF needs stronger learning signal)
+    GRAD_CLIP = 0.5
+    VF_CLIP_PARAM = 2.0   # REDUCED from 10.0 (clips TD error, not reward!)  
 
     # v8.8: Log-std clamping to prevent entropy explosion
     LOG_STD_MIN = -2.0  # Minimum log_std (σ_min ≈ 0.135)
@@ -305,22 +342,28 @@ def create_ppo_config():
     )
 
     # 7. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
-    # v8.8: Added lr and lr_schedule to fix policy instability
-    # v8.9: Applied stability fixes from Training_Diagnosis_Report.md
+    # v8.10.2: Applied corrective fixes based on post-training diagnosis
+    #          - Entropy was RISING (8.53 → 8.98) instead of declining
+    #          - VF Explained Var stuck at 0.0 (no learning)
+    #          - Root cause: Hyperparameters too aggressive (high entropy coeff + loose VF clip)
     config = config.training(
-        lr=SBDAPMConfig.LEARNING_RATE,  # v8.8: CRITICAL FIX - was missing!
-        lr_schedule=[  # v8.8: Linear decay schedule for stability
-            (0, SBDAPMConfig.LEARNING_RATE),
-            (500000, SBDAPMConfig.LEARNING_RATE * 0.5),  # 50% at 500k steps
-            (1000000, SBDAPMConfig.LEARNING_RATE * 0.2),  # 20% at 1M steps
-            (2000000, SBDAPMConfig.LEARNING_RATE_END),  # Final LR at 2M steps
+        lr=SBDAPMConfig.LEARNING_RATE,  # v8.10.2: Reduced to 5e-5 (more conservative)
+        lr_schedule=[  # v8.10.2: Slower decay schedule
+            (0, 5e-5),        # Start conservative
+            (1000000, 2e-5),  # Decay at 1M steps
+            (2000000, 1e-5),  # Final LR at 2M steps
         ],
         train_batch_size=SBDAPMConfig.TRAIN_BATCH_SIZE,
         lambda_=SBDAPMConfig.GAE_LAMBDA,
         clip_param=SBDAPMConfig.CLIP_PARAM,  # v8.9: 0.15 (tightened)
-        vf_clip_param=SBDAPMConfig.VF_CLIP_PARAM,  # v8.9: 1.0 (reduced from 10.0)
-        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,  # v8.9: 0.005 (increased)
-        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,  # v8.9: 0.5 (reduced)
+        vf_clip_param=SBDAPMConfig.VF_CLIP_PARAM,  # v8.10.2: 2.0 (clips TD error, not reward)
+        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,  # v8.10.2: 0.01 (reduced from 0.02)
+        entropy_coeff_schedule=[  # v8.10.2: More conservative schedule
+            (0, 0.01),         # Lower initial exploration
+            (500000, 0.005),   # Slower decay
+            (1000000, 0.001),  # Allow policy to converge
+        ],
+        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,  # v8.10.2: 1.0 (increased from 0.5 for stronger VF learning)
         grad_clip=SBDAPMConfig.GRAD_CLIP,  # v8.9: CRITICAL - prevents gradient explosion
         use_gae=True,
         use_critic=True,
@@ -404,9 +447,16 @@ def export_onnx(algo, output_dir):
                 support_tactical = torch.sigmoid(self.model.support_mean_head(features))
                 retreat_tactical = torch.sigmoid(self.model.retreat_mean_head(features))
                 combat_priority = torch.sigmoid(self.model.combat_mean_head(features))
-                value = self.model.value_head(features)
+
+                # v8.10: Export all 4 strategy-specific value heads
+                assault_value = self.model.assault_value_head(features)
+                defend_value = self.model.defend_value_head(features)
+                support_value = self.model.support_value_head(features)
+                retreat_value = self.model.retreat_value_head(features)
+
                 return (assault_tactical, defend_tactical, support_tactical,
-                       retreat_tactical, combat_priority, value)
+                       retreat_tactical, combat_priority,
+                       assault_value, defend_value, support_value, retreat_value)
 
         wrapper = MultiHeadPolicyWrapper(model)
         wrapper.eval()
@@ -418,7 +468,8 @@ def export_onnx(algo, output_dir):
             wrapper, dummy_input, str(model_path),
             input_names=["observation"],
             output_names=["assault_tactical", "defend_tactical", "support_tactical",
-                         "retreat_tactical", "combat_priority", "value"],
+                         "retreat_tactical", "combat_priority",
+                         "assault_value", "defend_value", "support_value", "retreat_value"],
             dynamic_axes={
                 "observation": {0: "batch_size"},
                 "assault_tactical": {0: "batch_size"},
@@ -426,7 +477,10 @@ def export_onnx(algo, output_dir):
                 "support_tactical": {0: "batch_size"},
                 "retreat_tactical": {0: "batch_size"},
                 "combat_priority": {0: "batch_size"},
-                "value": {0: "batch_size"}
+                "assault_value": {0: "batch_size"},
+                "defend_value": {0: "batch_size"},
+                "support_value": {0: "batch_size"},
+                "retreat_value": {0: "batch_size"}
             },
             opset_version=11
         )
@@ -450,7 +504,7 @@ def train(args):
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
 
     print("=" * 60)
-    print("CORTEX v10.0 - Synchronous Architecture")
+    print("CORTEX v8.10.2 - Post-Diagnosis Corrective Fix")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
@@ -458,16 +512,8 @@ def train(args):
     print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
     print(f"  Iterations: {args.iterations}")
     print()
-    print("  v10.0 Synchronous Environment:")
-    print(f"    Architecture: Blocking send/poll (no threads)")
-    print(f"    Policy Updates: Natural pause (RLlib doesn't call step())")
-    print(f"    Episode Boundaries: Direct detection (clean terminal states)")
-    print()
-    print("  PPO Stability:")
-    print(f"    Learning Rate: {SBDAPMConfig.LEARNING_RATE} → {SBDAPMConfig.LEARNING_RATE_END} (scheduled)")
-    print(f"    Entropy Coeff: {SBDAPMConfig.ENTROPY_COEFF}")
-    print(f"    Log-Std Bounds: [{SBDAPMConfig.LOG_STD_MIN}, {SBDAPMConfig.LOG_STD_MAX}] (clamped)")
-    print()
+
+
 
     # Cleanup any existing Ray
     try:
@@ -601,7 +647,7 @@ def train(args):
             print(f"    Agent steps this iteration: {agent_steps}")
             print(f"    Cumulative: {cumulative_episodes} episodes, {cumulative_steps} steps")
 
-            # Show learner stats (v8.8: Enhanced monitoring for stability diagnostics)
+            # Show learner stats (v8.10: Enhanced VF collapse monitoring)
             learner_info = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {})
             if learner_info:
                 total_loss = learner_info.get('total_loss', 'N/A')
@@ -610,32 +656,9 @@ def train(args):
                 kl = learner_info.get('kl', 'N/A')
                 entropy = learner_info.get('entropy', 'N/A')
                 cur_kl_coeff = learner_info.get('cur_kl_coeff', 'N/A')
+                vf_explained_var = learner_info.get('vf_explained_var', 'N/A')
 
                 print(f"    Loss: total={total_loss:.4f}, policy={policy_loss:.4f}, vf={vf_loss:.4f}" if isinstance(total_loss, float) else f"    Loss: {total_loss}")
-                if isinstance(kl, float) and isinstance(entropy, float):
-                    print(f"    KL divergence: {kl:.6f}, Entropy: {entropy:.4f}")
-                    # v8.8: Warn if KL or entropy are concerning
-                    if kl > 0.02:
-                        print(f"    ⚠️ WARNING: KL divergence ({kl:.4f}) > 0.02 - policy updates may be too aggressive")
-                    if entropy > 7.0:
-                        print(f"    ⚠️ WARNING: Entropy ({entropy:.2f}) > 7.0 - possible exploration collapse")
-                    elif entropy < 1.0:
-                        print(f"    ⚠️ WARNING: Entropy ({entropy:.2f}) < 1.0 - possible premature convergence")
-                if isinstance(cur_kl_coeff, float):
-                    print(f"    Current KL coefficient: {cur_kl_coeff:.4f}")
-
-                # v8.9: Emergency checkpoint if training becomes unstable (Training_Diagnosis_Report.md)
-                if isinstance(vf_loss, float) and isinstance(kl, float):
-                    if vf_loss > 2.0 or kl > 0.03:
-                        print(f"\n🚨 CRITICAL: Training instability detected!")
-                        print(f"    VF Loss: {vf_loss:.4f} (threshold: 2.0)")
-                        print(f"    KL Divergence: {kl:.6f} (threshold: 0.03)")
-                        print(f"    Saving emergency checkpoint...")
-                        emergency_path = os.path.join(output_dir, f"emergency_iter_{i+1}")
-                        algo.save(emergency_path)
-                        print(f"    Emergency checkpoint saved to: {emergency_path}")
-                        print(f"    Consider halting training and reviewing hyperparameters.\n")
-            print()
 
         # Checkpoint
         if (i + 1) % args.checkpoint_freq == 0:

@@ -98,8 +98,8 @@ if SCHOLA_AVAILABLE:
 
             host = kwargs.get("host", "localhost")
             port = self._resolve_port(kwargs)
-            timeout = kwargs.get("timeout", 60)
             self.num_envs = kwargs.get("num_envs", 4)
+            self._agent_strategies = {}  # flat_id → strategy_idx (0=Assault, 1=Defend, 2=Support, 3=Retreat)
 
             print(f"[CORTEX v10.0] Connecting to {host}:{port}...")
             print(f"[CORTEX v10.0] Multi-environment: {self.num_envs} parallel UE5 envs")
@@ -220,15 +220,37 @@ if SCHOLA_AVAILABLE:
 
             return all_keys
 
-        def _build_observation(self, base_obs):
-            """Build 50-dim observation: pad/truncate to 46 + add strategy one-hot."""
+        def _build_observation(self, base_obs, strategy_idx=0):
+            """Build 50-dim observation: pad/truncate to 46 + add strategy one-hot.
+            
+            Args:
+                base_obs: 46-dim observation vector
+                strategy_idx: Strategy index (0=Assault, 1=Defend, 2=Support, 3=Retreat)
+            """
+            # Pad/truncate to 46 dimensions
             if len(base_obs) < 46:
-                base_obs = np.pad(base_obs, (0, 46 - len(base_obs)), mode='constant')
-            elif len(base_obs) > 46:
+                base_obs = np.pad(base_obs[:46], (0, 46 - len(base_obs)), mode='constant')
+            else:
                 base_obs = base_obs[:46]
-
-            # Default strategy one-hot (Assault)
-            strategy_onehot = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            
+            # ✅ Strategy one-hot을 파라미터에서 생성
+            strategy_onehot = np.zeros(4, dtype=np.float32)
+            strategy_idx = min(int(strategy_idx), 3)  # 범위 체크: [0,3]
+            strategy_onehot[strategy_idx] = 1.0
+            
+            # ✅ Strategy 분포 추적
+            if not hasattr(self, '_strategy_count'):
+                self._strategy_count = [0, 0, 0, 0]
+            self._strategy_count[strategy_idx] += 1
+            
+            # ✅ 매 10000 observation마다 로그
+            if sum(self._strategy_count) % 10000 == 0:
+                total = sum(self._strategy_count)
+                pct = [f"{100*c//total:>3}%" for c in self._strategy_count]
+                names = ["Assault", "Defend", "Support", "Retreat"]
+                dist_str = " | ".join([f"{n}={p}" for n, p in zip(names, pct)])
+                print(f"[STRATEGY DIST] {dist_str}")
+            
             return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
 
         @property
@@ -468,11 +490,23 @@ if SCHOLA_AVAILABLE:
                         obs_val = list(agent_obs_data.values())[0]
                     else:
                         obs_val = agent_obs_data
-                    base_obs = np.array(obs_val, dtype=np.float32).flatten()
+                    full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    base_obs = np.zeros(46, dtype=np.float32)
+                    full_obs = np.zeros(50, dtype=np.float32)
 
-                obs_dict[flat_id] = self._build_observation(base_obs)
+                # Extract strategy from observation (last 4 dimensions are one-hot)
+                if len(full_obs) >= 50:
+                    base_obs = full_obs[:46]
+                    strategy_onehot = full_obs[46:50]
+                    strategy_idx = int(np.argmax(strategy_onehot))
+                else:
+                    # Fallback for old observations
+                    base_obs = full_obs[:46] if len(full_obs) >= 46 else np.pad(full_obs, (0, 46 - len(full_obs)))
+                    strategy_idx = 0
+
+                # Cache strategy for this agent
+                self._agent_strategies[flat_id] = strategy_idx
+                obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
                 info_dict[flat_id] = {"env_id": env_idx}
 
             return obs_dict, info_dict
@@ -504,10 +538,23 @@ if SCHOLA_AVAILABLE:
                         obs_val = list(agent_obs_data.values())[0]
                     else:
                         obs_val = agent_obs_data
-                    base_obs = np.array(obs_val, dtype=np.float32).flatten()
+                    full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    base_obs = np.zeros(46, dtype=np.float32)
-                obs_dict[flat_id] = self._build_observation(base_obs)
+                    full_obs = np.zeros(50, dtype=np.float32)
+
+                # Extract strategy from observation (last 4 dimensions are one-hot)
+                if len(full_obs) >= 50:
+                    base_obs = full_obs[:46]
+                    strategy_onehot = full_obs[46:50]
+                    strategy_idx = int(np.argmax(strategy_onehot))
+                else:
+                    # Fallback for old observations
+                    base_obs = full_obs[:46] if len(full_obs) >= 46 else np.pad(full_obs, (0, 46 - len(full_obs)))
+                    strategy_idx = 0
+
+                # Cache strategy for this agent
+                self._agent_strategies[flat_id] = strategy_idx
+                obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
 
                 # Reward
                 reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
@@ -549,11 +596,23 @@ if SCHOLA_AVAILABLE:
                         obs_val = list(agent_obs_data.values())[0]
                     else:
                         obs_val = agent_obs_data
-                    base_obs = np.array(obs_val, dtype=np.float32).flatten()
+                    full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    base_obs = np.zeros(46, dtype=np.float32)
+                    full_obs = np.zeros(50, dtype=np.float32)
 
-                obs_dict[flat_id] = self._build_observation(base_obs)
+                # Extract strategy from observation (last 4 dimensions are one-hot)
+                if len(full_obs) >= 50:
+                    base_obs = full_obs[:46]
+                    strategy_onehot = full_obs[46:50]
+                    strategy_idx = int(np.argmax(strategy_onehot))
+                else:
+                    # Fallback for old observations
+                    base_obs = full_obs[:46] if len(full_obs) >= 46 else np.pad(full_obs, (0, 46 - len(full_obs)))
+                    strategy_idx = 0
+
+                # Cache strategy for this agent
+                self._agent_strategies[flat_id] = strategy_idx
+                obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
                 info_dict[flat_id] = {"env_id": env_idx}
 
             return obs_dict, info_dict
@@ -613,10 +672,11 @@ if SCHOLA_AVAILABLE:
 
         def _create_zero_step_result(self):
             """Create zero-filled step result for fallback."""
-            obs_dict = {
-                flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
-                for flat_id in self._agent_ids
-            }
+            obs_dict = {}
+            for flat_id in self._agent_ids:
+                strategy_idx = self._agent_strategies.get(flat_id, 0)
+                obs_dict[flat_id] = self._build_observation(np.zeros(46, dtype=np.float32), strategy_idx)
+
             reward_dict = {flat_id: 0.0 for flat_id in self._agent_ids}
             terminated_dict = {flat_id: False for flat_id in self._agent_ids}
             terminated_dict['__all__'] = False
@@ -628,10 +688,11 @@ if SCHOLA_AVAILABLE:
 
         def _create_terminal_fallback(self):
             """Create terminal fallback for error handling."""
-            fallback_obs = {
-                flat_id: self._build_observation(np.zeros(46, dtype=np.float32))
-                for flat_id in self._agent_ids
-            }
+            fallback_obs = {}
+            for flat_id in self._agent_ids:
+                strategy_idx = self._agent_strategies.get(flat_id, 0)
+                fallback_obs[flat_id] = self._build_observation(np.zeros(46, dtype=np.float32), strategy_idx)
+
             terminated_fallback = {flat_id: True for flat_id in self._agent_ids}
             terminated_fallback['__all__'] = True
             truncated_fallback = {flat_id: False for flat_id in self._agent_ids}

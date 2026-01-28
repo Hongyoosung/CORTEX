@@ -7,6 +7,7 @@
 #include "RL/RLTypes.h"  // v8.0: EStrategyType, FStrategyAssignment
 #include "RL/RLPolicyNetwork.h"  // v8.0: For value estimates
 #include "Core/SimulationManagerGameMode.h"
+#include "Actor/LeaderCharacter.h"
 #include "DrawDebugHelpers.h"
 #include "Async/Async.h"
 #include "Misc/FileHelper.h"
@@ -986,6 +987,12 @@ void UTeamLeaderComponent::RegisterEnemy(AActor* Enemy)
 {
 	if (!Enemy) return;
 
+	// Filter out Leader characters - they should not be registered as enemies
+	if (Enemy->IsA<ALeaderCharacter>())
+	{
+		return;
+	}
+
 	if (!KnownEnemies.Contains(Enemy))
 	{
 		KnownEnemies.Add(Enemy);
@@ -1103,7 +1110,7 @@ void UTeamLeaderComponent::DrawDebugInfo()
 					ObjectivePos,
 					100.0f,  // Arrow size
 					FColor::Yellow,
-					false, 0.0f, 0, 3.0f  // Thickness
+					false, -1.0f, 0, 3.0f  // Thickness
 				);
 			}
 
@@ -1118,7 +1125,7 @@ void UTeamLeaderComponent::DrawDebugInfo()
 				InfoText,
 				nullptr,
 				FColor::Green,
-				0.0f,
+				-1.0f,
 				true  // Draw shadow
 			);
 
@@ -1132,7 +1139,7 @@ void UTeamLeaderComponent::DrawDebugInfo()
 					ObjectiveText,
 					nullptr,
 					FColor::Cyan,
-					0.0f,
+					-1.0f,
 					true  // Draw shadow
 				);
 			}
@@ -1148,7 +1155,7 @@ void UTeamLeaderComponent::DrawDebugInfo()
 		if (!Follower) continue;
 
 		FVector FollowerPos = Follower->GetActorLocation();
-		DrawDebugLine(World, LeaderPos, FollowerPos, TeamColor.ToFColor(true), false, 0.5f, 0, 2.0f);
+		DrawDebugLine(World, LeaderPos, FollowerPos, TeamColor.ToFColor(true), false, -1.0f, 0, 2.0f);
 
 		// Draw strategy type above follower (v8.0 legacy - redundant with v8.0 visualization)
 		if (!bEnableDebugDrawing)
@@ -1157,7 +1164,7 @@ void UTeamLeaderComponent::DrawDebugInfo()
 			{
 				FString StrategyText = UEnum::GetValueAsString(AssignmentPtr->Strategy);
 				// Use 0.0f duration to prevent overlapping text from multiple frames
-				DrawDebugString(World, FollowerPos + FVector(0, 0, 180), StrategyText, nullptr, FColor::White, 0.0f, true);
+				DrawDebugString(World, FollowerPos + FVector(0, 0, 180), StrategyText, nullptr, FColor::White, -1.0f, true);
 			}
 		}
 	}
@@ -1179,5 +1186,5 @@ void UTeamLeaderComponent::DrawDebugInfo()
 		CurrentTeamObservation.AverageTeamHealth,
 		KnownEnemies.Num());
 
-	DrawDebugString(World, LeaderPos + FVector(0, 0, 200), TeamInfo, nullptr, TeamColor.ToFColor(true), 0.5f, true);
+	DrawDebugString(World, LeaderPos + FVector(0, 0, 200), TeamInfo, nullptr, TeamColor.ToFColor(true), -1.0f, true);
 }

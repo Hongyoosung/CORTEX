@@ -63,4 +63,12 @@ public:
 	/** State Tree component (tactical state management) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components")
 	UFollowerStateTreeComponent* StateTreeComponent;
+
+private:
+	//--------------------------------------------------------------------------
+	// COMPONENT COORDINATION (v8.0)
+	//--------------------------------------------------------------------------
+	/** Handle death event from HealthComponent and coordinate with FollowerAgentComponent */
+	UFUNCTION()
+	void OnHealthComponentDeath(const struct FDeathEventData& DeathEvent);
 };

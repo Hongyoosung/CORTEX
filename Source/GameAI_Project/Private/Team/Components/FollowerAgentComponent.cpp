@@ -141,6 +141,8 @@ void UFollowerAgentComponent::BeginPlay()
 		CombatExecutor->RewardCalculator = RLAgent->GetRewardCalculator();
 	}
 
+	// NOTE: Death event subscription is handled by FollowerCharacter (owner coordinates components)
+
 	// Auto-register with team leader
 	if (bAutoRegisterWithLeader)
 	{
@@ -259,6 +261,8 @@ void UFollowerAgentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// Unregister from team leader
 	UnregisterFromTeamLeader();
+
+	// NOTE: Death event unsubscription is handled by FollowerCharacter (owner coordinates components)
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -449,17 +453,26 @@ void UFollowerAgentComponent::MarkAsDead()
 		CombatExecutor->bIsAlive = false;
 	}
 
+	// Deactivate the actor: disable collision and make invisible
+	AActor* Owner = GetOwner();
+	if (Owner)
+	{
+		Owner->SetActorEnableCollision(false);
+		Owner->SetActorHiddenInGame(true);
+	}
+
 	// Signal death to team leader
-	SignalEventToLeader(EStrategicEvent::AllyKilled, GetOwner(), FVector::ZeroVector, 10);
+	SignalEventToLeader(EStrategicEvent::AllyKilled, Owner, FVector::ZeroVector, 10);
 
 	// Notify StateTree of death
-	UFollowerStateTreeComponent* StateTreeComp = GetOwner()->FindComponentByClass<UFollowerStateTreeComponent>();
+	UFollowerStateTreeComponent* StateTreeComp = Owner ? Owner->FindComponentByClass<UFollowerStateTreeComponent>() : nullptr;
 	if (StateTreeComp)
 	{
 		StateTreeComp->OnFollowerDied();
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Marked as dead"), *GetOwner()->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Marked as dead (deactivated: collision OFF, visibility OFF)"),
+		Owner ? *Owner->GetName() : TEXT("NULL"));
 }
 
 void UFollowerAgentComponent::MarkAsAlive()
@@ -474,8 +487,16 @@ void UFollowerAgentComponent::MarkAsAlive()
 		CombatExecutor->bIsAlive = true;
 	}
 
+	// Reactivate the actor: enable collision and make visible
+	AActor* Owner = GetOwner();
+	if (Owner)
+	{
+		Owner->SetActorEnableCollision(true);
+		Owner->SetActorHiddenInGame(false);
+	}
+
 	// Reset health to full
-	UHealthComponent* HealthComp = GetOwner()->FindComponentByClass<UHealthComponent>();
+	UHealthComponent* HealthComp = Owner ? Owner->FindComponentByClass<UHealthComponent>() : nullptr;
 	if (HealthComp)
 	{
 		HealthComp->ResetHealth();
@@ -485,11 +506,14 @@ void UFollowerAgentComponent::MarkAsAlive()
 	ResetEpisode();
 
 	// Notify StateTree of respawn
-	UFollowerStateTreeComponent* StateTreeComp = GetOwner()->FindComponentByClass<UFollowerStateTreeComponent>();
+	UFollowerStateTreeComponent* StateTreeComp = Owner ? Owner->FindComponentByClass<UFollowerStateTreeComponent>() : nullptr;
 	if (StateTreeComp && StateTreeComp->IsValidLowLevel() && StateTreeComp->GetWorld())
 	{
 		StateTreeComp->OnFollowerRespawned();
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Marked as alive (reactivated: collision ON, visibility ON)"),
+		Owner ? *Owner->GetName() : TEXT("NULL"));
 }
 
 bool UFollowerAgentComponent::GetIsAlive() const
@@ -690,13 +714,13 @@ void UFollowerAgentComponent::DrawDebugInfo()
 		*StrategyStr,
 		*ObjectiveStr);
 
-	DrawDebugString(World, FollowerPos + FVector(0, 0, 120), StateText, nullptr, FColor::Cyan, 0.1f, true);
+	DrawDebugString(World, FollowerPos + FVector(0, 0, 120), StateText, nullptr, FColor::Cyan, -1.0f, true);
 
 	// Draw line to target objective
 	if (Assignment.TargetObjective && IsValid(Assignment.TargetObjective))
 	{
 		FVector TargetPos = Assignment.TargetObjective->GetActorLocation();
-		DrawDebugLine(World, FollowerPos, TargetPos, FColor::Red, false, 0.1f, 0, 2.0f);
+		DrawDebugLine(World, FollowerPos, TargetPos, FColor::Cyan, false, -1.0f, 0, 2.0f);
 		DrawDebugSphere(World, TargetPos, 50.0f, 8, FColor::Red, false, 0.1f);
 	}
 
@@ -704,7 +728,7 @@ void UFollowerAgentComponent::DrawDebugInfo()
 	if (TeamLeader && TeamLeader->GetOwner())
 	{
 		FVector LeaderPos = TeamLeader->GetOwner()->GetActorLocation();
-		DrawDebugLine(World, FollowerPos, LeaderPos, TeamLeader->TeamColor.ToFColor(true), false, 0.1f, 0, 1.0f);
+		DrawDebugLine(World, FollowerPos, LeaderPos, TeamLeader->TeamColor.ToFColor(true), false, -1.0f, 0, 1.0f);
 	}
 }
 

@@ -80,37 +80,83 @@ TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment(
         Backpropagation(ExpandedNode, Value);
     }
 
-    // Select best child (highest visit count = most explored)
-    TSharedPtr<FTeamMCTSNode> BestChild = TeamRootNode->SelectBestChild(0.0f);  // ExplorationParam=0 for pure exploitation
+    // v8.10 FIX: Traverse down to find a complete assignment (all agents assigned)
+    // The tree builds incrementally: root (0 agents) → level 1 (1 agent) → ... → level N (N agents)
+    // We need to follow the best path down to get a complete assignment
 
-    if (BestChild.IsValid())
+    TSharedPtr<FTeamMCTSNode> CurrentNode = TeamRootNode;
+    TSharedPtr<FTeamMCTSNode> BestLeafNode = nullptr;
+    int32 TraversalDepth = 0;
+
+    // Follow best child path until we reach a node with all agents assigned or a terminal node
+    while (CurrentNode.IsValid())
     {
-        // 원본: TObjectPtr 키 사용
-        TMap<TObjectPtr<AActor>, FStrategyAssignment> BestAssignmentsTObject = BestChild->GetStrategyAssignments();
+        TMap<TObjectPtr<AActor>, FStrategyAssignment> CurrentAssignments = CurrentNode->GetStrategyAssignments();
 
-        UE_LOG(LogTemp, Log, TEXT("[MCTS v8.0] Best assignment found: Value=%.2f, Visits=%d"),
-            BestChild->TotalReward / FMath::Max(1, BestChild->VisitCount), BestChild->VisitCount);
+        // Check if all agents are assigned
+        if (CurrentAssignments.Num() >= Agents.Num())
+        {
+            BestLeafNode = CurrentNode;
+            UE_LOG(LogTemp, Display, TEXT("[MCTS v8.10 FIX] Found complete assignment at depth %d: %d agents assigned"),
+                TraversalDepth, CurrentAssignments.Num());
+            break;
+        }
 
-        // 반환용: AActor* 키 사용
+        // Select best child (highest visit count for robust decision)
+        TSharedPtr<FTeamMCTSNode> BestChild = CurrentNode->SelectBestChild(0.0f);  // ExplorationParam=0 for pure exploitation
+
+        if (!BestChild.IsValid())
+        {
+            // No children - use current node if it has some assignments
+            if (CurrentAssignments.Num() > 0)
+            {
+                BestLeafNode = CurrentNode;
+                UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10 FIX] Reached leaf at depth %d with partial assignment: %d/%d agents"),
+                    TraversalDepth, CurrentAssignments.Num(), Agents.Num());
+            }
+            break;
+        }
+
+        CurrentNode = BestChild;
+        TraversalDepth++;
+
+        // Safety: Prevent infinite loop
+        if (TraversalDepth > 10)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MCTS v8.10 FIX] Traversal depth exceeded 10, breaking"));
+            break;
+        }
+    }
+
+    if (BestLeafNode.IsValid())
+    {
+        // Convert TObjectPtr keys to AActor* keys
+        TMap<TObjectPtr<AActor>, FStrategyAssignment> BestAssignmentsTObject = BestLeafNode->GetStrategyAssignments();
+
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10 FIX] Best assignment found: Value=%.2f, Visits=%d, Agents=%d"),
+            BestLeafNode->TotalReward / FMath::Max(1, BestLeafNode->VisitCount),
+            BestLeafNode->VisitCount,
+            BestAssignmentsTObject.Num());
+
+        // Convert to return format
         TMap<AActor*, FStrategyAssignment> ResultAssignments;
-        ResultAssignments.Reserve(BestAssignmentsTObject.Num()); // 성능 최적화
+        ResultAssignments.Reserve(BestAssignmentsTObject.Num());
 
         for (auto& [AgentPtr, Assignment] : BestAssignmentsTObject)
         {
-            // 값을 수정 (메트릭 추가)
-            Assignment.ExpectedValue = BestChild->TotalReward / FMath::Max(1, BestChild->VisitCount);
-            Assignment.VisitCount = BestChild->VisitCount;
+            // Add metrics
+            Assignment.ExpectedValue = BestLeafNode->TotalReward / FMath::Max(1, BestLeafNode->VisitCount);
+            Assignment.VisitCount = BestLeafNode->VisitCount;
             Assignment.Timestamp = FPlatformTime::Seconds();
 
-            // TObjectPtr -> AActor* 자동 변환되어 저장됨
             ResultAssignments.Add(AgentPtr, Assignment);
         }
 
         return ResultAssignments;
     }
 
-    // Fallback: Return root assignments (should never happen if simulations > 0)
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.0] No best child found, returning empty assignments"));
+    // Fallback: Return empty assignments
+    UE_LOG(LogTemp, Error, TEXT("[MCTS v8.10 FIX] No valid assignment found after %d simulations"), Simulations);
     return TMap<AActor*, FStrategyAssignment>();
 }
 
@@ -218,26 +264,26 @@ float UMCTS::EvaluateStrategyAssignment(const TMap<AActor*, FStrategyAssignment>
     {
         if (!Agent || !Assignment.TargetObjective) continue;
 
-        // v8.0: Use cached observation for thread safety
+        // v8.10 FIX: Use cached observation for thread safety
         const FObservationElement* CachedObs = CachedObservations.Find(Agent);
         if (!CachedObs)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.0] No cached observation for agent %s, skipping"), *Agent->GetName());
+            UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10] No cached observation for agent %s, skipping"), *Agent->GetName());
             continue;
         }
 
-        // Build objective context from strategy assignment
-        UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
-        if (!FollowerComp) continue;
+        // v8.10 FIX: Query RL value estimate directly from cached observation
+        // The cached observation already contains all necessary tactical context
+        // (enemy positions, cover, allies, etc.) - no need to add objective context
+        float StateValue = RLPolicyNetwork->GetStateValueV8(*CachedObs, Assignment.Strategy);
 
-        // v8.0: Build context from objective actor
-        FObjectiveContext ObjCtx;
-        ObjCtx.TargetObjective = Assignment.TargetObjective;
-        ObjCtx.Distance = FVector::Dist(Agent->GetActorLocation(), Assignment.TargetObjective->GetActorLocation());
-        ObjCtx.Distance = FMath::Clamp(ObjCtx.Distance / 5000.0f, 0.0f, 1.0f);  // Normalize
+        TotalValue += StateValue;
+        AgentCount++;
 
-        FVector Direction = (Assignment.TargetObjective->GetActorLocation() - Agent->GetActorLocation()).GetSafeNormal2D();
-        ObjCtx.Direction = FVector2D(Direction.X, Direction.Y);
+        UE_LOG(LogTemp, VeryVerbose, TEXT("[MCTS v8.10 FIX] Agent '%s' Strategy '%s' → Value: %.3f"),
+            *Agent->GetName(),
+            *UEnum::GetValueAsString(Assignment.Strategy),
+            StateValue);
     }
 
     // Normalize by agent count

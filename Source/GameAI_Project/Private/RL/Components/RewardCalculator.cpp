@@ -81,6 +81,12 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 		return;
 	}
 
+	// Skip reward calculation for dead agents to prevent negative impact on RL training
+	if (!FollowerComponent->GetIsAlive())
+	{
+		return;
+	}
+
 	// Build current observation
 	FObservationElement CurrentObs = FollowerComponent->BuildLocalObservation();
 
@@ -205,18 +211,28 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	float tacticalComponent = CalculateTacticalParameterEffectivenessComponent(CurrentObs, CurrentTacticalParams);
 	Breakdown.TacticalEffectiveness = tacticalComponent * Weights.TacticalEffectiveness;
 
-	// Total reward
-	Breakdown.Total = Breakdown.ObjectiveProgress +
-	                  Breakdown.CombatEffectiveness +
-	                  Breakdown.Survival +
-	                  Breakdown.CoverUsage +
-	                  Breakdown.TeamCoordination +
-	                  Breakdown.TacticalEffectiveness;
+	// Total reward (sum all weighted components)
+	float RawTotal = Breakdown.ObjectiveProgress +
+	                 Breakdown.CombatEffectiveness +
+	                 Breakdown.Survival +
+	                 Breakdown.CoverUsage +
+	                 Breakdown.TeamCoordination +
+	                 Breakdown.TacticalEffectiveness;
+
+	// v8.10 FIX: Normalize total reward to consistent range [-10, 10]
+	// This prevents value function collapse from multi-modal return distributions
+	// Raw rewards can vary 100x between strategies (Assault combat spikes vs Support formation rewards)
+	Breakdown.Total = FMath::Clamp(RawTotal, -10.0f, 10.0f);
 
 	// Log breakdown for debugging
-	UE_LOG(LogTemp, Verbose, TEXT("[REWARD v8.0] %s: %s"),
-		*UEnum::GetValueAsString(Strategy),
-		*Breakdown.ToString());
+	if (FMath::Abs(RawTotal) > 10.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD v8.10] %s: Raw reward %.2f CLAMPED to %.2f | %s"),
+			*UEnum::GetValueAsString(Strategy),
+			RawTotal,
+			Breakdown.Total,
+			*Breakdown.ToString());
+	}
 
 	return Breakdown;
 }
