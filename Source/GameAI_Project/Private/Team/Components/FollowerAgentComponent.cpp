@@ -702,7 +702,7 @@ void UFollowerAgentComponent::DrawDebugInfo()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	FVector FollowerPos = GetOwner()->GetActorLocation();
+	FVector FollowerPos = GetOwner()->GetActorLocation() + FVector(0, 0, 120);
 
 	// Draw strategy assignment info
 	FStrategyAssignment Assignment = TacticalState->GetStrategyAssignment();
@@ -714,7 +714,7 @@ void UFollowerAgentComponent::DrawDebugInfo()
 		*StrategyStr,
 		*ObjectiveStr);
 
-	DrawDebugString(World, FollowerPos + FVector(0, 0, 120), StateText, nullptr, FColor::Cyan, -1.0f, true);
+	DrawDebugString(World, FollowerPos, StateText, nullptr, FColor::Cyan, 0.0f, true);
 
 	// Draw line to target objective
 	if (Assignment.TargetObjective && IsValid(Assignment.TargetObjective))

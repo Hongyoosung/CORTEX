@@ -222,6 +222,17 @@ public:
 	bool IsRunningMCTS() const { return bMCTSRunning; }
 
 
+	//--------------------------------------------------------------------------
+	// EPISODE MANAGEMENT
+	/** Handle episode start */
+	UFUNCTION()
+	void OnEpisodeStart(int32 EnvironmentID, int32 EpisodeNumber);
+
+	/** Handle episode completion */
+	UFUNCTION()
+	void OnEpisodeComplete(int32 EnviornmentID, const FEpisodeResult& Result);
+
+
 
 private:
 	/** Process pending events */
@@ -272,7 +283,7 @@ public:
 
 	/** Interval for continuous planning (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team Leader|Planning")
-	float ContinuousPlanningInterval = 1.5f;
+	float ContinuousPlanningInterval = 30.0f;
 
 	/** Allow critical events to interrupt continuous planning */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team Leader|Planning")
@@ -396,6 +407,8 @@ private:
 	/** 리더가 등록되기 전에 먼저 도착한 팔로워 대기열 */
 	UPROPERTY()
 	TArray<AActor*> PendingFollowerRegistration;
+
+	FString CurrentBatchKey;
 
 	/** 대기열에 있는 팔로워들을 매니저에 등록하는 내부 함수 */
 	void ProcessPendingRegistrations();

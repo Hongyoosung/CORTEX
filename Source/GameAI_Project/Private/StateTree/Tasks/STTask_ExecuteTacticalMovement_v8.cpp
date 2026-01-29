@@ -17,6 +17,9 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement_v8::EnterState(FStateTreeExe
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 
+	UE_LOG(LogTemp, Warning, TEXT("[TACTICAL v8.0] '%s': Entering tactical movement state"),
+		InstanceData.ControlledPawn ? *InstanceData.ControlledPawn->GetName() : TEXT("Unknown"));
+
 	if (!InstanceData.StateTreeComp)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[TACTICAL v8.0] StateTreeComp is null"));
@@ -128,7 +131,7 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement_v8::Tick(FStateTreeExecution
 		// Update previous params
 		InstanceData.PreviousTacticalParams = TacticalParams;
 
-		UE_LOG(LogTemp, Verbose, TEXT("[TACTICAL v8.0] '%s': Updated tactical params - Aggression=%.2f, Cover=%.2f, Spread=%.2f, Risk=%.2f"),
+		UE_LOG(LogTemp, Warning, TEXT("[TACTICAL v8.0] '%s': Updated tactical params - Aggression=%.2f, Cover=%.2f, Spread=%.2f, Risk=%.2f"),
 			*InstanceData.ControlledPawn->GetName(),
 			TacticalParams.Aggression,
 			TacticalParams.CoverPreference,

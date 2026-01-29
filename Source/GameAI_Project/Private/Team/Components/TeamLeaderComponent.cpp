@@ -53,6 +53,8 @@ void UTeamLeaderComponent::BeginPlay()
 				// 대기 중이던 팔로워들을 이제 등록 처리
 				ProcessPendingRegistrations();
 			}
+			SimManager->OnEpisodeStarted.AddDynamic(this, &UTeamLeaderComponent::OnEpisodeStart);
+			SimManager->OnEpisodeEnded.AddDynamic(this, &UTeamLeaderComponent::OnEpisodeComplete);
 		}
 	}
 
@@ -620,6 +622,112 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 }
 
 
+void UTeamLeaderComponent::OnEpisodeStart(int32 EnvironmentID, int32 EpisodeNumber)
+{
+	// 1. 내 환경인지 확인 (EnvironmentID = TeamID / 2)
+	int32 MyEnvironmentID = TeamID / 2;
+	if (EnvironmentID != MyEnvironmentID)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] Env %d | Team %d | Episode %d Started - Triggering Initial MCTS"),
+		EnvironmentID, TeamID, EpisodeNumber);
+
+	// 2. 이전 에피소드 데이터 완전 초기화
+	CurrentBatchKey.Empty();
+	CurrentAssignments.Empty();
+
+	// 3. 목표물 재탐색 (에피소드 리셋 후 객체 상태가 변경되었을 수 있으므로 안전장치)
+	if (!FriendlyObjective || !HostileObjective)
+	{
+		DiscoverWorldObjectives();
+	}
+
+	// 4. MCTS 즉시 실행하여 초기 배치 할당 (이것이 없으면 CurrentBatchKey가 비어있게 됨)
+	if (bAsyncMCTS)
+	{
+		RunStrategyAssignmentAsync();
+	}
+	else
+	{
+		RunStrategyAssignment();
+	}
+}
+
+void UTeamLeaderComponent::OnEpisodeComplete(int32 EnvironmentID, const FEpisodeResult& Result)
+{
+	UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] Episode complete received for Env %d | Team %d"), EnvironmentID, TeamID);
+	// 1. [Multi-Env Filter] 이 이벤트가 우리 환경에서 발생한 것인지 확인
+	// 가정: EnvironmentID = TeamID / 2 (0,1팀 -> Env0 | 2,3팀 -> Env1 ...)
+	int32 MyEnvironmentID = TeamID / 2;
+
+	if (EnvironmentID != MyEnvironmentID)
+	{
+		// 다른 환경(병렬 훈련 중인 다른 팀들)의 결과이므로 무시
+		return;
+	}
+
+
+	// 2. [Result Mapping] 전역 결과를 팀 관점의 결과로 변환
+	ETeamEpisodeResult LocalResult = ETeamEpisodeResult::Draw;
+
+	if (Result.WinningTeamID == TeamID)
+	{
+		LocalResult = ETeamEpisodeResult::Win;
+	}
+	else if (Result.LosingTeamID == TeamID)
+	{
+		LocalResult = ETeamEpisodeResult::Loss;
+	}
+	else
+	{
+		// 승자도 패자도 아닌 경우 (타임아웃) 혹은 무승부
+		// Timeout일 경우 보통 WinningTeamID = -1, LosingTeamID = -1
+		LocalResult = ETeamEpisodeResult::Draw;
+	}
+
+	// 3. [MCTS Update] 배치 캐시 업데이트
+	if (StrategicMCTS)
+	{
+		if (!CurrentBatchKey.IsEmpty())
+		{
+			StrategicMCTS->UpdateBatchCache(CurrentAssignments, LocalResult);
+
+			// 로그 출력 (디버깅용)
+			FString ResultStr;
+			switch (LocalResult)
+			{
+			case ETeamEpisodeResult::Win: ResultStr = TEXT("WIN 🏆"); break;
+			case ETeamEpisodeResult::Loss: ResultStr = TEXT("LOSS ❌"); break;
+			case ETeamEpisodeResult::Draw: ResultStr = TEXT("DRAW ➖"); break;
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] Env %d | Team %d | Batch '%s' Result: %s"),
+				EnvironmentID, TeamID, *CurrentBatchKey, *ResultStr);
+
+			// 4. [Persistence] 캐시 저장 (옵션: 에피소드 10회마다 저장)
+			static int32 EpisodeCounter = 0;
+			if (++EpisodeCounter % 10 == 0)
+			{
+				FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
+				StrategicMCTS->SaveBatchCache(CachePath);
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("✅ [MCTS Update] Cache updated for batch '%s'"), *CurrentBatchKey);
+		}
+		else
+		{
+			// 이 로그가 뜨면 MCTS가 에피소드 중에 한 번도 안 돈 것입니다.
+			UE_LOG(LogTemp, Error, TEXT("❌ [MCTS Update Failed] CurrentBatchKey is EMPTY! MCTS did not run this episode."));
+		}
+	}
+
+	// 5. [Reset] 다음 에피소드를 위해 상태 초기화
+	CurrentBatchKey.Empty();
+	CurrentAssignments.Empty();
+}
+
 void UTeamLeaderComponent::ProcessPendingEvents()
 {
 	if (PendingEvents.Num() == 0) return;
@@ -691,120 +799,53 @@ void UTeamLeaderComponent::RunStrategyAssignment()
 {
 	if (bMCTSRunning)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': MCTS already running"), *TeamName);
-		return;
-	}
-
-	if (!StrategicMCTS)
-	{
-		UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Missing MCTS"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("MCTS already running"));
 		return;
 	}
 
 	TArray<AActor*> AliveAgents = GetAliveFollowers();
-
 	if (AliveAgents.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': No alive agents, skipping MCTS"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("No alive agents"));
 		return;
 	}
 
-	if (!FriendlyObjective || !HostileObjective)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': Missing objectives, retrying discovery..."), *TeamName);
-
-		// RACE CONDITION FIX: Enemy team may not have registered yet during BeginPlay
-		// Retry objective discovery now that all teams should be registered
-		DiscoverWorldObjectives();
-
-		// Check again after retry
-		if (!FriendlyObjective || !HostileObjective)
-		{
-			UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Still missing objectives after retry! Friendly=%s, Hostile=%s"),
-				*TeamName,
-				FriendlyObjective ? TEXT("OK") : TEXT("NULL"),
-				HostileObjective ? TEXT("OK") : TEXT("NULL"));
-			return;
-		}
-
-		UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Objectives found after retry!"), *TeamName);
-	}
-
-	bMCTSRunning = true;
-	float StartTime = FPlatformTime::Seconds();
-	LastMCTSTime = StartTime;
-
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v8.0] '%s': STARTED (SYNC) - %d agents"),
-		*TeamName,
-		AliveAgents.Num());
-
-	// v8.0: Pre-cache observations for thread safety
+	// [Fix] CachedObservations 수집 로직 추가
 	TMap<AActor*, FObservationElement> CachedObservations;
 	for (AActor* Agent : AliveAgents)
 	{
-		if (!Agent) continue;
-
-		UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
-		if (FollowerComp)
+		if (UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>())
 		{
-			FObservationElement Obs = FollowerComp->BuildLocalObservation();
-			CachedObservations.Add(Agent, Obs);
+			// 각 팔로워의 현재 관측 정보를 빌드하여 맵에 저장
+			CachedObservations.Add(Agent, FollowerComp->BuildLocalObservation());
 		}
 	}
 
-	// Build objectives array (v8.0)
-	TArray<AObjectiveActor*> Objectives;
-	if (FriendlyObjective) Objectives.Add(FriendlyObjective);
-	if (HostileObjective) Objectives.Add(HostileObjective);
+	// v8.20: Call new batch-level implementation
+	// (CachedObservations 변수 사용 가능해짐)
+	TMap<AActor*, FStrategyAssignment> Assignments =
+		StrategicMCTS->RunStrategyAssignment_v820(
+			AliveAgents,
+			{ FriendlyObjective, HostileObjective }, // Objective 멤버 변수명은 확인 필요
+			MCTSSimulations,
+			CachedObservations);
 
-	// Run MCTS to find best strategy assignments (v8.0)
-	TMap<AActor*, FStrategyAssignment> AssignmentMap = StrategicMCTS->RunStrategyAssignment(
-		AliveAgents,
-		Objectives,
-		MCTSSimulations,
-		CachedObservations
-	);
-
-	// Convert map to array for ApplyStrategyAssignment
-	TArray<FStrategyAssignment> Assignments;
-	for (const auto& Pair : AssignmentMap)
+	if (Assignments.Num() != AliveAgents.Num())
 	{
-		Assignments.Add(Pair.Value);
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] Batch assignment incomplete! Got %d, Expected %d"),
+			Assignments.Num(), AliveAgents.Num());
+		return;
 	}
 
-	float ExecutionTime = (FPlatformTime::Seconds() - StartTime) * 1000.0f; // ms
+	// Store for end-of-episode cache update
+	CurrentBatchKey = StrategicMCTS->GetBatchKey(Assignments);
+	CurrentAssignments = Assignments;
 
-	// Update rolling average (Performance Profiling)
-	MCTSExecutionCount++;
-	AverageMCTSExecutionTime = ((AverageMCTSExecutionTime * (MCTSExecutionCount - 1)) + ExecutionTime) / MCTSExecutionCount;
+	// [Fix] TMap의 값들을 TArray로 변환하여 전달
+	TArray<FStrategyAssignment> AssignmentList;
+	Assignments.GenerateValueArray(AssignmentList); // Map의 Value들만 추출
 
-	// Performance warning if exceeding target
-	const float TargetTime = 50.0f; // Target: 30-50ms
-	if (ExecutionTime > TargetTime)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ [PERFORMANCE] '%s': MCTS took %.2fms (exceeds target of %.0fms) - Avg: %.2fms over %d runs"),
-			*TeamName,
-			ExecutionTime,
-			TargetTime,
-			AverageMCTSExecutionTime,
-			MCTSExecutionCount);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("✓ [PERFORMANCE] '%s': MCTS took %.2fms (within target) - Avg: %.2fms over %d runs"),
-			*TeamName,
-			ExecutionTime,
-			AverageMCTSExecutionTime,
-			MCTSExecutionCount);
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v8.0] '%s': COMPLETED in %.2fms - %d assignments"),
-		*TeamName,
-		ExecutionTime,
-		Assignments.Num());
-
-	// Apply assignment (v8.0)
-	ApplyStrategyAssignment(Assignments);
+	ApplyStrategyAssignment(AssignmentList);
 }
 
 

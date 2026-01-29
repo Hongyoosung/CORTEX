@@ -346,6 +346,7 @@ private:
 	/** Minimum time between strategy updates */
 	float MinStrategyUpdateInterval = 0.05f;
 
+
 	/**
 	 * Check if strategy should be recomputed (v6.0)
 	 * Only updates on significant events to reduce inference cost
