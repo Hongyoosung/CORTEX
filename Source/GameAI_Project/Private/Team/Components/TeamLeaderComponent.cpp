@@ -1008,6 +1008,13 @@ void UTeamLeaderComponent::ApplyStrategyAssignment(const TArray<FStrategyAssignm
 		}
 	}
 
+	if (StrategicMCTS && CurrentAssignments.Num() > 0)
+	{
+		CurrentBatchKey = StrategicMCTS->GetBatchKey(CurrentAssignments);
+		UE_LOG(LogTemp, Warning, TEXT("[✅ BATCH KEY SET] %s: BatchKey='%s' (%d assignments)"),
+			*TeamName, *CurrentBatchKey, CurrentAssignments.Num());
+	}
+
 	// Broadcast event (v8.0)
 	FStrategyAssignmentMap AssignmentMap;
 	AssignmentMap.Assignments = Assignments;
