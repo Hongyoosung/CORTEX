@@ -362,10 +362,10 @@ void UFollowerAgentComponent::SetStrategyAssignment(const FStrategyAssignment& A
 
 	TacticalState->SetStrategyAssignment(Assignment);
 
-	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v8.0] '%s': Strategy assignment received - Strategy=%s, Objective=%s"),
+	// v9.0: Objective implicit in reward function, not explicit assignment
+	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v9.0] '%s': Strategy assignment received - Strategy=%s"),
 		*GetOwner()->GetName(),
-		*UEnum::GetValueAsString(Assignment.Strategy),
-		Assignment.TargetObjective ? *Assignment.TargetObjective->GetName() : TEXT("None"));
+		*UEnum::GetValueAsString(Assignment.Strategy));
 
 	// Broadcast event for StateTree or other systems
 	OnStrategyAssignmentReceived.Broadcast(Assignment);
@@ -704,25 +704,17 @@ void UFollowerAgentComponent::DrawDebugInfo()
 
 	FVector FollowerPos = GetOwner()->GetActorLocation() + FVector(0, 0, 120);
 
-	// Draw strategy assignment info
+	// v9.0: Draw strategy assignment info (objective implicit)
 	FStrategyAssignment Assignment = TacticalState->GetStrategyAssignment();
 	FString StrategyStr = UEnum::GetValueAsString(Assignment.Strategy);
-	FString ObjectiveStr = Assignment.TargetObjective ? Assignment.TargetObjective->GetName() : TEXT("None");
 
-	FString StateText = FString::Printf(TEXT("Alive: %s\nStrategy: %s\nObjective: %s"),
+	FString StateText = FString::Printf(TEXT("Alive: %s\nStrategy: %s"),
 		GetIsAlive() ? TEXT("Yes") : TEXT("Dead"),
-		*StrategyStr,
-		*ObjectiveStr);
+		*StrategyStr);
 
 	DrawDebugString(World, FollowerPos, StateText, nullptr, FColor::Cyan, 0.0f, true);
 
-	// Draw line to target objective
-	if (Assignment.TargetObjective && IsValid(Assignment.TargetObjective))
-	{
-		FVector TargetPos = Assignment.TargetObjective->GetActorLocation();
-		DrawDebugLine(World, FollowerPos, TargetPos, FColor::Cyan, false, -1.0f, 0, 2.0f);
-		DrawDebugSphere(World, TargetPos, 50.0f, 8, FColor::Red, false, 0.1f);
-	}
+	// v9.0: Objective visualization removed (objectives implicit in reward functions)
 
 	// Draw line to team leader
 	if (TeamLeader && TeamLeader->GetOwner())
@@ -787,8 +779,8 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 	{
 		FStrategyAssignment Current = TacticalState->GetStrategyAssignment();
 		FStrategyAssignment Last = TacticalState->GetLastAssignment();
-		bAssignmentChanged = (Current.Strategy != Last.Strategy) ||
-		                     (Current.TargetObjective != Last.TargetObjective);
+		// v9.0: Only check strategy change (objectives implicit)
+		bAssignmentChanged = (Current.Strategy != Last.Strategy);
 	}
 
 	// Fallback: Force update every 30 ticks (~0.5s at 60 FPS)

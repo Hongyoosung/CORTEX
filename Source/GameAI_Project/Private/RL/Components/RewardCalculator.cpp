@@ -41,31 +41,10 @@ void URewardCalculator::BeginPlay()
 	AccumulatedIndividualReward = 0.0f;
 	AccumulatedCoordinationReward = 0.0f;
 
-	// v8.0 REBALANCED: Initialize capture progress tracking
+	// v9.0: Removed explicit objective tracking (now uses observation fields)
+	// Strategy-specific rewards use HostileObjectiveDistance/FriendlyObjectiveDistance instead
 	PreviousCaptureProgress = 0.0f;
 	bCaptureCompletionRewarded = false;
-
-	// Initialize capture progress from objective (if available)
-	if (FollowerComponent)
-	{
-		AObjectiveActor* Objective = FollowerComponent->GetTargetObjective();
-		if (Objective)
-		{
-			int32 AgentTeamID = FollowerComponent->GetTeamID();
-			bool bIsHostile = Objective->IsHostileTo(AgentTeamID);
-
-			if (bIsHostile)
-			{
-				// For hostile objectives, track capture progress (inverse of durability)
-				PreviousCaptureProgress = 1.0f - Objective->GetDurabilityPercent();
-			}
-			else
-			{
-				// For friendly objectives, track durability directly
-				PreviousCaptureProgress = Objective->GetDurabilityPercent();
-			}
-		}
-	}
 }
 
 void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -186,30 +165,39 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	// Get strategy-specific weights
 	const RewardConfig::FStrategyWeights& Weights = RewardConfig::GetWeightsForStrategy(Strategy);
 
+	// v9.0: Normalize EACH component BEFORE strategy weighting
+	// This prevents any single component from dominating the value function
+
 	// Component 1: Objective Progress
-	float objComponent = CalculateObjectiveProgressComponent(PrevObs, CurrentObs);
-	Breakdown.ObjectiveProgress = objComponent * Weights.ObjectiveProgress;
+	float objRaw = CalculateObjectiveProgressComponent(PrevObs, CurrentObs);
+	float objNormalized = RewardConfig::OBJECTIVE_NORM.Normalize(objRaw);
+	Breakdown.ObjectiveProgress = objNormalized * Weights.ObjectiveProgress;
 
 	// Component 2: Combat Effectiveness
-	float combatComponent = CalculateCombatEffectivenessComponent(CurrentObs);
-	Breakdown.CombatEffectiveness = combatComponent * Weights.CombatEffectiveness;
+	float combatRaw = CalculateCombatEffectivenessComponent(CurrentObs);
+	float combatNormalized = RewardConfig::COMBAT_NORM.Normalize(combatRaw);
+	Breakdown.CombatEffectiveness = combatNormalized * Weights.CombatEffectiveness;
 
 	// Component 3: Survival
-	float survivalComponent = CalculateSurvivalComponent(CurrentObs);
-	Breakdown.Survival = survivalComponent * Weights.Survival;
+	float survivalRaw = CalculateSurvivalComponent(CurrentObs);
+	float survivalNormalized = RewardConfig::SURVIVAL_NORM.Normalize(survivalRaw);
+	Breakdown.Survival = survivalNormalized * Weights.Survival;
 
 	// Component 4: Cover Usage
-	float coverComponent = CalculateCoverUsageComponent(CurrentObs);
-	Breakdown.CoverUsage = coverComponent * Weights.CoverUsage;
+	float coverRaw = CalculateCoverUsageComponent(CurrentObs);
+	float coverNormalized = RewardConfig::COVER_NORM.Normalize(coverRaw);
+	Breakdown.CoverUsage = coverNormalized * Weights.CoverUsage;
 
 	// Component 5: Team Coordination
-	float coordComponent = CalculateTeamCoordinationComponent(CurrentObs);
-	Breakdown.TeamCoordination = coordComponent * Weights.TeamCoordination;
+	float coordRaw = CalculateTeamCoordinationComponent(CurrentObs);
+	float coordNormalized = RewardConfig::COORD_NORM.Normalize(coordRaw);
+	Breakdown.TeamCoordination = coordNormalized * Weights.TeamCoordination;
 
 	// Component 6: v8.0 Tactical Parameter Effectiveness
 	// Creates tight feedback loop: RL parameters → EQS positioning → outcome → reward
-	float tacticalComponent = CalculateTacticalParameterEffectivenessComponent(CurrentObs, CurrentTacticalParams);
-	Breakdown.TacticalEffectiveness = tacticalComponent * Weights.TacticalEffectiveness;
+	float tacticalRaw = CalculateTacticalParameterEffectivenessComponent(CurrentObs, CurrentTacticalParams);
+	float tacticalNormalized = RewardConfig::TACTICAL_NORM.Normalize(tacticalRaw);
+	Breakdown.TacticalEffectiveness = tacticalNormalized * Weights.TacticalEffectiveness;
 
 	// Total reward (sum all weighted components)
 	float RawTotal = Breakdown.ObjectiveProgress +
@@ -219,37 +207,26 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	                 Breakdown.TeamCoordination +
 	                 Breakdown.TacticalEffectiveness;
 
-	// v8.10 FIX: Normalize total reward to consistent range [-10, 10]
-	// This prevents value function collapse from multi-modal return distributions
-	// Raw rewards can vary 100x between strategies (Assault combat spikes vs Support formation rewards)
-	Breakdown.Total = FMath::Clamp(RawTotal, -10.0f, 10.0f);
+	// v9.0: Soft tanh scaling instead of hard clamp
+	// tanh provides smooth gradients at boundaries, better for learning
+	// Dividing by 4.0 before tanh keeps typical rewards in linear region
+	// Multiplying by 5.0 after tanh gives output range [-5, 5] (softer than v8.10's [-10, 10])
+	Breakdown.Total = FMath::Tanh(RawTotal / 4.0f) * 5.0f;
 
-	// Log breakdown for debugging
-	if (FMath::Abs(RawTotal) > 10.0f)
+	// Log breakdown for debugging (every 100 steps to reduce spam)
+	static int32 LogCounter = 0;
+	if (++LogCounter % 100 == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD v8.10] %s: Raw reward %.2f CLAMPED to %.2f | %s"),
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD v9.0] %s | Agent=%s | Obj=%.2f | Combat=%.2f | Survival=%.2f | Cover=%.2f | Coord=%.2f | Tactical=%.2f | Total=%.2f"),
 			*UEnum::GetValueAsString(Strategy),
-			RawTotal,
-			Breakdown.Total,
-			*Breakdown.ToString());
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("📊 REWARD BREAKDOWN: Agent=%s | Obj=%.2f | Combat=%.2f | Survival=%.2f | Cover=%.2f | Coord=%.2f | Tactical=%.2f"),
-		*GetOwner()->GetName(),
-		Breakdown.ObjectiveProgress,
-		Breakdown.CombatEffectiveness,
-		Breakdown.Survival,
-		Breakdown.CoverUsage,
-		Breakdown.TeamCoordination,
-		Breakdown.TacticalEffectiveness
-	);
-
-	Breakdown.Total = FMath::Clamp(RawTotal, -10.0f, 10.0f);
-
-	if (FMath::Abs(RawTotal) > 10.0f)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("REWARD v8.10: Raw reward %.2f CLAMPED to %.2f"),
-			RawTotal, Breakdown.Total);
+			*GetOwner()->GetName(),
+			Breakdown.ObjectiveProgress,
+			Breakdown.CombatEffectiveness,
+			Breakdown.Survival,
+			Breakdown.CoverUsage,
+			Breakdown.TeamCoordination,
+			Breakdown.TacticalEffectiveness,
+			Breakdown.Total);
 	}
 
 	return Breakdown;
@@ -263,123 +240,121 @@ float URewardCalculator::CalculateObjectiveProgressComponent(
 	const FObservationElement& PrevObs,
 	const FObservationElement& CurrentObs)
 {
+	// v9.0: Strategy-specific objective reward functions
+	// No explicit objective assignment - rewards based on observation fields
+	if (!FollowerComponent) return 0.0f;
+
+	CurrentStrategy = FollowerComponent->GetAssignedStrategy();
+
+	switch (CurrentStrategy)
+	{
+		case EStrategyType::Assault:
+			return CalculateAssaultReward(PrevObs, CurrentObs);
+		case EStrategyType::Defend:
+			return CalculateDefendReward(PrevObs, CurrentObs);
+		case EStrategyType::Support:
+			return CalculateSupportReward(PrevObs, CurrentObs);
+		case EStrategyType::Retreat:
+			return CalculateRetreatReward(PrevObs, CurrentObs);
+		default:
+			return 0.0f;
+	}
+}
+
+//--------------------------------------------------------------------------
+// v9.0: STRATEGY-SPECIFIC REWARD FUNCTIONS
+//--------------------------------------------------------------------------
+
+float URewardCalculator::CalculateAssaultReward(
+	const FObservationElement& PrevObs,
+	const FObservationElement& CurrentObs)
+{
+	// Assault: Incentivize approaching hostile objective
 	float Reward = 0.0f;
 
-	AObjectiveActor* ObjectiveActor = FollowerComponent->GetTargetObjective();
-
-	if (!ObjectiveActor || !GetOwner())
+	// Reward for getting closer to hostile objective
+	float DistanceDelta = PrevObs.HostileObjectiveDistance - CurrentObs.HostileObjectiveDistance;
+	if (DistanceDelta > 0.0f)
 	{
-		// ✅ LOG: No objective assigned
-		static int32 NoObjectiveCounter = 0;
-		if (++NoObjectiveCounter % 100 == 0)
-		{
-			UE_LOG(LogTemp, Error, TEXT("❌ [OBJECTIVE] Agent=%s has NO target objective!"),
-				*GetOwner()->GetName());
-		}
-		return 0.0f;
+		// Approaching hostile objective
+		Reward += DistanceDelta * 10.0f;  // Scale by progress
 	}
 
-	// Determine if attacking or defending this objective
-	int32 AgentTeamID = FollowerComponent->GetTeamID();
-	bool bIsHostileObjective = ObjectiveActor->IsHostileTo(AgentTeamID);
-
-	// ✅ LOG: Strategy-Objective alignment check (every 100 ticks)
-	static int32 AlignmentCheckCounter = 0;
-	if (++AlignmentCheckCounter % 100 == 0)
+	// Extra reward for being very close to hostile objective (<20% distance)
+	if (CurrentObs.HostileObjectiveDistance < 0.2f)
 	{
-		EStrategyType AgentStrategy = FollowerComponent->GetAssignedStrategy();
-		FString StrategyName = UEnum::GetValueAsString(AgentStrategy);
-		FString ObjectiveType = bIsHostileObjective ? TEXT("HOSTILE") : TEXT("FRIENDLY");
-		bool bAlignmentCorrect = false;
-
-		// Check if strategy matches objective type
-		if (AgentStrategy == EStrategyType::Assault && bIsHostileObjective)
-			bAlignmentCorrect = true;
-		else if (AgentStrategy == EStrategyType::Defend && !bIsHostileObjective)
-			bAlignmentCorrect = true;
-		else if (AgentStrategy == EStrategyType::Support)
-			bAlignmentCorrect = true;  // Support can go to either
-		else if (AgentStrategy == EStrategyType::Retreat)
-			bAlignmentCorrect = true;  // Retreat has special logic
-
-		FString AlignmentStatus = bAlignmentCorrect ? TEXT("✅ CORRECT") : TEXT("❌ MISMATCH");
-		UE_LOG(LogTemp, Warning, TEXT("[STRATEGY-OBJ] %s | Agent=%s | Strategy=%s | Objective=%s (%s)"),
-			*AlignmentStatus,
-			*GetOwner()->GetName(),
-			*StrategyName,
-			*ObjectiveActor->GetName(),
-			*ObjectiveType
-		);
+		Reward += RewardConfig::OBJECTIVE_VOLUME_REWARD;  // +1.0 per step near objective
 	}
 
-	// Check if agent is in objective volume
-	bool bIsInVolume = ObjectiveActor->IsAgentInVolume(GetOwner());
+	return Reward;
+}
 
-	// ========================================
-	// v8.0 REBALANCED: Volume retention reward (continuous while inside)
-	// ========================================
-	if (bIsInVolume)
+float URewardCalculator::CalculateDefendReward(
+	const FObservationElement& PrevObs,
+	const FObservationElement& CurrentObs)
+{
+	// Defend: Incentivize staying near friendly objective
+	float Reward = 0.0f;
+
+	// Reward for being close to friendly objective (defensive perimeter)
+	if (CurrentObs.FriendlyObjectiveDistance < 0.3f)
 	{
-		Reward += RewardConfig::OBJECTIVE_VOLUME_REWARD;  // +1.0 per step (was 0.1)
+		Reward += RewardConfig::OBJECTIVE_VOLUME_REWARD;  // +1.0 per step in perimeter
 	}
 
-	// ========================================
-	// v8.0 REBALANCED: Incremental capture progress reward
-	// Track durability changes for attacking objectives
-	// ========================================
-	if (bIsHostileObjective)
+	// Penalty for moving away from friendly objective
+	float DistanceDelta = CurrentObs.FriendlyObjectiveDistance - PrevObs.FriendlyObjectiveDistance;
+	if (DistanceDelta > 0.0f)
 	{
-		// For hostile objectives: Reward when durability DECREASES (we're capturing it)
-		// Capture progress = (1.0 - durability) ranges from 0.0 (full health) to 1.0 (destroyed)
-		float CurrentCaptureProgress = 1.0f - ObjectiveActor->GetDurabilityPercent();
-		float ProgressDelta = CurrentCaptureProgress - PreviousCaptureProgress;
-
-		if (ProgressDelta > 0.0f)
-		{
-			// Incremental progress reward (scaled by delta)
-			Reward += ProgressDelta * RewardConfig::OBJECTIVE_PROGRESS_REWARD;  // +50.0 per 1.0 delta
-
-			UE_LOG(LogTemp, Log, TEXT("[REWARD v8.0] '%s': Objective capture progress +%.2f%% → Reward +%.2f"),
-				*GetOwner()->GetName(), ProgressDelta * 100.0f, ProgressDelta * RewardConfig::OBJECTIVE_PROGRESS_REWARD);
-		}
-
-		// Terminal reward for full capture (durability = 0)
-		if (CurrentCaptureProgress >= 0.99f && !bCaptureCompletionRewarded)
-		{
-			Reward += RewardConfig::OBJECTIVE_CAPTURE_REWARD;  // +100.0 for completing capture
-			bCaptureCompletionRewarded = true;
-
-			UE_LOG(LogTemp, Warning, TEXT("[REWARD v8.0] 🎯 '%s': OBJECTIVE CAPTURED! Terminal reward +%.1f"),
-				*GetOwner()->GetName(), RewardConfig::OBJECTIVE_CAPTURE_REWARD);
-		}
-
-		// Update previous progress
-		PreviousCaptureProgress = CurrentCaptureProgress;
-	}
-	else
-	{
-		// For friendly objectives: Reward for maintaining/recovering durability
-		float CurrentDurability = ObjectiveActor->GetDurabilityPercent();
-		float DurabilityDelta = CurrentDurability - PreviousCaptureProgress;
-
-		if (DurabilityDelta > 0.0f && bIsInVolume)
-		{
-			// Reward defense efforts (recovery while inside volume)
-			Reward += DurabilityDelta * RewardConfig::OBJECTIVE_PROGRESS_REWARD * 0.5f;  // +25.0 per 1.0 recovery
-		}
-
-		// Update previous durability
-		PreviousCaptureProgress = CurrentDurability;
+		// Moving away from friendly objective (bad for defense)
+		Reward -= DistanceDelta * 5.0f;
 	}
 
-	// ========================================
-	// v8.0 REBALANCED: Distance-based approach reward
-	// ========================================
-	float currentDistance = FVector::Dist(CurrentObs.Position, ObjectiveActor->GetActorLocation());
-	float prevDistance = FVector::Dist(PrevObs.Position, ObjectiveActor->GetActorLocation());
-	if ((currentDistance < prevDistance) && !bIsInVolume)
+	return Reward;
+}
+
+float URewardCalculator::CalculateSupportReward(
+	const FObservationElement& PrevObs,
+	const FObservationElement& CurrentObs)
+{
+	// Support: Incentivize proximity to allies (uses existing AllyDistance field)
+	float Reward = 0.0f;
+
+	// Reward for being close to ally
+	if (CurrentObs.bAllyNeedsHelp && CurrentObs.AllyDistance < 0.2f)
 	{
-		Reward += RewardConfig::OBJECTIVE_ADVANCE_REWARD;  // +0.5 per step when advancing (was 0.1)
+		Reward += RewardConfig::SUPPORT_CRITICAL_BONUS;  // +5.0 for reaching ally in need
+	}
+
+	// Reward for approaching ally
+	float AllyDistanceDelta = PrevObs.AllyDistance - CurrentObs.AllyDistance;
+	if (AllyDistanceDelta > 0.0f && CurrentObs.bAllyNeedsHelp)
+	{
+		Reward += AllyDistanceDelta * RewardConfig::SUPPORT_PROXIMITY_BONUS;  // Scale by progress
+	}
+
+	return Reward;
+}
+
+float URewardCalculator::CalculateRetreatReward(
+	const FObservationElement& PrevObs,
+	const FObservationElement& CurrentObs)
+{
+	// Retreat: Incentivize distance from enemies (uses DistanceToNearestEnemy)
+	float Reward = 0.0f;
+
+	// Reward for increasing distance from nearest enemy
+	float EnemyDistanceDelta = CurrentObs.DistanceToNearestEnemy - PrevObs.DistanceToNearestEnemy;
+	if (EnemyDistanceDelta > 0.0f)
+	{
+		// Successfully retreating (getting further from enemies)
+		Reward += EnemyDistanceDelta * 8.0f;  // High reward for escape
+	}
+
+	// Bonus for being far from enemies (>80% distance)
+	if (CurrentObs.DistanceToNearestEnemy > 0.8f)
+	{
+		Reward += 1.0f;  // Safe distance bonus
 	}
 
 	return Reward;
@@ -454,10 +429,10 @@ float URewardCalculator::CalculateTeamCoordinationComponent(
 	float Reward = 0.0f;
 
 	// ✅ v8.20 ENHANCEMENT: Strategy-aware coordination rewards
-	EStrategyType CurrentStrategy = FollowerComponent ? FollowerComponent->GetAssignedStrategy() : EStrategyType::Assault;
+	EStrategyType AssignedStrategy = FollowerComponent ? FollowerComponent->GetAssignedStrategy() : EStrategyType::Assault;
 
 	// [1] Support Strategy: Reward approaching low-health allies
-	if (CurrentStrategy == EStrategyType::Support)
+	if (AssignedStrategy == EStrategyType::Support)
 	{
 		// Check if observation contains ally health info
 		float AllyHP = CurrentObs.AllyHealth;  // Normalized [0,1]
@@ -508,88 +483,124 @@ float URewardCalculator::CalculateTacticalParameterEffectivenessComponent(
 	const FObservationElement& CurrentObs,
 	const FTacticalParameters& TacticalParams)
 {
-	float Reward = 0.0f;
-	float AlignmentScore = 0.0f;
-	int32 AlignmentCount = 0;
+	// v9.0: Gradient-based tactical parameter rewards (continuous, not binary)
+	// Replaces binary thresholds with smooth gradient functions
+	// Expected: 2-3× faster convergence due to continuous feedback
+	float TotalReward = 0.0f;
 
-	// v8.0: Reward alignment between tactical parameters and actual positioning outcomes
-	// This creates a tight feedback loop: parameters → EQS → positioning → reward
-
-	// 1. Aggression alignment: High aggression should correlate with close enemy proximity
-	// If Aggression > 0.5 and enemy is close (< 0.3 normalized), reward alignment
-	// If Aggression < 0.5 and enemy is far (> 0.5 normalized), reward alignment
+	// ========================================
+	// 1. AGGRESSION: Target distance based on aggression level
+	// ========================================
+	// High aggression (0.8) → target distance 0.2 (20% of max)
+	// Medium aggression (0.5) → target distance 0.5 (50% of max)
+	// Low aggression (0.2) → target distance 0.8 (80% of max)
 	{
-		float enemyDist = CurrentObs.DistanceToNearestEnemy;
-		bool bAggressiveParams = TacticalParams.Aggression > 0.5f;
-		bool bCloseToEnemy = enemyDist < 0.3f;
-		bool bFarFromEnemy = enemyDist > 0.5f;
+		float TargetDistance = 0.8f - (TacticalParams.Aggression * 0.6f);  // Range [0.2, 0.8]
+		float ActualDistance = CurrentObs.DistanceToNearestEnemy;
+		float DistanceError = FMath::Abs(TargetDistance - ActualDistance);
 
-		if ((bAggressiveParams && bCloseToEnemy) || (!bAggressiveParams && bFarFromEnemy))
-		{
-			AlignmentScore += 1.0f;
-		}
-		AlignmentCount++;
+		// Gaussian-like reward: peak at target, falls off with distance
+		float AggressionReward = FMath::Exp(-DistanceError * 3.0f);  // Range [0, 1]
+		TotalReward += AggressionReward * 0.3f;  // Weight: 30%
 	}
 
-	// 2. Cover preference alignment: High cover preference should correlate with being in cover
+	// ========================================
+	// 2. COVER: Probabilistic alignment + penalty under fire
+	// ========================================
+	// High CoverPreference → should be in cover when enemies nearby
+	// Low CoverPreference → can be exposed
 	{
-		bool bCoverParams = TacticalParams.CoverPreference > 0.5f;
-		bool bInCover = CurrentObs.bHasCover;
+		float CoverReward = 0.0f;
+		bool bEnemiesNearby = CurrentObs.DistanceToNearestEnemy < 0.5f;
 
-		if ((bCoverParams && bInCover) || (!bCoverParams && !bInCover))
+		if (CurrentObs.bHasCover)
 		{
-			AlignmentScore += 1.0f;
+			// In cover: Reward proportional to CoverPreference
+			CoverReward = TacticalParams.CoverPreference;
+
+			// Extra reward if taking fire (cover is critical)
+			if (bEnemiesNearby)
+			{
+				CoverReward += 0.5f;
+			}
 		}
-		AlignmentCount++;
+		else
+		{
+			// Not in cover: Reward if preference is low
+			CoverReward = 1.0f - TacticalParams.CoverPreference;
+
+			// Penalty if taking fire without cover
+			if (bEnemiesNearby && TacticalParams.CoverPreference > 0.6f)
+			{
+				CoverReward -= 0.5f;  // Should be in cover!
+			}
+		}
+
+		TotalReward += FMath::Clamp(CoverReward, -0.5f, 1.0f) * 0.2f;  // Weight: 20%
 	}
 
-	// 3. Spread distance alignment: Low spread should correlate with close ally proximity
-	// Only relevant if we have ally info
-	if (CurrentObs.AllyDistance > 0.01f)  // Has ally nearby
+	// ========================================
+	// 3. SPREAD: Target ally distance based on spread parameter
+	// ========================================
+	// Low spread (0.0) → tight formation, target 0.1 (10% of max distance)
+	// High spread (1.0) → dispersed, target 0.6 (60% of max distance)
+	if (CurrentObs.AllyDistance > 0.01f)  // Has ally data
 	{
-		bool bTightFormation = TacticalParams.SpreadDistance < 0.4f;
-		bool bCloseToAlly = CurrentObs.AllyDistance < 0.2f;
-		bool bFarFromAlly = CurrentObs.AllyDistance > 0.4f;
+		float TargetAllyDistance = 0.1f + (TacticalParams.SpreadDistance * 0.5f);  // Range [0.1, 0.6]
+		float ActualAllyDistance = CurrentObs.AllyDistance;
+		float DistanceError = FMath::Abs(TargetAllyDistance - ActualAllyDistance);
 
-		if ((bTightFormation && bCloseToAlly) || (!bTightFormation && bFarFromAlly))
-		{
-			AlignmentScore += 1.0f;
-		}
-		AlignmentCount++;
+		// Gaussian-like reward
+		float SpreadReward = FMath::Exp(-DistanceError * 4.0f);  // Range [0, 1]
+		TotalReward += SpreadReward * 0.25f;  // Weight: 25%
 	}
 
-	// 4. Risk tolerance alignment: High risk tolerance + surviving in dangerous position = good
-	// Low risk tolerance + retreating from danger = good
+	// ========================================
+	// 4. RISK: Gradient threat level × tolerance
+	// ========================================
+	// Threat level = (1 - health) × (1 - enemyDistance) × enemyCount
+	// High risk tolerance → can survive high threat
+	// Low risk tolerance → should avoid threat
 	{
-		bool bHighRisk = TacticalParams.RiskTolerance > 0.6f;
-		bool bLowHealth = CurrentObs.AgentHealth < 0.4f;
-		bool bInDanger = CurrentObs.DistanceToNearestEnemy < 0.3f && CurrentObs.VisibleEnemyCount > 1;
+		float ThreatLevel = (1.0f - CurrentObs.AgentHealth) *
+		                    (1.0f - CurrentObs.DistanceToNearestEnemy) *
+		                    FMath::Min(CurrentObs.VisibleEnemyCount / 3.0f, 1.0f);  // Normalized [0, 1]
 
-		// High risk: Staying in danger despite low health (risky but intentional)
-		// Low risk: Avoiding danger or maintaining health (conservative)
-		if (bHighRisk && bInDanger)
-		{
-			AlignmentScore += 0.5f;  // Partial credit for risky behavior
-		}
-		else if (!bHighRisk && !bInDanger)
-		{
-			AlignmentScore += 1.0f;  // Full credit for conservative success
-		}
-		AlignmentCount++;
+		// Acceptable threat = RiskTolerance (high tolerance → can handle high threat)
+		float ThreatError = FMath::Abs(ThreatLevel - TacticalParams.RiskTolerance);
+
+		// Reward for matching risk tolerance to actual threat exposure
+		float RiskReward = FMath::Exp(-ThreatError * 2.0f);  // Range [0, 1]
+		TotalReward += RiskReward * 0.15f;  // Weight: 15%
 	}
 
-	// Calculate average alignment and convert to reward
-	if (AlignmentCount > 0)
+	// ========================================
+	// 5. TEMPORAL CONSISTENCY: Penalize erratic parameter changes
+	// ========================================
+	// Reward smooth parameter adjustments over time
 	{
-		float AverageAlignment = AlignmentScore / static_cast<float>(AlignmentCount);
-		Reward = AverageAlignment * RewardConfig::TACTICAL_EFFECTIVENESS_BONUS;
+		// Compare current params to previous params
+		float ParamDelta = FMath::Abs(TacticalParams.Aggression - PreviousTacticalParams.Aggression) +
+		                   FMath::Abs(TacticalParams.CoverPreference - PreviousTacticalParams.CoverPreference) +
+		                   FMath::Abs(TacticalParams.SpreadDistance - PreviousTacticalParams.SpreadDistance) +
+		                   FMath::Abs(TacticalParams.RiskTolerance - PreviousTacticalParams.RiskTolerance);
+
+		// Reward small deltas (smooth control), penalize large deltas (erratic)
+		float ConsistencyReward = FMath::Exp(-ParamDelta * 2.0f);  // Range [0, 1]
+		TotalReward += ConsistencyReward * 0.1f;  // Weight: 10%
+
+		// Update previous params
+		PreviousTacticalParams = TacticalParams;
 	}
 
-	return Reward;
+	// Scale total reward by effectiveness bonus
+	return TotalReward * RewardConfig::TACTICAL_EFFECTIVENESS_BONUS;  // × 0.5
 }
 
 void URewardCalculator::SetCurrentTacticalParameters(const FTacticalParameters& Params)
 {
+	// v9.0: Store previous params for temporal consistency reward
+	PreviousTacticalParams = CurrentTacticalParams;
 	CurrentTacticalParams = Params;
 }
 
@@ -655,32 +666,12 @@ void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
 		EStrategyType PreviousStrategy = CurrentStrategy;
 		CurrentStrategy = Strategy;
 
-		// v8.0 REBALANCED: Reset capture progress tracking on strategy change
-		// (target objective might have changed)
+		// v9.0: Removed explicit objective tracking
+		// Strategy-specific rewards use observation fields instead
 		PreviousCaptureProgress = 0.0f;
 		bCaptureCompletionRewarded = false;
 
-		// Re-initialize capture progress from new objective
-		if (FollowerComponent)
-		{
-			AObjectiveActor* Objective = FollowerComponent->GetTargetObjective();
-			if (Objective)
-			{
-				int32 AgentTeamID = FollowerComponent->GetTeamID();
-				bool bIsHostile = Objective->IsHostileTo(AgentTeamID);
-
-				if (bIsHostile)
-				{
-					PreviousCaptureProgress = 1.0f - Objective->GetDurabilityPercent();
-				}
-				else
-				{
-					PreviousCaptureProgress = Objective->GetDurabilityPercent();
-				}
-			}
-		}
-
-		UE_LOG(LogTemp, Log, TEXT("[REWARD v8.0] Strategy updated: %s → %s (reward weights + capture tracking reset)"),
+		UE_LOG(LogTemp, Log, TEXT("[REWARD v9.0] Strategy updated: %s → %s"),
 			*UEnum::GetValueAsString(PreviousStrategy),
 			*UEnum::GetValueAsString(Strategy));
 	}

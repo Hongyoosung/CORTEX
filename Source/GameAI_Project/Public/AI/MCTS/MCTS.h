@@ -67,7 +67,7 @@ struct FBatchPrototype
 
     FString Name;                                    // "TightAssault", "WideDefense", etc.
     TArray<EStrategyType> Strategies;               // [Assault, Assault, Assault, Support]
-    EObjectiveType PrimaryObjective;                // Friendly or Hostile
+    FString Description;                            // For logging/debugging (e.g., "3 Assault + 1 Support, aggressive push")
     float EstimatedValue = 0.5f;                    // RL prior estimate
 };
 

@@ -19,7 +19,7 @@ class INNERuntimeGPU;
  * Neural Network-based RL Policy for Tactical Parameter Control (v8.0 Multi-Head)
  *
  * v8.0 Architecture (Multi-Head):
- *   Input Layer:  50 features (46 base + 4 strategy one-hot from MCTS)
+ *   Input Layer:  56 features (52 base + 4 strategy one-hot from MCTS)
  *   Shared Trunk: 128 → 128 → 64 (ReLU)
  *   ├─ Assault Head:  [4] tactical parameters (Aggression, Cover, Spread, Risk)
  *   ├─ Defend Head:   [4] tactical parameters
@@ -34,13 +34,14 @@ class INNERuntimeGPU;
  *   - Tactical parameters modulate EQS weights for spatial reasoning
  *   - Combat head learns target priority selection
  *
- * Observation Space (46 base features):
+ * Observation Space (52 base features - v9.0):
  *   - Agent State (4): pos(3), health(1)
  *   - Combat (1): enemy_dist(1)
  *   - Perception (16): raycasts(16)
  *   - Support Context (5): ally_needs(1), ally_health(1), ally_dist(1), ally_dir(2)
  *   - Enemy Info (16): count(1), nearby(15)
  *   - Tactical (4): has_cover(1), cover_dist(1), cover_dir(2)
+ *   - Objective Context (6): friendly_obj_dist(1), friendly_obj_dir(2), hostile_obj_dist(1), hostile_obj_dir(2)
  *
  * Usage:
  *   1. Get macro action: GetMacroAction(Observation, AssignedStrategy)
@@ -62,7 +63,7 @@ public:
 
 	/**
 	 * Get tactical parameters and combat parameters for current observation + assigned strategy (v8.0)
-	 * @param Observation - Agent's 64-feature observation
+	 * @param Observation - Agent's 52-feature observation (v9.0)
 	 * @param AssignedStrategy - Strategy assigned by MCTS (determines which head to use)
 	 * @return Macro action with tactical and combat parameters
 	 */
@@ -71,7 +72,7 @@ public:
 
 	/**
 	 * Get state value estimate (used by PPO training) (v8.0)
-	 * @param Observation - Agent's 64-feature observation
+	 * @param Observation - Agent's 52-feature observation (v9.0)
 	 * @param AssignedStrategy - Strategy assigned by MCTS
 	 * @return Value estimate [-1, 1]
 	 */
@@ -102,10 +103,10 @@ private:
 	// ========================================
 
 	/**
-	 * Build 50-feature input from observation + assigned strategy (v8.0)
-	 * @param Observation - Agent's 46-feature observation
+	 * Build 56-feature input from observation + assigned strategy (v9.0)
+	 * @param Observation - Agent's 52-feature observation
 	 * @param AssignedStrategy - Strategy assigned by MCTS (one-hot encoded)
-	 * @return 50-element vector (46 base + 4 strategy one-hot)
+	 * @return 56-element vector (52 base + 4 strategy one-hot)
 	 */
 	TArray<float> BuildNetworkInputV8(const FObservationElement& Observation, EStrategyType AssignedStrategy) const;
 

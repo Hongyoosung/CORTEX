@@ -990,13 +990,10 @@ void UTeamLeaderComponent::ApplyStrategyAssignment(const TArray<FStrategyAssignm
 		{
 			FollowerComp->SetStrategyAssignment(Assignment);
 
-			// v8.0: Enhanced logging
-			FString ObjectiveName = Assignment.TargetObjective ? Assignment.TargetObjective->GetName() : TEXT("None");
-
-			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v8.0] Agent '%s' → Strategy '%s' (Objective=%s, Priority=%d, Value=%.2f, Visits=%d)"),
+			// v9.0: Strategy-only assignment logging (no explicit objective)
+			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v9.0] Agent '%s' → Strategy '%s' (Priority=%d, Value=%.2f, Visits=%d)"),
 				*Agent->GetName(),
 				*UEnum::GetValueAsString(Assignment.Strategy),
-				*ObjectiveName,
 				Assignment.Priority,
 				Assignment.ExpectedValue,
 				Assignment.VisitCount);
@@ -1142,14 +1139,27 @@ void UTeamLeaderComponent::DrawDebugInfo()
 
 			FVector AgentPos = Agent->GetActorLocation();
 
-			// Get objective position
+			// v9.0: Get implicit objective based on strategy
 			FVector ObjectivePos = FVector::ZeroVector;
-			if (Assignment.TargetObjective && IsValid(Assignment.TargetObjective))
+			AObjectiveActor* ImplicitObjective = nullptr;
+
+			// Assault/Support → Hostile objective, Defend → Friendly objective
+			if (Assignment.Strategy == EStrategyType::Assault || Assignment.Strategy == EStrategyType::Support)
 			{
-				ObjectivePos = Assignment.TargetObjective->GetActorLocation();
+				ImplicitObjective = HostileObjective;
+			}
+			else if (Assignment.Strategy == EStrategyType::Defend)
+			{
+				ImplicitObjective = FriendlyObjective;
+			}
+			// Retreat has no specific objective
+
+			if (ImplicitObjective && IsValid(ImplicitObjective))
+			{
+				ObjectivePos = ImplicitObjective->GetActorLocation();
 			}
 
-			// Draw MCTS assignment arrow (yellow arrow: Agent → Objective)
+			// Draw MCTS assignment arrow (yellow arrow: Agent → Implicit Objective)
 			if (!ObjectivePos.IsZero())
 			{
 				DrawDebugDirectionalArrow(
@@ -1177,10 +1187,10 @@ void UTeamLeaderComponent::DrawDebugInfo()
 				true  // Draw shadow
 			);
 
-			// Draw objective type (cyan text above objective)
-			if (Assignment.TargetObjective && !ObjectivePos.IsZero())
+			// Draw implicit objective type (cyan text above objective)
+			if (ImplicitObjective && !ObjectivePos.IsZero())
 			{
-				FString ObjectiveText = Assignment.TargetObjective->GetName();
+				FString ObjectiveText = ImplicitObjective->GetName();
 				DrawDebugString(
 					World,
 					ObjectivePos + FVector(0, 0, 100),

@@ -2,6 +2,7 @@
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/HealthComponent.h"
+#include "Team/ObjectiveActor.h"  // v9.0: For objective context
 
 UObservationBuilderComponent::UObservationBuilderComponent()
 {
@@ -202,6 +203,9 @@ FObservationElement UObservationBuilderComponent::BuildLocalObservation()
 		}
 	}
 
+	// v9.0: Populate objective context
+	PopulateObjectiveContext(Observation);
+
 	// End profiling
 	double EndTime = FPlatformTime::Seconds();
 	TotalObservationTime += static_cast<float>((EndTime - StartTime) * 1000.0); // Convert to ms
@@ -340,4 +344,63 @@ void UObservationBuilderComponent::ResetEpisode()
 	CachedCoverLocation = FVector::ZeroVector;
 	CachedCoverDistance = 9999.0f;
 	LastCoverQueryTime = 0.0f;
+}
+
+//------------------------------------------------------------------------------
+// OBJECTIVE CONTEXT (v9.0)
+//------------------------------------------------------------------------------
+
+void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement& Observation)
+{
+	AActor* Owner = GetOwner();
+	if (!Owner || !TeamLeader) return;
+
+	const float MaxNormDistance = 10000.0f;  // Normalization constant
+	const FVector AgentLocation = Owner->GetActorLocation();
+
+	// Get objectives from team leader
+	AObjectiveActor* FriendlyObjective = TeamLeader->GetFriendlyObjective();
+	AObjectiveActor* HostileObjective = TeamLeader->GetHostileObjective();
+
+	// Populate friendly objective context
+	if (FriendlyObjective)
+	{
+		FVector ToFriendly = FriendlyObjective->GetActorLocation() - AgentLocation;
+		float Distance = ToFriendly.Size();
+
+		// Normalized distance [0, 1]
+		Observation.FriendlyObjectiveDistance = FMath::Clamp(Distance / MaxNormDistance, 0.0f, 1.0f);
+
+		// Normalized 2D direction
+		ToFriendly.Z = 0; // Flatten to 2D
+		ToFriendly.Normalize();
+		Observation.FriendlyObjectiveDirection = FVector2D(ToFriendly.X, ToFriendly.Y);
+	}
+	else
+	{
+		// Default values if objective not found
+		Observation.FriendlyObjectiveDistance = 1.0f;
+		Observation.FriendlyObjectiveDirection = FVector2D::ZeroVector;
+	}
+
+	// Populate hostile objective context
+	if (HostileObjective)
+	{
+		FVector ToHostile = HostileObjective->GetActorLocation() - AgentLocation;
+		float Distance = ToHostile.Size();
+
+		// Normalized distance [0, 1]
+		Observation.HostileObjectiveDistance = FMath::Clamp(Distance / MaxNormDistance, 0.0f, 1.0f);
+
+		// Normalized 2D direction
+		ToHostile.Z = 0; // Flatten to 2D
+		ToHostile.Normalize();
+		Observation.HostileObjectiveDirection = FVector2D(ToHostile.X, ToHostile.Y);
+	}
+	else
+	{
+		// Default values if objective not found
+		Observation.HostileObjectiveDistance = 1.0f;
+		Observation.HostileObjectiveDirection = FVector2D::ZeroVector;
+	}
 }

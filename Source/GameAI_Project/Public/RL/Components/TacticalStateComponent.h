@@ -46,9 +46,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "TacticalState|Strategy")
 	EStrategyType GetAssignedStrategy() const { return CurrentAssignment.Strategy; }
 
-	/** Get target objective from current assignment */
-	UFUNCTION(BlueprintPure, Category = "TacticalState|Strategy")
-	AObjectiveActor* GetTargetObjective() const { return CurrentAssignment.TargetObjective; }
+	/** v9.0: Get target objective (deprecated - objectives implicit in strategy)
+	 * Returns nullptr - use StateTreeContext.TargetObjective which computes based on strategy */
+	UFUNCTION(BlueprintPure, Category = "TacticalState|Strategy", meta = (DeprecatedFunction))
+	AObjectiveActor* GetTargetObjective() const { return nullptr; }
 
 	/** Get previous assignment (for change detection) */
 	UFUNCTION(BlueprintPure, Category = "TacticalState|Strategy")

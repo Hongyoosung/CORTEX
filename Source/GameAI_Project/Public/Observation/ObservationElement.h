@@ -93,6 +93,26 @@ struct GAMEAI_PROJECT_API FObservationElement
     FVector2D CoverDirection = FVector2D::ZeroVector;  // 2 features
 
     //--------------------------------------------------------------------------
+    // OBJECTIVE CONTEXT (6 features) - v9.0
+    //--------------------------------------------------------------------------
+
+    /** Normalized distance to friendly objective [0, 1] */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
+    float FriendlyObjectiveDistance = 1.0f;  // 1 feature
+
+    /** Normalized 2D direction to friendly objective */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
+    FVector2D FriendlyObjectiveDirection = FVector2D::ZeroVector;  // 2 features
+
+    /** Normalized distance to hostile objective [0, 1] */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
+    float HostileObjectiveDistance = 1.0f;  // 1 feature
+
+    /** Normalized 2D direction to hostile objective */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
+    FVector2D HostileObjectiveDirection = FVector2D::ZeroVector;  // 2 features
+
+    //--------------------------------------------------------------------------
     // CONSTRUCTOR & UTILITY FUNCTIONS
     //--------------------------------------------------------------------------
 
@@ -108,11 +128,11 @@ struct GAMEAI_PROJECT_API FObservationElement
         NearbyEnemies.Init(FEnemyObservation(), 5);  // Track top 5 closest enemies
     }
 
-    /** Convert observation to normalized feature vector (46 elements) - v8.0 */
+    /** Convert observation to normalized feature vector (52 elements) - v9.0 */
     TArray<float> ToFeatureVector() const;
 
-    /** Get feature count (v8.0: 46 base features, strategy context added by network) */
-    static int32 GetFeatureCount() { return 46; }
+    /** Get feature count (v9.0: 52 base features = 46 + 6 objective context, strategy context added by network) */
+    static int32 GetFeatureCount() { return 52; }
 
     /** Reset to default values */
     void Reset();
