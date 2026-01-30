@@ -29,12 +29,129 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
     MaxSimulations = InMaxSimulations;
     ExplorationParameter = InExplorationParam;
 
-    // v6.0: Initialize RL Policy Network for value estimates (actual neural network)
+    // v8.20: Initialize batch prototypes
+    BatchPrototypes.Empty(8);
+
+    // Prototype 1: Tight Assault (3 Assault, 1 Support)
+    FBatchPrototype TightAssault;
+    TightAssault.Name = TEXT("TightAssault");
+    TightAssault.Strategies = {
+        EStrategyType::Assault,
+        EStrategyType::Assault,
+        EStrategyType::Assault,
+        EStrategyType::Support
+    };
+    TightAssault.PrimaryObjective = EObjectiveType::Hostile;
+    TightAssault.EstimatedValue = 0.55f;
+    BatchPrototypes.Add(TightAssault);
+
+    // Prototype 2: Wide Defense (2 Defend, 2 Support)
+    FBatchPrototype WideDefense;
+    WideDefense.Name = TEXT("WideDefense");
+    WideDefense.Strategies = {
+        EStrategyType::Defend,
+        EStrategyType::Defend,
+        EStrategyType::Support,
+        EStrategyType::Support
+    };
+    WideDefense.PrimaryObjective = EObjectiveType::Friendly;
+    WideDefense.EstimatedValue = 0.52f;
+    BatchPrototypes.Add(WideDefense);
+
+    // Prototype 3: Balanced (A, D, S, R - one each)
+    FBatchPrototype Balanced;
+    Balanced.Name = TEXT("Balanced");
+    Balanced.Strategies = {
+        EStrategyType::Assault,
+        EStrategyType::Defend,
+        EStrategyType::Support,
+        EStrategyType::Retreat
+    };
+    Balanced.PrimaryObjective = EObjectiveType::Neutral;
+    Balanced.EstimatedValue = 0.50f;
+    BatchPrototypes.Add(Balanced);
+
+    // Prototype 4: Support Focus (2 Assault, 2 Support)
+    FBatchPrototype SupportFocus;
+    SupportFocus.Name = TEXT("SupportFocus");
+    SupportFocus.Strategies = {
+        EStrategyType::Assault,
+        EStrategyType::Assault,
+        EStrategyType::Support,
+        EStrategyType::Support
+    };
+    SupportFocus.PrimaryObjective = EObjectiveType::Hostile;
+    SupportFocus.EstimatedValue = 0.54f;
+    BatchPrototypes.Add(SupportFocus);
+
+    // Prototype 5: Defense Focus (3 Defend, 1 Support)
+    FBatchPrototype DefenseFocus;
+    DefenseFocus.Name = TEXT("DefenseFocus");
+    DefenseFocus.Strategies = {
+        EStrategyType::Defend,
+        EStrategyType::Defend,
+        EStrategyType::Defend,
+        EStrategyType::Support
+    };
+    DefenseFocus.PrimaryObjective = EObjectiveType::Friendly;
+    DefenseFocus.EstimatedValue = 0.48f;
+    BatchPrototypes.Add(DefenseFocus);
+
+    // Prototype 6: Offensive Swarm (all Assault)
+    FBatchPrototype OffensiveSwarm;
+    OffensiveSwarm.Name = TEXT("OffensiveSwarm");
+    OffensiveSwarm.Strategies = {
+        EStrategyType::Assault,
+        EStrategyType::Assault,
+        EStrategyType::Assault,
+        EStrategyType::Assault
+    };
+    OffensiveSwarm.PrimaryObjective = EObjectiveType::Hostile;
+    OffensiveSwarm.EstimatedValue = 0.50f;
+    BatchPrototypes.Add(OffensiveSwarm);
+
+    // Prototype 7: Defensive Wall (all Defend)
+    FBatchPrototype DefensiveWall;
+    DefensiveWall.Name = TEXT("DefensiveWall");
+    DefensiveWall.Strategies = {
+        EStrategyType::Defend,
+        EStrategyType::Defend,
+        EStrategyType::Defend,
+        EStrategyType::Defend
+    };
+    DefensiveWall.PrimaryObjective = EObjectiveType::Friendly;
+    DefensiveWall.EstimatedValue = 0.45f;
+    BatchPrototypes.Add(DefensiveWall);
+
+    // Prototype 8: Mixed Objectives (2→Friendly, 2→Hostile)
+    FBatchPrototype MixedObjectives;
+    MixedObjectives.Name = TEXT("MixedObjectives");
+    MixedObjectives.Strategies = {
+        EStrategyType::Assault,
+        EStrategyType::Assault,
+        EStrategyType::Defend,
+        EStrategyType::Defend
+    };
+    MixedObjectives.PrimaryObjective = EObjectiveType::Mixed;
+    MixedObjectives.EstimatedValue = 0.50f;
+    BatchPrototypes.Add(MixedObjectives);
+
+    UE_LOG(LogTemp, Log, TEXT("[MCTS v8.20] Initialized %d batch prototypes"), BatchPrototypes.Num());
+
+    // v8.20: Initialize RLPolicyNetwork for value estimates
     RLPolicyNetwork = NewObject<URLPolicyNetwork>(this);
 
-    UE_LOG(LogTemp, Log, TEXT("✅ [MCTS v8.0] Initialized for strategy assignment (Simulations: %d, Exploration: %.2f)"),
-        MaxSimulations, ExplorationParameter);
-    UE_LOG(LogTemp, Log, TEXT("✅ [MCTS v8.0] Using RL value estimates + coordination heuristics"));
+    // Try to load batch cache from previous runs (warm start)
+    FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
+    if (FPaths::FileExists(*CachePath))
+    {
+        LoadBatchCache(CachePath);
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Loaded batch cache with %d entries"), BatchCache.Num());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] No existing batch cache, starting with fresh priors"));
+    }
 }
 
 //==============================================================================
@@ -48,6 +165,10 @@ TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment(
     const TMap<AActor*, FObservationElement>& InCachedObservations
 )
 {
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Input Agents: %d"), Agents.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Input Objectives: %d"), Objectives.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Cached Observations: %d"), InCachedObservations.Num());
+
     // Cache inputs for thread-safe async execution
     AvailableAgents = Agents;
     AvailableObjectives = Objectives;
@@ -80,38 +201,522 @@ TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment(
         Backpropagation(ExpandedNode, Value);
     }
 
-    // Select best child (highest visit count = most explored)
-    TSharedPtr<FTeamMCTSNode> BestChild = TeamRootNode->SelectBestChild(0.0f);  // ExplorationParam=0 for pure exploitation
+    // v8.10 FIX: Traverse down to find a complete assignment (all agents assigned)
+    // The tree builds incrementally: root (0 agents) → level 1 (1 agent) → ... → level N (N agents)
+    // We need to follow the best path down to get a complete assignment
 
-    if (BestChild.IsValid())
+    TSharedPtr<FTeamMCTSNode> CurrentNode = TeamRootNode;
+    TSharedPtr<FTeamMCTSNode> BestLeafNode = nullptr;
+    int32 TraversalDepth = 0;
+
+    // Follow best child path until we reach a node with all agents assigned or a terminal node
+    while (CurrentNode.IsValid())
     {
-        // 원본: TObjectPtr 키 사용
-        TMap<TObjectPtr<AActor>, FStrategyAssignment> BestAssignmentsTObject = BestChild->GetStrategyAssignments();
+        TMap<TObjectPtr<AActor>, FStrategyAssignment> CurrentAssignments = CurrentNode->GetStrategyAssignments();
 
-        UE_LOG(LogTemp, Log, TEXT("[MCTS v8.0] Best assignment found: Value=%.2f, Visits=%d"),
-            BestChild->TotalReward / FMath::Max(1, BestChild->VisitCount), BestChild->VisitCount);
+        // Check if all agents are assigned
+        if (CurrentAssignments.Num() >= Agents.Num())
+        {
+            BestLeafNode = CurrentNode;
+            UE_LOG(LogTemp, Display, TEXT("[MCTS v8.10 FIX] Found complete assignment at depth %d: %d agents assigned"),
+                TraversalDepth, CurrentAssignments.Num());
+            break;
+        }
 
-        // 반환용: AActor* 키 사용
+        // Select best child (highest visit count for robust decision)
+        TSharedPtr<FTeamMCTSNode> BestChild = CurrentNode->SelectBestChild(0.0f);  // ExplorationParam=0 for pure exploitation
+
+        if (!BestChild.IsValid())
+        {
+            // No children - use current node if it has some assignments
+            if (CurrentAssignments.Num() > 0)
+            {
+                BestLeafNode = CurrentNode;
+                UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10 FIX] Reached leaf at depth %d with partial assignment: %d/%d agents"),
+                    TraversalDepth, CurrentAssignments.Num(), Agents.Num());
+            }
+            break;
+        }
+
+        CurrentNode = BestChild;
+        TraversalDepth++;
+
+        // Safety: Prevent infinite loop
+        if (TraversalDepth > 10)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MCTS v8.10 FIX] Traversal depth exceeded 10, breaking"));
+            break;
+        }
+    }
+
+    if (BestLeafNode.IsValid())
+    {
+        // Convert TObjectPtr keys to AActor* keys
+        TMap<TObjectPtr<AActor>, FStrategyAssignment> BestAssignmentsTObject = BestLeafNode->GetStrategyAssignments();
+
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10 FIX] Best assignment found: Value=%.2f, Visits=%d, Agents=%d"),
+            BestLeafNode->TotalReward / FMath::Max(1, BestLeafNode->VisitCount),
+            BestLeafNode->VisitCount,
+            BestAssignmentsTObject.Num());
+
+        // Convert to return format
         TMap<AActor*, FStrategyAssignment> ResultAssignments;
-        ResultAssignments.Reserve(BestAssignmentsTObject.Num()); // 성능 최적화
+        ResultAssignments.Reserve(BestAssignmentsTObject.Num());
 
         for (auto& [AgentPtr, Assignment] : BestAssignmentsTObject)
         {
-            // 값을 수정 (메트릭 추가)
-            Assignment.ExpectedValue = BestChild->TotalReward / FMath::Max(1, BestChild->VisitCount);
-            Assignment.VisitCount = BestChild->VisitCount;
+            // Add metrics
+            Assignment.ExpectedValue = BestLeafNode->TotalReward / FMath::Max(1, BestLeafNode->VisitCount);
+            Assignment.VisitCount = BestLeafNode->VisitCount;
             Assignment.Timestamp = FPlatformTime::Seconds();
 
-            // TObjectPtr -> AActor* 자동 변환되어 저장됨
             ResultAssignments.Add(AgentPtr, Assignment);
         }
+
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Output Assignments: %d"), ResultAssignments.Num());
 
         return ResultAssignments;
     }
 
-    // Fallback: Return root assignments (should never happen if simulations > 0)
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.0] No best child found, returning empty assignments"));
+    // Fallback: Return empty assignments
+    UE_LOG(LogTemp, Error, TEXT("[MCTS v8.10 FIX] No valid assignment found after %d simulations"), Simulations);
     return TMap<AActor*, FStrategyAssignment>();
+}
+
+TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GenerateCompleteBatches(
+    const TArray<AActor*>& Agents,
+    const TArray<AObjectiveActor*>& Objectives)
+{
+    // [v8.21] 생존 에이전트가 없으면 빈 배열 반환
+    if (Agents.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.21] No agents available for strategy assignment."));
+        return TArray<TMap<AActor*, FStrategyAssignment>>();
+    }
+
+    // [v8.21] 목표가 부족한 경우에 대한 예외 처리 (최소 1개는 있어야 함)
+    if (Objectives.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.21] No objectives available!"));
+        return TArray<TMap<AActor*, FStrategyAssignment>>();
+    }
+
+    TArray<TMap<AActor*, FStrategyAssignment>> AllBatches;
+    AllBatches.Reserve(BatchPrototypes.Num());
+
+    // [v8.21] 전략 일관성을 위해 에이전트를 이름(혹은 ID) 순으로 정렬
+    // 이렇게 해야 "첫 번째 전략"이 항상 "특정 에이전트(리더급)"에게 할당됨
+    TArray<AActor*> SortedAgents = Agents;
+    SortedAgents.Sort([](const AActor& A, const AActor& B) {
+        return A.GetName() < B.GetName();
+        });
+
+    for (const auto& Prototype : BatchPrototypes)
+    {
+        TMap<AActor*, FStrategyAssignment> Batch;
+
+        // [v8.21 핵심] 루프 횟수를 '생존 에이전트 수'와 '프로토타입 전략 수' 중 작은 쪽으로 제한
+        // 예: 생존자 2명이면, 프로토타입의 앞쪽 전략 2개만 가져옴
+        int32 AssignCount = FMath::Min(SortedAgents.Num(), Prototype.Strategies.Num());
+
+        for (int32 i = 0; i < AssignCount; ++i)
+        {
+            AActor* Agent = SortedAgents[i];
+            EStrategyType Strategy = Prototype.Strategies[i];
+
+            // 목표 할당 로직 (v8.20 유지)
+            AObjectiveActor* TargetObjective = nullptr;
+
+            if (Prototype.PrimaryObjective == EObjectiveType::Hostile)
+            {
+                TargetObjective = Objectives.Num() > 1 ? Objectives[1] : Objectives[0];
+            }
+            else if (Prototype.PrimaryObjective == EObjectiveType::Friendly)
+            {
+                TargetObjective = Objectives[0];
+            }
+            else if (Prototype.PrimaryObjective == EObjectiveType::Mixed)
+            {
+                // 인덱스 기반 분배: 생존자가 적을 때도 앞쪽 인덱스 로직을 따름
+                if (i < 2) // 0, 1번 에이전트는 Friendly
+                {
+                    TargetObjective = Objectives[0];
+                }
+                else // 2, 3번 에이전트는 Hostile
+                {
+                    TargetObjective = Objectives.Num() > 1 ? Objectives[1] : Objectives[0];
+                }
+            }
+            else // Neutral
+            {
+                TargetObjective = Objectives[0];
+            }
+
+            FStrategyAssignment Assignment;
+            Assignment.Agent = Agent;
+            Assignment.Strategy = Strategy;
+            Assignment.TargetObjective = TargetObjective;
+            Assignment.Priority = 5;
+            Assignment.Timestamp = FPlatformTime::Seconds();
+
+            Batch.Add(Agent, Assignment);
+        }
+
+        // [v8.21] 유효성 검사: 생성된 배치의 크기가 생존 에이전트 수와 같은지 확인
+        if (Batch.Num() == SortedAgents.Num())
+        {
+            AllBatches.Add(Batch);
+        }
+        else
+        {
+            // 이론상 발생하면 안 되지만, 디버그용 로그
+            UE_LOG(LogTemp, Error, TEXT("[MCTS v8.21] Batch generation mismatch! Agents: %d, Batch: %d"),
+                SortedAgents.Num(), Batch.Num());
+        }
+    }
+
+    return AllBatches;
+}
+
+TMap<AActor*, FStrategyAssignment> UMCTS::SelectBatchByUCB1(
+    const TArray<TMap<AActor*, FStrategyAssignment>>& AllBatches)
+{
+    if (AllBatches.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] SelectBatchByUCB1 received empty batch list"));
+        return TMap<AActor*, FStrategyAssignment>();
+    }
+
+    float BestUCB = -FLT_MAX;
+    int32 BestBatchIdx = 0;
+
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] UCB1 Batch Selection:"));
+
+    for (int32 i = 0; i < AllBatches.Num(); ++i)
+    {
+        const auto& Batch = AllBatches[i];
+        FString BatchKey = GetBatchKey(Batch);
+
+        // ✅ BatchCache에서 가져오거나 기본값으로 FBatchPerformance 생성
+        FBatchPerformance Performance;
+        if (BatchCache.Contains(BatchKey))
+        {
+            Performance = BatchCache[BatchKey];
+        }
+        else
+        {
+            // 캐시에 없으면 기본값 (Trials=0, WinRate=0.5)
+            Performance.BatchKey = BatchKey;
+            Performance.Trials = 0;
+            Performance.Wins = 0;
+            Performance.AverageValue = 0.5f;
+        }
+
+        // ✅ GetUCBValue() 함수 호출 (FLT_MAX 처리 포함)
+        float UCB = Performance.GetUCBValue(ExplorationParameter, TotalBatchTrials);
+        float WinRate = Performance.GetWinRate();
+        int32 Trials = Performance.Trials;
+
+        // 로그용 Exploration 계산 (디버깅용)
+        float Exploration = (Trials == 0) ? 0.0f :
+            ExplorationParameter * FMath::Sqrt(FMath::Loge((float)TotalBatchTrials + 1) / (Trials + 1));
+
+        // ✅ UCB가 FLT_MAX인 경우 특별 처리
+        FString UCBStr;
+        if (UCB >= FLT_MAX / 2)  // FLT_MAX 근사값 체크
+        {
+            UCBStr = TEXT("∞");
+        }
+        else
+        {
+            UCBStr = FString::Printf(TEXT("%.4f"), UCB);
+        }
+
+        UE_LOG(LogTemp, Warning,
+            TEXT("  Batch %d: WR=%.2f (%d/%d), Exploration=%.2f, UCB=%s %s"),
+            i, WinRate * 100.0f,
+            Trials == 0 ? 0 : FMath::RoundToInt(WinRate * Trials), Trials,
+            Exploration, *UCBStr,
+            (UCB > BestUCB) ? TEXT("← BEST") : TEXT(""));
+
+        if (UCB > BestUCB)
+        {
+            BestUCB = UCB;
+            BestBatchIdx = i;
+        }
+    }
+
+    // ✅ 로그 출력도 FLT_MAX 처리
+    FString BestUCBStr = (BestUCB >= FLT_MAX / 2) ? TEXT("∞") : FString::Printf(TEXT("%.4f"), BestUCB);
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Selected batch %d with UCB=%s"),
+        BestBatchIdx, *BestUCBStr);
+
+    return AllBatches[BestBatchIdx];
+}
+
+void UMCTS::UpdateBatchCache(
+    const TMap<AActor*, FStrategyAssignment>& BatchAssignments,
+    ETeamEpisodeResult Result) 
+{
+    FString BatchKey = GetBatchKey(BatchAssignments);
+
+    if (!BatchCache.Contains(BatchKey))
+    {
+        BatchCache.Add(BatchKey, FBatchPerformance());
+        BatchCache[BatchKey].BatchKey = BatchKey;
+    }
+
+    auto& CachedBatch = BatchCache[BatchKey];
+    CachedBatch.Trials++;
+    CachedBatch.LastUsedTime = FPlatformTime::Seconds();
+
+    // 승/패/무승부 처리
+    switch (Result)
+    {
+    case ETeamEpisodeResult::Win:
+        CachedBatch.Wins++;
+        TotalBatchWins++; // 전역 승리 카운트 증가
+        break;
+
+    case ETeamEpisodeResult::Loss:
+        CachedBatch.Losses++; // 구조체에 Losses 필드가 있다고 가정
+        break;
+
+    case ETeamEpisodeResult::Draw:
+        CachedBatch.Draws++; // 구조체에 Draws 필드가 있다고 가정
+        // 무승부는 승률 계산 시 0.5승으로 칠지, 제외할지 결정 필요
+        // 현재 로직상 Wins/Trials 이므로 무승부는 승률을 낮추는 요인이 됨 (보수적 접근)
+        break;
+    }
+
+    // 평균 가치 재계산 (Win Rate Update)
+    CachedBatch.AverageValue = CachedBatch.GetWinRate();
+    TotalBatchTrials++;
+}
+
+FString UMCTS::GetBatchKey(const TMap<AActor*, FStrategyAssignment>& BatchAssignments) const
+{
+    TArray<AActor*> SortedAgents;
+    BatchAssignments.GetKeys(SortedAgents);
+
+    // Sort for consistent key generation
+    SortedAgents.Sort([](const AActor& A, const AActor& B) {
+        return A.GetName() < B.GetName();
+        });
+
+    FString Key;
+    for (const auto& Agent : SortedAgents)
+    {
+        if (const auto* Assignment = BatchAssignments.Find(Agent))
+        {
+            if (!Key.IsEmpty())
+            {
+                Key += TEXT(",");
+            }
+
+            FString StrategyStr = UEnum::GetValueAsString(Assignment->Strategy);
+            FString ObjectiveName = Assignment->TargetObjective ?
+                Assignment->TargetObjective->GetName() : TEXT("None");
+
+            Key += FString::Printf(TEXT("%s→%s→%s"),
+                *Agent->GetName(),
+                *StrategyStr,
+                *ObjectiveName);
+        }
+    }
+
+    return Key;
+}
+
+bool UMCTS::SaveBatchCache(const FString& SavePath)
+{
+    // Create JSON structure
+    TSharedPtr<FJsonObject> RootJson = MakeShared<FJsonObject>();
+    RootJson->SetNumberField(TEXT("Version"), 1);
+    RootJson->SetNumberField(TEXT("Timestamp"), FPlatformTime::Seconds());
+    RootJson->SetNumberField(TEXT("TotalTrials"), TotalBatchTrials);
+    RootJson->SetNumberField(TEXT("TotalWins"), TotalBatchWins);
+
+    TSharedPtr<FJsonObject> BatchesJson = MakeShared<FJsonObject>();
+
+    // Add each batch entry
+    for (const auto& [Key, Value] : BatchCache)
+    {
+        TSharedPtr<FJsonObject> BatchJson = MakeShared<FJsonObject>();
+        BatchJson->SetNumberField(TEXT("Wins"), Value.Wins);
+        BatchJson->SetNumberField(TEXT("Trials"), Value.Trials);
+        BatchJson->SetNumberField(TEXT("AverageValue"), Value.AverageValue);
+        BatchJson->SetNumberField(TEXT("LastUsedTime"), Value.LastUsedTime);
+
+        BatchesJson->SetObjectField(Key, BatchJson);
+    }
+
+    RootJson->SetObjectField(TEXT("Batches"), BatchesJson);
+
+    // Write to file
+    FString JsonString;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+    FJsonSerializer::Serialize(RootJson.ToSharedRef(), Writer);
+
+    // Ensure directory exists
+    FString Directory = FPaths::GetPath(SavePath);
+    IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+    if (!PlatformFile.DirectoryExists(*Directory))
+    {
+        PlatformFile.CreateDirectoryTree(*Directory);
+    }
+
+    // Save file
+    bool bSuccess = FFileHelper::SaveStringToFile(JsonString, *SavePath);
+
+    if (bSuccess)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Saved batch cache to %s (%d batches)"),
+            *SavePath, BatchCache.Num());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] Failed to save batch cache to %s"), *SavePath);
+    }
+
+    return bSuccess;
+}
+
+bool UMCTS::LoadBatchCache(const FString& LoadPath)
+{
+    // Read file
+    FString JsonString;
+    if (!FFileHelper::LoadFileToString(JsonString, *LoadPath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Batch cache file not found: %s"), *LoadPath);
+        return false;
+    }
+
+    // Parse JSON
+    TSharedPtr<FJsonObject> RootJson;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+
+    if (!FJsonSerializer::Deserialize(Reader, RootJson) || !RootJson.IsValid())
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] Failed to parse batch cache JSON"));
+        return false;
+    }
+
+    // Load metadata
+    TotalBatchTrials = RootJson->GetIntegerField(TEXT("TotalTrials"));
+    TotalBatchWins = RootJson->GetIntegerField(TEXT("TotalWins"));
+
+    // Load batches
+    TSharedPtr<FJsonObject> BatchesJson = RootJson->GetObjectField(TEXT("Batches"));
+
+    for (const auto& [Key, Value] : BatchesJson->Values)
+    {
+        TSharedPtr<FJsonObject> BatchJson = Value->AsObject();
+
+        FBatchPerformance Performance;
+        Performance.BatchKey = Key;
+        Performance.Wins = BatchJson->GetIntegerField(TEXT("Wins"));
+        Performance.Trials = BatchJson->GetIntegerField(TEXT("Trials"));
+        Performance.AverageValue = BatchJson->GetNumberField(TEXT("AverageValue"));
+        Performance.LastUsedTime = BatchJson->GetNumberField(TEXT("LastUsedTime"));
+
+        BatchCache.Add(Key, Performance);
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Loaded batch cache: %d batches, %d total trials"),
+        BatchCache.Num(), TotalBatchTrials);
+
+    return true;
+}
+
+void UMCTS::LogBatchPerformance()
+{
+    if (BatchCache.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] No batch performance data"));
+        return;
+    }
+
+    // [Fix] TMap -> TArray 변환 로직 수정
+    TArray<TPair<FString, FBatchPerformance>> SortedBatches;
+    SortedBatches.Reserve(BatchCache.Num());
+
+    for (const auto& Pair : BatchCache)
+    {
+        SortedBatches.Add(Pair);
+    }
+
+    // Sort by win rate (Desc)
+    SortedBatches.Sort([](const TPair<FString, FBatchPerformance>& A, const TPair<FString, FBatchPerformance>& B) {
+        return A.Value.GetWinRate() > B.Value.GetWinRate();
+        });
+
+    UE_LOG(LogTemp, Warning, TEXT("========== BATCH PERFORMANCE REPORT =========="));
+    UE_LOG(LogTemp, Warning, TEXT("Total Trials: %d, Total Wins: %d (%.1f%%)"),
+        TotalBatchTrials, TotalBatchWins,
+        TotalBatchTrials > 0 ? 100.0f * TotalBatchWins / TotalBatchTrials : 0.0f);
+    UE_LOG(LogTemp, Warning, TEXT(""));
+
+    for (int32 i = 0; i < FMath::Min(5, SortedBatches.Num()); ++i)
+    {
+        const auto& Pair = SortedBatches[i];
+        const FString& Key = Pair.Key;
+        const FBatchPerformance& Value = Pair.Value;
+
+        UE_LOG(LogTemp, Warning, TEXT("  %d. %s"), i + 1, *Key);
+        UE_LOG(LogTemp, Warning, TEXT("     Wins: %d/%d (%.1f%%)"),
+            Value.Wins, Value.Trials, 100.0f * Value.GetWinRate());
+        UE_LOG(LogTemp, Warning, TEXT("     UCB: %.4f"),
+            Value.GetUCBValue(1.41f, TotalBatchTrials));
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("============================================="));
+}
+
+TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment_v820(const TArray<AActor*>& Agents, const TArray<AObjectiveActor*>& Objectives, int32 Simulations, const TMap<AActor*, FObservationElement>& InCachedObservations)
+{
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] START: Agents=%d, Objectives=%d, Simulations=%d"),
+        Agents.Num(), Objectives.Num(), Simulations);
+
+    float StartTime = FPlatformTime::Seconds();
+
+    // Cache inputs for thread-safe async execution
+    AvailableAgents = Agents;
+    AvailableObjectives = Objectives;
+    CachedObservations = InCachedObservations;
+
+    // [Phase 1] Generate all complete batches
+    TArray<TMap<AActor*, FStrategyAssignment>> AllBatches =
+        GenerateCompleteBatches(Agents, Objectives);
+
+    if (AllBatches.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] Failed to generate batches"));
+        return TMap<AActor*, FStrategyAssignment>();
+    }
+
+    // [Phase 2] Select best batch using UCB1
+    TMap<AActor*, FStrategyAssignment> SelectedBatch =
+        SelectBatchByUCB1(AllBatches);
+
+    // [Phase 3] Optional: Refine batch with MCTS (currently skipped)
+    // TMap<AActor*, FStrategyAssignment> RefinedBatch = 
+    //     RefineStrategyAssignmentWithin(SelectedBatch, Simulations);
+
+    // [Phase 4] Validate output
+    if (SelectedBatch.Num() != Agents.Num())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("[MCTS v8.21] Output batch incomplete: Input Agents=%d, Assigned=%d"),
+            Agents.Num(), SelectedBatch.Num());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[MCTS v8.20] Output batch VALID: 4 agents assigned"));
+    }
+
+    return SelectedBatch;
 }
 
 
@@ -218,26 +823,26 @@ float UMCTS::EvaluateStrategyAssignment(const TMap<AActor*, FStrategyAssignment>
     {
         if (!Agent || !Assignment.TargetObjective) continue;
 
-        // v8.0: Use cached observation for thread safety
+        // v8.10 FIX: Use cached observation for thread safety
         const FObservationElement* CachedObs = CachedObservations.Find(Agent);
         if (!CachedObs)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.0] No cached observation for agent %s, skipping"), *Agent->GetName());
+            UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10] No cached observation for agent %s, skipping"), *Agent->GetName());
             continue;
         }
 
-        // Build objective context from strategy assignment
-        UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
-        if (!FollowerComp) continue;
+        // v8.10 FIX: Query RL value estimate directly from cached observation
+        // The cached observation already contains all necessary tactical context
+        // (enemy positions, cover, allies, etc.) - no need to add objective context
+        float StateValue = RLPolicyNetwork->GetStateValueV8(*CachedObs, Assignment.Strategy);
 
-        // v8.0: Build context from objective actor
-        FObjectiveContext ObjCtx;
-        ObjCtx.TargetObjective = Assignment.TargetObjective;
-        ObjCtx.Distance = FVector::Dist(Agent->GetActorLocation(), Assignment.TargetObjective->GetActorLocation());
-        ObjCtx.Distance = FMath::Clamp(ObjCtx.Distance / 5000.0f, 0.0f, 1.0f);  // Normalize
+        TotalValue += StateValue;
+        AgentCount++;
 
-        FVector Direction = (Assignment.TargetObjective->GetActorLocation() - Agent->GetActorLocation()).GetSafeNormal2D();
-        ObjCtx.Direction = FVector2D(Direction.X, Direction.Y);
+        UE_LOG(LogTemp, VeryVerbose, TEXT("[MCTS v8.10 FIX] Agent '%s' Strategy '%s' → Value: %.3f"),
+            *Agent->GetName(),
+            *UEnum::GetValueAsString(Assignment.Strategy),
+            StateValue);
     }
 
     // Normalize by agent count
@@ -258,6 +863,8 @@ TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GeneratePossibleStrategyAssign
     const TMap<AActor*, FStrategyAssignment>& CurrentAssignments
 )
 {
+    UE_LOG(LogTemp, Warning, TEXT("[GEN DEBUG] CurrentAssignments input: %d agents"), CurrentAssignments.Num());
+
     TArray<TMap<AActor*, FStrategyAssignment>> PossibleAssignments;
 
     // v8.0: Generate strategy assignments for each agent × strategy × objective combination
@@ -265,6 +872,10 @@ TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GeneratePossibleStrategyAssign
 
     for (AActor* Agent : AvailableAgents)
     {
+        UE_LOG(LogTemp, Verbose, TEXT("[GEN DEBUG] Checking Agent %s: Contains=%s"),
+            *Agent->GetName(),
+            CurrentAssignments.Contains(Agent) ? TEXT("YES (SKIP)") : TEXT("NO (PROCESS)"));
+
         // Skip agents already assigned
         if (CurrentAssignments.Contains(Agent))
         {
@@ -311,6 +922,8 @@ TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GeneratePossibleStrategyAssign
         }
         PossibleAssignments.SetNum(MaxCombinationsPerExpansion);
     }
+
+    UE_LOG(LogTemp, Warning, TEXT("[GEN DEBUG] Generated actions: %d"), PossibleAssignments.Num());
 
     return PossibleAssignments;
 }

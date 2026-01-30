@@ -5,7 +5,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_training_single
+    container_name: cortex_training_single
     volumes:
       - ./training_results:/app/training_results
       - ./models:/app/models
@@ -29,7 +29,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_training_multi
+    container_name: cortex_training_multi
     volumes:
       - ./training_results:/app/training_results
       - ./models:/app/models
@@ -50,7 +50,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_tensorboard
+    container_name: cortex_tensorboard
     volumes:
       - ./training_results:/app/training_results
     ports:
@@ -64,7 +64,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_connection_test
+    container_name: cortex_connection_test
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -79,7 +79,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_grpc_test
+    container_name: cortex_grpc_test
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -94,7 +94,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_timeout_diag
+    container_name: cortex_timeout_diag
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -109,7 +109,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_training_diag
+    container_name: cortex_training_diag
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -124,7 +124,7 @@ services:
     build:
       context: ..
       dockerfile: CORTEX_Training/Dockerfile
-    container_name: sbdapm_agent_diag
+    container_name: cortex_agent_diag
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:

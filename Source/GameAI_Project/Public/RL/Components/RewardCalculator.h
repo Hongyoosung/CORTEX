@@ -10,7 +10,7 @@ class UFollowerAgentComponent;
 class UHealthComponent;
 
 /**
- * v8.0 Unified Reward Configuration
+ * v8.10 Unified Reward Configuration (VF Collapse Fix)
  * Strategy-specific behavior emerges from weight profiles, not separate reward functions.
  * All strategies use same reward components with different weights.
  *
@@ -19,6 +19,12 @@ class UHealthComponent;
  * - Easy hyperparameter tuning via weight profiles
  * - TensorBoard-compatible component breakdown
  * - No code duplication
+ *
+ * v8.10 Critical Fix:
+ * - Reward normalization: Clamps total reward to [-10, 10] range
+ * - Prevents value function collapse from multi-modal return distributions
+ * - Required because strategy-specific weights create 100x variance in raw rewards
+ *   (e.g., Assault combat spikes vs Support formation rewards)
  */
 namespace RewardConfig {
 	// === BASE REWARD COMPONENT VALUES ===
@@ -46,6 +52,10 @@ namespace RewardConfig {
 	// Team coordination (INCREASED - incentivize teamwork)
 	constexpr float FORMATION_BONUS = 0.3f;                // Per step in formation (was 0.1f) - 3× increase
 	constexpr float COMBINED_FIRE_REWARD = 20.0f;          // Combined fire on same target (was 10.0f in code) - 2× increase
+
+	// v8.20: Support strategy specific rewards
+	constexpr float SUPPORT_PROXIMITY_BONUS = 2.0f;        // Support approaching low-HP ally (scaled by proximity)
+	constexpr float SUPPORT_CRITICAL_BONUS = 5.0f;         // Support reaching critically wounded ally (<30% HP, <200cm)
 
 	// v8.0: Tactical parameter effectiveness (INCREASED - improve parameter learning)
 	constexpr float TACTICAL_EFFECTIVENESS_BONUS = 0.5f;   // Per step when parameters match outcomes (was 0.15f) - 3.3× increase

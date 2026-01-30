@@ -142,8 +142,17 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         # Shared Log-Std Head
         self.log_std_head = SlimFC(final_hidden_size, self.action_dim, activation_fn=None)
 
-        # Shared Value Head
-        self.value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        # v8.10 FIX: Strategy-Specific Value Heads (Critical for VF collapse fix)
+        # Each strategy sees different reward distributions:
+        # - Assault: High combat spikes (kills, damage)
+        # - Defend: High survival/cover (steady accumulation)
+        # - Support: High coordination (formation, combined fire)
+        # - Retreat: High survival + objective progress (escape rewards)
+        # Single value head cannot learn all these modes → explained_var = 0
+        self.assault_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        self.defend_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        self.support_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
+        self.retreat_value_head = SlimFC(final_hidden_size, 1, activation_fn=None)
 
         # v8.8: Log-std clamping bounds (prevents entropy explosion)
         log_std_config = model_config.get("custom_model_config", {})
@@ -163,6 +172,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         # Run shared trunk
         features = self.shared_trunk(obs)
         self._last_features = features
+        self._last_strategy_onehot = strategy_onehot  # Store for value_function()
 
         # Route to appropriate strategy head
         tactical_means = torch.zeros(batch_size, 4, device=obs.device)
@@ -194,7 +204,34 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     def value_function(self):
         if self._last_features is None:
             raise ValueError("Must call forward() before value_function()")
-        return self.value_head(self._last_features).squeeze(-1)
+
+        # v8.10 FIX: Strategy-specific value function
+        # Route to appropriate value head based on strategy one-hot
+        # This fixes the value function collapse issue where single head
+        # couldn't learn multi-modal return distributions across strategies
+        batch_size = self._last_features.shape[0]
+
+        # Get last observation to extract strategy (stored during forward())
+        if not hasattr(self, '_last_strategy_onehot'):
+            # Fallback: use Assault head if strategy not available
+            return self.assault_value_head(self._last_features).squeeze(-1)
+
+        strategy_onehot = self._last_strategy_onehot
+        values = torch.zeros(batch_size, device=self._last_features.device)
+
+        for i in range(batch_size):
+            strategy_idx = torch.argmax(strategy_onehot[i]).item()
+
+            if strategy_idx == 0:  # Assault
+                values[i] = self.assault_value_head(self._last_features[i:i+1]).squeeze()
+            elif strategy_idx == 1:  # Defend
+                values[i] = self.defend_value_head(self._last_features[i:i+1]).squeeze()
+            elif strategy_idx == 2:  # Support
+                values[i] = self.support_value_head(self._last_features[i:i+1]).squeeze()
+            else:  # Retreat
+                values[i] = self.retreat_value_head(self._last_features[i:i+1]).squeeze()
+
+        return values
 
 
 # ==============================================================================
@@ -211,17 +248,23 @@ class SBDAPMConfig:
     # Network architecture
     HIDDEN_LAYERS = [256, 256, 128]
 
-    # PPO hyperparameters
-    LEARNING_RATE = 3e-5  # v8.8: Reduced from 5e-5 to improve stability
-    LEARNING_RATE_END = 1e-6  # v8.8: Final LR for schedule
-    TRAIN_BATCH_SIZE = 32000  # v8.6 ASYNC: 4 envs × 8 agents × 1000 steps = policy update every 1000 env steps
-    SGD_MINIBATCH_SIZE = 2048 # Minibatch size for SGD updates
-    NUM_SGD_ITER = 10
+    # PPO hyperparameters (v8.10.2: Post-Diagnosis Fix)
+    LEARNING_RATE = 5e-5  # REDUCED from 1e-4 (was too aggressive, causing instability)
+    LEARNING_RATE_END = 1e-5  # Keep final LR the same
+    TRAIN_BATCH_SIZE = 48000
+    SGD_MINIBATCH_SIZE = 2048
+    NUM_SGD_ITER = 3
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
-    CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.001  # v8.8: Reduced from 0.01 to prevent entropy explosion
-    VF_LOSS_COEFF = 1.5
+    CLIP_PARAM = 0.15
+
+    # v8.10.2 CORRECTIVE FIXES for Persistent VF Collapse:
+    # ROOT CAUSE: v8.10 hyperparameters were TOO AGGRESSIVE, preventing VF from learning
+    # ISSUE: Entropy RISING (8.53 → 8.98), VF Explained Var = 0.0 after 480k steps
+    ENTROPY_COEFF = 0.01  # REDUCED from 0.02 (was causing excessive exploration)
+    VF_LOSS_COEFF = 1.0   # INCREASED from 0.5 (VF needs stronger learning signal)
+    GRAD_CLIP = 0.5
+    VF_CLIP_PARAM = 2.0   # REDUCED from 10.0 (clips TD error, not reward!)  
 
     # v8.8: Log-std clamping to prevent entropy explosion
     LOG_STD_MIN = -2.0  # Minimum log_std (σ_min ≈ 0.135)
@@ -229,8 +272,8 @@ class SBDAPMConfig:
 
     # Training
     NUM_WORKERS = 0  # Windows: single process
-    NUM_ENVS_PER_WORKER = 1  # FIXED: Schola handles vectorization internally via nested dicts
-    NUM_UE5_ENVIRONMENTS = 4  # v8.5: Number of parallel UE5 environments (managed by single Python env)
+    NUM_ENVS_PER_WORKER = 1 
+    NUM_UE5_ENVIRONMENTS = 4 
     NUM_ITERATIONS = 100
     CHECKPOINT_FREQ = 10
 
@@ -246,9 +289,8 @@ def create_env_config():
     config = {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,
-        "num_envs": SBDAPMConfig.NUM_UE5_ENVIRONMENTS,  # v8.5: Number of UE5 environments to manage
     }
-    
+
     # Add Docker-specific settings
     if is_docker:
         config["is_docker"] = True
@@ -266,7 +308,7 @@ def create_ppo_config():
 
     # 2. Environment 설정
     config = config.environment(
-        env="sbdapm_env_async",
+        env="cortex_env",
         env_config=create_env_config(),
         disable_env_checking=True,
     )
@@ -287,8 +329,10 @@ def create_ppo_config():
         count_steps_by="agent_steps",
     )
     
-    # 5. Callbacks (Episode Logging)
-    config = config.callbacks(EpisodeLoggerCallback)
+
+    # 5. Callbacks (Episode Logging only)
+    # v10.0: Removed PolicyUpdatePauseCallback - not needed in sync architecture
+    config.callbacks(EpisodeLoggerCallback)
 
     # 6. Debugging & Reporting
     config = config.debugging(log_level="WARN")
@@ -298,21 +342,29 @@ def create_ppo_config():
     )
 
     # 7. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
-    # v8.8: Added lr and lr_schedule to fix policy instability
+    # v8.10.2: Applied corrective fixes based on post-training diagnosis
+    #          - Entropy was RISING (8.53 → 8.98) instead of declining
+    #          - VF Explained Var stuck at 0.0 (no learning)
+    #          - Root cause: Hyperparameters too aggressive (high entropy coeff + loose VF clip)
     config = config.training(
-        lr=SBDAPMConfig.LEARNING_RATE,  # v8.8: CRITICAL FIX - was missing!
-        lr_schedule=[  # v8.8: Linear decay schedule for stability
-            (0, SBDAPMConfig.LEARNING_RATE),
-            (500000, SBDAPMConfig.LEARNING_RATE * 0.5),  # 50% at 500k steps
-            (1000000, SBDAPMConfig.LEARNING_RATE * 0.2),  # 20% at 1M steps
-            (2000000, SBDAPMConfig.LEARNING_RATE_END),  # Final LR at 2M steps
+        lr=SBDAPMConfig.LEARNING_RATE,  # v8.10.2: Reduced to 5e-5 (more conservative)
+        lr_schedule=[  # v8.10.2: Slower decay schedule
+            (0, 5e-5),        # Start conservative
+            (1000000, 2e-5),  # Decay at 1M steps
+            (2000000, 1e-5),  # Final LR at 2M steps
         ],
         train_batch_size=SBDAPMConfig.TRAIN_BATCH_SIZE,
         lambda_=SBDAPMConfig.GAE_LAMBDA,
-        clip_param=SBDAPMConfig.CLIP_PARAM,
-        vf_clip_param=10.0,
-        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,
-        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,
+        clip_param=SBDAPMConfig.CLIP_PARAM,  # v8.9: 0.15 (tightened)
+        vf_clip_param=SBDAPMConfig.VF_CLIP_PARAM,  # v8.10.2: 2.0 (clips TD error, not reward)
+        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,  # v8.10.2: 0.01 (reduced from 0.02)
+        entropy_coeff_schedule=[  # v8.10.2: More conservative schedule
+            (0, 0.01),         # Lower initial exploration
+            (500000, 0.005),   # Slower decay
+            (1000000, 0.001),  # Allow policy to converge
+        ],
+        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,  # v8.10.2: 1.0 (increased from 0.5 for stronger VF learning)
+        grad_clip=SBDAPMConfig.GRAD_CLIP,  # v8.9: CRITICAL - prevents gradient explosion
         use_gae=True,
         use_critic=True,
         use_kl_loss=True,
@@ -351,14 +403,14 @@ def register_env():
 
     if SCHOLA_AVAILABLE:
         def env_creator(config):
-            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
-            return SBDAPMAsyncMultiAgentEnv(**config)
+            from cortex_env import CORTEXSyncMultiAgentEnv
+            return CORTEXSyncMultiAgentEnv(**config)
     else:
         def env_creator(config):
-            from sbdapm_env_async import SBDAPMAsyncMultiAgentEnv
-            return SBDAPMAsyncMultiAgentEnv(**config)
+            from cortex_env import CORTEXSyncMultiAgentEnv
+            return CORTEXSyncMultiAgentEnv(**config)
 
-    register_env("sbdapm_env_async", env_creator)
+    register_env("cortex_env", env_creator)
 
 
 def register_custom_model():
@@ -395,9 +447,16 @@ def export_onnx(algo, output_dir):
                 support_tactical = torch.sigmoid(self.model.support_mean_head(features))
                 retreat_tactical = torch.sigmoid(self.model.retreat_mean_head(features))
                 combat_priority = torch.sigmoid(self.model.combat_mean_head(features))
-                value = self.model.value_head(features)
+
+                # v8.10: Export all 4 strategy-specific value heads
+                assault_value = self.model.assault_value_head(features)
+                defend_value = self.model.defend_value_head(features)
+                support_value = self.model.support_value_head(features)
+                retreat_value = self.model.retreat_value_head(features)
+
                 return (assault_tactical, defend_tactical, support_tactical,
-                       retreat_tactical, combat_priority, value)
+                       retreat_tactical, combat_priority,
+                       assault_value, defend_value, support_value, retreat_value)
 
         wrapper = MultiHeadPolicyWrapper(model)
         wrapper.eval()
@@ -409,7 +468,8 @@ def export_onnx(algo, output_dir):
             wrapper, dummy_input, str(model_path),
             input_names=["observation"],
             output_names=["assault_tactical", "defend_tactical", "support_tactical",
-                         "retreat_tactical", "combat_priority", "value"],
+                         "retreat_tactical", "combat_priority",
+                         "assault_value", "defend_value", "support_value", "retreat_value"],
             dynamic_axes={
                 "observation": {0: "batch_size"},
                 "assault_tactical": {0: "batch_size"},
@@ -417,7 +477,10 @@ def export_onnx(algo, output_dir):
                 "support_tactical": {0: "batch_size"},
                 "retreat_tactical": {0: "batch_size"},
                 "combat_priority": {0: "batch_size"},
-                "value": {0: "batch_size"}
+                "assault_value": {0: "batch_size"},
+                "defend_value": {0: "batch_size"},
+                "support_value": {0: "batch_size"},
+                "retreat_value": {0: "batch_size"}
             },
             opset_version=11
         )
@@ -441,7 +504,7 @@ def train(args):
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
 
     print("=" * 60)
-    print("CORTEX v8.8 Stabilized Training")
+    print("CORTEX v8.10.2 - Post-Diagnosis Corrective Fix")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
@@ -449,11 +512,8 @@ def train(args):
     print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
     print(f"  Iterations: {args.iterations}")
     print()
-    print("  v8.8 Stability Fixes:")
-    print(f"    Learning Rate: {SBDAPMConfig.LEARNING_RATE} → {SBDAPMConfig.LEARNING_RATE_END} (scheduled)")
-    print(f"    Entropy Coeff: {SBDAPMConfig.ENTROPY_COEFF} (reduced from 0.01)")
-    print(f"    Log-Std Bounds: [{SBDAPMConfig.LOG_STD_MIN}, {SBDAPMConfig.LOG_STD_MAX}] (clamped)")
-    print()
+
+
 
     # Cleanup any existing Ray
     try:
@@ -587,7 +647,7 @@ def train(args):
             print(f"    Agent steps this iteration: {agent_steps}")
             print(f"    Cumulative: {cumulative_episodes} episodes, {cumulative_steps} steps")
 
-            # Show learner stats (v8.8: Enhanced monitoring for stability diagnostics)
+            # Show learner stats (v8.10: Enhanced VF collapse monitoring)
             learner_info = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {})
             if learner_info:
                 total_loss = learner_info.get('total_loss', 'N/A')
@@ -596,20 +656,9 @@ def train(args):
                 kl = learner_info.get('kl', 'N/A')
                 entropy = learner_info.get('entropy', 'N/A')
                 cur_kl_coeff = learner_info.get('cur_kl_coeff', 'N/A')
+                vf_explained_var = learner_info.get('vf_explained_var', 'N/A')
 
                 print(f"    Loss: total={total_loss:.4f}, policy={policy_loss:.4f}, vf={vf_loss:.4f}" if isinstance(total_loss, float) else f"    Loss: {total_loss}")
-                if isinstance(kl, float) and isinstance(entropy, float):
-                    print(f"    KL divergence: {kl:.6f}, Entropy: {entropy:.4f}")
-                    # v8.8: Warn if KL or entropy are concerning
-                    if kl > 0.02:
-                        print(f"    ⚠️ WARNING: KL divergence ({kl:.4f}) > 0.02 - policy updates may be too aggressive")
-                    if entropy > 7.0:
-                        print(f"    ⚠️ WARNING: Entropy ({entropy:.2f}) > 7.0 - possible exploration collapse")
-                    elif entropy < 1.0:
-                        print(f"    ⚠️ WARNING: Entropy ({entropy:.2f}) < 1.0 - possible premature convergence")
-                if isinstance(cur_kl_coeff, float):
-                    print(f"    Current KL coefficient: {cur_kl_coeff:.4f}")
-            print()
 
         # Checkpoint
         if (i + 1) % args.checkpoint_freq == 0:

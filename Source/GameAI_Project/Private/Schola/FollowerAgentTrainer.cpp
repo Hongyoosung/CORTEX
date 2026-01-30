@@ -120,8 +120,8 @@ float AFollowerAgentTrainer::ComputeReward()
 
 EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 {
-	// v8.5 VECTORIZED TRAINING: Per-environment episode termination
-	// Check if THIS AGENT'S ENVIRONMENT has finished, not all environments
+	// Multi-actor architecture: Each environment (actor) terminates independently
+	// Check if THIS actor's environment has finished
 
 	// DIAGNOSTIC: Track ComputeStatus() calls to verify it's being invoked
 	static int32 CallCounter = 0;
@@ -152,23 +152,19 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 
 	ASimulationManagerGameMode* SimManager = Env->SimulationManager;
 
-	// v8.5 CRITICAL FIX: Get the LOGICAL EnvironmentID for THIS agent's team
-	// Step 1: Get agent's TeamID
+	// Multi-actor architecture: Use the environment actor's EnvId directly
+	// Each actor manages its own environment, so EnvId IS the environment ID
+	int32 EnvironmentID = Env->GetEnvId();
+	
+
+	// Optional: Get TeamID for logging purposes
 	int32 InTeamID = -1;
 	if (FollowerAgent && FollowerAgent->TeamLeader)
 	{
 		InTeamID = FollowerAgent->TeamLeader->TeamID;
 	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeStatus: Cannot determine TeamID! FollowerAgent or TeamLeader is NULL!"));
-		return EAgentTrainingStatus::Running;
-	}
 
-	// Step 2: Map TeamID to LogicalEnvironmentID (Teams 0,1→Env0 | Teams 2,3→Env1 | etc.)
-	int32 EnvironmentID = Env->GetLogicalEnvironmentID(InTeamID);
-
-	// Check per-environment termination flags (NOW checking the correct environment!)
+	// Check per-environment termination flags for THIS environment
 	bool bShouldTerminate = SimManager->IsEnvironmentEpisodeEnding(EnvironmentID) ||
 	                       SimManager->GetEnvironmentLastTerminated(EnvironmentID);
 
@@ -181,15 +177,15 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 		if (bWasTimeout)
 		{
 			TruncatedCounter++;
-			UE_LOG(LogTemp, Warning, TEXT("[ENV %d TERMINATION] %s: Episode TRUNCATED (timeout) - Total: %d"),
-				EnvironmentID, *TrainerConfiguration.Name, TruncatedCounter);
+			UE_LOG(LogTemp, Warning, TEXT("[ENV %d | Team %d] %s: Episode TRUNCATED (timeout) - Total: %d"),
+				EnvironmentID, InTeamID, *TrainerConfiguration.Name, TruncatedCounter);
 			return EAgentTrainingStatus::Truncated;
 		}
 		else
 		{
 			CompletedCounter++;
-			UE_LOG(LogTemp, Warning, TEXT("[ENV %d TERMINATION] %s: Episode COMPLETED (team elim) - Total: %d"),
-				EnvironmentID, *TrainerConfiguration.Name, CompletedCounter);
+			UE_LOG(LogTemp, Warning, TEXT("[ENV %d | Team %d] %s: Episode COMPLETED (team elim) - Total: %d"),
+				EnvironmentID, InTeamID, *TrainerConfiguration.Name, CompletedCounter);
 			return EAgentTrainingStatus::Completed;
 		}
 	}
@@ -198,8 +194,8 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 	RunningCounter++;
 	if (CallCounter % 100 == 0)
 	{
-		UE_LOG(LogTemp, VeryVerbose, TEXT("[ENV %d] %s: Status=Running (step %d)"),
-			EnvironmentID, *TrainerConfiguration.Name, EpisodeSteps);
+		UE_LOG(LogTemp, VeryVerbose, TEXT("[ENV %d | Team %d] %s: Status=Running (step %d)"),
+			EnvironmentID, InTeamID, *TrainerConfiguration.Name, EpisodeSteps);
 	}
 	return EAgentTrainingStatus::Running;
 }
@@ -221,19 +217,24 @@ void AFollowerAgentTrainer::GetInfo(TMap<FString, FString>& Info)
 		Info.Add(TEXT("current_reward"), FString::SanitizeFloat(RewardProvider->GetReward()));
 	}
 
-	// v8.5 VECTORIZED TRAINING: Pass logical environment ID to Python
-	// Python uses this to group agents by logical environment for episode detection
-	int32 LogicalEnvID = -1;
+	// Multi-actor architecture: Pass environment ID to Python
+	// Each actor IS a physical environment, so we use the actor's EnvId
+	int32 EnvironmentID = -1;
 	if (ScholaAgent && ScholaAgent->ScholaEnvironment)
 	{
 		AScholaCombatEnvironment* Env = Cast<AScholaCombatEnvironment>(ScholaAgent->ScholaEnvironment);
-		if (Env && FollowerAgent && FollowerAgent->TeamLeader)
+		if (Env)
 		{
-			int32 InTeamID = FollowerAgent->TeamLeader->TeamID;
-			LogicalEnvID = Env->GetLogicalEnvironmentID(InTeamID);
+			EnvironmentID = Env->GetEnvId();
 		}
 	}
-	Info.Add(TEXT("logical_env_id"), FString::FromInt(LogicalEnvID));
+	Info.Add(TEXT("environment_id"), FString::FromInt(EnvironmentID));
+
+	// Also include team ID for debugging
+	if (FollowerAgent && FollowerAgent->TeamLeader)
+	{
+		Info.Add(TEXT("team_id"), FString::FromInt(FollowerAgent->TeamLeader->TeamID));
+	}
 
 	// DIAGNOSTIC: Add current training status to info
 	EAgentTrainingStatus CurrentStatus = State.TrainingStatus;

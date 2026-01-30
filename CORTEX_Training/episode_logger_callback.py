@@ -3,6 +3,11 @@ Episode Logging Callback for CORTEX v8.0
 
 Logs detailed per-agent and per-environment episode metrics.
 Addresses the issue where episode-level rewards are not being tracked.
+
+v8.9.1 Changes:
+    - Reduced logging noise from fragment-based episode boundaries
+    - Clarified RLlib episode ID vs logical environment ID
+    - Only log detailed stats for true episode completions (not truncations)
 """
 
 from ray.rllib.algorithms.callbacks import DefaultCallbacks
@@ -13,6 +18,11 @@ from typing import Dict, Optional
 import numpy as np
 
 
+# Minimum episode length to consider a "true" episode (vs fragment truncation)
+# This helps distinguish real episode completions from RLlib's batch truncations
+MIN_TRUE_EPISODE_LENGTH = 100
+
+
 class EpisodeLoggerCallback(DefaultCallbacks):
     """
     Custom callback to log detailed episode metrics.
@@ -21,6 +31,11 @@ class EpisodeLoggerCallback(DefaultCallbacks):
     - Per-agent rewards (individual agent performance)
     - Per-environment rewards (team performance)
     - Episode length and completion statistics
+
+    Note on Episode IDs:
+        RLlib's episode.episode_id is an internal unique identifier (e.g., 885976910065141457).
+        This is NOT your logical environment ID (0-3). RLlib generates these for its own tracking.
+        Logical environment IDs are tracked via info["logical_env_id"] in the environment.
     """
 
     def on_episode_start(self, *, worker, base_env: BaseEnv, policies: Dict[str, Policy],
@@ -28,6 +43,11 @@ class EpisodeLoggerCallback(DefaultCallbacks):
         """
         Called when an episode starts.
         Initialize episode-level tracking.
+
+        Note: RLlib may create multiple "episodes" per training batch due to:
+            1. True episode boundaries (__all__ = True from environment)
+            2. Rollout fragment boundaries (rollout_fragment_length=256)
+            3. Batch truncations (batch_mode="truncate_episodes")
         """
         # Initialize custom metrics
         episode.user_data["agent_rewards"] = {}
@@ -35,8 +55,10 @@ class EpisodeLoggerCallback(DefaultCallbacks):
         episode.user_data["env_rewards"] = {}  # Track per logical environment
         episode.user_data["env_episode_counts"] = {}  # Track episodes per logical env
         episode.user_data["last_step_count"] = 0  # For detecting new episodes
+        episode.user_data["is_fragment"] = True  # Assume fragment until proven otherwise
 
-        print(f"[CALLBACK] on_episode_start called for episode {episode.episode_id}")
+        # Minimal logging - full details will be logged on episode end
+        # (RLlib episode IDs are internal identifiers, not meaningful to the user)
 
     def on_episode_step(self, *, worker, base_env: BaseEnv, episode: Episode, **kwargs):
         """
@@ -48,13 +70,12 @@ class EpisodeLoggerCallback(DefaultCallbacks):
         """
         # Initialize tracking if missing (happens after auto-reset when on_episode_start not called)
         if "agent_rewards" not in episode.user_data:
-            print(f"[CALLBACK] WARNING: on_episode_step called but agent_rewards not initialized!")
-            print(f"[CALLBACK] This suggests on_episode_start was not called for episode {episode.episode_id}")
             episode.user_data["agent_rewards"] = {}
             episode.user_data["agent_steps"] = {}
             episode.user_data["env_rewards"] = {}
             episode.user_data["env_episode_counts"] = {}
             episode.user_data["last_step_count"] = 0
+            episode.user_data["is_fragment"] = True
 
         # Get agent rewards from this step
         agent_rewards = episode.user_data.get("agent_rewards", {})
@@ -88,12 +109,15 @@ class EpisodeLoggerCallback(DefaultCallbacks):
         episode.user_data["agent_rewards"] = agent_rewards
         episode.user_data["agent_steps"] = agent_steps
 
-        # Periodic logging to confirm callback is working (every 500 steps)
+        # Mark as potentially a true episode if it exceeds minimum length
         total_steps = sum(agent_steps.values())
+        if total_steps >= MIN_TRUE_EPISODE_LENGTH:
+            episode.user_data["is_fragment"] = False
+
+        # v8.9.1: Reduced logging - only log every 2000 steps to reduce noise
         last_logged = episode.user_data.get("last_step_count", 0)
-        if total_steps > 0 and total_steps % 500 == 0 and total_steps != last_logged:
-            print(f"[CALLBACK] on_episode_step: Episode {episode.episode_id}, Total steps={total_steps}, "
-                  f"Agents tracked={len(agent_rewards)}")
+        if total_steps > 0 and total_steps % 2000 == 0 and total_steps != last_logged:
+            print(f"[CALLBACK] Progress: {total_steps} agent-steps, {len(agent_rewards)} agents tracked")
             episode.user_data["last_step_count"] = total_steps
 
     def on_episode_end(self, *, worker, base_env: BaseEnv, policies: Dict[str, Policy],
@@ -102,7 +126,10 @@ class EpisodeLoggerCallback(DefaultCallbacks):
         Called when an episode ends.
         Log accumulated statistics.
 
-        Uses RLlib's built-in episode.agent_rewards if user_data tracking failed.
+        v8.9.1: Only logs detailed statistics for "true" episode completions,
+        not for RLlib's fragment-based truncations.
+
+        Note: RLlib's episode.episode_id is an internal unique ID (not logical env ID).
         """
         agent_rewards = episode.user_data.get("agent_rewards", {})
         agent_steps = episode.user_data.get("agent_steps", {})
@@ -162,7 +189,7 @@ class EpisodeLoggerCallback(DefaultCallbacks):
             except (ValueError, IndexError, AttributeError):
                 pass
 
-        # Log aggregate statistics
+        # Log aggregate statistics (always, for metrics tracking)
         all_rewards = list(agent_rewards.values())
         episode.custom_metrics["agent_reward_mean"] = np.mean(all_rewards) if all_rewards else 0.0
         episode.custom_metrics["agent_reward_min"] = np.min(all_rewards) if all_rewards else 0.0
@@ -181,33 +208,39 @@ class EpisodeLoggerCallback(DefaultCallbacks):
             episode.custom_metrics["env_reward_min"] = np.min(env_total_rewards)
             episode.custom_metrics["env_reward_max"] = np.max(env_total_rewards)
 
-        # Print detailed episode summary
-        print("\n" + "="*80)
-        print(f"📊 EPISODE COMPLETE - Episode {episode.episode_id}")
-        print("="*80)
-        print(f"  Episode Length: {episode.length}")
-        print(f"  Total Return: {episode.total_reward:.2f}")
-        print(f"\n  Per-Agent Statistics ({len(agent_rewards)} agents):")
-        print(f"    Mean Reward: {episode.custom_metrics['agent_reward_mean']:.2f}")
-        print(f"    Min Reward:  {episode.custom_metrics['agent_reward_min']:.2f}")
-        print(f"    Max Reward:  {episode.custom_metrics['agent_reward_max']:.2f}")
-        print(f"    Std Dev:     {episode.custom_metrics['agent_reward_std']:.2f}")
+        # v8.9.1: Only print detailed output for TRUE episode completions
+        # Fragment-based truncations (from rollout_fragment_length) should not spam logs
+        is_fragment = episode.user_data.get("is_fragment", True)
+        total_agent_steps = sum(agent_steps.values())
 
-        if env_rewards:
-            print(f"\n  Per-Environment Statistics ({len(env_rewards)} environments):")
-            for env_idx in sorted(env_rewards.keys()):
-                print(f"    Env {env_idx}: Total={env_rewards[env_idx]:.2f}, "
-                      f"Avg={env_rewards[env_idx]/env_agent_counts[env_idx]:.2f}, "
-                      f"Agents={env_agent_counts[env_idx]}")
+        # Determine if this is a true episode completion vs. fragment truncation
+        # True episodes have significant length AND multiple agents participating
+        is_true_episode = (
+            not is_fragment and
+            total_agent_steps >= MIN_TRUE_EPISODE_LENGTH and
+            len(agent_rewards) >= 4  # At least 4 agents (half a logical env)
+        )
 
-        # Sample individual agent rewards (first 8 agents to avoid spam)
-        print(f"\n  Sample Agent Rewards (first 8):")
-        for i, (agent_id, reward) in enumerate(sorted(agent_rewards.items())[:8]):
-            steps = agent_steps.get(agent_id, 0)
-            avg_per_step = reward / steps if steps > 0 else 0.0
-            print(f"    {agent_id}: {reward:.2f} ({steps} steps, {avg_per_step:.4f}/step)")
+        if is_true_episode:
+            # Print detailed episode summary for TRUE completions only
+            print("\n" + "="*80)
+            print(f"📊 EPISODE COMPLETE (RLlib batch boundary)")
+            print("="*80)
+            print(f"  RLlib Episode ID: {episode.episode_id} (internal tracking ID)")
+            print(f"  Episode Length: {episode.length}")
+            print(f"  Total Return: {episode.total_reward:.2f}")
+            print(f"  Agent-Steps: {total_agent_steps}")
+            print(f"\n  Per-Agent Statistics ({len(agent_rewards)} agents):")
+            print(f"    Mean Reward: {episode.custom_metrics['agent_reward_mean']:.2f}")
+            print(f"    Min Reward:  {episode.custom_metrics['agent_reward_min']:.2f}")
+            print(f"    Max Reward:  {episode.custom_metrics['agent_reward_max']:.2f}")
+            print(f"    Std Dev:     {episode.custom_metrics['agent_reward_std']:.2f}")
 
-        if len(agent_rewards) > 8:
-            print(f"    ... and {len(agent_rewards) - 8} more agents")
+            if env_rewards:
+                print(f"\n  Per-Logical-Environment Statistics ({len(env_rewards)} environments):")
+                for env_idx in sorted(env_rewards.keys()):
+                    print(f"    Env {env_idx}: Total={env_rewards[env_idx]:.2f}, "
+                          f"Avg={env_rewards[env_idx]/env_agent_counts[env_idx]:.2f}, "
+                          f"Agents={env_agent_counts[env_idx]}")
 
-        print("="*80 + "\n")
+            print("="*80 + "\n")

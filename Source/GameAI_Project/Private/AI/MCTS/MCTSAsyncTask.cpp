@@ -25,12 +25,12 @@ void FMCTSAsyncTask::DoWork()
 
     float StartTime = FPlatformTime::Seconds();
 
-    // Run MCTS strategy assignment (v8.0)
-    ResultAssignments = MCTS->RunStrategyAssignment(
+    // [Fix] v8.20 함수 호출로 변경
+    ResultAssignments = MCTS->RunStrategyAssignment_v820(
         Agents,
         Objectives,
         Simulations,
-        CachedObservations  // v8.0: Pass pre-cached observations for thread safety
+        CachedObservations
     );
 
     ExecutionTime = (FPlatformTime::Seconds() - StartTime) * 1000.0f; // ms

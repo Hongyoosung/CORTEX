@@ -5,6 +5,7 @@
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Combat/Components/HealthComponent.h"
+#include "Actor/LeaderCharacter.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
@@ -299,6 +300,12 @@ bool UAgentPerceptionComponent::IsActorEnemy(AActor* Actor) const
 
 	AActor* Owner = GetOwner();
 	if (!Owner) return false;
+
+	// Filter out Leader characters - they should not be recognized as enemies
+	if (Actor->IsA<ALeaderCharacter>())
+	{
+		return false;
+	}
 
 	return CachedSimulationManager->AreActorsEnemies(Owner, Actor);
 }

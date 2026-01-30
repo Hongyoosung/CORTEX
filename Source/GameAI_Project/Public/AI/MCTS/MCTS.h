@@ -41,6 +41,80 @@ class AObjectiveActor;
  */
 
 
+
+ /**
+  * v8.20: Objective targeting type for batch prototypes
+  * Determines which objective (Friendly/Hostile) agents should target
+  */
+UENUM(BlueprintType)
+enum class EObjectiveType : uint8
+{
+    Friendly    UMETA(DisplayName = "Friendly"), // 아군 기지 방어 (Index 0)
+    Hostile     UMETA(DisplayName = "Hostile"),  // 적군 기지 공격 (Index 1)
+    Neutral     UMETA(DisplayName = "Neutral"),  // 중립/기본 (Index 0)
+    Mixed       UMETA(DisplayName = "Mixed")     // 반반 나누기 (앞쪽 절반은 Friendly, 뒤쪽 절반은 Hostile)
+};
+
+
+ /**
+  * v8.20: Team composition batch definition
+  * Represents a fixed assignment of strategies to all 4 agents
+  */
+USTRUCT(BlueprintType)
+struct FBatchPrototype
+{
+    GENERATED_BODY()
+
+    FString Name;                                    // "TightAssault", "WideDefense", etc.
+    TArray<EStrategyType> Strategies;               // [Assault, Assault, Assault, Support]
+    EObjectiveType PrimaryObjective;                // Friendly or Hostile
+    float EstimatedValue = 0.5f;                    // RL prior estimate
+};
+
+/**
+ * v8.20: Batch performance tracking
+ * Accumulates win/loss statistics for UCB1 selection
+ */
+USTRUCT(BlueprintType)
+struct FBatchPerformance
+{
+    GENERATED_BODY()
+
+    FString BatchKey;                                   // "A0→Assault,A1→Assault,A2→Defend,A3→Support"
+    int32 Wins = 0;                                     // Episodes won with this batch
+    int32 Losses = 0;
+    int32 Draws = 0;
+    int32 Trials = 0;                                   // Total episodes tried (N for this node)
+    float AverageValue = 0.5f;                          // Wins / Trials
+    double LastUsedTime = 0.0;                          // FPlatformTime::Seconds()
+
+    float GetWinRate() const
+    {
+        if (Trials == 0) return 0.5f;
+
+        // 무승부를 0.5승으로 계산
+        float Points = Wins + (Draws * 0.5f);
+        return Points / (float)Trials;
+    }
+
+    // 수정된 부분: TotalSystemTrials 인자 이름 수정 및 적용
+    float GetUCBValue(float ExplorationParam, int32 TotalSystemTrials) const
+    {
+        if (Trials == 0) return FLT_MAX;  // Untried batches have infinite UCB
+
+        float Exploitation = GetWinRate();
+
+        // UCB1 Formula: Vi + C * sqrt(ln(N) / ni)
+        // TotalSystemTrials: 전체 시도 횟수 (N)
+        // Trials: 이 배치의 시도 횟수 (ni)
+        // (+1은 log(0) 방지 및 스무딩용)
+        float Exploration = ExplorationParam * FMath::Sqrt(FMath::Loge((float)(TotalSystemTrials + 1)) / (float)(Trials + 1));
+
+        return Exploitation + Exploration;
+    }
+};
+
+
 UCLASS()
 class GAMEAI_PROJECT_API UMCTS : public UObject
 {
@@ -78,6 +152,70 @@ public:
         int32 Simulations,
         const TMap<AActor*, FObservationElement>& InCachedObservations
     );
+
+
+    // v8.20: New methods for batch-level strategy assignment
+
+    /**
+     * Generate all possible complete batch assignments (4 agents assigned)
+     * @param Agents Available agents
+     * @param Objectives Available objectives
+     * @return Array of complete batches (size = 8)
+     */
+    TArray<TMap<AActor*, FStrategyAssignment>> GenerateCompleteBatches(
+        const TArray<AActor*>& Agents,
+        const TArray<AObjectiveActor*>& Objectives);
+
+    /**
+     * Select best batch using UCB1 with cached win rates
+     * @param AllBatches All available batches (size = 8)
+     * @return Best batch according to UCB1 formula
+     */
+    TMap<AActor*, FStrategyAssignment> SelectBatchByUCB1(
+        const TArray<TMap<AActor*, FStrategyAssignment>>& AllBatches);
+
+    /**
+     * Update batch performance cache after episode completes
+     * @param BatchAssignments The batch that was used
+     * @param bEpisodeWon Whether the team won the episode
+     */
+    void UpdateBatchCache(
+        const TMap<AActor*, FStrategyAssignment>& BatchAssignments,
+        ETeamEpisodeResult Result);
+
+    /**
+     * Convert batch assignment map to unique string key for caching
+     * @param BatchAssignments Map of agents to their assignments
+     * @return String key like "A0→Assault→Obj1,A1→Assault→Obj1,..."
+     */
+    FString GetBatchKey(const TMap<AActor*, FStrategyAssignment>& BatchAssignments) const;
+
+    /**
+     * Save batch cache to JSON file (for warm start across runs)
+     * @param SavePath Full file path
+     * @return True if save successful
+     */
+    bool SaveBatchCache(const FString& SavePath);
+
+    /**
+     * Load batch cache from JSON file (warm start)
+     * @param LoadPath Full file path
+     * @return True if load successful
+     */
+    bool LoadBatchCache(const FString& LoadPath);
+
+    /**
+     * Print batch performance summary to logs
+     * Shows top 5 batches by win rate
+     */
+    void LogBatchPerformance();
+
+    // v8.20: Main entry point (refactored from v8.10)
+    TMap<AActor*, FStrategyAssignment> RunStrategyAssignment_v820(
+        const TArray<AActor*>& Agents,
+        const TArray<AObjectiveActor*>& Objectives,
+        int32 Simulations,
+        const TMap<AActor*, FObservationElement>& InCachedObservations);
 
 private:
     //--------------------------------------------------------------------------
@@ -172,6 +310,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MCTS|Config")
     int32 ParallelBatchSize = 50;
 
+    UPROPERTY()
+    TObjectPtr<class URLPolicyNetwork> RLPolicyNetwork;
+
 
 private:
     //--------------------------------------------------------------------------
@@ -184,13 +325,18 @@ private:
     UPROPERTY()
     FTeamObservation CachedTeamObservation;
 
-public:
-    /** RL Policy Network for heuristic action priors (v5.0 - DEPRECATED)
-     * v6.0: Now used for GetStateValue() queries (actual RL value estimates)
-     * Public for debug visualization access (v6.0 Phase 13)
-     */
+    // v8.20: Batch cache for persistent performance tracking
     UPROPERTY()
-    TObjectPtr<class URLPolicyNetwork> RLPolicyNetwork;
+    TMap<FString, FBatchPerformance> BatchCache;
+
+    // v8.20: Pre-defined batch prototypes (set in InitializeTeamMCTS)
+    UPROPERTY()
+    TArray<FBatchPrototype> BatchPrototypes;
+
+    // v8.20: Statistics
+    int32 TotalBatchTrials = 0;
+    int32 TotalBatchWins = 0;
+
 
 private:
 

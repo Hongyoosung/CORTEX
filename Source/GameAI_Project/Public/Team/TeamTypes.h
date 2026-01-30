@@ -3,6 +3,15 @@
 #include "CoreMinimal.h"
 #include "TeamTypes.generated.h"
 
+
+UENUM(BlueprintType)
+enum class ETeamEpisodeResult : uint8
+{
+	Win     UMETA(DisplayName = "Win"),
+	Loss    UMETA(DisplayName = "Loss"),
+	Draw    UMETA(DisplayName = "Draw / Timeout")
+};
+
 /**
  * Strategic events that trigger MCTS decision-making
  */

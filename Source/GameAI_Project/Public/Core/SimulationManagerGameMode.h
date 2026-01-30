@@ -508,6 +508,8 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
 	FOnEpisodeStarted OnEpisodeStarted;
 
+
+
 private:
 	/** Draw debug information */
 	void DrawDebugInformation();

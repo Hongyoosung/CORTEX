@@ -29,6 +29,9 @@ void UTacticalRewardProvider::Initialize()
 
 float UTacticalRewardProvider::GetReward()
 {
+	static int32 CallCount = 0;
+	CallCount++;
+
 	if (!FollowerAgent)
 	{
 		return 0.0f;
@@ -36,6 +39,17 @@ float UTacticalRewardProvider::GetReward()
 
 	float CurrentReward = FollowerAgent->GetAccumulatedReward();
 	float DeltaReward = CurrentReward - LastRewardValue;
+
+	if (FMath::Abs(DeltaReward) > 0.01f)
+	{
+		UE_LOG(LogTemp, Display, TEXT("SCHOLA REWARD : Agent = % s | Delta = % .3f | Accumulated = % .3f"),
+			*FollowerAgent->GetOwner()->GetName(),
+			DeltaReward,
+			CurrentReward
+		);
+	}
+
+
 	LastRewardValue = CurrentReward;
 
 	return DeltaReward;
