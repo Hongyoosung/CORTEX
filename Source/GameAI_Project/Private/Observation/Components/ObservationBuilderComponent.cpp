@@ -196,6 +196,9 @@ FObservationElement UObservationBuilderComponent::BuildLocalObservation()
 				FVector::CrossProduct(Forward, ToAlly).Z,
 				FVector::DotProduct(Forward, ToAlly)
 			);
+
+			Observation.AllyDirection = FVector2D(ToAlly.X, ToAlly.Y);
+
 		}
 		else
 		{
@@ -402,5 +405,16 @@ void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement&
 		// Default values if objective not found
 		Observation.HostileObjectiveDistance = 1.0f;
 		Observation.HostileObjectiveDirection = FVector2D::ZeroVector;
+	}
+
+	static float LastLogTime = 0.0f;
+	float CurrentTime = GetWorld()->GetTimeSeconds();
+	if (CurrentTime - LastLogTime > 5.0f)
+	{
+		LastLogTime = CurrentTime;
+		UE_LOG(LogTemp, Warning, TEXT("[%s] Obs Context: FriendlyDist=%.2f, HostileDist=%.2f"),
+			*Owner->GetName(),
+			Observation.FriendlyObjectiveDistance,
+			Observation.HostileObjectiveDistance);
 	}
 }

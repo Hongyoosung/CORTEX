@@ -100,32 +100,12 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 	TArray<float> Features = Obs.ToFeatureVector();
 
 	// Copy all 52 base features
-	check(Features.Num() == 52);
-	for (int32 i = 0; i < 52; ++i)
+	check(Features.Num() == 56);
+	for (int32 i = 0; i < 56; ++i)
 	{
 		OutObservations.Values[i] = Features[i];
 	}
 
-	// Append strategy one-hot encoding (4 features) from MCTS assignment
-	EStrategyType AssignedStrategy = FollowerAgent->GetAssignedStrategy();
-	int32 StrategyIdx = static_cast<int32>(AssignedStrategy);
-
-	// Initialize strategy one-hot to [0, 0, 0, 0]
-	for (int32 i = 52; i < 56; ++i)
-	{
-		OutObservations.Values[i] = 0.0f;
-	}
-
-	// Set the assigned strategy to 1.0
-	if (StrategyIdx >= 0 && StrategyIdx < 4)
-	{
-		OutObservations.Values[52 + StrategyIdx] = 1.0f;
-	}
-	else
-	{
-		// Fallback to Assault if invalid
-		OutObservations.Values[52] = 1.0f;
-	}
 }
 
 UFollowerAgentComponent* UTacticalObserver::FindFollowerAgent() const

@@ -1,7 +1,7 @@
 #include "Observation/ObservationElement.h"
 #include "Core/ProfilingMacros.h"  // v6.0: Performance profiling
 
-TArray<float> FObservationElement::ToFeatureVector() const
+TArray<float> FObservationElement::ToFeatureVector(bool bIncludeStrategy) const
 {
     SCOPE_CYCLE_COUNTER(STAT_ObservationBuild);  // v6.0: Profile observation building (target: <0.5ms)
 
@@ -110,7 +110,23 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(static_cast<float>(HostileObjectiveDirection.X));
     Features.Add(static_cast<float>(HostileObjectiveDirection.Y));
 
-    check(Features.Num() == 52);
+    if (bIncludeStrategy)
+    {
+        for (int32 i = 0; i < 4; i++)
+        {
+            if (i == AssignedStrategyIndex)
+            {
+                Features.Add(1.0f);
+            }
+            else
+            {
+                Features.Add(0.0f);
+            }
+        }
+    }
+
+	UE_LOG(LogTemp, Warning, TEXT("✅ [Observation] Built feature vector with %d features."), Features.Num());
+
     return Features;
 }
 

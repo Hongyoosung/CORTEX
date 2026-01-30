@@ -553,7 +553,17 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 		return FObservationElement();
 	}
 
-	return ObservationBuilder->BuildLocalObservation();
+	FObservationElement Obs = ObservationBuilder->BuildLocalObservation();
+
+	// 2. [v9.0 수정] 현재 할당된 전략 정보 주입
+	// 이 정보가 있어야 ToFeatureVector()에서 One-Hot을 만들 수 있습니다.
+	CurrentStrategy = GetAssignedStrategy();
+	Obs.AssignedStrategyIndex = (int32)CurrentStrategy;
+
+	// 3. Update stored observation
+	ObservationBuilder->UpdateLocalObservation(Obs);
+
+	return Obs;
 }
 
 bool UFollowerAgentComponent::FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies)

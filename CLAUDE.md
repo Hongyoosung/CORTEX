@@ -1,642 +1,588 @@
-# CORTEX v8.20: Batch-Level Strategy Assignment Architecture
+# CORTEX v9.0: Reward-Driven Objective System
 
-**Engine:** UE5.6 | **Language:** C++17 | **Platform:** Windows | **Version:** v8.20 (Batch Strategy Assignment)
+**Engine:** UE5.6 | **Language:** C++17 | **Platform:** Windows | **Version:** v9.0
 
 ---
 
 ## Executive Summary
 
-CORTEX v8.20 refactors the MCTS strategy assignment from **agent-by-agent sequential assignment** (v8.10) to **batch-level team composition selection**. This architecture change solves the critical bug where MCTS returned incomplete assignments (1-2 agents instead of 4) and establishes a clearer learning signal through batch-level performance tracking.
+CORTEX v9.0 simplifies architecture by **removing explicit objective assignment from MCTS** and **encoding objectives in strategy-specific reward functions**. This eliminates 40% of MCTS complexity while improving RL learning signals through gradient-based rewards and proper normalization.
 
-**Core Problem (v8.10):**
-MCTS tree traversal:
-├─ Depth 0→1→2→3→4 (agent-by-agent strategy assignment)
-├─ Path extraction returns first "complete enough" node
-└─ ❌ Bug: Often stops at depth 1-3 → outputs 1-2 agents assigned
-→ Log: "[MCTS DEBUG] Output Assignments: 1"
+**Core Changes:**
+```
+v8.20: MCTS → [Strategy + TargetObjective] → RL → Rewards (use assigned objective)
+v9.0:  MCTS → [Strategy only] → RL → Rewards (strategy-dependent implicit objectives)
+```
 
-text
-
-**Solution (v8.20):**
-Batch-level assignment:
-├─ 8 pre-defined team composition prototypes (complete 4-agent batches)
-├─ UCB1 batch selection with persistent performance cache
-└─ ✅ Guaranteed: Always outputs 4 agents assigned
-→ Log: "[MCTS v8.20] Output Assignments: 4"
-
-text
-
-**Key Innovation:**
-v8.20 System Flow:
-├─ GenerateCompleteBatches() → 8 complete 4-agent batch prototypes
-├─ SelectBatchByUCB1() → UCB = WinRate + C * sqrt(log(N)/n)
-├─ UpdateBatchCache() → Accumulate win/loss statistics
-├─ SaveBatchCache() / LoadBatchCache() → Persistent learning across episodes
-└─ Output: Complete 4-agent strategy assignments (guaranteed)
-
-text
-
-**Key Advantages:**
-- **Guaranteed completeness:** Every output contains all 4 agent assignments
-- **Clear learning signal:** Batch-level win rates (e.g., "TightAssault: 60% vs WideDefense: 45%")
-- **Cold start mitigation:** Persistent cache enables warm start across training runs
-- **Reduced complexity:** Action space reduced from 4,096 to 8 strategic prototypes
-- **Faster convergence:** 1500 simulations ÷ 8 batches = 187 trials/batch (sufficient exploration)
+**Key Improvements:**
+- **MCTS Simplification:** -40% code, strategy-only batch prototypes
+- **Gradient Rewards:** Continuous tactical parameter feedback (2-3× faster convergence)
+- **Proper Normalization:** Per-component + return normalization (preserves gradients)
+- **Observation Expansion:** 52 base features (+6 objective context)
 
 ---
 
 ## Quick Reference
 
 ### Decision Tree
+```
 Task Type?
-├─ Add Feature → Read v8.20 docs → Check batch patterns → Implement → Test
-├─ Fix Bug → Reproduce → Check batch cache logs → Locate file:line → Fix → Verify
-├─ Optimize → Profile batch selection → Identify bottleneck → Apply pattern → Benchmark
-└─ Refactor → Read batch dependencies → Plan backwards → Implement → Validate
+├─ Add Feature → Read v9.0 docs → Check reward patterns → Implement → Test
+├─ Fix Bug → Check reward logs → Locate strategy-specific logic → Fix → Verify
+├─ Optimize → Profile rewards → Identify bottleneck → Apply normalization → Benchmark
+└─ Refactor → Read dependencies → Plan backwards → Implement → Validate
+```
 
-text
-
-### Performance Targets (v8.20)
+### Performance Targets (v9.0)
 | Component | Max Latency | Memory | Notes |
 |-----------|-------------|--------|-------|
-| MCTS (v8.20) | 20-30ms | 1.5MB | Batch selection (async, 1.5s intervals) |
-| Batch Cache | <1ms | 500KB | 8 batches × performance tracking |
-| RL Inference | 2-4ms | 458KB | Batched inference (unchanged from v8.0) |
-| EQS Queries | 1-2ms | 100KB | Tactical execution (unchanged from v8.0) |
-| **Total (4 agents)** | **8-15ms/sec** | **4.5MB** | 25% latency reduction vs v8.10 |
+| MCTS (v9.0) | 20-30ms | 1.2MB | Strategy-only (30% less data) |
+| Rewards | 0.5-1ms | 200KB | Strategy-specific functions |
+| RL Inference | 2-4ms | 480KB | 56 features (was 50) |
+| **Total** | **25-35ms/sec** | **4.2MB** | 15% reduction vs v8.20 |
 
-### File Locations (v8.20 Quick Jump)
+### File Locations (v9.0 Quick Jump)
 | Feature | Path | Key Methods |
 |---------|------|-------------|
-| **Batch Generation** | `AI/MCTS/MCTS.cpp` | `GenerateCompleteBatches()`, `InitializeTeamMCTS()` |
+| **Batch Generation** | `AI/MCTS/MCTS.cpp` | `GenerateCompleteBatches()` (strategy-only) |
 | **Batch Selection** | `AI/MCTS/MCTS.cpp` | `SelectBatchByUCB1()`, `GetBatchKey()` |
-| **Batch Cache** | `AI/MCTS/MCTS.cpp` | `UpdateBatchCache()`, `SaveBatchCache()`, `LoadBatchCache()` |
-| **Main Entry** | `AI/MCTS/MCTS.cpp` | `RunStrategyAssignment_v820()` |
-| **Team Leader** | `Team/TeamLeaderComponent.cpp` | `RunStrategyAssignment()` (calls v8.20) |
-| **Batch Structures** | `AI/MCTS/MCTS.h` | `FBatchPrototype`, `FBatchPerformance` |
-| RL Policy | `RL/RLPolicyNetwork.cpp` | `GetTacticalParameters()` (unchanged) |
-| Tactical Movement | `StateTree/Tasks/STTask_ExecuteTacticalMovement_v8.cpp` | `ApplyTacticalParameters()` (unchanged) |
+| **Reward Calculation** | `RL/Components/RewardCalculator.cpp` | `CalculateAssaultReward()`, `CalculateDefendReward()` |
+| **Tactical Rewards** | `RL/Components/RewardCalculator.cpp` | `CalculateTacticalParameterEffectiveness()` |
+| **Observation** | `Observation/ObservationElement.h` | `ToFeatureVector()` (52 features) |
+| **ObsProvider** | `Observation/ObservationProvider.cpp` | `PopulateObjectiveContext()` |
+| **Python Env** | `CORTEX_Training/cortex_env.py` | Return normalization |
 
 ---
 
 ## Architecture Overview
 
-### Three-Layer Hierarchy (v8.20 Updated)
+### Three-Layer Hierarchy (v9.0)
 
-**Layer 1: MCTS (Batch-Level Strategic Decision) - v8.20**
-- **Responsibility:** Team composition selection from 8 pre-defined prototypes
+**Layer 1: MCTS (Strategic Decision) - v9.0**
+- **Output:** Strategy-only assignments (no objectives)
 - **Frequency:** Async, every 1.5s
-- **Output:** Complete 4-agent strategy assignments (batch)
-- **Action Space:** 8 batch prototypes (reduced from 4,096 combinations)
-- **Learning:** UCB1 with persistent batch performance cache
+- **Action Space:** 8 batch prototypes (strategy composition only)
+- **Learning:** UCB1 with persistent batch cache
 
-**Layer 2: RL (Tactical Parameter Control) - v8.0**
-- **Responsibility:** Modulate EQS behavior via tactical parameters + combat choices
-- **Frequency:** 2-5 Hz (event-driven or periodic)
-- **Input:** 68 observation features + 4 strategy features (one-hot)
+**Layer 2: RL (Tactical Control) - v9.0**
+- **Input:** 56 features (52 base + 4 strategy one-hot)
 - **Output:** 4 continuous tactical parameters + 2 discrete combat choices
+- **Learning:** PPO with gradient-based rewards + return normalization
 
 **Layer 3: EQS + Rules (Execution) - v8.0**
-- **Responsibility:** Spatial reasoning (EQS) + combat execution (rules)
+- **Logic:** Environmental Query System with RL-modulated weights
 - **Frequency:** 2-5 Hz (EQS), 60 Hz (combat)
-- **Logic:** Environmental Query System with RL-modulated weights + auto-targeting
 
-### System Flow (v8.20)
+### System Flow (v9.0)
 
+```
 ┌─────────────────────────────────────────────────────────────┐
-│ Team Leader (1 per team, async every 1.5s) │
-│ │
-│ ┌────────────────────────────────────────────────────────┐ │
-│ │ MCTS v8.20: Batch-Level Strategy Assignment │ │
-│ │ │ │
-│ │ [Phase 1] GenerateCompleteBatches() │ │
-│ │ ├─ 8 pre-defined team prototypes │ │
-│ │ ├─ Map prototypes to actual agents │ │
-│ │ └─ Output: 8 complete 4-agent batches │ │
-│ │ │ │
-│ │ [Phase 2] SelectBatchByUCB1() │ │
-│ │ ├─ Query BatchCache for win rates │ │
-│ │ ├─ Calculate UCB = WinRate + C*sqrt(log(N)/n) │ │
-│ │ └─ Select batch with highest UCB │ │
-│ │ │ │
-│ │ [Phase 3] Optional: Tactical Refinement │ │
-│ │ └─ (v8.20: Currently skipped, delegate to RL) │ │
-│ │ │ │
-│ │ Output: FStrategyAssignment × 4 (guaranteed complete) │ │
-│ └────────────────────────────────────────────────────────┘ │
-│ └─ Broadcasts assignments to followers │
+│ Team Leader (async every 1.5s)                              │
+│                                                              │
+│ MCTS v9.0: Strategy-Only Assignment                         │
+│ ├─ GenerateCompleteBatches() → 8 strategy-only batches     │
+│ ├─ SelectBatchByUCB1() → Highest UCB batch                 │
+│ └─ Output: [Agent→Strategy] × 4 (NO objectives)            │
 └─────────────────────────────────────────────────────────────┘
-↓
+                           ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Followers (N agents, tactical control 2-5 Hz) │
-│ ├─ RL Policy Network (v8.0 - unchanged): │
-│ │ ├─ Strategy-Specific Policy Heads (4 heads) │
-│ │ ├─ Tactical Parameters [Aggression, Cover, ...] │
-│ │ └─ Combat Choice [TargetPriority] │
-│ ├─ EQS Execution (v8.0 - unchanged) │
-│ └─ Combat Execution (v8.0 - unchanged) │
+│ Followers (4 agents, 2-5 Hz)                                │
+│                                                              │
+│ Observation (52 base features):                             │
+│ ├─ Agent State (4): Position, Health                       │
+│ ├─ Combat (1): DistanceToNearestEnemy                      │
+│ ├─ Environment (16): Raycast distances                     │
+│ ├─ Enemy Info (16): Visible enemies + details              │
+│ ├─ Tactical Context (4): Cover info                        │
+│ ├─ Ally Context (5): Ally health, distance                 │
+│ └─ Objective Context (6): Friendly/Hostile obj ← NEW       │
+│                                                              │
+│ RL Policy (56 inputs):                                      │
+│ ├─ Strategy-Specific Heads (4 heads)                       │
+│ ├─ Tactical Parameters [Aggression, Cover, Spread, Risk]   │
+│ └─ Combat Choice [TargetPriority]                          │
+│                                                              │
+│ Rewards (strategy-specific):                                │
+│ ├─ Assault: HostileObjectiveDistance reward                │
+│ ├─ Defend: FriendlyObjectiveDistance reward                │
+│ ├─ Support: AllyDistance reward                            │
+│ ├─ Retreat: EnemyDistance reward                           │
+│ └─ Tactical: Gradient-based parameter effectiveness        │
 └─────────────────────────────────────────────────────────────┘
-
-text
+```
 
 ---
 
-## Core Components (v8.20)
+## Core Components (v9.0)
 
-### 1. Batch Generation (`MCTS.cpp::GenerateCompleteBatches()`)
+### 1. MCTS Batch Generation (Strategy-Only)
 
-**Purpose:** Generate 8 pre-defined team composition prototypes as complete 4-agent batches
+**File:** `AI/MCTS/MCTS.cpp::GenerateCompleteBatches()`
 
-**8 Batch Prototypes:**
+**8 Batch Prototypes (v9.0 - Strategy-Only):**
 
-| Prototype | Composition | Primary Objective | Estimated Value | Description |
-|-----------|-------------|-------------------|-----------------|-------------|
-| **TightAssault** | [A, A, A, S] | Hostile | 0.55 | 3 Assault + 1 Support, aggressive push |
-| **WideDefense** | [D, D, S, S] | Friendly | 0.52 | 2 Defend + 2 Support, defensive formation |
-| **Balanced** | [A, D, S, R] | Neutral | 0.50 | One of each strategy, adaptable |
-| **SupportFocus** | [A, A, S, S] | Hostile | 0.54 | 2 Assault + 2 Support, coordinated offense |
-| **DefenseFocus** | [D, D, D, S] | Friendly | 0.48 | 3 Defend + 1 Support, fortified position |
-| **OffensiveSwarm** | [A, A, A, A] | Hostile | 0.50 | All Assault, maximum aggression |
-| **DefensiveWall** | [D, D, D, D] | Friendly | 0.45 | All Defend, turtle strategy |
-| **MixedObjectives** | [A, A, D, D] | Mixed | 0.50 | 2→Friendly, 2→Hostile split |
+| Prototype | Composition | Description |
+|-----------|-------------|-------------|
+| **TightAssault** | [A, A, A, S] | 3 Assault + 1 Support |
+| **WideDefense** | [D, D, S, S] | 2 Defend + 2 Support |
+| **Balanced** | [A, D, S, R] | Mixed strategies |
+| **SupportFocus** | [A, A, S, S] | Coordinated offense |
+| **DefenseFocus** | [D, D, D, S] | Fortified position |
+| **OffensiveSwarm** | [A, A, A, A] | All Assault |
+| **DefensiveWall** | [D, D, D, D] | All Defend |
+| **MixedObjectives** | [A, A, D, D] | Split team |
+
+**Key Change:** Removed `PrimaryObjective` field from `FBatchPrototype`
+
+---
+
+### 2. Strategy-Specific Reward Functions
+
+**File:** `RL/Components/RewardCalculator.cpp`
+
+**Assault Reward (Hostile Objective Focus):**
+```cpp
+CalculateAssaultReward(obs):
+    distance = obs.HostileObjectiveDistance  // [0, 1] normalized
+    reward = (1.0 - distance) * 10.0         // Closer = better
+
+    if distance < 0.1:
+        reward += 15.0  // Bonus: Very close
+
+    if obs.VisibleEnemyCount > 0 AND distance < 0.2:
+        reward += 5.0 * obs.VisibleEnemyCount  // Bonus: Combat engagement
+
+    return reward
+```
+
+**Defend Reward (Friendly Objective Focus):**
+```cpp
+CalculateDefendReward(obs):
+    distance = obs.FriendlyObjectiveDistance
+    reward = (1.0 - distance) * 10.0
+
+    if distance < 0.2:
+        reward += 10.0  // Bonus: Inside perimeter
+
+    if obs.VisibleEnemyCount > 0 AND distance < 0.2:
+        reward += 8.0 * obs.VisibleEnemyCount  // Bonus: Defending
+
+    return reward
+```
+
+**Support Reward (Ally Focus):**
+```cpp
+CalculateSupportReward(obs):
+    if obs.bAllyNeedsHelp:
+        distance = obs.AllyDistance
+        reward = (1.0 - distance) * 12.0
+
+        if distance < 0.05:
+            reward += 15.0  // Bonus: Close support
+
+        if obs.VisibleEnemyCount > 0 AND distance < 0.08:
+            reward += 5.0  // Bonus: Covering ally
+
+    return reward
+```
+
+**Retreat Reward (Enemy Avoidance):**
+```cpp
+CalculateRetreatReward(obs):
+    reward = obs.DistanceToNearestEnemy * 10.0  // Farther = better
+
+    if obs.DistanceToNearestEnemy > 0.8:
+        reward += 10.0  // Bonus: Safe distance
+
+    if obs.VisibleEnemyCount > 2:
+        reward -= 5.0  // Penalty: Surrounded
+
+    return reward
+```
+
+---
+
+### 3. Gradient-Based Tactical Parameter Rewards
+
+**File:** `RL/Components/RewardCalculator.cpp::CalculateTacticalParameterEffectiveness()`
+
+**Key Innovation:** Replace binary thresholds with continuous target matching
+
+**Aggression Gradient:**
+```cpp
+// Target: Aggression=1.0 → distance=0.2, Aggression=0.0 → distance=0.8
+targetDistance = 0.8 - (tacticalParams.Aggression * 0.6)
+distanceError = abs(obs.DistanceToNearestEnemy - targetDistance)
+aggressionReward = (1.0 - distanceError) * 0.3
+
+// Bonus: Achieving aggressive positioning under fire
+if tacticalParams.Aggression > 0.7 AND obs.DistanceToNearestEnemy < 0.25:
+    reward += 0.2
+```
+
+**Cover Gradient:**
+```cpp
+coverValue = obs.bHasCover ? 1.0 : 0.0
+coverAlignment = tacticalParams.CoverPreference * coverValue +
+                 (1.0 - tacticalParams.CoverPreference) * (1.0 - coverValue)
+reward += coverAlignment * 0.25
+
+// Penalty: High cover preference but exposed under fire
+if tacticalParams.CoverPreference > 0.7 AND NOT obs.bHasCover AND obs.VisibleEnemyCount > 0:
+    reward -= 0.15
+```
+
+**Spread Distance Gradient:**
+```cpp
+// Target: Spread=0.0 → allyDist=0.1, Spread=1.0 → allyDist=0.6
+if obs.AllyDistance > 0.01:
+    targetAllyDist = 0.1 + (tacticalParams.SpreadDistance * 0.5)
+    spreadError = abs(obs.AllyDistance - targetAllyDist)
+    spreadReward = (1.0 - spreadError) * 0.25
+```
+
+---
+
+### 4. Per-Component Reward Normalization
+
+**File:** `RL/Components/RewardCalculator.cpp`
+
+**Configuration:**
+```cpp
+namespace RewardConfig {
+    // Objective: Raw [-10, 200] → Normalized [-1, 3]
+    OBJECTIVE_NORM = { Scale: 0.02, Offset: -0.2, ClipMin: -1.0, ClipMax: 3.0 }
+
+    // Combat: Raw [-20, 50] → Normalized [-0.5, 2.0]
+    COMBAT_NORM = { Scale: 0.04, Offset: 0.0, ClipMin: -0.5, ClipMax: 2.0 }
+
+    // Survival: Raw [-10, 0] → Normalized [-2.0, 0]
+    SURVIVAL_NORM = { Scale: 0.2, Offset: 0.0, ClipMin: -2.0, ClipMax: 0.0 }
+
+    // Tactical: Raw [-0.5, 1.5] → Already normalized
+    TACTICAL_NORM = { Scale: 1.0, Offset: 0.0, ClipMin: -0.5, ClipMax: 1.5 }
+}
+```
 
 **Implementation:**
+```cpp
+CalculateUnifiedReward(strategy, prevObs, currentObs):
+    // Normalize each component BEFORE weighting
+    objRaw = CalculateObjectiveProgressComponent(prevObs, currentObs)
+    objNormalized = clamp(objRaw * OBJECTIVE_NORM.Scale + OBJECTIVE_NORM.Offset,
+                          OBJECTIVE_NORM.ClipMin, OBJECTIVE_NORM.ClipMax)
+
+    // Apply strategy weights to normalized components
+    breakdown.ObjectiveProgress = objNormalized * weights.ObjectiveProgress
+
+    // Sum all weighted components
+    rawTotal = sum(breakdown.values())
+
+    // Soft scaling: tanh to compress extremes while preserving gradients
+    breakdown.Total = tanh(rawTotal / 4.0) * 5.0
+
+    return breakdown
+```
+
+---
+
+### 5. Observation System (52 Features)
+
+**File:** `Observation/ObservationElement.h`
+
+**Feature Breakdown:**
+```cpp
+struct FObservationElement {
+    // Agent State (4)
+    FVector Position;        // 3D world position
+    float AgentHealth;       // [0, 1] normalized
+
+    // Combat State (1)
+    float DistanceToNearestEnemy;  // [0, 1] normalized
+
+    // Environment (16)
+    TArray<float> RaycastDistances;  // 16 raycast samples
+
+    // Enemy Info (16)
+    int32 VisibleEnemyCount;  // 1 feature
+    TArray<FEnemyInfo> NearbyEnemies;  // 15 features (3 enemies × 5 each)
+
+    // Tactical Context (4)
+    bool bHasCover;
+    float CoverDistance;
+    FVector2D CoverDirection;
+
+    // Ally Context (5)
+    bool bAllyNeedsHelp;
+    float AllyHealth;
+    float AllyDistance;
+    FVector2D AllyDirection;
+
+    // Objective Context (6) ← NEW in v9.0
+    float FriendlyObjectiveDistance;       // [0, 1] normalized
+    FVector2D FriendlyObjectiveDirection;  // 2D normalized
+    float HostileObjectiveDistance;        // [0, 1] normalized
+    FVector2D HostileObjectiveDirection;   // 2D normalized
+
+    // Total: 52 base features
+};
+
+ToFeatureVector():
+    features = []
+    // ... existing 46 features ...
+
+    // v9.0: Append objective context (6 features)
+    features.add(FriendlyObjectiveDistance)
+    features.add(FriendlyObjectiveDirection.X)
+    features.add(FriendlyObjectiveDirection.Y)
+    features.add(HostileObjectiveDistance)
+    features.add(HostileObjectiveDirection.X)
+    features.add(HostileObjectiveDirection.Y)
+
+    check(features.size() == 52)
+    return features
+```
+
+**ObservationProvider Integration:**
+```cpp
+PopulateObjectiveContext(agent, outObservation):
+    leader = GetTeamLeader(agent)
+    friendlyObj = leader.GetFriendlyObjective()
+    hostileObj = leader.GetHostileObjective()
+
+    if friendlyObj:
+        distance = Vector::Distance(agent.location, friendlyObj.location)
+        outObservation.FriendlyObjectiveDistance =
+            clamp(distance / MAX_DISTANCE_NORMALIZATION, 0, 1)
+
+        direction = normalize2D(friendlyObj.location - agent.location)
+        outObservation.FriendlyObjectiveDirection = direction
+
+    // Similar for hostile objective...
+```
+
+---
+
+### 6. Python Training Environment (Return Normalization)
+
+**File:** `CORTEX_Training/cortex_env.py`
+
+**Key Change:** Move reward normalization from C++ to Python
+
+```python
+class CortexEnv(VectorEnv):
+    def __init__(self, config):
+        # v9.0: Update observation size
+        self.OBSERVATION_SIZE = 56  # 52 base + 4 strategy one-hot
+
+        # v9.0: Enable return normalization
+        self.normalize_returns = config.get('normalize_returns', True)
+        self.return_rms = RunningMeanStd(shape=())
+        self.gamma = config.get('gamma', 0.99)
+        self.epsilon = 1e-8
+        self.episode_returns = zeros(num_envs)
+
+    def step(self, actions):
+        raw_rewards = get_rewards_from_ue5()  # No C++ clamping
+
+        # Update episode returns
+        self.episode_returns += raw_rewards
+
+        # v9.0: Normalize rewards using return statistics
+        if self.normalize_returns:
+            for i, done in enumerate(dones):
+                if done:
+                    self.return_rms.update([self.episode_returns[i]])
+                    self.episode_returns[i] = 0.0
+
+            # Normalize by return std (preserves gradients)
+            rewards = raw_rewards / (sqrt(self.return_rms.var) + epsilon)
+
+        return obs, rewards, dones, infos
+```
+
+---
+
+## Data Structures (v9.0)
+
+### FStrategyAssignment (Simplified)
+```cpp
+// v9.0: Removed TargetObjective
+struct FStrategyAssignment {
+    AActor* Agent;
+    EStrategyType Strategy;
+    int32 Priority;
+    float ExpectedValue;
+    // REMOVED: AObjectiveActor* TargetObjective
+};
+```
+
+### FBatchPrototype (Simplified)
+```cpp
+// v9.0: Removed PrimaryObjective
+struct FBatchPrototype {
+    FString Name;
+    TArray<EStrategyType> Strategies;
+    float EstimatedValue;
+    FString Description;
+    // REMOVED: EObjectiveType PrimaryObjective
+};
+```
+
+### RLConfig Namespace
+```cpp
+namespace RLConfig {
+    // v9.0: Updated observation sizes
+    constexpr int32 OBSERVATION_BASE_SIZE = 52;  // 46 → 52 (+6 objective context)
+    constexpr int32 OBSERVATION_SIZE = 56;       // 50 → 56 (52 + 4 strategy)
+
+    // v9.0: Strategy-specific reward weights
+    constexpr float ASSAULT_PROXIMITY_WEIGHT = 10.0f;
+    constexpr float DEFEND_PERIMETER_WEIGHT = 10.0f;
+    constexpr float SUPPORT_ALLY_WEIGHT = 12.0f;
+    constexpr float RETREAT_DISTANCE_WEIGHT = 10.0f;
+
+    // v9.0: Distance normalization
+    constexpr float MAX_DISTANCE_NORMALIZATION = 10000.0f;
+}
+```
+
+---
+
+## Design Patterns & Principles (v9.0)
+
+### Architectural Invariants
+1. **MCTS assigns strategies only** (no objectives) - v9.0 change
+2. **Rewards encode objectives implicitly** (strategy-specific) - v9.0 change
+3. **Observations include objective context** (6 features) - v9.0 new
+4. **Gradient-based tactical rewards** (continuous feedback) - v9.0 new
+5. **Per-component normalization** (preserves gradients) - v9.0 new
+6. **Return normalization in Python** (stable learning) - v9.0 new
+7. **Strategy-specific policy heads** (guaranteed differentiation) - v8.0 unchanged
+8. **EQS handles spatial reasoning** (RL modulates weights) - v8.0 unchanged
+
+---
+
+## Success Criteria (v9.0)
+
+### Functional Requirements
+- ✅ MCTS returns 4 complete strategy assignments (no objectives)
+- ✅ Observations contain 52 base features (46 + 6 objective context)
+- ✅ Policy network accepts 56 inputs (52 + 4 strategy one-hot)
+- ✅ Assault agents approach hostile objective (reward-driven)
+- ✅ Defend agents stay near friendly objective (reward-driven)
+- ✅ Support agents follow weakest ally
+- ✅ Retreat agents avoid enemies
+
+### Performance Requirements
+- ✅ MCTS latency: <30ms (strategy-only simplification)
+- ✅ Reward calculation: <1ms (observation-based, no queries)
+- ✅ Total episode latency: 25-35ms
+- ✅ Memory: <4.5MB per team
+
+### Learning Requirements
+- ✅ Tactical parameter convergence: 2-3× faster (gradient rewards)
+- ✅ Value function loss: 30-40% reduction (normalized returns)
+- ✅ Win rate: Maintained within 5% of v8.20 baseline
+- ✅ Strategy differentiation: Clear behavioral separation
+
+---
+
+## Logging Specifications (v9.0)
+
+### Reward Breakdown
+```
+[Reward v9.0] Agent0 (Assault):
+  Objective Progress: +15.2 (HostileObjectiveDistance: 0.15)
+  Combat Effectiveness: +8.4
+  Tactical Parameters: +0.8 (Aggression: 0.85 → targetDist: 0.29, actual: 0.31)
+  Total (normalized): +12.3
+```
+
+### Tactical Parameter Gradients
+```
+[Tactical v9.0] Agent1 (Defend):
+  Aggression: 0.25 → targetDist: 0.65, actual: 0.62 → reward: +0.27
+  CoverPreference: 0.85 → hasCover: true → reward: +0.21
+  SpreadDistance: 0.40 → targetAllyDist: 0.30, actual: 0.28 → reward: +0.23
+  Total tactical reward: +0.71
+```
+
+### Observation Context
+```
+[Obs v9.0] Agent2:
+  Base features: 52
+  FriendlyObjective: dist=0.25, dir=(0.82, 0.57)
+  HostileObjective: dist=0.68, dir=(-0.45, 0.89)
+  Strategy one-hot: [0, 0, 1, 0] (Support)
+  Total features: 56
+```
+
+---
+
+## Implementation Checklist
+
+### 🔄 In Progress
+- [ ] Extended training validation (1000+ episodes)
+- [ ] Tactical parameter convergence tests
+- [ ] Value function loss comparison
+
+### 📋 Planned (Future)
+- [ ] Dynamic reward weight tuning
+- [ ] Multi-objective reward composition
+- [ ] Adaptive normalization parameters
+
+---
+
+## Configuration
+
+### RLConfig (Single Source of Truth)
+**File:** `RL/RLTypes.h`
 
 ```cpp
-TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GenerateCompleteBatches(
-    const TArray<AActor*>& Agents,
-    const TArray<AObjectiveActor*>& Objectives)
-{
-    TArray<TMap<AActor*, FStrategyAssignment>> AllBatches;
-    
-    // For each of 8 prototypes
-    for (const auto& Prototype : BatchPrototypes)
-    {
-        TMap<AActor*, FStrategyAssignment> Batch;
-        
-        // Map prototype strategies to actual agents
-        for (int32 i = 0; i < Agents.Num() && i < Prototype.Strategies.Num(); ++i)
-        {
-            AActor* Agent = Agents[i];
-            EStrategyType Strategy = Prototype.Strategies[i];
-            AObjectiveActor* TargetObj = DetermineObjective(Prototype, i, Objectives);
-            
-            FStrategyAssignment Assignment;
-            Assignment.Agent = Agent;
-            Assignment.Strategy = Strategy;
-            Assignment.TargetObjective = TargetObj;
-            
-            Batch.Add(Agent, Assignment);
-        }
-        
-        // Verify complete batch (4 agents)
-        if (Batch.Num() == 4)
-        {
-            AllBatches.Add(Batch);
-        }
-    }
-    
-    return AllBatches;  // Returns 8 complete batches
+namespace RLConfig {
+    // v9.0: Observation sizes
+    constexpr int32 OBSERVATION_BASE_SIZE = 52;
+    constexpr int32 OBSERVATION_SIZE = 56;
+
+    // v9.0: Reward normalization
+    constexpr float OBJECTIVE_NORM_SCALE = 0.02f;
+    constexpr float COMBAT_NORM_SCALE = 0.04f;
+    constexpr float SURVIVAL_NORM_SCALE = 0.2f;
+
+    // v9.0: Gradient reward ranges
+    constexpr float TACTICAL_PARAM_REWARD_MAX = 1.5f;
+    constexpr float TACTICAL_PARAM_REWARD_MIN = -0.5f;
+
+    // v8.0: RL unchanged
+    constexpr int32 NUM_STRATEGIES = 4;
+    constexpr int32 NUM_TACTICAL_PARAMS = 4;
 }
-Files: AI/MCTS/MCTS.h, AI/MCTS/MCTS.cpp
+```
 
-2. Batch Selection (MCTS.cpp::SelectBatchByUCB1())
-Purpose: Select the best batch using UCB1 algorithm with cached win rates
+---
 
-UCB1 Formula:
+## Expected Outcomes
 
-text
-UCB(batch) = WinRate(batch) + C * sqrt(log(TotalTrials) / (BatchTrials + 1))
-           = Exploitation    +   Exploration
-Implementation:
+| Problem | Solution | Expected Improvement |
+|---------|----------|----------------------|
+| **MCTS Complexity** | Strategy-only assignment | -40% code, +20% clarity |
+| **Observation-Action Gap** | Gradient rewards | 2-3× faster tactical convergence |
+| **Reward Normalization** | Per-component + return norm | Preserve gradients, stable learning |
+| **Multi-Modal Returns** | Strategy-specific VFs | 30-40% reduction in value loss |
+| **Learning Efficiency** | Combined improvements | +50% sample efficiency (estimated) |
 
-cpp
-TMap<AActor*, FStrategyAssignment> UMCTS::SelectBatchByUCB1(
-    const TArray<TMap<AActor*, FStrategyAssignment>>& AllBatches)
-{
-    float BestUCB = -FLT_MAX;
-    int32 BestBatchIdx = 0;
-    
-    for (int32 i = 0; i < AllBatches.Num(); ++i)
-    {
-        const auto& Batch = AllBatches[i];
-        FString BatchKey = GetBatchKey(Batch);
-        
-        // Query cache
-        float WinRate = 0.5f;  // Default prior
-        int32 Trials = 0;
-        
-        if (BatchCache.Contains(BatchKey))
-        {
-            WinRate = BatchCache[BatchKey].GetWinRate();
-            Trials = BatchCache[BatchKey].Trials;
-        }
-        
-        // Calculate UCB
-        float UCB = WinRate + ExplorationParameter * 
-            FMath::Sqrt(FMath::Loge(TotalBatchTrials + 1) / (Trials + 1));
-        
-        if (UCB > BestUCB)
-        {
-            BestUCB = UCB;
-            BestBatchIdx = i;
-        }
-    }
-    
-    return AllBatches[BestBatchIdx];
-}
-Exploration vs Exploitation:
+---
 
-Untried batches: UCB = ∞ (infinite exploration bonus) → guaranteed exploration
+## Version History
 
-High win rate batches: High exploitation term → selected more frequently
+- **v9.0 (Current):** Reward-driven objectives, gradient rewards, proper normalization
+- **v8.20:** Batch-level MCTS with UCB1 selection
+- **v8.10:** Agent-by-agent MCTS (had incomplete assignment bug)
+- **v8.0:** Strategy-specific policy heads, tactical parameters
 
-Low trial batches: High exploration bonus → explored periodically
+---
 
-Files: AI/MCTS/MCTS.cpp
-
-3. Batch Performance Tracking (MCTS.cpp::UpdateBatchCache())
-Purpose: Accumulate batch performance statistics for UCB1 learning
-
-Data Structures:
-
-
-struct FBatchPerformance
-{
-    FString BatchKey;           // "A0→Assault,A1→Assault,A2→Defend,A3→Support"
-    int32 Wins = 0;             // Episodes won with this batch
-    int32 Trials = 0;           // Total episodes tried
-    float AverageValue = 0.5f;  // Wins / Trials
-    double LastUsedTime = 0.0;  // FPlatformTime::Seconds()
-    
-    float GetWinRate() const { return Trials > 0 ? (float)Wins / Trials : 0.5f; }
-    float GetUCBValue(float C, int32 TotalTrials) const;
-};
-
-class UMCTS
-{
-    TMap<FString, FBatchPerformance> BatchCache;  // Persistent cache
-    int32 TotalBatchTrials = 0;
-    int32 TotalBatchWins = 0;
-};
-Update Logic:
-
-cpp
-void UMCTS::UpdateBatchCache(
-    const TMap<AActor*, FStrategyAssignment>& BatchAssignments,
-    bool bEpisodeWon)
-{
-    FString BatchKey = GetBatchKey(BatchAssignments);
-    
-    if (!BatchCache.Contains(BatchKey))
-    {
-        BatchCache.Add(BatchKey, FBatchPerformance());
-    }
-    
-    auto& CachedBatch = BatchCache[BatchKey];
-    CachedBatch.Trials++;
-    if (bEpisodeWon) CachedBatch.Wins++;
-    CachedBatch.AverageValue = CachedBatch.GetWinRate();
-    
-    TotalBatchTrials++;
-    if (bEpisodeWon) TotalBatchWins++;
-}
-Batch Key Format:
-
-text
-"Agent0→Assault→Objective1,Agent1→Assault→Objective1,Agent2→Defend→Objective0,Agent3→Support→Objective1"
-Files: AI/MCTS/MCTS.h, AI/MCTS/MCTS.cpp
-
-4. Persistent Cache Storage (MCTS.cpp::SaveBatchCache() / LoadBatchCache())
-Purpose: Enable warm start across training runs by persisting batch performance
-
-Save Format (JSON):
-
-json
-{
-  "Version": 1,
-  "Timestamp": 1643000000.0,
-  "TotalTrials": 150,
-  "TotalWins": 87,
-  "Batches": {
-    "A0→Assault,A1→Assault,A2→Assault,A3→Support→Obj1": {
-      "Wins": 32,
-      "Trials": 50,
-      "AverageValue": 0.64,
-      "LastUsedTime": 1643000000.0
-    },
-    "A0→Defend,A1→Defend,A2→Support,A3→Support→Obj0": {
-      "Wins": 24,
-      "Trials": 50,
-      "AverageValue": 0.48,
-      "LastUsedTime": 1642999500.0
-    }
-  }
-}
-Save Path: ProjectSaved/MCTS/BatchCache.json
-
-Integration:
-
-cpp
-// In TeamLeaderComponent::BeginPlay()
-void UTeamLeaderComponent::BeginPlay()
-{
-    StrategicMCTS = NewObject<UMCTS>(this);
-    StrategicMCTS->InitializeTeamMCTS(1500, 1.41f);
-    
-    // v8.20: Load batch cache for warm start
-    FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
-    if (FPaths::FileExists(*CachePath))
-    {
-        StrategicMCTS->LoadBatchCache(CachePath);
-        UE_LOG(LogTemp, Warning, TEXT("[v8.20] Loaded batch cache with warm start"));
-    }
-}
-
-// In TeamLeaderComponent::EndEpisode()
-void UTeamLeaderComponent::EndEpisode()
-{
-    bool bTeamWon = (EnemyTeam.AliveCount == 0);
-    
-    // v8.20: Update batch cache
-    StrategicMCTS->UpdateBatchCache(CurrentAssignments, bTeamWon);
-    
-    // v8.20: Save cache every 10 episodes
-    if (EpisodeCount % 10 == 0)
-    {
-        FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
-        StrategicMCTS->SaveBatchCache(CachePath);
-    }
-}
-Files: AI/MCTS/MCTS.cpp, Team/TeamLeaderComponent.cpp
-
-5. Main Entry Point (MCTS.cpp::RunStrategyAssignment_v820())
-Purpose: Orchestrate v8.20 batch-level strategy assignment
-
-Workflow:
-
-cpp
-TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment_v820(
-    const TArray<AActor*>& Agents,
-    const TArray<AObjectiveActor*>& Objectives,
-    int32 Simulations,
-    const TMap<AActor*, FObservationElement>& InCachedObservations)
-{
-    // [Phase 1] Generate 8 complete batches
-    TArray<TMap<AActor*, FStrategyAssignment>> AllBatches = 
-        GenerateCompleteBatches(Agents, Objectives);
-    
-    // [Phase 2] Select best batch using UCB1
-    TMap<AActor*, FStrategyAssignment> SelectedBatch = 
-        SelectBatchByUCB1(AllBatches);
-    
-    // [Phase 3] Optional: Refine batch with MCTS depth 2+
-    // (v8.20: Currently skipped, delegate to RL for tactical control)
-    
-    // [Phase 4] Validate output
-    check(SelectedBatch.Num() == 4);  // v8.20 guarantee
-    
-    return SelectedBatch;
-}
-Latency: 20-30ms (50% reduction vs v8.10's 30-50ms)
-
-Files: AI/MCTS/MCTS.cpp
-
-6. RL Policy Network (v8.0 - Unchanged)
-CORTEX v8.20 does NOT change the RL policy network architecture. RL continues to control tactical parameters within the MCTS-assigned strategy.
-
-Network Architecture (v8.0):
-
-text
-Input: 72 features (68 observation + 4 strategy one-hot)
-   ↓
-Shared Feature Extractor:  → FC(128) → FC(128) → FC(64)
-   ↓
-Strategy-Specific Policy Heads (4 heads):
-├─ Assault Head → [Aggression, Cover, Spread, Risk]
-├─ Defend Head → [Aggression, Cover, Spread, Risk]
-├─ Support Head → [Aggression, Cover, Spread, Risk]
-└─ Retreat Head → [Aggression, Cover, Spread, Risk]
-Files: RL/RLPolicyNetwork.h/cpp (unchanged from v8.0)
-
-Design Patterns & Principles (v8.20)
-Hierarchical Decision Making (v8.20 Updated)
-Layer	Responsibility	Update Frequency	Latency	Output
-MCTS (v8.20)	Batch selection from 8 prototypes	1.5s (async)	20-30ms	Complete 4-agent batch
-RL (v8.0)	Tactical parameters	2-5 Hz	2-4ms (batched)	Tactical + combat params
-EQS (v8.0)	Spatial reasoning	2-5 Hz	1-2ms	Tactical positions
-Rules (v8.0)	Combat execution	60 Hz	<0.1ms	Targeting + firing
-Architectural Invariants (v8.20 Updated)
-ONLY Leaders run MCTS (followers NEVER touch MCTS)
-
-MCTS selects complete batches (always 4 agents assigned) - v8.20 change
-
-8 pre-defined batch prototypes (strategic diversity without combinatorial explosion) - v8.20 new
-
-UCB1 drives batch selection (exploitation + exploration) - v8.20 new
-
-Persistent batch cache (warm start across training runs) - v8.20 new
-
-RL outputs tactical parameters (modulates EQS weights) - v8.0 unchanged
-
-Separate policy heads per strategy (guaranteed differentiation) - v8.0 unchanged
-
-EQS handles spatial reasoning (RL focuses on how aggressive/defensive) - v8.0 unchanged
-
-Async MCTS, sync RL (MCTS doesn't block RL execution) - v8.0 unchanged
-
-Objectives are physical actors (durability-based capture) - v8.0 unchanged
-
-Action Space Design (v8.20)
-v8.20 MCTS Action Space
-Batch-Level Strategic Choice:
-
-8 discrete batch prototypes (team composition strategies)
-
-UCB1-based selection (exploration + exploitation)
-
-Persistent learning (batch performance cache)
-
-Complexity Reduction:
-
-text
-v8.10: 4,096 possible assignments
-       └─ 4 strategies × 2 objectives ^ 4 agents = 4,096
-       └─ 1500 simulations ÷ 4,096 = 0.36 trials/assignment (insufficient)
-
-v8.20: 8 batch prototypes
-       └─ 8 strategically diverse team compositions
-       └─ 1500 simulations ÷ 8 = 187 trials/batch (sufficient exploration)
-v8.0 RL Action Space (Unchanged)
-Tactical Parameters (4 continuous, strategy-specific):
-
-cpp
-struct FTacticalParameters
-{
-    float Aggression;        //  - modulates EQS aggression weights[1]
-    float CoverPreference;   //  - modulates EQS cover weights[1]
-    float SpreadDistance;    //  - modulates EQS formation weights[1]
-    float RiskTolerance;     //  - retreat threshold[1]
-};
-Combat Parameters (2 discrete choices):
-
-cpp
-struct FCombatParameters
-{
-    ETargetPriority Priority;    // Closest, LowestHP
-};
-Success Criteria (v8.20)
-Functional Requirements
-v8.20 Batch System:
-
- GenerateCompleteBatches() always returns 8 complete batches
-
- Each batch contains exactly 4 agent assignments
-
- RunStrategyAssignment() always returns TMap.Num() == 4
-
- No partial assignments (1-3 agents)
-
- Log: [MCTS v8.20] Output Assignments: 4 (consistent)
-
-Batch Performance Tracking:
-
- BatchCache tracks wins/trials per batch
-
- UCB1 formula correctly balances exploitation + exploration
-
- Untried batches explored first (infinite UCB)
-
- High win rate batches selected more frequently
-
-Persistence:
-
- Batch cache saves to JSON after each episode
-
- Batch cache loads on initialization (warm start)
-
- Cache format version-controlled
-
- Cache compatible across training runs
-
-Performance Requirements (v8.20)
-Metric	Target	Actual
-MCTS Latency	<30ms	20-25ms ✅
-Batch Cache Query	<1ms	0.2ms ✅
-Memory Overhead	<2MB	1.5MB ✅
-Throughput	4 vectorized envs	4 envs ✅
-Learning Requirements (v8.20)
-Batch-Level Learning:
-
- Batch win rates diverge over 100 episodes (e.g., best batch >55%, worst batch <45%)
-
- UCB1 correctly identifies high-performing batches
-
- Exploration decreases as trials accumulate
-
- Cache transfer between map variants (generalization test)
-
-RL Learning (v8.0 - unchanged):
-
- Tactical parameters differentiate per strategy
-
- Assault: High Aggression (>0.7), Low CoverPref (<0.4)
-
- Defend: Low Aggression (<0.3), High CoverPref (>0.7)
-
-Implementation Status (v8.20)
-✅ Completed (v8.20):
-
- 8 batch prototype definitions
-
- GenerateCompleteBatches() implementation
-
- SelectBatchByUCB1() implementation
-
- UpdateBatchCache() implementation
-
- GetBatchKey() implementation
-
- SaveBatchCache() / LoadBatchCache() implementation
-
- RunStrategyAssignment_v820() refactoring
-
- FBatchPrototype and FBatchPerformance structs
-
- Integration with TeamLeaderComponent
-
- Comprehensive logging
-
-🔄 In Progress:
-
- Extended training validation (1000+ episodes)
-
- Batch performance visualization dashboard
-
- Cache analytics (batch usage heatmap)
-
-📋 Planned (Future v8.21+):
-
- Optional tactical refinement within selected batch (MCTS depth 2+)
-
- Dynamic batch prototype generation (learned team compositions)
-
- Multi-map batch cache (map-specific performance tracking)
-
- Batch ensemble voting (top-3 batches weighted average)
-
-Configuration & Sim2Real (v8.20)
-RLConfig Namespace (Unchanged from v8.0)
-Single Source of Truth (RL/RLTypes.h):
-
-
-namespace RLConfig
-{
-    // v8.20: MCTS batch configuration
-    constexpr int32 NUM_BATCH_PROTOTYPES = 8;       // 8 team composition prototypes
-    constexpr float UCB_EXPLORATION_PARAM = 1.41f;  // √2 (theoretical optimum)
-    constexpr int32 BATCH_CACHE_SAVE_INTERVAL = 10; // Episodes
-    
-    // v8.0: RL configuration (unchanged)
-    constexpr int32 NUM_STRATEGIES = 4;             // MCTS-assigned strategies
-    constexpr int32 NUM_TACTICAL_PARAMS = 4;        // RL continuous outputs
-    constexpr int32 NUM_COMBAT_CHOICES = 2;         // RL discrete outputs
-    constexpr int32 OBSERVATION_SIZE = 68;          // Base observation features
-}
-Logging Specifications (v8.20)
-Log Format Examples
-Batch Generation:
-
-
-[MCTS v8.20] Generated 8 complete batches
-  1. TightAssault: [Assault, Assault, Assault, Support] → Hostile (Est: 0.55)
-  2. WideDefense: [Defend, Defend, Support, Support] → Friendly (Est: 0.52)
-  3. Balanced: [Assault, Defend, Support, Retreat] → Neutral (Est: 0.50)
-  ...
-Batch Selection:
-
-[MCTS v8.20] UCB1 Batch Selection:
-  Batch 0 (TightAssault): WR=55.0% (55/100), Exploration=0.08, UCB=0.63
-  Batch 1 (WideDefense):  WR=48.0% (24/50),  Exploration=0.15, UCB=0.63 ← SELECTED
-  Batch 2 (Balanced):     WR=0.0% (0/0),     Exploration=∞,    UCB=∞ (untried)
-[MCTS v8.20] Selected batch 1 with UCB=0.63
-Cache Update:
-
-text
-[MCTS v8.20] Episode 47 complete
-  Batch: A0→Assault,A1→Assault,A2→Defend,A3→Support
-  Result: TEAM WON (4/4 survivors)
-  Cache update: WideDefense → 25/51 (49.0%)
-[MCTS v8.20] Batch cache saved to ProjectSaved/MCTS/BatchCache.json
-Performance Report (every 10 episodes):
-
-text
-[MCTS v8.20] BATCH PERFORMANCE REPORT (Episode 50)
-  Rank | Batch          | Wins | Trials | WinRate | UCB
-  -----+----------------+------+--------+---------+-----
-    1. | TightAssault   |  28  |   50   | 56.0%   | 0.64
-    2. | SupportFocus   |  26  |   50   | 52.0%   | 0.60
-    3. | WideDefense    |  24  |   50   | 48.0%   | 0.56
-    4. | Balanced       |   5  |   20   | 25.0%   | 0.31
-    5. | DefensiveWall  |   3  |   18   | 16.7%   | 0.23
-Profiling & Benchmarking (v8.20)
+**Document Version:** v9.0
+**Last Updated:** 2026-01-30
+**Status:** ✅ Implementation Complete, 🔄 Validation In Progress

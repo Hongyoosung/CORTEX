@@ -10,7 +10,7 @@ v8.0 Changes:
 
 v8.0 Architecture:
     - MCTS assigns strategies → RL outputs tactical parameters + combat priority
-    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128]
+    - Multi-head network: 56 input (52 base + 4 strategy one-hot) → [256, 256, 128]
     - Action space: 5 continuous outputs (4 tactical params + 1 combat priority)
     - Exports to: cortex_policy_v8.onnx
 
@@ -38,7 +38,7 @@ try:
 except ImportError:
     print("Warning: training_env/config.py not found. Using defaults.")
     class RLConfig:
-        OBSERVATION_SIZE = 50  # 46 base + 4 strategy one-hot
+        OBSERVATION_SIZE = 56  # 52 base + 4 strategy one-hot
         NUM_STRATEGIES = 4
 
 import torch  # Must be imported before ray on Windows
@@ -87,7 +87,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     Multi-Head PPO Network for Tactical Parameters + Combat Control.
 
     Architecture:
-        - Input: 50 features (46 base + 4 strategy one-hot)
+        - Input: 56 features (52 base + 4 strategy one-hot)
         - Shared Feature Extractor: [256 → 256 → 128] ReLU
         - 4 Strategy-Specific Mean Heads: Assault, Defend, Support, Retreat
         - 1 Combat Mean Head: FC(128→1)
@@ -102,7 +102,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
 
-        obs_dim = RLConfig.OBSERVATION_SIZE  # 50
+        obs_dim = RLConfig.OBSERVATION_SIZE  # 56
         self.num_outputs = num_outputs
         self.action_dim = num_outputs // 2  # 5
 
@@ -167,7 +167,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         batch_size = obs.shape[0]
 
         # Extract strategy one-hot (last 4 features)
-        strategy_onehot = obs[:, 46:50]
+        strategy_onehot = obs[:, 52:56]
 
         # Run shared trunk
         features = self.shared_trunk(obs)
@@ -331,7 +331,7 @@ def create_ppo_config():
     
 
     # 5. Callbacks (Episode Logging only)
-    # v10.0: Removed PolicyUpdatePauseCallback - not needed in sync architecture
+    # Removed PolicyUpdatePauseCallback - not needed in sync architecture
     config.callbacks(EpisodeLoggerCallback)
 
     # 6. Debugging & Reporting

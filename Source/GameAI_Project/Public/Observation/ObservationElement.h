@@ -112,6 +112,9 @@ struct GAMEAI_PROJECT_API FObservationElement
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
     FVector2D HostileObjectiveDirection = FVector2D::ZeroVector;  // 2 features
 
+    UPROPERTY(Transient)
+    int32 AssignedStrategyIndex = 0;
+
     //--------------------------------------------------------------------------
     // CONSTRUCTOR & UTILITY FUNCTIONS
     //--------------------------------------------------------------------------
@@ -129,10 +132,10 @@ struct GAMEAI_PROJECT_API FObservationElement
     }
 
     /** Convert observation to normalized feature vector (52 elements) - v9.0 */
-    TArray<float> ToFeatureVector() const;
+    TArray<float> ToFeatureVector(bool bIncludeStrategy = true) const;
 
-    /** Get feature count (v9.0: 52 base features = 46 + 6 objective context, strategy context added by network) */
-    static int32 GetFeatureCount() { return 52; }
+    /** Get feature count (v9.0: 52 base features = 46 + 6 objective context, strategy context added by network) and + 4 strategy index*/
+    static int32 GetFeatureCount() { return 56; }
 
     /** Reset to default values */
     void Reset();

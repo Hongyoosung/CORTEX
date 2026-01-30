@@ -271,6 +271,19 @@ float URewardCalculator::CalculateAssaultReward(
 {
 	// Assault: Incentivize approaching hostile objective
 	float Reward = 0.0f;
+	float Dist = CurrentObs.HostileObjectiveDistance;
+	float PrevDist = PrevObs.HostileObjectiveDistance;
+
+	// [DEBUG CHECK] 거리가 1.0f(초기값)에서 변하지 않는지 확인
+	if (Dist >= 0.99f && PrevDist >= 0.99f)
+	{
+		// 100틱마다 한 번만 경고 로그 (스팸 방지)
+		static int32 WarningCount = 0;
+		if (++WarningCount % 100 == 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[REWARD ALERT] Agent %s has MAX Hostile Distance (1.0). ObsBuilder update required!"), *GetOwner()->GetName());
+		}
+	}
 
 	// Reward for getting closer to hostile objective
 	float DistanceDelta = PrevObs.HostileObjectiveDistance - CurrentObs.HostileObjectiveDistance;
