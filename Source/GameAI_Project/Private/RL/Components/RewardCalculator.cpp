@@ -234,6 +234,24 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 			*Breakdown.ToString());
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("📊 REWARD BREAKDOWN: Agent=%s | Obj=%.2f | Combat=%.2f | Survival=%.2f | Cover=%.2f | Coord=%.2f | Tactical=%.2f"),
+		*GetOwner()->GetName(),
+		Breakdown.ObjectiveProgress,
+		Breakdown.CombatEffectiveness,
+		Breakdown.Survival,
+		Breakdown.CoverUsage,
+		Breakdown.TeamCoordination,
+		Breakdown.TacticalEffectiveness
+	);
+
+	Breakdown.Total = FMath::Clamp(RawTotal, -10.0f, 10.0f);
+
+	if (FMath::Abs(RawTotal) > 10.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("REWARD v8.10: Raw reward %.2f CLAMPED to %.2f"),
+			RawTotal, Breakdown.Total);
+	}
+
 	return Breakdown;
 }
 
@@ -251,12 +269,48 @@ float URewardCalculator::CalculateObjectiveProgressComponent(
 
 	if (!ObjectiveActor || !GetOwner())
 	{
+		// ✅ LOG: No objective assigned
+		static int32 NoObjectiveCounter = 0;
+		if (++NoObjectiveCounter % 100 == 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [OBJECTIVE] Agent=%s has NO target objective!"),
+				*GetOwner()->GetName());
+		}
 		return 0.0f;
 	}
 
 	// Determine if attacking or defending this objective
 	int32 AgentTeamID = FollowerComponent->GetTeamID();
 	bool bIsHostileObjective = ObjectiveActor->IsHostileTo(AgentTeamID);
+
+	// ✅ LOG: Strategy-Objective alignment check (every 100 ticks)
+	static int32 AlignmentCheckCounter = 0;
+	if (++AlignmentCheckCounter % 100 == 0)
+	{
+		EStrategyType AgentStrategy = FollowerComponent->GetAssignedStrategy();
+		FString StrategyName = UEnum::GetValueAsString(AgentStrategy);
+		FString ObjectiveType = bIsHostileObjective ? TEXT("HOSTILE") : TEXT("FRIENDLY");
+		bool bAlignmentCorrect = false;
+
+		// Check if strategy matches objective type
+		if (AgentStrategy == EStrategyType::Assault && bIsHostileObjective)
+			bAlignmentCorrect = true;
+		else if (AgentStrategy == EStrategyType::Defend && !bIsHostileObjective)
+			bAlignmentCorrect = true;
+		else if (AgentStrategy == EStrategyType::Support)
+			bAlignmentCorrect = true;  // Support can go to either
+		else if (AgentStrategy == EStrategyType::Retreat)
+			bAlignmentCorrect = true;  // Retreat has special logic
+
+		FString AlignmentStatus = bAlignmentCorrect ? TEXT("✅ CORRECT") : TEXT("❌ MISMATCH");
+		UE_LOG(LogTemp, Warning, TEXT("[STRATEGY-OBJ] %s | Agent=%s | Strategy=%s | Objective=%s (%s)"),
+			*AlignmentStatus,
+			*GetOwner()->GetName(),
+			*StrategyName,
+			*ObjectiveActor->GetName(),
+			*ObjectiveType
+		);
+	}
 
 	// Check if agent is in objective volume
 	bool bIsInVolume = ObjectiveActor->IsAgentInVolume(GetOwner());
@@ -336,6 +390,19 @@ float URewardCalculator::CalculateCombatEffectivenessComponent(
 {
 	float Reward = 0.0f;
 
+	// ✅ LOG: Combat activity tracking
+	static int32 TickCounter = 0;
+	TickCounter++;
+
+	if (TickCounter % 100 == 0)  // Log every 100 ticks (~10 seconds)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[COMBAT CHECK] Agent=%s | DamageDealt=%.1f | Kills=%d"),
+			*GetOwner()->GetName(),
+			DamageSinceLastUpdate,
+			KillsSinceLastUpdate
+		);
+	}
+
 	// Damage dealt
 	if (DamageSinceLastUpdate > 0.0f)
 	{
@@ -386,10 +453,43 @@ float URewardCalculator::CalculateTeamCoordinationComponent(
 {
 	float Reward = 0.0f;
 
-	// Formation bonus (optimal support range: 200cm to 800cm)
-	// v8.0 FIX: AllyDistance is normalized [0,1] by MAX_DISTANCE_NORMALIZATION (5000cm)
-	// Optimal range: 200-800cm → normalized: [0.04, 0.16]
-	if (ProtectedAlly && CurrentObs.AllyDistance > 0.0f)
+	// ✅ v8.20 ENHANCEMENT: Strategy-aware coordination rewards
+	EStrategyType CurrentStrategy = FollowerComponent ? FollowerComponent->GetAssignedStrategy() : EStrategyType::Assault;
+
+	// [1] Support Strategy: Reward approaching low-health allies
+	if (CurrentStrategy == EStrategyType::Support)
+	{
+		// Check if observation contains ally health info
+		float AllyHP = CurrentObs.AllyHealth;  // Normalized [0,1]
+		float AllyDist = CurrentObs.AllyDistance;  // Normalized [0,1]
+
+		if (AllyHP > 0.0f && AllyHP < 0.6f && AllyDist > 0.0f)  // Ally has <60% HP
+		{
+			// Reward inversely proportional to distance (closer = better)
+			float ProximityReward = (1.0f - AllyDist) * RewardConfig::SUPPORT_PROXIMITY_BONUS;  // +2.0 at 0 dist
+			Reward += ProximityReward;
+
+			// Additional bonus if ally is critically low (<30% HP) and very close (<200cm)
+			if (AllyHP < 0.3f && AllyDist < 0.04f)
+			{
+				Reward += RewardConfig::SUPPORT_CRITICAL_BONUS;  // +5.0 for critical support
+			}
+
+			// ✅ LOG: Support behavior tracking
+			static int32 SupportLogCounter = 0;
+			if (++SupportLogCounter % 50 == 0)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[SUPPORT REWARD] Agent=%s | AllyHP=%.1f%% | AllyDist=%.2f | Reward=+%.2f"),
+					*GetOwner()->GetName(),
+					AllyHP * 100.0f,
+					AllyDist,
+					ProximityReward
+				);
+			}
+		}
+	}
+	// [2] Generic formation bonus for all other strategies
+	else if (ProtectedAlly && CurrentObs.AllyDistance > 0.0f)
 	{
 		float normalizedDist = CurrentObs.AllyDistance;
 		constexpr float MIN_FORMATION_DIST = 200.0f / RLConfig::MAX_DISTANCE_NORMALIZATION;  // ~0.04
@@ -525,8 +625,9 @@ void URewardCalculator::OnDealDamage(float Damage, AActor* Target)
 	// Register for combined fire tracking
 	RegisterCombinedFire(Target);
 
-	UE_LOG(LogTemp, Verbose, TEXT("[REWARD EVENT] '%s': Dealt %.1f damage (accumulated: %.1f)"),
-		*GetOwner()->GetName(), Damage, DamageSinceLastUpdate);
+	// ✅ LOG: Upgraded to Warning level for visibility
+	UE_LOG(LogTemp, Warning, TEXT("💥 [DAMAGE EVENT] '%s' dealt %.1f damage to '%s' (accumulated: %.1f)"),
+		*GetOwner()->GetName(), Damage, Target ? *Target->GetName() : TEXT("NULL"), DamageSinceLastUpdate);
 }
 
 void URewardCalculator::OnTakeDamage(float Damage)

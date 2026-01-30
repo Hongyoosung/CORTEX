@@ -522,6 +522,22 @@ if SCHOLA_AVAILABLE:
                 # Fallback
                 return self._create_zero_step_result()
 
+            # ✅ LOG: Debug raw reward structure
+            if not hasattr(self, '_rew_log_counter'):
+                self._rew_log_counter = 0
+            self._rew_log_counter += 1
+
+            if self._rew_log_counter % 50 == 0:  # Log every 50 steps
+                print(f"\n🔍 [PYTHON RAW REWARDS] Step {self._rew_log_counter}")
+                for env_idx in range(min(2, len(rew_nested))):  # First 2 envs
+                    if env_idx in rew_nested:
+                        env_rewards = rew_nested[env_idx]
+                        if isinstance(env_rewards, dict):
+                            sample_agents = list(env_rewards.keys())[:2]
+                            for agent_idx in sample_agents:
+                                raw_val = env_rewards.get(agent_idx, 0.0)
+                                print(f"  Env{env_idx} Agent{agent_idx}: {raw_val:.4f}")
+
             obs_dict = {}
             reward_dict = {}
             terminated_dict = {}
@@ -557,7 +573,12 @@ if SCHOLA_AVAILABLE:
                 obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
 
                 # Reward
-                reward_dict[flat_id] = float(rew_nested.get(env_idx, {}).get(agent_idx, 0.0))
+                raw_reward = rew_nested.get(env_idx, {}).get(agent_idx, 0.0)
+                reward_dict[flat_id] = float(raw_reward)
+
+                # ✅ LOG: Track non-zero rewards
+                if abs(raw_reward) > 0.01 and self._rew_log_counter % 50 == 0:
+                    print(f"    → Parsed {flat_id}: {raw_reward:.4f}")
 
                 # Termination
                 is_term = term_nested.get(env_idx, {}).get(agent_idx, False)

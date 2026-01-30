@@ -53,6 +53,10 @@ namespace RewardConfig {
 	constexpr float FORMATION_BONUS = 0.3f;                // Per step in formation (was 0.1f) - 3× increase
 	constexpr float COMBINED_FIRE_REWARD = 20.0f;          // Combined fire on same target (was 10.0f in code) - 2× increase
 
+	// v8.20: Support strategy specific rewards
+	constexpr float SUPPORT_PROXIMITY_BONUS = 2.0f;        // Support approaching low-HP ally (scaled by proximity)
+	constexpr float SUPPORT_CRITICAL_BONUS = 5.0f;         // Support reaching critically wounded ally (<30% HP, <200cm)
+
 	// v8.0: Tactical parameter effectiveness (INCREASED - improve parameter learning)
 	constexpr float TACTICAL_EFFECTIVENESS_BONUS = 0.5f;   // Per step when parameters match outcomes (was 0.15f) - 3.3× increase
 
