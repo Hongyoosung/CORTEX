@@ -213,13 +213,19 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	// Multiplying by 5.0 after tanh gives output range [-5, 5] (softer than v8.10's [-10, 10])
 	Breakdown.Total = FMath::Tanh(RawTotal / 4.0f) * 5.0f;
 
-	// Log breakdown for debugging (every 100 steps to reduce spam)
-	static int32 LogCounter = 0;
+	// v9.0 FIX: Per-component logging to detect identical rewards across agents
+	static TMap<URewardCalculator*, int32> LogCounters;
+	int32& LogCounter = LogCounters.FindOrAdd(this, 0);
+
 	if (++LogCounter % 100 == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD v9.0] %s | Agent=%s | Obj=%.2f | Combat=%.2f | Survival=%.2f | Cover=%.2f | Coord=%.2f | Tactical=%.2f | Total=%.2f"),
+		// Enhanced logging with observation context to verify differentiation
+		UE_LOG(LogTemp, Warning, TEXT("🎯 [REWARD v9.0] %s '%s' (#%d):"),
 			*UEnum::GetValueAsString(Strategy),
 			*GetOwner()->GetName(),
+			LogCounter);
+
+		UE_LOG(LogTemp, Warning, TEXT("   Obj=%.2f, Combat=%.2f, Surv=%.2f, Cover=%.2f, Coord=%.2f, Tact=%.2f → Total=%.2f"),
 			Breakdown.ObjectiveProgress,
 			Breakdown.CombatEffectiveness,
 			Breakdown.Survival,
@@ -227,6 +233,19 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 			Breakdown.TeamCoordination,
 			Breakdown.TacticalEffectiveness,
 			Breakdown.Total);
+
+		// v9.0: Show observation context to verify differentiation
+		UE_LOG(LogTemp, Display, TEXT("   Obs: FriendlyDist=%.3f, HostileDist=%.3f, EnemyDist=%.3f, AllyDist=%.3f"),
+			CurrentObs.FriendlyObjectiveDistance,
+			CurrentObs.HostileObjectiveDistance,
+			CurrentObs.DistanceToNearestEnemy,
+			CurrentObs.AllyDistance);
+
+		// Detect if using default observations (indicates problem)
+		if (CurrentObs.FriendlyObjectiveDistance >= 0.99f && CurrentObs.HostileObjectiveDistance >= 0.99f)
+		{
+			UE_LOG(LogTemp, Error, TEXT("   ⚠️ WARNING: Using default objective distances (1.0)! This will cause identical rewards."));
+		}
 	}
 
 	return Breakdown;
@@ -244,7 +263,40 @@ float URewardCalculator::CalculateObjectiveProgressComponent(
 	// No explicit objective assignment - rewards based on observation fields
 	if (!FollowerComponent) return 0.0f;
 
-	CurrentStrategy = FollowerComponent->GetAssignedStrategy();
+	// v9.0 FIX CRITICAL: DO NOT lazy sync - trust SetCurrentStrategy() value!
+	// Lazy sync was OVERWRITING correct strategies with stale data from TacticalState.
+	// Now that SetCurrentStrategy() is called explicitly, we TRUST that value.
+
+	// Diagnostic only: Check if FollowerComponent has different strategy (should NOT happen)
+	if (FollowerComponent)
+	{
+		EStrategyType FollowerReportedStrategy = FollowerComponent->GetAssignedStrategy();
+
+		if (FollowerReportedStrategy != CurrentStrategy)
+		{
+			static TMap<URewardCalculator*, int32> MismatchCounts;
+			int32& Count = MismatchCounts.FindOrAdd(this, 0);
+
+			if (++Count <= 3)  // Log first 3 mismatches only
+			{
+				UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY MISMATCH v9.0] '%s': FollowerComponent reports '%s', but CurrentStrategy is '%s' (occurrence %d)"),
+					*GetOwner()->GetName(),
+					*UEnum::GetValueAsString(FollowerReportedStrategy),
+					*UEnum::GetValueAsString(CurrentStrategy),
+					Count);
+				UE_LOG(LogTemp, Error, TEXT("   └─ USING CurrentStrategy '%s' (from SetCurrentStrategy). FollowerComponent data is STALE."),
+					*UEnum::GetValueAsString(CurrentStrategy));
+
+				if (Count == 3)
+				{
+					UE_LOG(LogTemp, Error, TEXT("   └─ Further mismatch warnings suppressed. This indicates TacticalState is not syncing with MCTS assignments."));
+				}
+			}
+
+			// DO NOT SYNC - trust SetCurrentStrategy value!
+			// CurrentStrategy stays as-is (correct value from MCTS → SetCurrentStrategy)
+		}
+	}
 
 	switch (CurrentStrategy)
 	{
@@ -269,34 +321,59 @@ float URewardCalculator::CalculateAssaultReward(
 	const FObservationElement& PrevObs,
 	const FObservationElement& CurrentObs)
 {
-	// Assault: Incentivize approaching hostile objective
+	// v9.0 GRADIENT-BASED: Assault focuses on approaching hostile objective
+	// Uses continuous distance gradient instead of binary thresholds
 	float Reward = 0.0f;
-	float Dist = CurrentObs.HostileObjectiveDistance;
-	float PrevDist = PrevObs.HostileObjectiveDistance;
+	float Distance = CurrentObs.HostileObjectiveDistance;  // [0, 1] normalized
 
-	// [DEBUG CHECK] 거리가 1.0f(초기값)에서 변하지 않는지 확인
-	if (Dist >= 0.99f && PrevDist >= 0.99f)
+	// [DEBUG CHECK] Verify observation is populated
+	if (Distance >= 0.99f)
 	{
-		// 100틱마다 한 번만 경고 로그 (스팸 방지)
 		static int32 WarningCount = 0;
 		if (++WarningCount % 100 == 0)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[REWARD ALERT] Agent %s has MAX Hostile Distance (1.0). ObsBuilder update required!"), *GetOwner()->GetName());
+			UE_LOG(LogTemp, Error, TEXT("[ASSAULT REWARD] Agent %s: HostileObjectiveDistance=1.0 (default). ObsBuilder not populating!"), *GetOwner()->GetName());
 		}
+		return 0.0f;  // No reward if observation invalid
 	}
 
-	// Reward for getting closer to hostile objective
-	float DistanceDelta = PrevObs.HostileObjectiveDistance - CurrentObs.HostileObjectiveDistance;
-	if (DistanceDelta > 0.0f)
+	// ========================================
+	// GRADIENT REWARD: Closer to hostile objective = higher reward
+	// ========================================
+	// Distance 0.0 (at objective) → reward = 10.0
+	// Distance 0.5 (halfway) → reward = 5.0
+	// Distance 1.0 (max distance) → reward = 0.0
+	Reward = (1.0f - Distance) * 10.0f;
+
+	// ========================================
+	// BONUS: Very close to hostile objective (<10% distance)
+	// ========================================
+	if (Distance < 0.1f)
 	{
-		// Approaching hostile objective
-		Reward += DistanceDelta * 10.0f;  // Scale by progress
+		Reward += 15.0f;  // Large bonus for reaching objective
 	}
 
-	// Extra reward for being very close to hostile objective (<20% distance)
-	if (CurrentObs.HostileObjectiveDistance < 0.2f)
+	// ========================================
+	// BONUS: Combat engagement near objective
+	// ========================================
+	// Reward aggressive combat near the hostile objective
+	if (CurrentObs.VisibleEnemyCount > 0 && Distance < 0.2f)
 	{
-		Reward += RewardConfig::OBJECTIVE_VOLUME_REWARD;  // +1.0 per step near objective
+		Reward += 5.0f * CurrentObs.VisibleEnemyCount;  // +5.0 per enemy engaged near objective
+	}
+
+	// v9.0 DEBUG: Log gradient reward calculation
+	static TMap<URewardCalculator*, int32> AssaultLogCounts;
+	int32& LogCount = AssaultLogCounts.FindOrAdd(this, 0);
+	if (++LogCount % 100 == 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("🔵 [ASSAULT GRADIENT] %s: Dist=%.3f → BaseReward=%.2f, Bonuses=%.2f → Total=%.2f"),
+			*GetOwner()->GetName(),
+			Distance,
+			(1.0f - Distance) * 10.0f,
+			Reward - ((1.0f - Distance) * 10.0f),
+			Reward
+		);
 	}
 
 	return Reward;
@@ -306,21 +383,48 @@ float URewardCalculator::CalculateDefendReward(
 	const FObservationElement& PrevObs,
 	const FObservationElement& CurrentObs)
 {
-	// Defend: Incentivize staying near friendly objective
+	// v9.0 GRADIENT-BASED: Defend focuses on staying near friendly objective
+	// Uses continuous distance gradient instead of binary volume checks
 	float Reward = 0.0f;
+	float Distance = CurrentObs.FriendlyObjectiveDistance;  // [0, 1] normalized
 
-	// Reward for being close to friendly objective (defensive perimeter)
-	if (CurrentObs.FriendlyObjectiveDistance < 0.3f)
+	// ========================================
+	// GRADIENT REWARD: Closer to friendly objective = higher reward
+	// ========================================
+	// Distance 0.0 (at objective) → reward = 10.0
+	// Distance 0.5 (halfway) → reward = 5.0
+	// Distance 1.0 (max distance) → reward = 0.0
+	Reward = (1.0f - Distance) * 10.0f;
+
+	// ========================================
+	// BONUS: Inside defensive perimeter (<20% distance)
+	// ========================================
+	if (Distance < 0.2f)
 	{
-		Reward += RewardConfig::OBJECTIVE_VOLUME_REWARD;  // +1.0 per step in perimeter
+		Reward += 10.0f;  // Bonus for tight perimeter defense
 	}
 
-	// Penalty for moving away from friendly objective
-	float DistanceDelta = CurrentObs.FriendlyObjectiveDistance - PrevObs.FriendlyObjectiveDistance;
-	if (DistanceDelta > 0.0f)
+	// ========================================
+	// BONUS: Defending against enemies near objective
+	// ========================================
+	// Reward active defense when enemies are nearby
+	if (CurrentObs.VisibleEnemyCount > 0 && Distance < 0.2f)
 	{
-		// Moving away from friendly objective (bad for defense)
-		Reward -= DistanceDelta * 5.0f;
+		Reward += 8.0f * CurrentObs.VisibleEnemyCount;  // +8.0 per enemy while defending
+	}
+
+	// v9.0 DEBUG: Log gradient reward calculation
+	static TMap<URewardCalculator*, int32> DefendLogCounts;
+	int32& LogCount = DefendLogCounts.FindOrAdd(this, 0);
+	if (++LogCount % 100 == 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("🟢 [DEFEND GRADIENT] %s: Dist=%.3f → BaseReward=%.2f, Bonuses=%.2f → Total=%.2f"),
+			*GetOwner()->GetName(),
+			Distance,
+			(1.0f - Distance) * 10.0f,
+			Reward - ((1.0f - Distance) * 10.0f),
+			Reward
+		);
 	}
 
 	return Reward;
@@ -330,20 +434,57 @@ float URewardCalculator::CalculateSupportReward(
 	const FObservationElement& PrevObs,
 	const FObservationElement& CurrentObs)
 {
-	// Support: Incentivize proximity to allies (uses existing AllyDistance field)
+	// v9.0 GRADIENT-BASED: Support focuses on proximity to allies in need
+	// Uses continuous distance gradient when ally needs help
 	float Reward = 0.0f;
 
-	// Reward for being close to ally
-	if (CurrentObs.bAllyNeedsHelp && CurrentObs.AllyDistance < 0.2f)
+	// Only provide support rewards if ally actually needs help
+	if (!CurrentObs.bAllyNeedsHelp)
 	{
-		Reward += RewardConfig::SUPPORT_CRITICAL_BONUS;  // +5.0 for reaching ally in need
+		return 0.0f;
 	}
 
-	// Reward for approaching ally
-	float AllyDistanceDelta = PrevObs.AllyDistance - CurrentObs.AllyDistance;
-	if (AllyDistanceDelta > 0.0f && CurrentObs.bAllyNeedsHelp)
+	float Distance = CurrentObs.AllyDistance;  // [0, 1] normalized
+
+	// ========================================
+	// GRADIENT REWARD: Closer to ally = higher reward
+	// ========================================
+	// Distance 0.0 (at ally) → reward = 12.0
+	// Distance 0.5 (halfway) → reward = 6.0
+	// Distance 1.0 (max distance) → reward = 0.0
+	// Higher base multiplier (12.0 vs 10.0) because support is critical
+	Reward = (1.0f - Distance) * 12.0f;
+
+	// ========================================
+	// BONUS: Very close support (<5% distance = ~250cm)
+	// ========================================
+	if (Distance < 0.05f)
 	{
-		Reward += AllyDistanceDelta * RewardConfig::SUPPORT_PROXIMITY_BONUS;  // Scale by progress
+		Reward += 15.0f;  // Large bonus for reaching ally in need
+	}
+
+	// ========================================
+	// BONUS: Covering ally under fire
+	// ========================================
+	// Reward staying close while enemies are nearby (protective support)
+	if (CurrentObs.VisibleEnemyCount > 0 && Distance < 0.08f)
+	{
+		Reward += 5.0f;  // Bonus for providing cover fire
+	}
+
+	// v9.0 DEBUG: Log gradient reward calculation
+	static TMap<URewardCalculator*, int32> SupportLogCounts;
+	int32& LogCount = SupportLogCounts.FindOrAdd(this, 0);
+	if (++LogCount % 100 == 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("🟡 [SUPPORT GRADIENT] %s: AllyDist=%.3f, NeedsHelp=%d → BaseReward=%.2f, Bonuses=%.2f → Total=%.2f"),
+			*GetOwner()->GetName(),
+			Distance,
+			CurrentObs.bAllyNeedsHelp ? 1 : 0,
+			(1.0f - Distance) * 12.0f,
+			Reward - ((1.0f - Distance) * 12.0f),
+			Reward
+		);
 	}
 
 	return Reward;
@@ -353,21 +494,49 @@ float URewardCalculator::CalculateRetreatReward(
 	const FObservationElement& PrevObs,
 	const FObservationElement& CurrentObs)
 {
-	// Retreat: Incentivize distance from enemies (uses DistanceToNearestEnemy)
+	// v9.0 GRADIENT-BASED: Retreat focuses on maximizing distance from enemies
+	// Uses continuous distance gradient instead of delta-only rewards
 	float Reward = 0.0f;
+	float Distance = CurrentObs.DistanceToNearestEnemy;  // [0, 1] normalized
 
-	// Reward for increasing distance from nearest enemy
-	float EnemyDistanceDelta = CurrentObs.DistanceToNearestEnemy - PrevObs.DistanceToNearestEnemy;
-	if (EnemyDistanceDelta > 0.0f)
+	// ========================================
+	// GRADIENT REWARD: Farther from enemies = higher reward
+	// ========================================
+	// Distance 1.0 (max distance) → reward = 10.0
+	// Distance 0.5 (halfway) → reward = 5.0
+	// Distance 0.0 (touching enemy) → reward = 0.0
+	Reward = Distance * 10.0f;
+
+	// ========================================
+	// BONUS: Safe distance achieved (>80% max distance)
+	// ========================================
+	if (Distance > 0.8f)
 	{
-		// Successfully retreating (getting further from enemies)
-		Reward += EnemyDistanceDelta * 8.0f;  // High reward for escape
+		Reward += 10.0f;  // Large bonus for reaching safety
 	}
 
-	// Bonus for being far from enemies (>80% distance)
-	if (CurrentObs.DistanceToNearestEnemy > 0.8f)
+	// ========================================
+	// PENALTY: Surrounded by multiple enemies
+	// ========================================
+	// Penalize failed retreat (still near many enemies)
+	if (CurrentObs.VisibleEnemyCount > 2)
 	{
-		Reward += 1.0f;  // Safe distance bonus
+		Reward -= 5.0f;  // Penalty for being surrounded
+	}
+
+	// v9.0 DEBUG: Log gradient reward calculation
+	static TMap<URewardCalculator*, int32> RetreatLogCounts;
+	int32& LogCount = RetreatLogCounts.FindOrAdd(this, 0);
+	if (++LogCount % 100 == 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("🔴 [RETREAT GRADIENT] %s: EnemyDist=%.3f, EnemyCount=%d → BaseReward=%.2f, Modifiers=%.2f → Total=%.2f"),
+			*GetOwner()->GetName(),
+			Distance,
+			CurrentObs.VisibleEnemyCount,
+			Distance * 10.0f,
+			Reward - (Distance * 10.0f),
+			Reward
+		);
 	}
 
 	return Reward;
@@ -684,9 +853,25 @@ void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
 		PreviousCaptureProgress = 0.0f;
 		bCaptureCompletionRewarded = false;
 
-		UE_LOG(LogTemp, Log, TEXT("[REWARD v9.0] Strategy updated: %s → %s"),
+		// v9.0 FIX: Enhanced logging to track strategy changes
+		UE_LOG(LogTemp, Display, TEXT("✅ [SET CURRENT STRATEGY] '%s': %s → %s (CurrentStrategy now = %s)"),
+			*GetOwner()->GetName(),
 			*UEnum::GetValueAsString(PreviousStrategy),
-			*UEnum::GetValueAsString(Strategy));
+			*UEnum::GetValueAsString(Strategy),
+			*UEnum::GetValueAsString(CurrentStrategy));
+	}
+	else
+	{
+		// v9.0 DEBUG: Log when SetCurrentStrategy is called but value doesn't change
+		static TMap<URewardCalculator*, int32> NoChangeCount;
+		int32& Count = NoChangeCount.FindOrAdd(this, 0);
+		if (++Count % 100 == 0)
+		{
+			UE_LOG(LogTemp, Display, TEXT("ℹ️ [SET CURRENT STRATEGY] '%s': Already %s (no change, count=%d)"),
+				*GetOwner()->GetName(),
+				*UEnum::GetValueAsString(Strategy),
+				Count);
+		}
 	}
 }
 

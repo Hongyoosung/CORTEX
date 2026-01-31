@@ -29,7 +29,7 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
     MaxSimulations = InMaxSimulations;
     ExplorationParameter = InExplorationParam;
 
-    // v8.20: Initialize batch prototypes
+    // v9.0: Initialize batch prototypes
     BatchPrototypes.Empty(8);
 
     // Prototype 1: Tight Assault (3 Assault, 1 Support)
@@ -136,9 +136,9 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
     MixedObjectives.EstimatedValue = 0.50f;
     BatchPrototypes.Add(MixedObjectives);
 
-    UE_LOG(LogTemp, Log, TEXT("[MCTS v8.20] Initialized %d batch prototypes"), BatchPrototypes.Num());
+    UE_LOG(LogTemp, Log, TEXT("[MCTS v9.0] Initialized %d batch prototypes"), BatchPrototypes.Num());
 
-    // v8.20: Initialize RLPolicyNetwork for value estimates
+    // v9.0: Initialize RLPolicyNetwork for value estimates
     RLPolicyNetwork = NewObject<URLPolicyNetwork>(this);
 
     // Try to load batch cache from previous runs (warm start)
@@ -146,11 +146,11 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
     if (FPaths::FileExists(*CachePath))
     {
         LoadBatchCache(CachePath);
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Loaded batch cache with %d entries"), BatchCache.Num());
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] Loaded batch cache with %d entries"), BatchCache.Num());
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] No existing batch cache, starting with fresh priors"));
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] No existing batch cache, starting with fresh priors"));
     }
 }
 
@@ -356,14 +356,24 @@ TMap<AActor*, FStrategyAssignment> UMCTS::SelectBatchByUCB1(
 {
     if (AllBatches.Num() == 0)
     {
-        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] SelectBatchByUCB1 received empty batch list"));
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v9.0] SelectBatchByUCB1 received empty batch list"));
         return TMap<AActor*, FStrategyAssignment>();
     }
 
-    float BestUCB = -FLT_MAX;
-    int32 BestBatchIdx = 0;
+    // ✅ v9.0 FIX: Epsilon-greedy exploration (20% random selection)
+    const float EpsilonExploration = 0.20f;
+    if (FMath::FRand() < EpsilonExploration)
+    {
+        int32 RandomIdx = FMath::RandRange(0, AllBatches.Num() - 1);
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] 🎲 EPSILON-GREEDY: Randomly selected batch %d (exploration)"), RandomIdx);
+        return AllBatches[RandomIdx];
+    }
 
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] UCB1 Batch Selection:"));
+    float BestUCB = -FLT_MAX;
+    TArray<int32> BestBatchIndices;  // v9.0: Track all batches with best UCB (for tie-breaking)
+
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] UCB1 Batch Selection (TotalTrials=%d, CacheSize=%d):"),
+        TotalBatchTrials, BatchCache.Num());
 
     for (int32 i = 0; i < AllBatches.Num(); ++i)
     {
@@ -372,9 +382,12 @@ TMap<AActor*, FStrategyAssignment> UMCTS::SelectBatchByUCB1(
 
         // ✅ BatchCache에서 가져오거나 기본값으로 FBatchPerformance 생성
         FBatchPerformance Performance;
-        if (BatchCache.Contains(BatchKey))
+        bool bCacheHit = BatchCache.Contains(BatchKey);
+        if (bCacheHit)
         {
             Performance = BatchCache[BatchKey];
+            UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0]  [CACHE HIT] Batch %d: Key='%s', Trials=%d"),
+                i, *BatchKey, Performance.Trials);
         }
         else
         {
@@ -383,6 +396,8 @@ TMap<AActor*, FStrategyAssignment> UMCTS::SelectBatchByUCB1(
             Performance.Trials = 0;
             Performance.Wins = 0;
             Performance.AverageValue = 0.5f;
+            UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0]  [CACHE MISS] Batch %d: Key='%s' (new entry)"),
+                i, *BatchKey);
         }
 
         // ✅ GetUCBValue() 함수 호출 (FLT_MAX 처리 포함)
@@ -406,22 +421,42 @@ TMap<AActor*, FStrategyAssignment> UMCTS::SelectBatchByUCB1(
         }
 
         UE_LOG(LogTemp, Warning,
-            TEXT("  Batch %d: WR=%.2f (%d/%d), Exploration=%.2f, UCB=%s %s"),
-            i, WinRate * 100.0f,
+            TEXT("  Batch %d (%s): WR=%.2f (%d/%d), Exploration=%.2f, UCB=%s %s"),
+            i, *BatchKey,
+            WinRate * 100.0f,
             Trials == 0 ? 0 : FMath::RoundToInt(WinRate * Trials), Trials,
             Exploration, *UCBStr,
-            (UCB > BestUCB) ? TEXT("← BEST") : TEXT(""));
+            (UCB > BestUCB) ? TEXT("← NEW BEST") : (FMath::IsNearlyEqual(UCB, BestUCB, 0.0001f) ? TEXT("← TIE") : TEXT("")));
 
+        // v9.0: Track ties for randomized tie-breaking
         if (UCB > BestUCB)
         {
             BestUCB = UCB;
-            BestBatchIdx = i;
+            BestBatchIndices.Empty();
+            BestBatchIndices.Add(i);
         }
+        else if (FMath::IsNearlyEqual(UCB, BestUCB, 0.0001f))
+        {
+            BestBatchIndices.Add(i);
+        }
+    }
+
+    // ✅ v9.0 FIX: Randomized tie-breaking
+    int32 BestBatchIdx = 0;
+    if (BestBatchIndices.Num() > 1)
+    {
+        BestBatchIdx = BestBatchIndices[FMath::RandRange(0, BestBatchIndices.Num() - 1)];
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] 🎲 TIE-BREAKING: %d batches tied, randomly selected batch %d"),
+            BestBatchIndices.Num(), BestBatchIdx);
+    }
+    else
+    {
+        BestBatchIdx = BestBatchIndices[0];
     }
 
     // ✅ 로그 출력도 FLT_MAX 처리
     FString BestUCBStr = (BestUCB >= FLT_MAX / 2) ? TEXT("∞") : FString::Printf(TEXT("%.4f"), BestUCB);
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Selected batch %d with UCB=%s"),
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] ✅ Selected batch %d with UCB=%s"),
         BestBatchIdx, *BestUCBStr);
 
     return AllBatches[BestBatchIdx];
@@ -429,19 +464,27 @@ TMap<AActor*, FStrategyAssignment> UMCTS::SelectBatchByUCB1(
 
 void UMCTS::UpdateBatchCache(
     const TMap<AActor*, FStrategyAssignment>& BatchAssignments,
-    ETeamEpisodeResult Result) 
+    ETeamEpisodeResult Result)
 {
     FString BatchKey = GetBatchKey(BatchAssignments);
+
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] [MCTS CACHE UPDATE] Key='%s', Result=%d, CacheSize=%d (before)"),
+        *BatchKey, static_cast<int32>(Result), BatchCache.Num());
 
     if (!BatchCache.Contains(BatchKey))
     {
         BatchCache.Add(BatchKey, FBatchPerformance());
         BatchCache[BatchKey].BatchKey = BatchKey;
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0]  [NEW ENTRY] Added to cache"));
     }
 
     auto& CachedBatch = BatchCache[BatchKey];
+    int32 OldTrials = CachedBatch.Trials;
     CachedBatch.Trials++;
     CachedBatch.LastUsedTime = FPlatformTime::Seconds();
+
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0]  [UPDATED] Trials: %d → %d, TotalTrials: %d → %d"),
+        OldTrials, CachedBatch.Trials, TotalBatchTrials, TotalBatchTrials + 1);
 
     // 승/패/무승부 처리
     switch (Result)
@@ -469,31 +512,37 @@ void UMCTS::UpdateBatchCache(
 
 FString UMCTS::GetBatchKey(const TMap<AActor*, FStrategyAssignment>& BatchAssignments) const
 {
-    TArray<AActor*> SortedAgents;
-    BatchAssignments.GetKeys(SortedAgents);
+    // v9.0 FIX: Strategy-pattern-only key (agent-agnostic)
+    // This ensures the same strategy composition always maps to the same cache entry,
+    // regardless of which specific agents are assigned or if agents are recreated between episodes.
 
-    // Sort for consistent key generation
-    SortedAgents.Sort([](const AActor& A, const AActor& B) {
-        return A.GetName() < B.GetName();
-        });
+    TArray<EStrategyType> Strategies;
+    Strategies.Reserve(BatchAssignments.Num());
 
-    FString Key;
-    for (const auto& Agent : SortedAgents)
+    // Extract strategies
+    for (const auto& [Agent, Assignment] : BatchAssignments)
     {
-        if (const auto* Assignment = BatchAssignments.Find(Agent))
+        Strategies.Add(Assignment.Strategy);
+    }
+
+    // Sort strategies for consistent key (independent of agent order)
+    Strategies.Sort([](const EStrategyType& A, const EStrategyType& B) {
+        return static_cast<int32>(A) < static_cast<int32>(B);
+    });
+
+    // Build key: "Assault,Assault,Assault,Support"
+    FString Key;
+    for (int32 i = 0; i < Strategies.Num(); ++i)
+    {
+        if (i > 0)
         {
-            if (!Key.IsEmpty())
-            {
-                Key += TEXT(",");
-            }
-
-            FString StrategyStr = UEnum::GetValueAsString(Assignment->Strategy);
-
-            // v9.0: Simplified key format (strategy-only, no objective)
-            Key += FString::Printf(TEXT("%s→%s"),
-                *Agent->GetName(),
-                *StrategyStr);
+            Key += TEXT(",");
         }
+
+        FString StrategyStr = UEnum::GetValueAsString(Strategies[i]);
+        // Remove "EStrategyType::" prefix if present
+        StrategyStr.RemoveFromStart(TEXT("EStrategyType::"));
+        Key += StrategyStr;
     }
 
     return Key;
@@ -542,12 +591,12 @@ bool UMCTS::SaveBatchCache(const FString& SavePath)
 
     if (bSuccess)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Saved batch cache to %s (%d batches)"),
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] Saved batch cache to %s (%d batches)"),
             *SavePath, BatchCache.Num());
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] Failed to save batch cache to %s"), *SavePath);
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v9.0] Failed to save batch cache to %s"), *SavePath);
     }
 
     return bSuccess;
@@ -559,7 +608,7 @@ bool UMCTS::LoadBatchCache(const FString& LoadPath)
     FString JsonString;
     if (!FFileHelper::LoadFileToString(JsonString, *LoadPath))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Batch cache file not found: %s"), *LoadPath);
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] Batch cache file not found: %s"), *LoadPath);
         return false;
     }
 
@@ -569,7 +618,7 @@ bool UMCTS::LoadBatchCache(const FString& LoadPath)
 
     if (!FJsonSerializer::Deserialize(Reader, RootJson) || !RootJson.IsValid())
     {
-        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] Failed to parse batch cache JSON"));
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v9.0] Failed to parse batch cache JSON"));
         return false;
     }
 
@@ -594,7 +643,7 @@ bool UMCTS::LoadBatchCache(const FString& LoadPath)
         BatchCache.Add(Key, Performance);
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] Loaded batch cache: %d batches, %d total trials"),
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] Loaded batch cache: %d batches, %d total trials"),
         BatchCache.Num(), TotalBatchTrials);
 
     return true;
@@ -604,7 +653,7 @@ void UMCTS::LogBatchPerformance()
 {
     if (BatchCache.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] No batch performance data"));
+        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] No batch performance data"));
         return;
     }
 
@@ -646,7 +695,7 @@ void UMCTS::LogBatchPerformance()
 
 TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment_v820(const TArray<AActor*>& Agents, const TArray<AObjectiveActor*>& Objectives, int32 Simulations, const TMap<AActor*, FObservationElement>& InCachedObservations)
 {
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.20] START: Agents=%d, Objectives=%d, Simulations=%d"),
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] START: Agents=%d, Objectives=%d, Simulations=%d"),
         Agents.Num(), Objectives.Num(), Simulations);
 
     float StartTime = FPlatformTime::Seconds();
@@ -662,7 +711,7 @@ TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment_v820(const TArra
 
     if (AllBatches.Num() == 0)
     {
-        UE_LOG(LogTemp, Error, TEXT("[MCTS v8.20] Failed to generate batches"));
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v9.0] Failed to generate batches"));
         return TMap<AActor*, FStrategyAssignment>();
     }
 
@@ -684,7 +733,7 @@ TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment_v820(const TArra
     else
     {
         UE_LOG(LogTemp, Warning,
-            TEXT("[MCTS v8.20] Output batch VALID: 4 agents assigned"));
+            TEXT("[MCTS v9.0] Output batch VALID: 4 agents assigned"));
     }
 
     return SelectedBatch;

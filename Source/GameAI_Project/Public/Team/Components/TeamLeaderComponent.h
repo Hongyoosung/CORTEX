@@ -241,7 +241,7 @@ public:
 
 	/** Handle episode completion */
 	UFUNCTION()
-	void OnEpisodeComplete(int32 EnviornmentID, const FEpisodeResult& Result);
+	void OnEpisodeComplete(int32 EnvironmentID, const FEpisodeResult& Result);
 
 
 

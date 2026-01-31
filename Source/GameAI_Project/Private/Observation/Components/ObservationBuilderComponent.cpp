@@ -1,5 +1,6 @@
 #include "Observation/Components/ObservationBuilderComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
+#include "Team/Components/FollowerAgentComponent.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Team/ObjectiveActor.h"  // v9.0: For objective context
@@ -356,7 +357,54 @@ void UObservationBuilderComponent::ResetEpisode()
 void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement& Observation)
 {
 	AActor* Owner = GetOwner();
-	if (!Owner || !TeamLeader) return;
+	if (!Owner || !TeamLeader)
+	{
+		// v9.0 FIX: Enhanced error logging with diagnostic information
+		static TMap<UObservationBuilderComponent*, int32> WarningCounts;
+		int32& Count = WarningCounts.FindOrAdd(this, 0);
+
+		if (++Count % 100 == 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("🔴 [OBS ERROR v9.0] Agent %s: TeamLeader=%s - Cannot populate objective context! (occurrences=%d)"),
+				Owner ? *Owner->GetName() : TEXT("NULL"),
+				TeamLeader ? TEXT("valid") : TEXT("NULL"),
+				Count);
+
+			// Diagnostic: Check why TeamLeader is NULL
+			if (!TeamLeader && Owner)
+			{
+				UFollowerAgentComponent* FollowerComp = Owner->FindComponentByClass<UFollowerAgentComponent>();
+				if (FollowerComp)
+				{
+					UTeamLeaderComponent* Leader = FollowerComp->GetTeamLeader();
+					UE_LOG(LogTemp, Error, TEXT("   └─ Diagnostic: FollowerAgentComponent exists, GetTeamLeader()=%s"),
+						Leader ? *Leader->GetOwner()->GetName() : TEXT("NULL"));
+
+					if (!Leader)
+					{
+						UE_LOG(LogTemp, Error, TEXT("   └─ ISSUE: FollowerAgentComponent has NULL TeamLeader. Check BeginPlay initialization order."));
+					}
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("   └─ ISSUE: NO FollowerAgentComponent found on owner! This ObservationBuilder is orphaned."));
+				}
+			}
+
+			if (Count == 100)
+			{
+				UE_LOG(LogTemp, Error, TEXT("   └─ This will cause all objective distances to default to 1.0 (max distance)."));
+				UE_LOG(LogTemp, Error, TEXT("   └─ Result: All agents in this environment will have IDENTICAL observations and rewards."));
+			}
+		}
+
+		// Set default values (max distance - worst case for rewards)
+		Observation.FriendlyObjectiveDistance = 1.0f;
+		Observation.FriendlyObjectiveDirection = FVector2D::ZeroVector;
+		Observation.HostileObjectiveDistance = 1.0f;
+		Observation.HostileObjectiveDirection = FVector2D::ZeroVector;
+		return;
+	}
 
 	const float MaxNormDistance = 10000.0f;  // Normalization constant
 	const FVector AgentLocation = Owner->GetActorLocation();
@@ -364,6 +412,16 @@ void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement&
 	// Get objectives from team leader
 	AObjectiveActor* FriendlyObjective = TeamLeader->GetFriendlyObjective();
 	AObjectiveActor* HostileObjective = TeamLeader->GetHostileObjective();
+
+	// v9.0 DEBUG: Log objective status periodically
+	static int32 LogCounter = 0;
+	if (++LogCounter % 200 == 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("📍 [OBS] Agent %s: FriendlyObj=%s, HostileObj=%s"),
+			*Owner->GetName(),
+			FriendlyObjective ? *FriendlyObjective->GetName() : TEXT("NULL"),
+			HostileObjective ? *HostileObjective->GetName() : TEXT("NULL"));
+	}
 
 	// Populate friendly objective context
 	if (FriendlyObjective)
@@ -378,6 +436,13 @@ void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement&
 		ToFriendly.Z = 0; // Flatten to 2D
 		ToFriendly.Normalize();
 		Observation.FriendlyObjectiveDirection = FVector2D(ToFriendly.X, ToFriendly.Y);
+
+		// v9.0 DEBUG: Log actual distances periodically
+		if (LogCounter % 200 == 0)
+		{
+			UE_LOG(LogTemp, Display, TEXT("  Friendly: RawDist=%.0f cm, Normalized=%.3f"),
+				Distance, Observation.FriendlyObjectiveDistance);
+		}
 	}
 	else
 	{
@@ -399,6 +464,13 @@ void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement&
 		ToHostile.Z = 0; // Flatten to 2D
 		ToHostile.Normalize();
 		Observation.HostileObjectiveDirection = FVector2D(ToHostile.X, ToHostile.Y);
+
+		// v9.0 DEBUG: Log actual distances periodically
+		if (LogCounter % 200 == 0)
+		{
+			UE_LOG(LogTemp, Display, TEXT("  Hostile: RawDist=%.0f cm, Normalized=%.3f"),
+				Distance, Observation.HostileObjectiveDistance);
+		}
 	}
 	else
 	{
@@ -407,14 +479,31 @@ void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement&
 		Observation.HostileObjectiveDirection = FVector2D::ZeroVector;
 	}
 
-	static float LastLogTime = 0.0f;
+	// v9.0: Enhanced periodic logging with diagnostic information
+	static TMap<UObservationBuilderComponent*, float> LastLogTimes;
+	float& LastLogTime = LastLogTimes.FindOrAdd(this, 0.0f);
 	float CurrentTime = GetWorld()->GetTimeSeconds();
+
 	if (CurrentTime - LastLogTime > 5.0f)
 	{
 		LastLogTime = CurrentTime;
-		UE_LOG(LogTemp, Warning, TEXT("[%s] Obs Context: FriendlyDist=%.2f, HostileDist=%.2f"),
-			*Owner->GetName(),
-			Observation.FriendlyObjectiveDistance,
-			Observation.HostileObjectiveDistance);
+
+		// Check if values are at default (indicates missing objectives)
+		bool bHasDefaults = (Observation.FriendlyObjectiveDistance >= 0.99f || Observation.HostileObjectiveDistance >= 0.99f);
+
+		if (bHasDefaults)
+		{
+			UE_LOG(LogTemp, Error, TEXT("⚠️ [OBS CONTEXT v9.0] %s: FriendlyDist=%.3f, HostileDist=%.3f - USING DEFAULTS (objectives missing!)"),
+				*Owner->GetName(),
+				Observation.FriendlyObjectiveDistance,
+				Observation.HostileObjectiveDistance);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Display, TEXT("✅ [OBS CONTEXT v9.0] %s: FriendlyDist=%.3f, HostileDist=%.3f"),
+				*Owner->GetName(),
+				Observation.FriendlyObjectiveDistance,
+				Observation.HostileObjectiveDistance);
+		}
 	}
 }

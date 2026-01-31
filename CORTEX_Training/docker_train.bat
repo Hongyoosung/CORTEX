@@ -70,12 +70,17 @@ echo 2. Multi-instance training (NUM_WORKERS=N, parallel environments)
 echo    - Faster training with multiple UE5 instances
 echo    - Requires N UE5 instances running on sequential ports
 echo.
+echo 3. Resume from checkpoint (continue previous training)
+echo    - Load existing checkpoint and continue training
+echo    - Preserves all training progress and statistics
+echo.
 echo ================================================================================
 echo.
-set /p MODE="Enter choice (1 or 2): "
+set /p MODE="Enter choice (1, 2, or 3): "
 
 if "%MODE%"=="1" goto :single_mode
 if "%MODE%"=="2" goto :multi_mode
+if "%MODE%"=="3" goto :resume_mode
 echo Invalid choice. Exiting.
 pause
 exit /b 1
@@ -133,6 +138,51 @@ set /p CONFIRM="Press ENTER to continue, or CTRL+C to cancel... "
 timeout /t 3 /nobreak 1>nul
 
 docker-compose run --rm -e NUM_WORKERS=%NUM_WORKERS% -e NUM_ITERATIONS=%ITERATIONS% training-multi python train_rllib.py --iterations %ITERATIONS% --host host.docker.internal --port 50051
+goto :training_complete
+
+:resume_mode
+echo.
+echo Available checkpoints:
+echo.
+dir /b /ad training_results 2>nul
+if errorlevel 1 (
+    echo No checkpoints found in training_results/
+    pause
+    exit /b 1
+)
+echo.
+set /p CHECKPOINT_DIR="Enter checkpoint directory name (e.g., 20260131_100243): "
+if "%CHECKPOINT_DIR%"=="" (
+    echo ERROR: Checkpoint directory is required
+    pause
+    exit /b 1
+)
+
+REM Check if checkpoint exists
+if not exist "training_results\%CHECKPOINT_DIR%\rllib_checkpoint.json" (
+    echo ERROR: Invalid checkpoint - rllib_checkpoint.json not found
+    echo Path checked: training_results\%CHECKPOINT_DIR%\rllib_checkpoint.json
+    pause
+    exit /b 1
+)
+
+echo.
+set /p ITERATIONS="Enter number of additional training iterations (default: 100): "
+if "%ITERATIONS%"=="" set ITERATIONS=100
+
+echo.
+echo ================================================================================
+echo Resuming Training from Checkpoint
+echo ================================================================================
+echo Checkpoint: %CHECKPOINT_DIR%
+echo Additional Iterations: %ITERATIONS%
+echo Workers: 0 (single process)
+echo UE5 Port: 50051
+echo ================================================================================
+echo.
+timeout /t 3 /nobreak 1>nul
+
+docker-compose run --rm -e NUM_ITERATIONS=%ITERATIONS% -v "%cd%\training_results\%CHECKPOINT_DIR%:/app/training_results/%CHECKPOINT_DIR%" training-single python train_rllib.py --iterations %ITERATIONS% --host host.docker.internal --port 50051 --resume "training_results/%CHECKPOINT_DIR%"
 goto :training_complete
 
 :training_complete

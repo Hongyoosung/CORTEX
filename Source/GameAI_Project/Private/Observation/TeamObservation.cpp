@@ -238,12 +238,6 @@ FTeamObservation FTeamObservation::BuildFromTeam(
 
             // Also calculate formation spread (max distance between any two agents)
             TeamObs.FormationSpread = TotalDistance / PairCount; // Average pairwise distance
-
-            // Log formation quality for diagnosis
-            UE_LOG(LogTemp, Log, TEXT("[FORMATION QUALITY] AvgDistance: %.1f cm, Coherence: %.3f (%.1f pairs scored, optimal: 400-800cm)"),
-                TeamObs.FormationSpread,
-                TeamObs.FormationCoherence,
-                static_cast<float>(PairCount));
         }
     }
     else if (TeamMembers.Num() == 1)

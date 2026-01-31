@@ -125,8 +125,6 @@ TArray<float> FObservationElement::ToFeatureVector(bool bIncludeStrategy) const
         }
     }
 
-	UE_LOG(LogTemp, Warning, TEXT("✅ [Observation] Built feature vector with %d features."), Features.Num());
-
     return Features;
 }
 

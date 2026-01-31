@@ -125,12 +125,42 @@ void UFollowerAgentComponent::BeginPlay()
 		if (ObservationBuilder)
 		{
 			ObservationBuilder->TeamLeader = TeamLeader;
+
+			// v9.0 DEBUG: Verify TeamLeader objectives are discovered
+			UE_LOG(LogTemp, Warning, TEXT("✅ [TEAM SETUP v9.0] '%s': TeamLeader '%s' (TeamID=%d) set on ObservationBuilder"),
+				*GetOwner()->GetName(),
+				*TeamLeader->GetOwner()->GetName(),
+				TeamLeader->TeamID);
+
+			AObjectiveActor* FriendlyObj = TeamLeader->GetFriendlyObjective();
+			AObjectiveActor* HostileObj = TeamLeader->GetHostileObjective();
+
+			UE_LOG(LogTemp, Warning, TEXT("   └─ FriendlyObjective: %s, HostileObjective: %s"),
+				FriendlyObj ? *FriendlyObj->GetName() : TEXT("NULL"),
+				HostileObj ? *HostileObj->GetName() : TEXT("NULL"));
+
+			if (!FriendlyObj || !HostileObj)
+			{
+				UE_LOG(LogTemp, Error, TEXT("⚠️ [TEAM SETUP v9.0] '%s': Objectives NOT YET DISCOVERED! Observations will default to max distance (1.0)."),
+					*GetOwner()->GetName());
+				UE_LOG(LogTemp, Error, TEXT("   └─ This is expected during BeginPlay. Objectives should be discovered by TeamLeader's DiscoverWorldObjectives()."));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [TEAM SETUP v9.0] '%s': ObservationBuilder component is NULL!"),
+				*GetOwner()->GetName());
 		}
 
 		if (CombatExecutor)
 		{
 			CombatExecutor->TeamLeader = TeamLeader;
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [TEAM SETUP v9.0] '%s': TeamLeader is NULL - ObservationBuilder will fail to populate objective context!"),
+			*GetOwner()->GetName());
 	}
 
 	// ========================================
@@ -361,6 +391,30 @@ void UFollowerAgentComponent::SetStrategyAssignment(const FStrategyAssignment& A
 	}
 
 	TacticalState->SetStrategyAssignment(Assignment);
+
+	// v9.0 FIX: Synchronize strategy to RewardCalculator (CRITICAL for strategy-specific rewards)
+	if (RLAgent)
+	{
+		URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator();
+		if (RewardCalc)
+		{
+			RewardCalc->SetCurrentStrategy(Assignment.Strategy);
+
+			UE_LOG(LogTemp, Display, TEXT("✅ [STRATEGY SYNC v9.0] '%s': RewardCalculator updated to strategy '%s'"),
+				*GetOwner()->GetName(),
+				*UEnum::GetValueAsString(Assignment.Strategy));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY SYNC v9.0] '%s': RLAgent has no RewardCalculator!"),
+				*GetOwner()->GetName());
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY SYNC v9.0] '%s': No RLAgent component - strategy sync failed!"),
+			*GetOwner()->GetName());
+	}
 
 	// v9.0: Objective implicit in reward function, not explicit assignment
 	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v9.0] '%s': Strategy assignment received - Strategy=%s"),
