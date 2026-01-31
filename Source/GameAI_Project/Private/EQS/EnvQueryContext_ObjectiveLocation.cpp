@@ -21,7 +21,8 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 	UFollowerStateTreeComponent* StateTreeComp = QueryOwner->FindComponentByClass<UFollowerStateTreeComponent>();
 	if (StateTreeComp)
 	{
-		// v8.0: Access TargetObjective from shared context (MCTS-assigned)
+		// v9.0: Access TargetObjective from shared context (computed based on strategy)
+		// Assault/Support → Hostile objective, Defend → Friendly objective
 		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
 		if (SharedContext.TargetObjective)
 		{
@@ -30,7 +31,7 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("EnvQueryContext_ObjectiveLocation: TargetObjective is NULL in SharedContext for %s"), *QueryOwner->GetName());
+			UE_LOG(LogTemp, Verbose, TEXT("EnvQueryContext_ObjectiveLocation: TargetObjective is NULL in SharedContext for %s (likely Retreat strategy)"), *QueryOwner->GetName());
 		}
 	}
 	else

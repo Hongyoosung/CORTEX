@@ -221,6 +221,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Debug")
 	bool IsRunningMCTS() const { return bMCTSRunning; }
 
+	//--------------------------------------------------------------------------
+	// v9.0: OBJECTIVE ACCESSORS
+	//--------------------------------------------------------------------------
+
+	/** Get friendly objective (for Defend strategy) */
+	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
+	AObjectiveActor* GetFriendlyObjective() const { return FriendlyObjective; }
+
+	/** Get hostile objective (for Assault/Support strategies) */
+	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
+	AObjectiveActor* GetHostileObjective() const { return HostileObjective; }
 
 	//--------------------------------------------------------------------------
 	// EPISODE MANAGEMENT
@@ -230,7 +241,7 @@ public:
 
 	/** Handle episode completion */
 	UFUNCTION()
-	void OnEpisodeComplete(int32 EnviornmentID, const FEpisodeResult& Result);
+	void OnEpisodeComplete(int32 EnvironmentID, const FEpisodeResult& Result);
 
 
 
@@ -401,15 +412,15 @@ private:
 	/** Count of MCTS executions for averaging */
 	int32 MCTSExecutionCount = 0;
 
-	/** SimulationManager¿¡ ¸®´õ°¡ ¼º°øÀûÀ¸·Î µî·ÏµÇ¾ú´ÂÁö ¿©ºÎ */
+	/** SimulationManagerï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ÏµÇ¾ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ */
 	bool bIsRegisteredToManager = false;
 
-	/** ¸®´õ°¡ µî·ÏµÇ±â Àü¿¡ ¸ÕÀú µµÂøÇÑ ÆÈ·Î¿ö ´ë±â¿­ */
+	/** ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ÏµÇ±ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½È·Î¿ï¿½ ï¿½ï¿½â¿­ */
 	UPROPERTY()
 	TArray<AActor*> PendingFollowerRegistration;
 
 	FString CurrentBatchKey;
 
-	/** ´ë±â¿­¿¡ ÀÖ´Â ÆÈ·Î¿öµéÀ» ¸Å´ÏÀú¿¡ µî·ÏÇÏ´Â ³»ºÎ ÇÔ¼ö */
+	/** ï¿½ï¿½â¿­ï¿½ï¿½ ï¿½Ö´ï¿½ ï¿½È·Î¿ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Å´ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ï´ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ô¼ï¿½ */
 	void ProcessPendingRegistrations();
 };

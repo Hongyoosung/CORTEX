@@ -75,6 +75,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Observation|Building")
 	void ResetEpisode();
 
+	//--------------------------------------------------------------------------
+	// OBJECTIVE CONTEXT (v9.0)
+	//--------------------------------------------------------------------------
+
+	/** Populate objective context fields in observation (friendly and hostile objectives) */
+	void PopulateObjectiveContext(FObservationElement& Observation);
+
 public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION

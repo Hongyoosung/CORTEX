@@ -125,6 +125,31 @@ namespace RewardConfig {
 			default:                       return ASSAULT_WEIGHTS;
 		}
 	}
+
+	// === v9.0: PER-COMPONENT NORMALIZATION ===
+	// Prevents value function collapse by normalizing each component before weighting
+
+	struct FComponentNormalization
+	{
+		float Scale;      // Multiplicative scaling factor
+		float Offset;     // Additive offset after scaling
+		float ClipMin;    // Minimum value after normalization
+		float ClipMax;    // Maximum value after normalization
+
+		float Normalize(float RawValue) const
+		{
+			float Scaled = RawValue * Scale + Offset;
+			return FMath::Clamp(Scaled, ClipMin, ClipMax);
+		}
+	};
+
+	// Normalization parameters per component (tuned to balance component magnitudes)
+	constexpr FComponentNormalization OBJECTIVE_NORM = { 0.02f, -0.2f, -1.0f, 3.0f };     // Objective progress
+	constexpr FComponentNormalization COMBAT_NORM = { 0.04f, 0.0f, -0.5f, 2.0f };         // Combat effectiveness
+	constexpr FComponentNormalization SURVIVAL_NORM = { 0.2f, 0.0f, -2.0f, 0.0f };        // Survival (death penalty)
+	constexpr FComponentNormalization COVER_NORM = { 1.0f, 0.0f, 0.0f, 0.5f };            // Cover usage
+	constexpr FComponentNormalization COORD_NORM = { 0.05f, 0.0f, 0.0f, 1.5f };           // Team coordination
+	constexpr FComponentNormalization TACTICAL_NORM = { 1.0f, 0.0f, -0.5f, 1.5f };        // Tactical effectiveness
 }
 
 /**
@@ -297,6 +322,43 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void SetCurrentTacticalParameters(const FTacticalParameters& Params);
 
+	// ========================================================================
+	// v9.0: STRATEGY-SPECIFIC REWARD FUNCTIONS
+	// Use observation fields (HostileObjectiveDistance, FriendlyObjectiveDistance, etc.)
+	// ========================================================================
+
+	/**
+	 * Assault reward: Incentivize approaching and capturing hostile objective
+	 */
+	float CalculateAssaultReward(
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs
+	);
+
+	/**
+	 * Defend reward: Incentivize staying near friendly objective
+	 */
+	float CalculateDefendReward(
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs
+	);
+
+	/**
+	 * Support reward: Incentivize proximity to allies (uses AllyDistance)
+	 */
+	float CalculateSupportReward(
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs
+	);
+
+	/**
+	 * Retreat reward: Incentivize distance from enemies (uses DistanceToNearestEnemy)
+	 */
+	float CalculateRetreatReward(
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs
+	);
+
 
 	//--------------------------------------------------------------------------
 	// EVENT TRACKING
@@ -413,6 +475,9 @@ private:
 
 	/** Current tactical parameters from RL (for effectiveness reward calculation) */
 	FTacticalParameters CurrentTacticalParams;
+
+	/** v9.0: Previous tactical parameters (for temporal consistency reward) */
+	FTacticalParameters PreviousTacticalParams;
 
 	/** v8.0 REBALANCED: Track objective capture progress for incremental rewards */
 	float PreviousCaptureProgress = 0.0f;

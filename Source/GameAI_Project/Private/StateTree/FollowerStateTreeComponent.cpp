@@ -326,12 +326,34 @@ void UFollowerStateTreeComponent::UpdateContextFromFollower()
 	Context.bIsAlive = HealthComponent->bIsAlive;
 	Context.AccumulatedReward = FollowerComponent->GetAccumulatedReward();
 
-	// v8.0 FIX: Sync strategy assignment from MCTS to SharedContext
-	// This is CRITICAL for EQS context providers to work correctly:
-	// - EnvQueryContext_ObjectiveLocation reads SharedContext.TargetObjective
-	// - Without this sync, EQS tests score 0 and return no valid positions
+	// v9.0: Sync strategy assignment and compute implicit objective from team leader
+	// Objectives are no longer explicitly assigned - they're implicit in the strategy:
+	// - Assault/Support → Hostile objective
+	// - Defend → Friendly objective
+	// - Retreat → No specific objective
 	Context.AssignedStrategy = FollowerComponent->GetAssignedStrategy();
-	Context.TargetObjective = FollowerComponent->GetTargetObjective();
+
+	// v9.0: Compute implicit target objective based on strategy
+	if (Context.TeamLeader)
+	{
+		if (Context.AssignedStrategy == EStrategyType::Assault ||
+		    Context.AssignedStrategy == EStrategyType::Support)
+		{
+			Context.TargetObjective = Context.TeamLeader->GetHostileObjective();
+		}
+		else if (Context.AssignedStrategy == EStrategyType::Defend)
+		{
+			Context.TargetObjective = Context.TeamLeader->GetFriendlyObjective();
+		}
+		else // Retreat
+		{
+			Context.TargetObjective = nullptr;
+		}
+	}
+	else
+	{
+		Context.TargetObjective = nullptr;
+	}
 }
 
 bool UFollowerStateTreeComponent::IsStateTreeRunning() const

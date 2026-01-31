@@ -10,7 +10,7 @@ v8.0 Changes:
 
 v8.0 Architecture:
     - MCTS assigns strategies → RL outputs tactical parameters + combat priority
-    - Multi-head network: 50 input (46 base + 4 strategy one-hot) → [256, 256, 128]
+    - Multi-head network: 56 input (52 base + 4 strategy one-hot) → [256, 256, 128]
     - Action space: 5 continuous outputs (4 tactical params + 1 combat priority)
     - Exports to: cortex_policy_v8.onnx
 
@@ -38,7 +38,7 @@ try:
 except ImportError:
     print("Warning: training_env/config.py not found. Using defaults.")
     class RLConfig:
-        OBSERVATION_SIZE = 50  # 46 base + 4 strategy one-hot
+        OBSERVATION_SIZE = 56  # 52 base + 4 strategy one-hot
         NUM_STRATEGIES = 4
 
 import torch  # Must be imported before ray on Windows
@@ -87,7 +87,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
     Multi-Head PPO Network for Tactical Parameters + Combat Control.
 
     Architecture:
-        - Input: 50 features (46 base + 4 strategy one-hot)
+        - Input: 56 features (52 base + 4 strategy one-hot)
         - Shared Feature Extractor: [256 → 256 → 128] ReLU
         - 4 Strategy-Specific Mean Heads: Assault, Defend, Support, Retreat
         - 1 Combat Mean Head: FC(128→1)
@@ -102,7 +102,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
 
-        obs_dim = RLConfig.OBSERVATION_SIZE  # 50
+        obs_dim = RLConfig.OBSERVATION_SIZE  # 56
         self.num_outputs = num_outputs
         self.action_dim = num_outputs // 2  # 5
 
@@ -167,7 +167,7 @@ class MultiHeadTacticalPolicy(TorchModelV2, nn.Module):
         batch_size = obs.shape[0]
 
         # Extract strategy one-hot (last 4 features)
-        strategy_onehot = obs[:, 46:50]
+        strategy_onehot = obs[:, 52:56]
 
         # Run shared trunk
         features = self.shared_trunk(obs)
@@ -331,7 +331,7 @@ def create_ppo_config():
     
 
     # 5. Callbacks (Episode Logging only)
-    # v10.0: Removed PolicyUpdatePauseCallback - not needed in sync architecture
+    # Removed PolicyUpdatePauseCallback - not needed in sync architecture
     config.callbacks(EpisodeLoggerCallback)
 
     # 6. Debugging & Reporting
@@ -503,14 +503,46 @@ def train(args):
         SBDAPMConfig.NUM_WORKERS = num_workers
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
 
+    # Check if resuming from checkpoint
+    resume_checkpoint = None
+    start_iteration = 0
+    if args.resume:
+        resume_checkpoint = os.path.abspath(args.resume)
+        if not os.path.exists(resume_checkpoint):
+            print(f"ERROR: Checkpoint directory not found: {resume_checkpoint}")
+            sys.exit(1)
+
+        # Try to detect last iteration from progress.csv
+        progress_csv = os.path.join(resume_checkpoint, "progress.csv")
+        if os.path.exists(progress_csv):
+            try:
+                import csv
+                with open(progress_csv, 'r') as f:
+                    reader = csv.DictReader(f)
+                    rows = list(reader)
+                    if rows:
+                        last_row = rows[-1]
+                        start_iteration = int(last_row.get('training_iteration', 0))
+                        print(f"[Resume] Detected last completed iteration: {start_iteration}")
+            except Exception as e:
+                print(f"[Resume] Could not read iteration from progress.csv: {e}")
+                print("[Resume] Will resume from iteration 0")
+
     print("=" * 60)
     print("CORTEX v8.10.2 - Post-Diagnosis Corrective Fix")
+    if args.resume:
+        print(f"RESUMING from checkpoint: {resume_checkpoint}")
     print("=" * 60)
     print(f"  Host: {SBDAPMConfig.HOST}:{SBDAPMConfig.PORT}")
     print(f"  Workers: {SBDAPMConfig.NUM_WORKERS}")
     print(f"  UE5 Environments: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS}")
     print(f"  Total Agents: {SBDAPMConfig.NUM_UE5_ENVIRONMENTS * 8} ({SBDAPMConfig.NUM_UE5_ENVIRONMENTS} envs × 8 agents)")
-    print(f"  Iterations: {args.iterations}")
+    if args.resume:
+        print(f"  Starting Iteration: {start_iteration + 1}")
+        print(f"  Remaining Iterations: {args.iterations}")
+        print(f"  Total Iterations: {start_iteration + args.iterations}")
+    else:
+        print(f"  Iterations: {args.iterations}")
     print()
 
 
@@ -551,12 +583,15 @@ def train(args):
     register_env()
     register_custom_model()
 
-    # Create output directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(SBDAPMConfig.OUTPUT_DIR, timestamp)
-    os.makedirs(output_dir, exist_ok=True)
-
-    print(f"Output: {output_dir}")
+    # Create or use existing output directory
+    if args.resume:
+        output_dir = resume_checkpoint
+        print(f"Output: {output_dir} (resuming)")
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = os.path.join(SBDAPMConfig.OUTPUT_DIR, timestamp)
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Output: {output_dir}")
 
     # Create logger
     from ray.tune.logger import UnifiedLogger, TBXLogger, JsonLogger, CSVLogger
@@ -564,25 +599,64 @@ def train(args):
     def logger_creator(config_dict):
         return UnifiedLogger(config_dict, output_dir, loggers=[JsonLogger, CSVLogger, TBXLogger])
 
-    # Build algorithm
-    print("\nConnecting to UE5...")
-    config = create_ppo_config()
-
-    try:
-        algo = config.build(logger_creator=logger_creator)
-        print("Connected!\n")
-    except Exception as e:
-        print(f"[ERROR] Failed to connect: {e}")
-        ray.shutdown()
-        sys.exit(1)
+    # Build or restore algorithm
+    if args.resume:
+        print(f"\nRestoring from checkpoint: {resume_checkpoint}")
+        try:
+            config = create_ppo_config()
+            algo = config.build(logger_creator=logger_creator)
+            algo.restore(resume_checkpoint)
+            print("Checkpoint restored successfully!\n")
+        except Exception as e:
+            print(f"[ERROR] Failed to restore checkpoint: {e}")
+            ray.shutdown()
+            sys.exit(1)
+    else:
+        print("\nConnecting to UE5...")
+        config = create_ppo_config()
+        try:
+            algo = config.build(logger_creator=logger_creator)
+            print("Connected!\n")
+        except Exception as e:
+            print(f"[ERROR] Failed to connect: {e}")
+            ray.shutdown()
+            sys.exit(1)
 
     # Training loop
     best_reward = float("-inf")
     cumulative_episodes = 0
     cumulative_steps = 0
 
+    # If resuming, try to load cumulative stats from checkpoint
+    if args.resume:
+        progress_csv = os.path.join(resume_checkpoint, "progress.csv")
+        if os.path.exists(progress_csv):
+            try:
+                import csv
+                with open(progress_csv, 'r') as f:
+                    reader = csv.DictReader(f)
+                    rows = list(reader)
+                    if rows:
+                        last_row = rows[-1]
+                        # Try to get cumulative stats
+                        cumulative_episodes = int(last_row.get('episodes_total', 0))
+                        cumulative_steps = int(last_row.get('num_env_steps_sampled_lifetime', 0))
+
+                        # Try to get best reward from all previous iterations
+                        all_rewards = [float(row.get('env_runners/episode_reward_mean', float('-inf')))
+                                      for row in rows if row.get('env_runners/episode_reward_mean')]
+                        if all_rewards:
+                            best_reward = max([r for r in all_rewards if not np.isnan(r)])
+
+                        print(f"[Resume] Loaded stats: episodes={cumulative_episodes}, steps={cumulative_steps}, best_reward={best_reward:.2f}")
+            except Exception as e:
+                print(f"[Resume] Could not load cumulative stats: {e}")
+
     print("\n" + "="*80)
-    print("TRAINING PROGRESS")
+    if args.resume:
+        print(f"RESUMING TRAINING FROM ITERATION {start_iteration + 1}")
+    else:
+        print("TRAINING PROGRESS")
     print("="*80)
     print(f"{'Iter':<6} {'Reward':>10} {'EpLen':>8} {'Episodes':>10} {'Steps':>12} {'Time':>8} {'Best':>10}")
     print("-"*80)
@@ -619,13 +693,15 @@ def train(args):
         cumulative_steps += agent_steps
 
         # Print concise progress line
+        current_iter = start_iteration + i + 1
+        total_iters = start_iteration + args.iterations
         status_indicator = "✓" if episodes_completed_this_iter else "→"
-        print(f"{status_indicator} {i+1:>3}/{args.iterations:<3} {reward:>10.2f} {ep_len:>8.1f} "
+        print(f"{status_indicator} {current_iter:>3}/{total_iters:<3} {reward:>10.2f} {ep_len:>8.1f} "
               f"{episodes:>10} {agent_steps:>12} {iter_time:>7.1f}s {best_reward:>10.2f}")
 
         # Print detailed breakdown every 10 iterations or on first iteration
         if i == 0 or (i + 1) % 10 == 0:
-            print(f"\n  [ITERATION {i+1} DETAILS]")
+            print(f"\n  [ITERATION {current_iter} DETAILS]")
             if episodes_completed_this_iter:
                 print(f"    Episode Reward: mean={reward:.2f}, min={reward_min:.2f}, max={reward_max:.2f}")
                 print(f"    Episode length: {ep_len:.1f} steps")
@@ -663,19 +739,24 @@ def train(args):
         # Checkpoint
         if (i + 1) % args.checkpoint_freq == 0:
             algo.save(output_dir)
-            print(f"  >> Checkpoint saved at iteration {i+1}\n")
+            print(f"  >> Checkpoint saved at iteration {current_iter}\n")
 
         # Track best
         if reward > best_reward and not np.isnan(reward):
             best_reward = reward
             algo.save(os.path.join(output_dir, "best"))
-            print(f"  >> NEW BEST REWARD: {best_reward:.2f} (iteration {i+1})\n")
+            print(f"  >> NEW BEST REWARD: {best_reward:.2f} (iteration {current_iter})\n")
 
     # Final save
     print("\n" + "="*80)
     print("TRAINING COMPLETE!")
     print("="*80)
-    print(f"Total iterations: {args.iterations}")
+    if args.resume:
+        print(f"Resumed from iteration: {start_iteration}")
+        print(f"Additional iterations: {args.iterations}")
+        print(f"Total iterations: {start_iteration + args.iterations}")
+    else:
+        print(f"Total iterations: {args.iterations}")
     print(f"Total episodes: {cumulative_episodes}")
     print(f"Total agent steps: {cumulative_steps}")
     print(f"Best reward: {best_reward:.2f}")
@@ -703,6 +784,8 @@ def main():
     parser.add_argument("--checkpoint-freq", type=int, default=SBDAPMConfig.CHECKPOINT_FREQ)
     parser.add_argument("--host", type=str, default=SBDAPMConfig.HOST)
     parser.add_argument("--port", type=int, default=SBDAPMConfig.PORT)
+    parser.add_argument("--resume", type=str, default=None,
+                       help="Path to checkpoint directory to resume training from (e.g., training_results/20260131_100243)")
 
     args = parser.parse_args()
 

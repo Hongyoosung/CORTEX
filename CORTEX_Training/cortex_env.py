@@ -1,5 +1,5 @@
 """
-CORTEX Synchronous Multi-Agent Environment (v10.0)
+CORTEX Synchronous Multi-Agent Environment (v9.0)
 
 This is a complete refactor from v9.0.2 async architecture to a fully synchronous design.
 
@@ -76,7 +76,8 @@ try:
     from training_env.config import RLConfig
 except ImportError:
     class RLConfig:
-        OBSERVATION_SIZE = 50
+        OBSERVATION_BASE_SIZE = 52
+        OBSERVATION_SIZE = 56
         NUM_TOTAL_OUTPUTS = 5
 
 
@@ -101,10 +102,10 @@ if SCHOLA_AVAILABLE:
             self.num_envs = kwargs.get("num_envs", 4)
             self._agent_strategies = {}  # flat_id → strategy_idx (0=Assault, 1=Defend, 2=Support, 3=Retreat)
 
-            print(f"[CORTEX v10.0] Connecting to {host}:{port}...")
-            print(f"[CORTEX v10.0] Multi-environment: {self.num_envs} parallel UE5 envs")
-            print(f"[CORTEX v10.0] Architecture: SYNCHRONOUS (blocking send/poll)")
-            print(f"[CORTEX v10.0] Policy Update Behavior: Natural idle (no step() calls)")
+            print(f"[CORTEX v9.0] Connecting to {host}:{port}...")
+            print(f"[CORTEX v9.0] Multi-environment: {self.num_envs} parallel UE5 envs")
+            print(f"[CORTEX v9.0] Architecture: SYNCHRONOUS (blocking send/poll)")
+            print(f"[CORTEX v9.0] Policy Update Behavior: Natural idle (no step() calls)")
 
             # Connect to UE5
             try:
@@ -114,14 +115,14 @@ if SCHOLA_AVAILABLE:
                     verbosity=1,
                     auto_reset_type=AutoResetType.SAME_STEP
                 )
-                print(f"[CORTEX v10.0] ✅ Connected!")
+                print(f"[CORTEX v9.0] ✅ Connected!")
 
                 # Verify environment structure
                 if len(self.schola_env.ids) == self.num_envs:
                     total_agents = sum(len(a) for a in self.schola_env.ids)
-                    print(f"[CORTEX v10.0] ✅ Verified {self.num_envs} environments with {total_agents} total agents")
+                    print(f"[CORTEX v9.0] ✅ Verified {self.num_envs} environments with {total_agents} total agents")
                 else:
-                    print(f"[CORTEX v10.0] ⚠️  WARNING: Expected {self.num_envs} environments but got {len(self.schola_env.ids)}")
+                    print(f"[CORTEX v9.0] ⚠️  WARNING: Expected {self.num_envs} environments but got {len(self.schola_env.ids)}")
 
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
@@ -191,7 +192,7 @@ if SCHOLA_AVAILABLE:
                         self.reverse_map[(physical_env_idx, schola_agent_idx)] = flat_id
                         self._agent_ids.add(flat_id)
 
-            print(f"[CORTEX v10.0] Agent map: {len(self._agent_ids)} agents")
+            print(f"[CORTEX v9.0] Agent map: {len(self._agent_ids)} agents")
 
         def _get_agents_for_env(self, physical_env_idx):
             """Get all agent IDs belonging to a physical Schola environment."""
@@ -221,29 +222,35 @@ if SCHOLA_AVAILABLE:
             return all_keys
 
         def _build_observation(self, base_obs, strategy_idx=0):
-            """Build 50-dim observation: pad/truncate to 46 + add strategy one-hot.
+            """Build 56-dim observation: pad/truncate to 52 + add strategy one-hot.
             
             Args:
-                base_obs: 46-dim observation vector
+                base_obs: 52-dim observation vector (v9.0)
                 strategy_idx: Strategy index (0=Assault, 1=Defend, 2=Support, 3=Retreat)
             """
-            # Pad/truncate to 46 dimensions
-            if len(base_obs) < 46:
-                base_obs = np.pad(base_obs[:46], (0, 46 - len(base_obs)), mode='constant')
+            # [v9.0 수정] Base Feature 크기 변경: 46 -> 52
+            # (Agent 4 + Combat 1 + Perception 16 + Support 5 + Enemy 16 + Tactical 4 + Objective 6 = 52)
+            TARGET_BASE_SIZE = 52
+
+            # Pad/truncate to 52 dimensions
+            if len(base_obs) < TARGET_BASE_SIZE:
+                # 부족하면 0으로 패딩 (초기화 단계 등에서 발생 가능)
+                base_obs = np.pad(base_obs[:TARGET_BASE_SIZE], (0, TARGET_BASE_SIZE - len(base_obs)), mode='constant')
             else:
-                base_obs = base_obs[:46]
+                # 넘치면 자름 (혹시 모를 56개 전체가 들어왔을 때를 대비해 52개만 취함)
+                base_obs = base_obs[:TARGET_BASE_SIZE]
             
-            # ✅ Strategy one-hot을 파라미터에서 생성
+            # ✅ Strategy one-hot을 파라미터에서 생성 (기존 로직 유지)
             strategy_onehot = np.zeros(4, dtype=np.float32)
             strategy_idx = min(int(strategy_idx), 3)  # 범위 체크: [0,3]
             strategy_onehot[strategy_idx] = 1.0
             
-            # ✅ Strategy 분포 추적
+            # ✅ Strategy 분포 추적 (기존 로직 유지)
             if not hasattr(self, '_strategy_count'):
                 self._strategy_count = [0, 0, 0, 0]
             self._strategy_count[strategy_idx] += 1
             
-            # ✅ 매 10000 observation마다 로그
+            # ✅ 매 10000 observation마다 로그 (기존 로직 유지)
             if sum(self._strategy_count) % 10000 == 0:
                 total = sum(self._strategy_count)
                 pct = [f"{100*c//total:>3}%" for c in self._strategy_count]
@@ -251,6 +258,7 @@ if SCHOLA_AVAILABLE:
                 dist_str = " | ".join([f"{n}={p}" for n, p in zip(names, pct)])
                 print(f"[STRATEGY DIST] {dist_str}")
             
+            # 최종 결과: 52(Base) + 4(Strategy) = 56 floats
             return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
 
         @property
@@ -492,17 +500,18 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    full_obs = np.zeros(50, dtype=np.float32)
+                    full_obs = np.zeros(56, dtype=np.float32)
 
                 # Extract strategy from observation (last 4 dimensions are one-hot)
-                if len(full_obs) >= 50:
-                    base_obs = full_obs[:46]
-                    strategy_onehot = full_obs[46:50]
+                obs_len = len(full_obs)
+                if obs_len >= 56: # v9.0 Expected Size
+                    base_len = obs_len - 4
+                    base_obs = full_obs[:base_len]
+                    strategy_onehot = full_obs[base_len:] # 마지막 4개 가져오기
                     strategy_idx = int(np.argmax(strategy_onehot))
                 else:
-                    # Fallback for old observations
-                    base_obs = full_obs[:46] if len(full_obs) >= 46 else np.pad(full_obs, (0, 46 - len(full_obs)))
-                    strategy_idx = 0
+                    print(f"[OBS PARSE WARNING] Unexpected obs size {obs_len} for {flat_id}")
+
 
                 # Cache strategy for this agent
                 self._agent_strategies[flat_id] = strategy_idx
@@ -556,16 +565,16 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    full_obs = np.zeros(50, dtype=np.float32)
+                    full_obs = np.zeros(56, dtype=np.float32)
 
                 # Extract strategy from observation (last 4 dimensions are one-hot)
-                if len(full_obs) >= 50:
-                    base_obs = full_obs[:46]
-                    strategy_onehot = full_obs[46:50]
+                if len(full_obs) >= 56:
+                    base_obs = full_obs[:52]
+                    strategy_onehot = full_obs[52:56]
                     strategy_idx = int(np.argmax(strategy_onehot))
                 else:
                     # Fallback for old observations
-                    base_obs = full_obs[:46] if len(full_obs) >= 46 else np.pad(full_obs, (0, 46 - len(full_obs)))
+                    base_obs = full_obs[:52] if len(full_obs) >= 52 else np.pad(full_obs, (0, 52 - len(full_obs)))
                     strategy_idx = 0
 
                 # Cache strategy for this agent
@@ -619,17 +628,16 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    full_obs = np.zeros(50, dtype=np.float32)
+                    full_obs = np.zeros(56, dtype=np.float32)
 
                 # Extract strategy from observation (last 4 dimensions are one-hot)
-                if len(full_obs) >= 50:
-                    base_obs = full_obs[:46]
-                    strategy_onehot = full_obs[46:50]
+                if len(full_obs) >= 56:
+                    base_obs = full_obs[:52]
+                    strategy_onehot = full_obs[52:56]
                     strategy_idx = int(np.argmax(strategy_onehot))
+                    print(f"[OBS PROCESS] {flat_id} strategy one-hot: {strategy_onehot}, idx: {strategy_idx}")
                 else:
-                    # Fallback for old observations
-                    base_obs = full_obs[:46] if len(full_obs) >= 46 else np.pad(full_obs, (0, 46 - len(full_obs)))
-                    strategy_idx = 0
+                    print(f"[OBS PROCESS WARNING] Unexpected obs size {len(full_obs)} for {flat_id}")
 
                 # Cache strategy for this agent
                 self._agent_strategies[flat_id] = strategy_idx
@@ -696,7 +704,7 @@ if SCHOLA_AVAILABLE:
             obs_dict = {}
             for flat_id in self._agent_ids:
                 strategy_idx = self._agent_strategies.get(flat_id, 0)
-                obs_dict[flat_id] = self._build_observation(np.zeros(46, dtype=np.float32), strategy_idx)
+                obs_dict[flat_id] = self._build_observation(np.zeros(52, dtype=np.float32), strategy_idx)
 
             reward_dict = {flat_id: 0.0 for flat_id in self._agent_ids}
             terminated_dict = {flat_id: False for flat_id in self._agent_ids}
@@ -712,7 +720,7 @@ if SCHOLA_AVAILABLE:
             fallback_obs = {}
             for flat_id in self._agent_ids:
                 strategy_idx = self._agent_strategies.get(flat_id, 0)
-                fallback_obs[flat_id] = self._build_observation(np.zeros(46, dtype=np.float32), strategy_idx)
+                fallback_obs[flat_id] = self._build_observation(np.zeros(52, dtype=np.float32), strategy_idx)
 
             terminated_fallback = {flat_id: True for flat_id in self._agent_ids}
             terminated_fallback['__all__'] = True
@@ -735,7 +743,7 @@ if SCHOLA_AVAILABLE:
 
         def close(self):
             """Clean shutdown."""
-            print("[CORTEX v10.0] Closing environment...")
+            print("[CORTEX 9.0] Closing environment...")
             if hasattr(self.schola_env, 'close'):
                 self.schola_env.close()
-            print("[CORTEX v10.0] Closed")
+            print("[CORTEX v9.0] Closed")

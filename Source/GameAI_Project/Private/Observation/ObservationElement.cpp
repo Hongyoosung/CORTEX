@@ -1,12 +1,12 @@
 #include "Observation/ObservationElement.h"
 #include "Core/ProfilingMacros.h"  // v6.0: Performance profiling
 
-TArray<float> FObservationElement::ToFeatureVector() const
+TArray<float> FObservationElement::ToFeatureVector(bool bIncludeStrategy) const
 {
     SCOPE_CYCLE_COUNTER(STAT_ObservationBuild);  // v6.0: Profile observation building (target: <0.5ms)
 
     TArray<float> Features;
-    Features.Reserve(46);  // v8.0: 46 base features (strategy context added by network)
+    Features.Reserve(52);  // v9.0: 52 base features (46 + 6 objective context, strategy context added by network)
 
     // ========================================
     // AGENT STATE (7 features) - v5.0 streamlined
@@ -91,8 +91,40 @@ TArray<float> FObservationElement::ToFeatureVector() const
     Features.Add(static_cast<float>(AllyDirection.X));
     Features.Add(static_cast<float>(AllyDirection.Y));
 
+    // ========================================
+    // OBJECTIVE CONTEXT (6 features) - v9.0
+    // Enables strategy-specific reward functions without explicit objective assignment
+    // ========================================
 
-    check(Features.Num() == 46);
+    // Friendly objective distance (1) - already normalized [0, 1]
+    Features.Add(FMath::Clamp(FriendlyObjectiveDistance, 0.0f, 1.0f));
+
+    // Friendly objective direction (2) - normalized 2D vector
+    Features.Add(static_cast<float>(FriendlyObjectiveDirection.X));
+    Features.Add(static_cast<float>(FriendlyObjectiveDirection.Y));
+
+    // Hostile objective distance (1) - already normalized [0, 1]
+    Features.Add(FMath::Clamp(HostileObjectiveDistance, 0.0f, 1.0f));
+
+    // Hostile objective direction (2) - normalized 2D vector
+    Features.Add(static_cast<float>(HostileObjectiveDirection.X));
+    Features.Add(static_cast<float>(HostileObjectiveDirection.Y));
+
+    if (bIncludeStrategy)
+    {
+        for (int32 i = 0; i < 4; i++)
+        {
+            if (i == AssignedStrategyIndex)
+            {
+                Features.Add(1.0f);
+            }
+            else
+            {
+                Features.Add(0.0f);
+            }
+        }
+    }
+
     return Features;
 }
 
@@ -122,6 +154,12 @@ void FObservationElement::Reset()
     AllyHealth = 1.0f;
     AllyDistance = 0.0f;
     AllyDirection = FVector2D::ZeroVector;
+
+    // Objective Context (v9.0: 6 features)
+    FriendlyObjectiveDistance = 1.0f;
+    FriendlyObjectiveDirection = FVector2D::ZeroVector;
+    HostileObjectiveDistance = 1.0f;
+    HostileObjectiveDirection = FVector2D::ZeroVector;
 }
 
 float FObservationElement::CalculateSimilarity(

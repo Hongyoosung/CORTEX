@@ -10,10 +10,10 @@ void UTacticalStateComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// v8.0: Initialize with default strategy assignment
+	// v9.0: Initialize with default strategy assignment (no objective)
 	CurrentAssignment.Agent = GetOwner();
 	CurrentAssignment.Strategy = EStrategyType::Assault;
-	CurrentAssignment.TargetObjective = nullptr;
+	// v9.0: TargetObjective removed - objectives implicit in strategy rewards
 	CurrentAssignment.Priority = 5;
 	CurrentAssignment.ExpectedValue = 0.0f;
 	CurrentAssignment.VisitCount = 0;
@@ -38,10 +38,9 @@ void UTacticalStateComponent::SetStrategyAssignment(const FStrategyAssignment& A
 	// Update timestamp
 	CurrentAssignment.Timestamp = GetWorld()->GetTimeSeconds();
 
-	UE_LOG(LogTemp, Verbose, TEXT("[TacticalState] '%s': Strategy assignment updated - Strategy=%s, Objective=%s"),
+	UE_LOG(LogTemp, Verbose, TEXT("[TacticalState] '%s': Strategy assignment updated - Strategy=%s"),
 		*GetOwner()->GetName(),
-		*UEnum::GetValueAsString(Assignment.Strategy),
-		Assignment.TargetObjective ? *Assignment.TargetObjective->GetName() : TEXT("None"));
+		*UEnum::GetValueAsString(Assignment.Strategy));
 
 	// v8.0 DEPRECATED: Update CurrentStrategy for backwards compatibility
 	CurrentStrategy = Assignment.Strategy;
@@ -93,9 +92,9 @@ void UTacticalStateComponent::MarkAsAlive()
 
 void UTacticalStateComponent::ResetState()
 {
-	// Reset assignment to default
+	// v9.0: Reset assignment to default (no objective)
 	CurrentAssignment.Strategy = EStrategyType::Assault;
-	CurrentAssignment.TargetObjective = nullptr;
+	// v9.0: TargetObjective removed - objectives implicit in strategy rewards
 	CurrentAssignment.Priority = 5;
 	LastAssignment = FStrategyAssignment();
 

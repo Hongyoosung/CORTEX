@@ -1,4 +1,4 @@
-// TacticalRewardProvider.h - Schola reward provider for combat events
+// TacticalRewardProvider.h - Schola reward provider for strategy-specific rewards
 
 #pragma once
 
@@ -7,15 +7,18 @@
 #include "TacticalRewardProvider.generated.h"
 
 class UFollowerAgentComponent;
+class URewardCalculator;
+class UObservationBuilderComponent;
 
 /**
- * Schola reward provider that exposes rewards from combat events.
+ * v9.0: Schola reward provider that integrates RewardCalculator.
  *
- * Reward structure:
- * +10.0 = Kill enemy
- * +5.0  = Deal damage
- * -5.0  = Take damage
- * -10.0 = Death
+ * Provides strategy-specific, observation-based rewards:
+ * - Assault: HostileObjectiveDistance rewards
+ * - Defend: FriendlyObjectiveDistance rewards
+ * - Support: AllyDistance rewards
+ * - Retreat: EnemyDistance rewards
+ * - Tactical parameter effectiveness (gradient-based)
  */
 UCLASS(BlueprintType, Blueprintable, EditInlineNew, meta = (DisplayName = "Tactical Reward Provider"))
 class GAMEAI_PROJECT_API UTacticalRewardProvider : public UObject
@@ -50,4 +53,12 @@ protected:
 
 	/** Find follower agent component */
 	UFollowerAgentComponent* FindFollowerAgent() const;
+
+	/** v9.0: Cached reward calculator (strategy-specific reward computation) */
+	UPROPERTY()
+	URewardCalculator* CachedRewardCalculator = nullptr;
+
+	/** v9.0: Cached observation builder (for current/previous observations) */
+	UPROPERTY()
+	UObservationBuilderComponent* CachedObservationBuilder = nullptr;
 };

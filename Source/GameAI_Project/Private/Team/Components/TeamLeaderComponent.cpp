@@ -105,7 +105,7 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			!bMCTSRunning &&
 			GetAliveFollowers().Num() > 0)
 		{
-			UE_LOG(LogTemp, Display, TEXT("⏰ [CONTINUOUS PLANNING] '%s': Planning interval reached (%.2fs), triggering MCTS"),
+			UE_LOG(LogTemp, Display, TEXT("[CONTINUOUS PLANNING] '%s': Planning interval reached (%.2fs), triggering MCTS"),
 				*TeamName, TimeSinceLastPlanning);
 
 			TimeSinceLastPlanning = 0.0f;
@@ -657,7 +657,9 @@ void UTeamLeaderComponent::OnEpisodeStart(int32 EnvironmentID, int32 EpisodeNumb
 
 void UTeamLeaderComponent::OnEpisodeComplete(int32 EnvironmentID, const FEpisodeResult& Result)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] Episode complete received for Env %d | Team %d"), EnvironmentID, TeamID);
+	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END v9.0] 🏁 Team %d (%s): Episode complete received for Env %d"),
+		TeamID, *TeamName, EnvironmentID);
+
 	// 1. [Multi-Env Filter] 이 이벤트가 우리 환경에서 발생한 것인지 확인
 	// 가정: EnvironmentID = TeamID / 2 (0,1팀 -> Env0 | 2,3팀 -> Env1 ...)
 	int32 MyEnvironmentID = TeamID / 2;
@@ -665,6 +667,8 @@ void UTeamLeaderComponent::OnEpisodeComplete(int32 EnvironmentID, const FEpisode
 	if (EnvironmentID != MyEnvironmentID)
 	{
 		// 다른 환경(병렬 훈련 중인 다른 팀들)의 결과이므로 무시
+		UE_LOG(LogTemp, Verbose, TEXT("[EPISODE END v9.0] Team %d: Ignoring Env %d (MyEnv=%d)"),
+			TeamID, EnvironmentID, MyEnvironmentID);
 		return;
 	}
 
@@ -692,6 +696,9 @@ void UTeamLeaderComponent::OnEpisodeComplete(int32 EnvironmentID, const FEpisode
 	{
 		if (!CurrentBatchKey.IsEmpty())
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[MCTS CACHE UPDATE v9.0] Team %d: Updating batch '%s' with result..."),
+				TeamID, *CurrentBatchKey);
+
 			StrategicMCTS->UpdateBatchCache(CurrentAssignments, LocalResult);
 
 			// 로그 출력 (디버깅용)
@@ -703,8 +710,8 @@ void UTeamLeaderComponent::OnEpisodeComplete(int32 EnvironmentID, const FEpisode
 			case ETeamEpisodeResult::Draw: ResultStr = TEXT("DRAW ➖"); break;
 			}
 
-			UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] Env %d | Team %d | Batch '%s' Result: %s"),
-				EnvironmentID, TeamID, *CurrentBatchKey, *ResultStr);
+			UE_LOG(LogTemp, Warning, TEXT("[MCTS CACHE UPDATE v9.0] ✅ Team %d | Batch '%s' → %s"),
+				TeamID, *CurrentBatchKey, *ResultStr);
 
 			// 4. [Persistence] 캐시 저장 (옵션: 에피소드 10회마다 저장)
 			static int32 EpisodeCounter = 0;
@@ -712,15 +719,18 @@ void UTeamLeaderComponent::OnEpisodeComplete(int32 EnvironmentID, const FEpisode
 			{
 				FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
 				StrategicMCTS->SaveBatchCache(CachePath);
+				UE_LOG(LogTemp, Warning, TEXT("[MCTS CACHE v9.0] 💾 Saved cache to disk (Episode %d)"), EpisodeCounter);
 			}
-
-			UE_LOG(LogTemp, Warning, TEXT("✅ [MCTS Update] Cache updated for batch '%s'"), *CurrentBatchKey);
 		}
 		else
 		{
 			// 이 로그가 뜨면 MCTS가 에피소드 중에 한 번도 안 돈 것입니다.
-			UE_LOG(LogTemp, Error, TEXT("❌ [MCTS Update Failed] CurrentBatchKey is EMPTY! MCTS did not run this episode."));
+			UE_LOG(LogTemp, Error, TEXT("❌ [MCTS CACHE UPDATE v9.0 FAILED] Team %d: CurrentBatchKey is EMPTY! MCTS did not run this episode."), TeamID);
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [MCTS CACHE UPDATE v9.0 FAILED] Team %d: StrategicMCTS is NULL!"), TeamID);
 	}
 
 	// 5. [Reset] 다음 에피소드를 위해 상태 초기화
@@ -840,6 +850,9 @@ void UTeamLeaderComponent::RunStrategyAssignment()
 	// Store for end-of-episode cache update
 	CurrentBatchKey = StrategicMCTS->GetBatchKey(Assignments);
 	CurrentAssignments = Assignments;
+
+	UE_LOG(LogTemp, Warning, TEXT("[MCTS BATCH STORED v9.0] Team %d: BatchKey='%s' (%d assignments)"),
+		TeamID, *CurrentBatchKey, CurrentAssignments.Num());
 
 	// [Fix] TMap의 값들을 TArray로 변환하여 전달
 	TArray<FStrategyAssignment> AssignmentList;
@@ -970,6 +983,19 @@ void UTeamLeaderComponent::ApplyStrategyAssignment(const TArray<FStrategyAssignm
 			CountPair.Value);
 	}
 
+	// v9.0 FIX: Clear previous assignments to prevent cache key corruption
+	// When continuous planning triggers multiple MCTS runs per episode,
+	// we must replace old assignments completely, not merge them
+	FString OldBatchKey = CurrentBatchKey;
+	int32 OldAssignmentCount = CurrentAssignments.Num();
+	CurrentAssignments.Empty();
+
+	if (OldAssignmentCount > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ASSIGNMENT v9.0 FIX] 🔄 Replacing previous batch: OldKey='%s' (%d assignments)"),
+			*OldBatchKey, OldAssignmentCount);
+	}
+
 	// Apply assignments to followers
 	for (const FStrategyAssignment& Assignment : Assignments)
 	{
@@ -990,13 +1016,10 @@ void UTeamLeaderComponent::ApplyStrategyAssignment(const TArray<FStrategyAssignm
 		{
 			FollowerComp->SetStrategyAssignment(Assignment);
 
-			// v8.0: Enhanced logging
-			FString ObjectiveName = Assignment.TargetObjective ? Assignment.TargetObjective->GetName() : TEXT("None");
-
-			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v8.0] Agent '%s' → Strategy '%s' (Objective=%s, Priority=%d, Value=%.2f, Visits=%d)"),
+			// v9.0: Strategy-only assignment logging (no explicit objective)
+			UE_LOG(LogTemp, Warning, TEXT("🎯 [ASSIGNMENT v9.0] Agent '%s' → Strategy '%s' (Priority=%d, Value=%.2f, Visits=%d)"),
 				*Agent->GetName(),
 				*UEnum::GetValueAsString(Assignment.Strategy),
-				*ObjectiveName,
 				Assignment.Priority,
 				Assignment.ExpectedValue,
 				Assignment.VisitCount);
@@ -1010,9 +1033,20 @@ void UTeamLeaderComponent::ApplyStrategyAssignment(const TArray<FStrategyAssignm
 
 	if (StrategicMCTS && CurrentAssignments.Num() > 0)
 	{
-		CurrentBatchKey = StrategicMCTS->GetBatchKey(CurrentAssignments);
-		UE_LOG(LogTemp, Warning, TEXT("[✅ BATCH KEY SET] %s: BatchKey='%s' (%d assignments)"),
-			*TeamName, *CurrentBatchKey, CurrentAssignments.Num());
+		FString NewBatchKey = StrategicMCTS->GetBatchKey(CurrentAssignments);
+
+		if (NewBatchKey != OldBatchKey)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[✅ BATCH KEY UPDATED] %s: '%s' → '%s' (%d assignments)"),
+				*TeamName, *OldBatchKey, *NewBatchKey, CurrentAssignments.Num());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[✅ BATCH KEY SET] %s: BatchKey='%s' (%d assignments)"),
+				*TeamName, *NewBatchKey, CurrentAssignments.Num());
+		}
+
+		CurrentBatchKey = NewBatchKey;
 	}
 
 	// Broadcast event (v8.0)
@@ -1142,14 +1176,27 @@ void UTeamLeaderComponent::DrawDebugInfo()
 
 			FVector AgentPos = Agent->GetActorLocation();
 
-			// Get objective position
+			// v9.0: Get implicit objective based on strategy
 			FVector ObjectivePos = FVector::ZeroVector;
-			if (Assignment.TargetObjective && IsValid(Assignment.TargetObjective))
+			AObjectiveActor* ImplicitObjective = nullptr;
+
+			// Assault/Support → Hostile objective, Defend → Friendly objective
+			if (Assignment.Strategy == EStrategyType::Assault || Assignment.Strategy == EStrategyType::Support)
 			{
-				ObjectivePos = Assignment.TargetObjective->GetActorLocation();
+				ImplicitObjective = HostileObjective;
+			}
+			else if (Assignment.Strategy == EStrategyType::Defend)
+			{
+				ImplicitObjective = FriendlyObjective;
+			}
+			// Retreat has no specific objective
+
+			if (ImplicitObjective && IsValid(ImplicitObjective))
+			{
+				ObjectivePos = ImplicitObjective->GetActorLocation();
 			}
 
-			// Draw MCTS assignment arrow (yellow arrow: Agent → Objective)
+			// Draw MCTS assignment arrow (yellow arrow: Agent → Implicit Objective)
 			if (!ObjectivePos.IsZero())
 			{
 				DrawDebugDirectionalArrow(
@@ -1177,10 +1224,10 @@ void UTeamLeaderComponent::DrawDebugInfo()
 				true  // Draw shadow
 			);
 
-			// Draw objective type (cyan text above objective)
-			if (Assignment.TargetObjective && !ObjectivePos.IsZero())
+			// Draw implicit objective type (cyan text above objective)
+			if (ImplicitObjective && !ObjectivePos.IsZero())
 			{
-				FString ObjectiveText = Assignment.TargetObjective->GetName();
+				FString ObjectiveText = ImplicitObjective->GetName();
 				DrawDebugString(
 					World,
 					ObjectivePos + FVector(0, 0, 100),

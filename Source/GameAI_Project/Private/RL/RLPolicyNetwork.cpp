@@ -53,9 +53,9 @@ FMacroAction URLPolicyNetwork::GetMacroAction(const FObservationElement& Observa
 		return Action;
 	}
 
-	// Build 68-feature input (64 base + 4 strategy one-hot)
+	// Build 56-feature input (52 base + 4 strategy one-hot)
 	TArray<float> InputFeatures = BuildNetworkInputV8(Observation, AssignedStrategy);
-	check(InputFeatures.Num() == 68);
+	check(InputFeatures.Num() == 56);
 
 	// Forward pass through multi-head network
 	FNetworkOutputV8 Output = ForwardPassV8(InputFeatures);
@@ -88,7 +88,7 @@ float URLPolicyNetwork::GetStateValueV8(const FObservationElement& Observation, 
 		return FMath::Clamp(value, -1.0f, 1.0f);
 	}
 
-	// Build 68-feature input
+	// Build 56-feature input
 	TArray<float> InputFeatures = BuildNetworkInputV8(Observation, AssignedStrategy);
 
 	// Forward pass
@@ -124,21 +124,21 @@ TArray<FMacroAction> URLPolicyNetwork::GetMacroActionsBatched(
 		return Actions;
 	}
 
-	// Build batched input tensor [BatchSize, 68]
+	// Build batched input tensor [BatchSize, 56]
 	TArray<float> BatchedInput;
-	BatchedInput.Reserve(BatchSize * 68);
+	BatchedInput.Reserve(BatchSize * 56);
 
 	for (int32 i = 0; i < BatchSize; ++i)
 	{
 		TArray<float> Features = BuildNetworkInputV8(Observations[i], AssignedStrategies[i]);
-		check(Features.Num() == 68);
+		check(Features.Num() == 56);
 		BatchedInput.Append(Features);
 	}
 
 	// Prepare input tensor
 	UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::Make({
 		static_cast<uint32>(BatchSize),
-		68u
+		56u
 	});
 
 	// Prepare output buffers (6 outputs from multi-head network)
@@ -262,25 +262,14 @@ TArray<float> URLPolicyNetwork::BuildNetworkInputV8(const FObservationElement& O
 {
 	SCOPE_CYCLE_COUNTER(STAT_RLBuildInput);  // v8.0: Profile input preparation
 
-	TArray<float> Input;
-	Input.Reserve(68);
+	TArray<float> Input = Observation.ToFeatureVector(false);
 
-	// Base observation (64 features)
-	TArray<float> BaseFeatures = Observation.ToFeatureVector();
-	check(BaseFeatures.Num() == 64);
-	Input.Append(BaseFeatures);
+	// 2. MCTS가 테스트하려는 가상의 전략(AssignedStrategy)을 바로 붙임
+	TArray<float> StrategyOneHot = { 0.0f, 0.0f, 0.0f, 0.0f };
+	StrategyOneHot[(int)AssignedStrategy] = 1.0f;
 
-	// Strategy one-hot encoding (4 features)
-	// [Assault, Defend, Support, Retreat]
-	TArray<float> StrategyOneHot = {0.0f, 0.0f, 0.0f, 0.0f};
-	int32 StrategyIndex = static_cast<int32>(AssignedStrategy);
-	if (StrategyIndex >= 0 && StrategyIndex < 4)
-	{
-		StrategyOneHot[StrategyIndex] = 1.0f;
-	}
 	Input.Append(StrategyOneHot);
 
-	check(Input.Num() == 68);
 	return Input;
 }
 
@@ -290,53 +279,56 @@ URLPolicyNetwork::FNetworkOutputV8 URLPolicyNetwork::ForwardPassV8(const TArray<
 
 	FNetworkOutputV8 Output;
 
-	// Prepare input tensor
-	InputBuffer = InputFeatures;
-	UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::Make({1u, 68u});
+	if (!ModelInstance.IsValid())
+	{
+		return FNetworkOutputV8(); // 기본 생성자 반환 (0.0 초기화 가정)
+	}
 
-	// Prepare output tensors (6 outputs from multi-head network)
+	// Bind tensors
+	TArray<float> LocalInputBuffer = InputFeatures;
+
+	UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::Make({ 1u, 56u });
+
+	// [OPTIMIZATION TIP] 
+	// 매 프레임 할당을 피하기 위해 멤버 변수로 버퍼를 가지고 있으면 좋지만,
+	// 현재 구조상으로는 아래 배열들의 크기가 작으므로(float 4개) 스택 할당에 가까워 큰 문제는 아닙니다.
+	// 하지만 TArray 할당 비용을 줄이려면 TFixedAllocator 등을 고려할 수 있습니다.
+
 	TArray<float> AssaultBuffer, DefendBuffer, SupportBuffer, RetreatBuffer, CombatBuffer, ValueBuffer;
-	AssaultBuffer.SetNum(4);   // 4 tactical params
-	DefendBuffer.SetNum(4);
-	SupportBuffer.SetNum(4);
-	RetreatBuffer.SetNum(4);
-	CombatBuffer.SetNum(2);    // 2 combat logits [Closest, LowestHP]
-	ValueBuffer.SetNum(1);     // 1 value estimate
+	AssaultBuffer.SetNumUninitialized(4);
+	DefendBuffer.SetNumUninitialized(4);
+	SupportBuffer.SetNumUninitialized(4);
+	RetreatBuffer.SetNumUninitialized(4);
+	CombatBuffer.SetNumUninitialized(2);
+	ValueBuffer.SetNumUninitialized(1);
 
 	// Bind tensors
 	TArray<UE::NNE::FTensorBindingCPU> InputBindings;
-	InputBindings.Add({InputBuffer.GetData(), static_cast<uint64>(InputBuffer.Num() * sizeof(float))});
+	InputBindings.Add({ LocalInputBuffer.GetData(), static_cast<uint64>(LocalInputBuffer.Num() * sizeof(float)) });
 
 	TArray<UE::NNE::FTensorBindingCPU> OutputBindings;
-	OutputBindings.Add({AssaultBuffer.GetData(), static_cast<uint64>(AssaultBuffer.Num() * sizeof(float))});
-	OutputBindings.Add({DefendBuffer.GetData(), static_cast<uint64>(DefendBuffer.Num() * sizeof(float))});
-	OutputBindings.Add({SupportBuffer.GetData(), static_cast<uint64>(SupportBuffer.Num() * sizeof(float))});
-	OutputBindings.Add({RetreatBuffer.GetData(), static_cast<uint64>(RetreatBuffer.Num() * sizeof(float))});
-	OutputBindings.Add({CombatBuffer.GetData(), static_cast<uint64>(CombatBuffer.Num() * sizeof(float))});
-	OutputBindings.Add({ValueBuffer.GetData(), static_cast<uint64>(ValueBuffer.Num() * sizeof(float))});
+	OutputBindings.Add({ AssaultBuffer.GetData(), static_cast<uint64>(AssaultBuffer.Num() * sizeof(float)) });
+	OutputBindings.Add({ DefendBuffer.GetData(), static_cast<uint64>(DefendBuffer.Num() * sizeof(float)) });
+	OutputBindings.Add({ SupportBuffer.GetData(), static_cast<uint64>(SupportBuffer.Num() * sizeof(float)) });
+	OutputBindings.Add({ RetreatBuffer.GetData(), static_cast<uint64>(RetreatBuffer.Num() * sizeof(float)) });
+	OutputBindings.Add({ CombatBuffer.GetData(), static_cast<uint64>(CombatBuffer.Num() * sizeof(float)) });
+	OutputBindings.Add({ ValueBuffer.GetData(), static_cast<uint64>(ValueBuffer.Num() * sizeof(float)) });
 
 	// Run inference
-	TArray<UE::NNE::FTensorShape> InputShapes = {InputShape};
+	TArray<UE::NNE::FTensorShape> InputShapes = { InputShape };
 	if (ModelInstance->SetInputTensorShapes(InputShapes) == UE::NNE::EResultStatus::Ok &&
 		ModelInstance->RunSync(InputBindings, OutputBindings) == UE::NNE::EResultStatus::Ok)
 	{
-		Output.AssaultTactical = AssaultBuffer;
-		Output.DefendTactical = DefendBuffer;
-		Output.SupportTactical = SupportBuffer;
-		Output.RetreatTactical = RetreatBuffer;
-		Output.CombatLogits = CombatBuffer;
+		Output.AssaultTactical = MoveTemp(AssaultBuffer);
+		Output.DefendTactical = MoveTemp(DefendBuffer);
+		Output.SupportTactical = MoveTemp(SupportBuffer);
+		Output.RetreatTactical = MoveTemp(RetreatBuffer);
+		Output.CombatLogits = MoveTemp(CombatBuffer);
 		Output.Value = ValueBuffer[0];
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("URLPolicyNetwork v8.0: Inference failed"));
-		// Return default values
-		Output.AssaultTactical = {0.5f, 0.5f, 0.5f, 0.5f};
-		Output.DefendTactical = {0.5f, 0.5f, 0.5f, 0.5f};
-		Output.SupportTactical = {0.5f, 0.5f, 0.5f, 0.5f};
-		Output.RetreatTactical = {0.5f, 0.5f, 0.5f, 0.5f};
-		Output.CombatLogits = {0.0f, 0.0f};
-		Output.Value = 0.0f;
+		UE_LOG(LogTemp, Error, TEXT("URLPolicyNetwork v8.0: Inference failed"));
 	}
 
 	return Output;

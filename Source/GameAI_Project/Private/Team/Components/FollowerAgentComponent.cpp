@@ -125,12 +125,42 @@ void UFollowerAgentComponent::BeginPlay()
 		if (ObservationBuilder)
 		{
 			ObservationBuilder->TeamLeader = TeamLeader;
+
+			// v9.0 DEBUG: Verify TeamLeader objectives are discovered
+			UE_LOG(LogTemp, Warning, TEXT("✅ [TEAM SETUP v9.0] '%s': TeamLeader '%s' (TeamID=%d) set on ObservationBuilder"),
+				*GetOwner()->GetName(),
+				*TeamLeader->GetOwner()->GetName(),
+				TeamLeader->TeamID);
+
+			AObjectiveActor* FriendlyObj = TeamLeader->GetFriendlyObjective();
+			AObjectiveActor* HostileObj = TeamLeader->GetHostileObjective();
+
+			UE_LOG(LogTemp, Warning, TEXT("   └─ FriendlyObjective: %s, HostileObjective: %s"),
+				FriendlyObj ? *FriendlyObj->GetName() : TEXT("NULL"),
+				HostileObj ? *HostileObj->GetName() : TEXT("NULL"));
+
+			if (!FriendlyObj || !HostileObj)
+			{
+				UE_LOG(LogTemp, Error, TEXT("⚠️ [TEAM SETUP v9.0] '%s': Objectives NOT YET DISCOVERED! Observations will default to max distance (1.0)."),
+					*GetOwner()->GetName());
+				UE_LOG(LogTemp, Error, TEXT("   └─ This is expected during BeginPlay. Objectives should be discovered by TeamLeader's DiscoverWorldObjectives()."));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [TEAM SETUP v9.0] '%s': ObservationBuilder component is NULL!"),
+				*GetOwner()->GetName());
 		}
 
 		if (CombatExecutor)
 		{
 			CombatExecutor->TeamLeader = TeamLeader;
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [TEAM SETUP v9.0] '%s': TeamLeader is NULL - ObservationBuilder will fail to populate objective context!"),
+			*GetOwner()->GetName());
 	}
 
 	// ========================================
@@ -362,10 +392,34 @@ void UFollowerAgentComponent::SetStrategyAssignment(const FStrategyAssignment& A
 
 	TacticalState->SetStrategyAssignment(Assignment);
 
-	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v8.0] '%s': Strategy assignment received - Strategy=%s, Objective=%s"),
+	// v9.0 FIX: Synchronize strategy to RewardCalculator (CRITICAL for strategy-specific rewards)
+	if (RLAgent)
+	{
+		URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator();
+		if (RewardCalc)
+		{
+			RewardCalc->SetCurrentStrategy(Assignment.Strategy);
+
+			UE_LOG(LogTemp, Display, TEXT("✅ [STRATEGY SYNC v9.0] '%s': RewardCalculator updated to strategy '%s'"),
+				*GetOwner()->GetName(),
+				*UEnum::GetValueAsString(Assignment.Strategy));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY SYNC v9.0] '%s': RLAgent has no RewardCalculator!"),
+				*GetOwner()->GetName());
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY SYNC v9.0] '%s': No RLAgent component - strategy sync failed!"),
+			*GetOwner()->GetName());
+	}
+
+	// v9.0: Objective implicit in reward function, not explicit assignment
+	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v9.0] '%s': Strategy assignment received - Strategy=%s"),
 		*GetOwner()->GetName(),
-		*UEnum::GetValueAsString(Assignment.Strategy),
-		Assignment.TargetObjective ? *Assignment.TargetObjective->GetName() : TEXT("None"));
+		*UEnum::GetValueAsString(Assignment.Strategy));
 
 	// Broadcast event for StateTree or other systems
 	OnStrategyAssignmentReceived.Broadcast(Assignment);
@@ -553,7 +607,17 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 		return FObservationElement();
 	}
 
-	return ObservationBuilder->BuildLocalObservation();
+	FObservationElement Obs = ObservationBuilder->BuildLocalObservation();
+
+	// 2. [v9.0 수정] 현재 할당된 전략 정보 주입
+	// 이 정보가 있어야 ToFeatureVector()에서 One-Hot을 만들 수 있습니다.
+	CurrentStrategy = GetAssignedStrategy();
+	Obs.AssignedStrategyIndex = (int32)CurrentStrategy;
+
+	// 3. Update stored observation
+	ObservationBuilder->UpdateLocalObservation(Obs);
+
+	return Obs;
 }
 
 bool UFollowerAgentComponent::FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies)
@@ -704,25 +768,17 @@ void UFollowerAgentComponent::DrawDebugInfo()
 
 	FVector FollowerPos = GetOwner()->GetActorLocation() + FVector(0, 0, 120);
 
-	// Draw strategy assignment info
+	// v9.0: Draw strategy assignment info (objective implicit)
 	FStrategyAssignment Assignment = TacticalState->GetStrategyAssignment();
 	FString StrategyStr = UEnum::GetValueAsString(Assignment.Strategy);
-	FString ObjectiveStr = Assignment.TargetObjective ? Assignment.TargetObjective->GetName() : TEXT("None");
 
-	FString StateText = FString::Printf(TEXT("Alive: %s\nStrategy: %s\nObjective: %s"),
+	FString StateText = FString::Printf(TEXT("Alive: %s\nStrategy: %s"),
 		GetIsAlive() ? TEXT("Yes") : TEXT("Dead"),
-		*StrategyStr,
-		*ObjectiveStr);
+		*StrategyStr);
 
 	DrawDebugString(World, FollowerPos, StateText, nullptr, FColor::Cyan, 0.0f, true);
 
-	// Draw line to target objective
-	if (Assignment.TargetObjective && IsValid(Assignment.TargetObjective))
-	{
-		FVector TargetPos = Assignment.TargetObjective->GetActorLocation();
-		DrawDebugLine(World, FollowerPos, TargetPos, FColor::Cyan, false, -1.0f, 0, 2.0f);
-		DrawDebugSphere(World, TargetPos, 50.0f, 8, FColor::Red, false, 0.1f);
-	}
+	// v9.0: Objective visualization removed (objectives implicit in reward functions)
 
 	// Draw line to team leader
 	if (TeamLeader && TeamLeader->GetOwner())
@@ -787,8 +843,8 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 	{
 		FStrategyAssignment Current = TacticalState->GetStrategyAssignment();
 		FStrategyAssignment Last = TacticalState->GetLastAssignment();
-		bAssignmentChanged = (Current.Strategy != Last.Strategy) ||
-		                     (Current.TargetObjective != Last.TargetObjective);
+		// v9.0: Only check strategy change (objectives implicit)
+		bAssignmentChanged = (Current.Strategy != Last.Strategy);
 	}
 
 	// Fallback: Force update every 30 ticks (~0.5s at 60 FPS)

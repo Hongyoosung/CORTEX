@@ -189,6 +189,10 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 						continue;
 					}
 
+					// v9.0: DISABLED - Replaced by strategy-specific rewards in RewardCalculator
+					// Legacy proximity rewards caused identical values for all agents (no differentiation)
+					// Now using TacticalRewardProvider → RewardCalculator::CalculateUnifiedReward()
+					/*
 					// Check distance to objective
 					float Distance = FVector::Dist(Member->GetActorLocation(), ObjectiveLocation);
 
@@ -202,6 +206,7 @@ void ASimulationManagerGameMode::Tick(float DeltaTime)
 							FollowerComp->AccumulateReward(Reward);
 						}
 					}
+					*/
 				}
 			}
 		}

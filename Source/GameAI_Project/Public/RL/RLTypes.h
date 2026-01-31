@@ -42,9 +42,9 @@ namespace RLConfig {
 	constexpr int32 NUM_TACTICAL_PARAMS = 4;  // Aggression, CoverPreference, SpreadDistance, RiskTolerance
 	constexpr int32 NUM_COMBAT_CHOICES = 2;   // TargetPriority: Closest, LowestHP
 
-	// Observation Space (v8.0: Streamlined - removed velocity, raycast hit types)
-	constexpr int32 OBSERVATION_BASE_SIZE = 46;  // Base observation features
-	constexpr int32 OBSERVATION_SIZE = 50;       // 46 base + 4 strategy context (one-hot from MCTS)
+	// Observation Space (v9.0: Added objective context)
+	constexpr int32 OBSERVATION_BASE_SIZE = 52;  // Base observation features (46 + 6 objective context)
+	constexpr int32 OBSERVATION_SIZE = 56;       // 52 base + 4 strategy context (one-hot from MCTS)
 
 	// === END CRITICAL SECTION ===
 }
@@ -140,10 +140,6 @@ struct GAMEAI_PROJECT_API FStrategyAssignment
 	/** Assigned strategy type */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
 	EStrategyType Strategy = EStrategyType::Assault;
-
-	/** Target objective (which base to attack/defend) */
-	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
-	TObjectPtr<class AObjectiveActor> TargetObjective = nullptr;
 
 	/** Assignment priority [0-10] */
 	UPROPERTY(BlueprintReadWrite, Category = "Assignment")
@@ -358,7 +354,7 @@ struct GAMEAI_PROJECT_API FRLPolicyConfig
 
 	/** Input size (observation features) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
-	int32 InputSize = 50;  // v8.0: 46 base + 4 strategy context
+	int32 InputSize = 56;  // v9.0: 52 base + 4 strategy context
 
 	/** Policy output size (strategy logits) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
