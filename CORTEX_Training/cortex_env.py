@@ -81,6 +81,38 @@ except ImportError:
         NUM_TOTAL_OUTPUTS = 5
 
 
+# v9.0.1: Running Mean/Std for return normalization
+class RunningMeanStd:
+    """
+    Tracks running mean and standard deviation using Welford's online algorithm.
+    Used for normalizing episode returns to stabilize value function learning.
+    """
+    def __init__(self, epsilon=1e-4, shape=()):
+        self.mean = np.zeros(shape, dtype=np.float64)
+        self.var = np.ones(shape, dtype=np.float64)
+        self.count = epsilon
+
+    def update(self, x):
+        batch_mean = np.mean(x, axis=0)
+        batch_var = np.var(x, axis=0)
+        batch_count = len(x)
+        self.update_from_moments(batch_mean, batch_var, batch_count)
+
+    def update_from_moments(self, batch_mean, batch_var, batch_count):
+        delta = batch_mean - self.mean
+        tot_count = self.count + batch_count
+
+        new_mean = self.mean + delta * batch_count / tot_count
+        m_a = self.var * self.count
+        m_b = batch_var * batch_count
+        M2 = m_a + m_b + np.square(delta) * self.count * batch_count / tot_count
+        new_var = M2 / tot_count
+
+        self.mean = new_mean
+        self.var = new_var
+        self.count = tot_count
+
+
 if SCHOLA_AVAILABLE:
 
     class CORTEXSyncMultiAgentEnv(MultiAgentEnv):
@@ -164,6 +196,16 @@ if SCHOLA_AVAILABLE:
             # Performance metrics
             self.step_durations = deque(maxlen=100)
             self.poll_durations = deque(maxlen=100)
+
+            # v9.0.1: Return normalization for stable value function learning
+            # Tracks running mean/std of episode returns to normalize per-step rewards
+            self.normalize_returns = kwargs.get("normalize_returns", True)
+            self.return_rms = RunningMeanStd(shape=())  # Scalar return statistics
+            self.gamma = 0.99
+            self.epsilon = 1e-8
+            self._agent_episode_returns = {}  # Running episode return per agent
+
+            print(f"[CORTEX v9.0.1] Return normalization: {'ENABLED' if self.normalize_returns else 'DISABLED'}")
 
         def _resolve_port(self, kwargs):
             """Resolve port for multi-worker RLlib setup."""
@@ -302,6 +344,7 @@ if SCHOLA_AVAILABLE:
                 # Initialize reward tracking for all agents
                 for flat_id in self._agent_ids:
                     self._agent_episode_rewards[flat_id] = 0.0
+                    self._agent_episode_returns[flat_id] = 0.0  # v9.0.1
 
                 # Hard reset (blocking call)
                 rawobs = self.schola_env.hard_reset()
@@ -312,6 +355,7 @@ if SCHOLA_AVAILABLE:
                 # Re-initialize reward tracking after agent map is built
                 for flat_id in self._agent_ids:
                     self._agent_episode_rewards[flat_id] = 0.0
+                    self._agent_episode_returns[flat_id] = 0.0  # v9.0.1
 
                 result = self._process_obs(rawobs)
 
@@ -426,12 +470,19 @@ if SCHOLA_AVAILABLE:
                         self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
                         self._env_done_flags[env_idx] = True
 
+                        # v9.0.1: Update return normalization statistics
+                        if self.normalize_returns:
+                            episode_returns = [self._agent_episode_returns.get(aid, 0.0) for aid in env_agents]
+                            if episode_returns:
+                                self.return_rms.update(episode_returns)
+
                         # Reset tracking for next episode
                         self._env_episodes_completed[env_idx] += 1
                         self._env_episode_steps[env_idx] = 0
                         self._env_episode_start_time[env_idx] = time.time()
                         for aid in env_agents:
                             self._agent_episode_rewards[aid] = 0.0
+                            self._agent_episode_returns[aid] = 0.0  # v9.0.1: Reset episode return tracker
 
                     # Detect auto-reset (done -> not done transition)
                     elif not all_done and self._env_done_flags.get(env_idx, False):
@@ -446,11 +497,19 @@ if SCHOLA_AVAILABLE:
                                 truncated_dict[aid] = True
                             self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
                             self._env_done_flags[env_idx] = True
+
+                            # v9.0.1: Update return normalization statistics
+                            if self.normalize_returns:
+                                episode_returns = [self._agent_episode_returns.get(aid, 0.0) for aid in env_agents]
+                                if episode_returns:
+                                    self.return_rms.update(episode_returns)
+
                             self._env_episodes_completed[env_idx] += 1
                             self._env_episode_steps[env_idx] = 0
                             self._env_episode_start_time[env_idx] = time.time()
                             for aid in env_agents:
                                 self._agent_episode_rewards[aid] = 0.0
+                                self._agent_episode_returns[aid] = 0.0  # v9.0.1: Reset episode return tracker
 
                 # 6. Periodic logging
                 should_log = any(
@@ -581,13 +640,28 @@ if SCHOLA_AVAILABLE:
                 self._agent_strategies[flat_id] = strategy_idx
                 obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
 
-                # Reward
+                # Reward (from UE5 - already per-component normalized in C++)
                 raw_reward = rew_nested.get(env_idx, {}).get(agent_idx, 0.0)
+
+                # v9.0.1: Track episode returns for normalization
+                if flat_id not in self._agent_episode_returns:
+                    self._agent_episode_returns[flat_id] = 0.0
+                self._agent_episode_returns[flat_id] += float(raw_reward)
+
+                # v9.0.1: Return normalization DISABLED (rewards already normalized in C++)
+                # C++ applies per-component normalization + tanh scaling → [-5, 5] range
+                # Applying normalization twice creates microscopic rewards
                 reward_dict[flat_id] = float(raw_reward)
 
                 # ✅ LOG: Track non-zero rewards
                 if abs(raw_reward) > 0.01 and self._rew_log_counter % 50 == 0:
                     print(f"    → Parsed {flat_id}: {raw_reward:.4f}")
+
+                # DISABLED: Double normalization caused reward collapse
+                # if self.normalize_returns:
+                #     std = np.sqrt(self.return_rms.var) + self.epsilon
+                #     normalized_reward = float(raw_reward) / std
+                #     reward_dict[flat_id] = normalized_reward
 
                 # Termination
                 is_term = term_nested.get(env_idx, {}).get(agent_idx, False)

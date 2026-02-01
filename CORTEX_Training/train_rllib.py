@@ -258,17 +258,20 @@ class SBDAPMConfig:
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.15
 
-    # v8.10.2 CORRECTIVE FIXES for Persistent VF Collapse:
-    # ROOT CAUSE: v8.10 hyperparameters were TOO AGGRESSIVE, preventing VF from learning
-    # ISSUE: Entropy RISING (8.53 → 8.98), VF Explained Var = 0.0 after 480k steps
-    ENTROPY_COEFF = 0.01  # REDUCED from 0.02 (was causing excessive exploration)
+    # v9.0.2 ENTROPY FIX: Entropy still at 6.8 after 192k steps (NOT decreasing!)
+    # ROOT CAUSE: Return normalization created microscopic rewards (fixed above)
+    #             Entropy coefficient still needs to be stronger now that rewards are normal
+    # FIX: Increase entropy coeff to 0.05 (5× original) to push entropy down
+    ENTROPY_COEFF = 0.05  # INCREASED from 0.02 (entropy stuck at 6.8, needs stronger penalty)
     VF_LOSS_COEFF = 1.0   # INCREASED from 0.5 (VF needs stronger learning signal)
     GRAD_CLIP = 0.5
-    VF_CLIP_PARAM = 2.0   # REDUCED from 10.0 (clips TD error, not reward!)  
+    VF_CLIP_PARAM = 10.0  # v9.0.3: INCREASED from 2.0 - Allow full TD error range for [-5, 5] rewards
 
-    # v8.8: Log-std clamping to prevent entropy explosion
+    # v9.0.1: Log-std clamping to reduce entropy ceiling
+    # Previous: LOG_STD_MAX=0.5 → max σ=1.65 → max entropy=9.59 (too high)
+    # Fixed: LOG_STD_MAX=0.0 → max σ=1.0 → max entropy≈7.8 (better convergence)
     LOG_STD_MIN = -2.0  # Minimum log_std (σ_min ≈ 0.135)
-    LOG_STD_MAX = 0.5   # Maximum log_std (σ_max ≈ 1.65)
+    LOG_STD_MAX = 0.0   # FIXED: Reduced from 0.5 (max σ = 1.0 instead of 1.65)
 
     # Training
     NUM_WORKERS = 0  # Windows: single process
@@ -289,6 +292,7 @@ def create_env_config():
     config = {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,
+        "normalize_returns": False,  # v9.0.2: DISABLED - rewards already normalized in C++
     }
 
     # Add Docker-specific settings
@@ -342,29 +346,25 @@ def create_ppo_config():
     )
 
     # 7. Training 설정 (ppo.py에 명시된 인자만 training() 메서드로 전달)
-    # v8.10.2: Applied corrective fixes based on post-training diagnosis
-    #          - Entropy was RISING (8.53 → 8.98) instead of declining
-    #          - VF Explained Var stuck at 0.0 (no learning)
-    #          - Root cause: Hyperparameters too aggressive (high entropy coeff + loose VF clip)
     config = config.training(
-        lr=SBDAPMConfig.LEARNING_RATE,  # v8.10.2: Reduced to 5e-5 (more conservative)
-        lr_schedule=[  # v8.10.2: Slower decay schedule
-            (0, 5e-5),        # Start conservative
-            (1000000, 2e-5),  # Decay at 1M steps
-            (2000000, 1e-5),  # Final LR at 2M steps
+        lr=SBDAPMConfig.LEARNING_RATE,  
+        lr_schedule=[  
+            (0, 5e-5),       
+            (1000000, 2e-5), 
+            (2000000, 1e-5), 
         ],
         train_batch_size=SBDAPMConfig.TRAIN_BATCH_SIZE,
         lambda_=SBDAPMConfig.GAE_LAMBDA,
-        clip_param=SBDAPMConfig.CLIP_PARAM,  # v8.9: 0.15 (tightened)
-        vf_clip_param=SBDAPMConfig.VF_CLIP_PARAM,  # v8.10.2: 2.0 (clips TD error, not reward)
-        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,  # v8.10.2: 0.01 (reduced from 0.02)
-        entropy_coeff_schedule=[  # v8.10.2: More conservative schedule
-            (0, 0.01),         # Lower initial exploration
-            (500000, 0.005),   # Slower decay
-            (1000000, 0.001),  # Allow policy to converge
+        clip_param=SBDAPMConfig.CLIP_PARAM, 
+        vf_clip_param=SBDAPMConfig.VF_CLIP_PARAM,  
+        entropy_coeff=SBDAPMConfig.ENTROPY_COEFF,
+        entropy_coeff_schedule=[
+            (0, 0.05),         # v9.0.2: Higher initial (entropy stuck at 6.8)
+            (500000, 0.03),    # v9.0.2: Slower decay
+            (1000000, 0.02),   # v9.0.2: Keep minimum higher
         ],
-        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,  # v8.10.2: 1.0 (increased from 0.5 for stronger VF learning)
-        grad_clip=SBDAPMConfig.GRAD_CLIP,  # v8.9: CRITICAL - prevents gradient explosion
+        vf_loss_coeff=SBDAPMConfig.VF_LOSS_COEFF,  
+        grad_clip=SBDAPMConfig.GRAD_CLIP, 
         use_gae=True,
         use_critic=True,
         use_kl_loss=True,
@@ -735,6 +735,16 @@ def train(args):
                 vf_explained_var = learner_info.get('vf_explained_var', 'N/A')
 
                 print(f"    Loss: total={total_loss:.4f}, policy={policy_loss:.4f}, vf={vf_loss:.4f}" if isinstance(total_loss, float) else f"    Loss: {total_loss}")
+
+                # v9.0.1: Enhanced diagnostics for entropy and value function
+                if isinstance(entropy, float):
+                    entropy_coeff = learner_info.get('entropy_coeff', 'N/A')
+                    print(f"    Entropy: {entropy:.2f} (coeff={entropy_coeff:.4f}, penalty={(entropy * entropy_coeff):.2f})")
+                if isinstance(vf_explained_var, float):
+                    print(f"    Value Function: explained_var={vf_explained_var:.4f}, loss={vf_loss:.4f}")
+                if isinstance(kl, float):
+                    print(f"    KL Divergence: {kl:.6f} (coeff={cur_kl_coeff:.4f})")
+            print()  # Blank line for readability
 
         # Checkpoint
         if (i + 1) % args.checkpoint_freq == 0:

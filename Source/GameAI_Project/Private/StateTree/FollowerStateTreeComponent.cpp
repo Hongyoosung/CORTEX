@@ -108,6 +108,9 @@ void UFollowerStateTreeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// v9.0 FIX: Increment counter to prevent spam
+	TickLogCounter++;
+
 	// Deferred initialization if BeginPlay failed to find FollowerComponent
 	if (!FollowerComponent && bAutoFindFollowerComponent)
 	{
@@ -140,7 +143,14 @@ void UFollowerStateTreeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	EStateTreeRunStatus CurrentStatus = GetStateTreeRunStatus();
 	if (CurrentStatus != EStateTreeRunStatus::Running)
 	{
-		// Schola 학습 중에는 컨트롤러가 늦게 붙을 수 있으므로 
+		// v9.0 FIX: Don't restart StateTree when agent is dead
+		// Dead agents should stay in Dead state until episode reset/respawn
+		if (HealthComponent && !HealthComponent->IsAlive())
+		{
+			return; // Stay stopped while dead
+		}
+
+		// Schola 학습 중에는 컨트롤러가 늦게 붙을 수 있으므로
 		// 컨트롤러가 유효해질 때까지 재시도를 반복하는 것은 괜찮으나,
 		// 종료 이유(Succeeded/Failed)를 확인해야 함.
 

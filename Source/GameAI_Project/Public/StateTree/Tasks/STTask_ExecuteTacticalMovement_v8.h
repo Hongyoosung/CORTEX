@@ -110,11 +110,14 @@ protected:
 	/**
 	 * Run EQS query with current tactical parameters
 	 * Returns best tactical position based on modulated weights
+	 *
+	 * v9.0: Added AssignedStrategy parameter for objective-aware scoring
 	 */
 	TArray<FVector> RunTacticalEQSQuery(
 		APawn* Pawn,
 		UEnvQuery* Query,
-		FTacticalParameters Params) const;
+		FTacticalParameters Params,
+		EStrategyType AssignedStrategy) const;
 
 	/**
 	 * Execute movement to EQS-selected position
