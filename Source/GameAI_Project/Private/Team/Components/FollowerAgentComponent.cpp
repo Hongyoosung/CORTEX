@@ -471,7 +471,6 @@ FAllyContext UFollowerAgentComponent::GetAllyContext() const
 	Context.AllyHealth = Obs.AllyHealth;
 	Context.AllyDistance = Obs.AllyDistance;
 	Context.AllyDirection = Obs.AllyDirection;
-	Context.ClosestAlly = Obs.ClosestAlly;
 
 	return Context;
 }

@@ -823,33 +823,33 @@ struct FObservationElement;
 
 ## Implementation Checklist
 
-### Phase 0: Preparation
-- [ ] Create feature branch `refactor/v9.0-cleanup`
-- [ ] Tag current state as `pre-refactor-v9.0`
-- [ ] Record baseline behavior (10 sessions, 1000 episodes)
-- [ ] Create integration tests (strategy assignment, observation features)
-- [ ] Run baseline tests → All pass ✅
+### Phase 0: Preparation (COMPLETE)
+- [v] Create feature branch `refactor/v9.0-cleanup`
+- [v] Tag current state as `pre-refactor-v9.0`
+- [v] Record baseline behavior (10 sessions, 1000 episodes)
+- [v] Create integration tests (strategy assignment, observation features)
+- [v] Run baseline tests → All pass ✅
 
-### Phase 1: Remove Deprecated Code
-- [ ] Clean `FollowerAgentComponent` (~30 lines removed)
-- [ ] Clean `TacticalStateComponent` (~5 lines removed)
-- [ ] Clean `RLAgentComponent` (verify reward history usage)
-- [ ] Clean Schola components (document 71-feature observer)
-- [ ] Compile & test → All pass ✅
-- [ ] Run 100 episodes → Rewards match baseline ± 5% ✅
+### Phase 1: Remove Deprecated Code (COMPLETE)
+- [v] Clean `FollowerAgentComponent` (~30 lines removed)
+- [v] Clean `TacticalStateComponent` (~5 lines removed)
+- [v] Clean `RLAgentComponent` (verify reward history usage)
+- [v] Clean Schola components (document 71-feature observer)
+- [v] Compile & test → All pass ✅
+- [v] Run 100 episodes → Rewards match baseline ± 5% ✅
 
-### Phase 2: Reorganize Directory Structure
-- [ ] Create new subdirectories (Schola/Observers, etc.)
-- [ ] Move Schola files to new locations (8 files)
-- [ ] Rename `GameAIProjectCharacter` → `CharacterBase`
-- [ ] Rename `STTask_ExecuteTacticalMovement_v8` → remove suffix
-- [ ] Update all `#include` statements
-- [ ] Compile & test → All pass ✅
+### Phase 2: Reorganize Directory Structure (COMPLETE)
+- [v] Create new subdirectories (Schola/Observers, etc.)
+- [v] Move Schola files to new locations (8 files)
+- [v] Rename `GameAIProjectCharacter` → `CharacterBase`
+- [v] Rename `STTask_ExecuteTacticalMovement_v8` → remove suffix
+- [v] Update all `#include` statements
+- [v] Compile & test → All pass ✅
 
 ### Phase 3: Architectural Decomposition
-- [ ] Implement `SquadManagerComponent` and Unit Test
-- [ ] Implement `IntelManagerComponent` and Test Objective Discovery
-- [ ] Implement `StrategicPlannerComponent` (ensure `FAsyncTask` is fully encapsulated)
+- [x] Implement `SquadManagerComponent` and Unit Test ✅ (Day 1 - Step 1)
+- [x] Implement `IntelManagerComponent` and Test Objective Discovery ✅ (Day 1 - Step 2)
+- [ ] Implement `StrategicPlannerComponent` (ensure `FAsyncTask` is fully encapsulated) - IN PROGRESS
 - [ ] Implement `TeamCommsComponent` and Test Leader Registration
 - [ ] Implement `VisualLoggerComponent` and migrate debug drawing
 - [ ] Implement `ContextBridgeComponent` to remove StateTree dependency

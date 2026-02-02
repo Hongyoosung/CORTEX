@@ -41,9 +41,6 @@ void UTacticalStateComponent::SetStrategyAssignment(const FStrategyAssignment& A
 	UE_LOG(LogTemp, Verbose, TEXT("[TacticalState] '%s': Strategy assignment updated - Strategy=%s"),
 		*GetOwner()->GetName(),
 		*UEnum::GetValueAsString(Assignment.Strategy));
-
-	// v8.0 DEPRECATED: Update CurrentStrategy for backwards compatibility
-	CurrentStrategy = Assignment.Strategy;
 }
 
 //------------------------------------------------------------------------------
@@ -100,9 +97,6 @@ void UTacticalStateComponent::ResetState()
 
 	// Reset parameters
 	CurrentMacroAction = FMacroAction();
-
-	// v8.0 DEPRECATED: Reset CurrentStrategy for backwards compatibility
-	CurrentStrategy = EStrategyType::Assault;
 
 	UE_LOG(LogTemp, Log, TEXT("[TacticalState] '%s': State reset"), *GetOwner()->GetName());
 }
