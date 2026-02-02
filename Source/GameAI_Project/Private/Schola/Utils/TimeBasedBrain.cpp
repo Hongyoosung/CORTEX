@@ -1,6 +1,6 @@
 // TimeBasedBrain.cpp - Implementation of time-based decision brain
 
-#include "Schola/TimeBasedBrain.h"
+#include "Schola/Utils/TimeBasedBrain.h"
 
 UTimeBasedBrain::UTimeBasedBrain()
 {

@@ -1,6 +1,6 @@
 // CombatChoiceActuator.cpp - v8.0 combat choice actuator implementation
 
-#include "Schola/CombatChoiceActuator.h"
+#include "Schola/Actuators/CombatChoiceActuator.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Common/Spaces/DiscreteSpace.h"
 #include "Common/Points/DiscretePoint.h"

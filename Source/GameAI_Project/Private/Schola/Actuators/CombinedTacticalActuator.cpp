@@ -1,6 +1,6 @@
 // CombinedTacticalActuator.cpp - v8.0 combined tactical + combat actuator implementation
 
-#include "Schola/CombinedTacticalActuator.h"
+#include "Schola/Actuators/CombinedTacticalActuator.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"

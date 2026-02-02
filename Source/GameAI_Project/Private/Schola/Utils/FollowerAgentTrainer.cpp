@@ -1,9 +1,9 @@
 // FollowerAgentTrainer.cpp - Trainer wrapper implementation
 
-#include "Schola/FollowerAgentTrainer.h"
+#include "Schola/Utils/FollowerAgentTrainer.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/ScholaCombatEnvironment.h"
-#include "Schola/TacticalRewardProvider.h"
+#include "Schola/Rewards/TacticalRewardProvider.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/HealthComponent.h"

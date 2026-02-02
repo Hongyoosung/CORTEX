@@ -2,7 +2,7 @@
 
 #include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/ScholaAgentComponent.h"
-#include "Schola/FollowerAgentTrainer.h"
+#include "Schola/Utils/FollowerAgentTrainer.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Core/ScholaGameInstance.h"
 #include "Team/Components/FollowerAgentComponent.h"

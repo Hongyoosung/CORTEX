@@ -1,6 +1,6 @@
 // TacticalRewardProvider.cpp - v9.0: Strategy-specific reward provider
 
-#include "Schola/TacticalRewardProvider.h"
+#include "Schola/Rewards/TacticalRewardProvider.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "RL/Components/RewardCalculator.h"
 #include "RL/Components/RLAgentComponent.h"

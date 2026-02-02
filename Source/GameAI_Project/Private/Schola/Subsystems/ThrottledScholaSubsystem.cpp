@@ -1,6 +1,6 @@
 // ThrottledScholaSubsystem.cpp - Custom Schola subsystem implementation
 
-#include "Schola/ThrottledScholaSubsystem.h"
+#include "Schola/Subsystems/ThrottledScholaSubsystem.h"
 #include "GymConnectors/AbstractGymConnector.h"
 
 

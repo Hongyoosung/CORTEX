@@ -1,9 +1,9 @@
 // ScholaAgentComponent.cpp - Schola agent component implementation
 
 #include "Schola/ScholaAgentComponent.h"
-#include "Schola/TacticalObserver.h"
-#include "Schola/TacticalRewardProvider.h"
-#include "Schola/CombinedTacticalActuator.h"
+#include "Schola/Observers/TacticalObserver.h"
+#include "Schola/Rewards/TacticalRewardProvider.h"
+#include "Schola/Actuators/CombinedTacticalActuator.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Inference/InferenceComponent.h"
 #include "Combat/Components/HealthComponent.h"
