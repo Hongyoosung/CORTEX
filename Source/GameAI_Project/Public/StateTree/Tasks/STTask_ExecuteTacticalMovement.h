@@ -8,7 +8,7 @@
 #include "StateTree/FollowerStateTreeSchema.h"
 #include "StateTreeExecutionTypes.h"
 #include "EnvironmentQuery/EnvQuery.h"
-#include "STTask_ExecuteTacticalMovement_v8.generated.h"
+#include "STTask_ExecuteTacticalMovement.generated.h"
 
 class UFollowerStateTreeComponent;
 class UFollowerAgentComponent;
@@ -38,7 +38,7 @@ class AAIController;
  */
 
 USTRUCT()
-struct GAMEAI_PROJECT_API FSTTask_ExecuteTacticalMovement_v8_InstanceData
+struct GAMEAI_PROJECT_API FSTTask_ExecuteTacticalMovement_InstanceData
 {
 	GENERATED_BODY()
 
@@ -78,13 +78,13 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteTacticalMovement_v8_InstanceData
 };
 
 USTRUCT(meta = (DisplayName = "Execute Tactical Movement v8.0"))
-struct GAMEAI_PROJECT_API FSTTask_ExecuteTacticalMovement_v8 : public FStateTreeTaskBase
+struct GAMEAI_PROJECT_API FSTTask_ExecuteTacticalMovement : public FStateTreeTaskBase
 {
 	GENERATED_BODY()
 
-	using FInstanceDataType = FSTTask_ExecuteTacticalMovement_v8_InstanceData;
+	using FInstanceDataType = FSTTask_ExecuteTacticalMovement_InstanceData;
 
-	FSTTask_ExecuteTacticalMovement_v8() = default;
+	FSTTask_ExecuteTacticalMovement() = default;
 
 	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
 

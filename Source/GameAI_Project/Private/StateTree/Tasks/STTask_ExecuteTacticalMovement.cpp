@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "StateTree/Tasks/STTask_ExecuteTacticalMovement_v8.h"
+#include "StateTree/Tasks/STTask_ExecuteTacticalMovement.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "Team/Components/FollowerAgentComponent.h"
@@ -15,7 +15,7 @@
 #include "NavigationSystem.h"
 #include "Navigation/PathFollowingComponent.h"
 
-EStateTreeRunStatus FSTTask_ExecuteTacticalMovement_v8::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 
@@ -62,7 +62,7 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement_v8::EnterState(FStateTreeExe
 	return EStateTreeRunStatus::Running;
 }
 
-EStateTreeRunStatus FSTTask_ExecuteTacticalMovement_v8::Tick(FStateTreeExecutionContext& Context, float DeltaTime) const
+EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::Tick(FStateTreeExecutionContext& Context, float DeltaTime) const
 {
 	// ========================================
 	// v8.0 EXECUTION LAYER (Layer 3 of Hierarchy)
@@ -144,7 +144,7 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement_v8::Tick(FStateTreeExecution
 	return EStateTreeRunStatus::Running;
 }
 
-void FSTTask_ExecuteTacticalMovement_v8::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+void FSTTask_ExecuteTacticalMovement::ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 
@@ -158,7 +158,7 @@ void FSTTask_ExecuteTacticalMovement_v8::ExitState(FStateTreeExecutionContext& C
 		InstanceData.ControlledPawn ? *InstanceData.ControlledPawn->GetName() : TEXT("Unknown"));
 }
 
-void FSTTask_ExecuteTacticalMovement_v8::ApplyTacticalParameters(
+void FSTTask_ExecuteTacticalMovement::ApplyTacticalParameters(
 	FStateTreeExecutionContext& Context,
 	FTacticalParameters Params) const
 {
@@ -263,7 +263,7 @@ void FSTTask_ExecuteTacticalMovement_v8::ApplyTacticalParameters(
 	}
 }
 
-TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
+TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 	APawn* Pawn,
 	UEnvQuery* Query,
 	FTacticalParameters Params,
@@ -428,7 +428,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 	return Results;
 }
 
-void FSTTask_ExecuteTacticalMovement_v8::ExecuteMovementToTacticalPosition(
+void FSTTask_ExecuteTacticalMovement::ExecuteMovementToTacticalPosition(
 	FStateTreeExecutionContext& Context,
 	FVector TargetPosition) const
 {

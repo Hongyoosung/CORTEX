@@ -10,7 +10,7 @@
 #include "Team/Components/TeamLeaderComponent.h"
 #include "RL/RLPolicyNetwork.h"
 #include "StateTree/Conditions/STCondition_IsAlive.h"
-#include "StateTree/Tasks/STTask_ExecuteTacticalMovement_v8.h"
+#include "StateTree/Tasks/STTask_ExecuteTacticalMovement.h"
 #include "StateTree/Tasks/STTask_ExecuteAiming.h"
 #include "StateTree/Tasks/STTask_ExecuteFire.h"
 #include "StateTree/Tasks/STTask_Dead.h"
@@ -186,7 +186,7 @@ bool UFollowerStateTreeSchema::IsStructAllowed(const UScriptStruct* InScriptStru
 			InScriptStruct->IsChildOf(FSTCondition_IsAlive::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_Dead::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_Idle::StaticStruct()) ||
-			InScriptStruct->IsChildOf(FSTTask_ExecuteTacticalMovement_v8::StaticStruct()) ||
+			InScriptStruct->IsChildOf(FSTTask_ExecuteTacticalMovement::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_ExecuteAiming::StaticStruct()) ||
 			InScriptStruct->IsChildOf(FSTTask_ExecuteFire::StaticStruct())
 			)
