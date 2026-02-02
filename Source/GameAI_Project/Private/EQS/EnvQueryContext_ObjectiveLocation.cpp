@@ -4,6 +4,8 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "Team/ObjectiveActor.h"
+#include "Team/Components/FollowerAgentComponent.h"  // v9.0: For GetAssignedStrategy()
+#include "Team/Components/TeamLeaderComponent.h"     // v9.0: For GetHostileObjective/GetFriendlyObjective
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -17,21 +19,85 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 
 	FVector ObjectiveLocation = FVector::ZeroVector;
 
-	// Production mode: Get FollowerStateTreeComponent to access shared context
+	// v9.0 FIXED: Determine objective from strategy, not SharedContext.TargetObjective
+	// MCTS no longer assigns objectives - reward functions encode objectives implicitly
 	UFollowerStateTreeComponent* StateTreeComp = QueryOwner->FindComponentByClass<UFollowerStateTreeComponent>();
 	if (StateTreeComp)
 	{
-		// v9.0: Access TargetObjective from shared context (computed based on strategy)
-		// Assault/Support → Hostile objective, Defend → Friendly objective
 		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-		if (SharedContext.TargetObjective)
+		EStrategyType Strategy = SharedContext.AssignedStrategy;
+
+		// Get FollowerAgentComponent to access TeamLeader
+		UFollowerAgentComponent* FollowerComp = QueryOwner->FindComponentByClass<UFollowerAgentComponent>();
+		if (FollowerComp)
 		{
-			// Get objective actor location
-			ObjectiveLocation = SharedContext.TargetObjective->GetActorLocation();
+			UTeamLeaderComponent* TeamLeader = FollowerComp->GetTeamLeader();
+			if (TeamLeader)
+			{
+				AObjectiveActor* TargetObjective = nullptr;
+
+				// Strategy-based objective selection (v9.0)
+				switch (Strategy)
+				{
+					case EStrategyType::Assault:
+						// Assault focuses on approaching hostile objective
+						TargetObjective = TeamLeader->GetHostileObjective();
+						break;
+
+					case EStrategyType::Defend:
+						// Defend focuses on staying near friendly objective
+						TargetObjective = TeamLeader->GetFriendlyObjective();
+						break;
+
+					case EStrategyType::Support:
+						// Support doesn't use objective context (ally proximity dominates)
+						UE_LOG(LogTemp, Verbose, TEXT("[EQS CONTEXT v9.0] %s: Support strategy - no objective context"), *QueryOwner->GetName());
+						break;
+
+					case EStrategyType::Retreat:
+						// Retreat doesn't use objective context (enemy avoidance dominates)
+						UE_LOG(LogTemp, Verbose, TEXT("[EQS CONTEXT v9.0] %s: Retreat strategy - no objective context"), *QueryOwner->GetName());
+						break;
+
+					default:
+						UE_LOG(LogTemp, Warning, TEXT("[EQS CONTEXT v9.0] %s: Unknown strategy %s"),
+							*QueryOwner->GetName(), *UEnum::GetValueAsString(Strategy));
+						break;
+				}
+
+				if (TargetObjective)
+				{
+					ObjectiveLocation = TargetObjective->GetActorLocation();
+
+					// v9.0: Periodic logging for verification
+					static TMap<const UEnvQueryContext_ObjectiveLocation*, int32> LogCounts;
+					int32& LogCount = LogCounts.FindOrAdd(this, 0);
+					if (++LogCount % 200 == 0)
+					{
+						UE_LOG(LogTemp, Display, TEXT("✅ [EQS CONTEXT v9.0] %s (%s) → Objective=%s at %s"),
+							*QueryOwner->GetName(),
+							*UEnum::GetValueAsString(Strategy),
+							*TargetObjective->GetName(),
+							*ObjectiveLocation.ToCompactString());
+					}
+				}
+			}
+			else
+			{
+				static int32 NoLeaderCount = 0;
+				if (++NoLeaderCount % 100 == 0)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[EQS CONTEXT v9.0] %s: No TeamLeader (count=%d)"), *QueryOwner->GetName(), NoLeaderCount);
+				}
+			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Verbose, TEXT("EnvQueryContext_ObjectiveLocation: TargetObjective is NULL in SharedContext for %s (likely Retreat strategy)"), *QueryOwner->GetName());
+			static int32 NoFollowerCount = 0;
+			if (++NoFollowerCount % 100 == 0)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[EQS CONTEXT v9.0] %s: No FollowerAgentComponent (count=%d)"), *QueryOwner->GetName(), NoFollowerCount);
+			}
 		}
 	}
 	else

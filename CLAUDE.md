@@ -60,7 +60,7 @@ Task Type?
 
 **Layer 1: MCTS (Strategic Decision) - v9.0**
 - **Output:** Strategy-only assignments (no objectives)
-- **Frequency:** Async, every 1.5s
+- **Frequency:** Async, every 30s (configurable via ContinuousPlanningInterval)
 - **Action Space:** 8 batch prototypes (strategy composition only)
 - **Learning:** UCB1 with persistent batch cache
 
@@ -77,7 +77,7 @@ Task Type?
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Team Leader (async every 1.5s)                              │
+│ Team Leader (async every 30s)                               │
 │                                                              │
 │ MCTS v9.0: Strategy-Only Assignment                         │
 │ ├─ GenerateCompleteBatches() → 8 strategy-only batches     │
@@ -250,8 +250,9 @@ if obs.AllyDistance > 0.01:
 **Configuration:**
 ```cpp
 namespace RewardConfig {
-    // Objective: Raw [-10, 200] → Normalized [-1, 3]
-    OBJECTIVE_NORM = { Scale: 0.02, Offset: -0.2, ClipMin: -1.0, ClipMax: 3.0 }
+    // Objective: Raw [0, 25] → Normalized [0, 2.5]
+    // v9.0 FIX: Updated for gradient-based rewards (was designed for [-10, 200])
+    OBJECTIVE_NORM = { Scale: 0.1, Offset: 0.0, ClipMin: 0.0, ClipMax: 2.5 }
 
     // Combat: Raw [-20, 50] → Normalized [-0.5, 2.0]
     COMBAT_NORM = { Scale: 0.04, Offset: 0.0, ClipMin: -0.5, ClipMax: 2.0 }

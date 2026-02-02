@@ -4,6 +4,8 @@
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Team/ObjectiveActor.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -177,6 +179,7 @@ void FSTTask_ExecuteTacticalMovement_v8::ApplyTacticalParameters(
 	// ========================================
 
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 	APawn* Pawn = InstanceData.ControlledPawn;
 
 	if (!Pawn || !InstanceData.TacticalPositionQuery)
@@ -184,11 +187,12 @@ void FSTTask_ExecuteTacticalMovement_v8::ApplyTacticalParameters(
 		return;
 	}
 
-	// Run EQS query with modulated weights
+	// Run EQS query with modulated weights (v9.0: includes objective-aware scoring)
 	TArray<FVector> CandidatePositions = RunTacticalEQSQuery(
 		Pawn,
 		InstanceData.TacticalPositionQuery,
-		Params
+		Params,
+		SharedContext.AssignedStrategy
 	);
 
 	// FALLBACK: If EQS returns no valid positions, hold current position
@@ -206,6 +210,42 @@ void FSTTask_ExecuteTacticalMovement_v8::ApplyTacticalParameters(
 
 	// Execute movement to best position
 	FVector TargetPosition = CandidatePositions[0];
+
+	// v9.0 DIAGNOSTIC: Log if EQS selected position toward or away from objective
+	if (InstanceData.AgentComponent)
+	{
+		UTeamLeaderComponent* TeamLeader = InstanceData.AgentComponent->GetTeamLeader();
+		EStrategyType AssignedStrategy = SharedContext.AssignedStrategy;
+		if (TeamLeader)
+		{
+			AObjectiveActor* TargetObj = nullptr;
+			if (AssignedStrategy == EStrategyType::Assault)
+			{
+				TargetObj = TeamLeader->GetHostileObjective();
+			}
+			else if (AssignedStrategy == EStrategyType::Defend)
+			{
+				TargetObj = TeamLeader->GetFriendlyObjective();
+			}
+
+			if (TargetObj)
+			{
+				FVector CurrentPos = Pawn->GetActorLocation();
+				float CurrentDist = FVector::Dist(CurrentPos, TargetObj->GetActorLocation());
+				float TargetDist = FVector::Dist(TargetPosition, TargetObj->GetActorLocation());
+				float DeltaDist = TargetDist - CurrentDist;
+
+				UE_LOG(LogTemp, Warning, TEXT("🔍 [EQS DIAGNOSTIC] %s (%s): CurrentDist=%.0fcm, TargetDist=%.0fcm, Delta=%+.0fcm | %s"),
+					*Pawn->GetName(),
+					AssignedStrategy == EStrategyType::Assault ? TEXT("Assault") : TEXT("Defend"),
+					CurrentDist,
+					TargetDist,
+					DeltaDist,
+					DeltaDist < -100.0f ? TEXT("✅ CLOSER to objective") : TEXT("❌ NOT closer (EQS ignoring objective!)"));
+			}
+		}
+	}
+
 	ExecuteMovementToTacticalPosition(Context, TargetPosition);
 
 	// Store risk tolerance for retreat logic (used outside EQS)
@@ -226,7 +266,8 @@ void FSTTask_ExecuteTacticalMovement_v8::ApplyTacticalParameters(
 TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 	APawn* Pawn,
 	UEnvQuery* Query,
-	FTacticalParameters Params) const
+	FTacticalParameters Params,
+	EStrategyType AssignedStrategy) const
 {
 	TArray<FVector> Results;
 
@@ -266,7 +307,57 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 	//    High spread (0.9) → IdealSpread = 1000cm (10m, dispersed)
 	//    Low spread (0.1) → IdealSpread = 200cm (2m, tight formation)
 	float IdealSpreadDistance = FMath::Lerp(200.0f, 1000.0f, Params.SpreadDistance);
-	float FormationWeight = FMath::Lerp(5.0f, 1.0f, Params.SpreadDistance); // [5.0, 1.0]
+
+	// v9.0 FIX: Strategy-dependent formation weight
+	// Base weight from RL parameter, then modulate by strategy needs
+	float BaseFormationWeight = FMath::Lerp(5.0f, 1.0f, Params.SpreadDistance);
+
+	float StrategyFormationMultiplier = 1.0f;
+	switch (AssignedStrategy)
+	{
+		case EStrategyType::Assault:
+			StrategyFormationMultiplier = 0.4f;  // Spread out to attack (FormationWeight: 0.4-2.0)
+			break;
+		case EStrategyType::Defend:
+			StrategyFormationMultiplier = 1.0f;  // Tight defensive line (FormationWeight: 1.0-5.0)
+			break;
+		case EStrategyType::Support:
+			StrategyFormationMultiplier = 0.6f;  // Some spread for coverage (FormationWeight: 0.6-3.0)
+			break;
+		case EStrategyType::Retreat:
+			StrategyFormationMultiplier = 0.3f;  // Scatter to evade (FormationWeight: 0.3-1.5)
+			break;
+		default:
+			StrategyFormationMultiplier = 1.0f;
+			break;
+	}
+
+	float FormationWeight = BaseFormationWeight * StrategyFormationMultiplier;
+
+	// 4. v9.0: ObjectiveWeight → Strategy-dependent objective focus
+	//    Assault: High weight (approach hostile objective)
+	//    Defend: Very high weight (stay near friendly objective)
+	//    Support: Low weight (ally proximity dominates)
+	//    Retreat: No weight (enemy avoidance dominates)
+	float ObjectiveWeight = 0.0f;
+	switch (AssignedStrategy)
+	{
+		case EStrategyType::Assault:
+			ObjectiveWeight = 5.0f; // Balanced with aggression
+			break;
+		case EStrategyType::Defend:
+			ObjectiveWeight = 8.0f; // Highest priority - hold position
+			break;
+		case EStrategyType::Support:
+			ObjectiveWeight = 1.0f; // Secondary to ally proximity
+			break;
+		case EStrategyType::Retreat:
+			ObjectiveWeight = 0.0f; // No objective focus
+			break;
+		default:
+			ObjectiveWeight = 0.0f;
+			break;
+	}
 
 	// Create EQS request with modulated parameters
 	FEnvQueryRequest QueryRequest(Query, Pawn);
@@ -278,6 +369,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 	QueryRequest.SetFloatParam(TEXT("CoverWeight"), CoverWeight);
 	QueryRequest.SetFloatParam(TEXT("FormationSpread"), IdealSpreadDistance);
 	QueryRequest.SetFloatParam(TEXT("FormationWeight"), FormationWeight);
+	QueryRequest.SetFloatParam(TEXT("ObjectiveWeight"), ObjectiveWeight); // v9.0: Objective-aware scoring
 
 	// Execute query (instant, not async)
 	TSharedPtr<FEnvQueryResult> QueryResult = QueryManager->RunInstantQuery(
@@ -310,8 +402,19 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement_v8::RunTacticalEQSQuery(
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TACTICAL v8.0] EQS returned %d positions (Aggression=%.2f → MinDist=%.0fcm, Cover=%.2f → Weight=%.1f)"),
-		Results.Num(), Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);
+	// v9.0: Include ObjectiveWeight in debug log
+	const TCHAR* StrategyName = nullptr;
+	switch (AssignedStrategy)
+	{
+		case EStrategyType::Assault: StrategyName = TEXT("Assault"); break;
+		case EStrategyType::Defend: StrategyName = TEXT("Defend"); break;
+		case EStrategyType::Support: StrategyName = TEXT("Support"); break;
+		case EStrategyType::Retreat: StrategyName = TEXT("Retreat"); break;
+		default: StrategyName = TEXT("Unknown"); break;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[TACTICAL v9.0] EQS returned %d positions | Strategy=%s, ObjWeight=%.1f, FormWeight=%.1f (×%.1f) | Aggr=%.2f→MinDist=%.0fcm, Cover=%.2f→Weight=%.1f"),
+		Results.Num(), StrategyName, ObjectiveWeight, FormationWeight, StrategyFormationMultiplier, Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);
 
 	// Log top 5 positions with scores for debugging
 	for (int32 i = 0; i < FMath::Min(5, ItemCount); ++i)

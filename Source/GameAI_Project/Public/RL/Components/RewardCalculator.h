@@ -144,7 +144,9 @@ namespace RewardConfig {
 	};
 
 	// Normalization parameters per component (tuned to balance component magnitudes)
-	constexpr FComponentNormalization OBJECTIVE_NORM = { 0.02f, -0.2f, -1.0f, 3.0f };     // Objective progress
+	// v9.0 FIX: Removed negative offset from OBJECTIVE_NORM to preserve gradient rewards
+	// v9.0 gradient rewards are [0, 25] range, not [-10, 200] as originally designed
+	constexpr FComponentNormalization OBJECTIVE_NORM = { 0.1f, 0.0f, 0.0f, 2.5f };        // Objective progress (raw [0, 25] → [0, 2.5])
 	constexpr FComponentNormalization COMBAT_NORM = { 0.04f, 0.0f, -0.5f, 2.0f };         // Combat effectiveness
 	constexpr FComponentNormalization SURVIVAL_NORM = { 0.2f, 0.0f, -2.0f, 0.0f };        // Survival (death penalty)
 	constexpr FComponentNormalization COVER_NORM = { 1.0f, 0.0f, 0.0f, 0.5f };            // Cover usage
