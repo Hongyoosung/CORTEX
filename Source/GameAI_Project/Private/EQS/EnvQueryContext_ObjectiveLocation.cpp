@@ -4,8 +4,8 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "Team/ObjectiveActor.h"
-#include "Team/Components/FollowerAgentComponent.h"  // v9.0: For GetAssignedStrategy()
-#include "Team/Components/TeamLeaderComponent.h"     // v9.0: For GetHostileObjective/GetFriendlyObjective
+#include "Team/Components/TeamLeaderComponent.h"    
+#include "Team/Components/TeamCommsComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -27,11 +27,11 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
 		EStrategyType Strategy = SharedContext.AssignedStrategy;
 
-		// Get FollowerAgentComponent to access TeamLeader
-		UFollowerAgentComponent* FollowerComp = QueryOwner->FindComponentByClass<UFollowerAgentComponent>();
-		if (FollowerComp)
+		UTeamCommsComponent* CommsComp = QueryOwner->FindComponentByClass<UTeamCommsComponent>();
+
+		if (CommsComp)
 		{
-			UTeamLeaderComponent* TeamLeader = FollowerComp->GetTeamLeader();
+			UTeamLeaderComponent* TeamLeader = CommsComp->GetTeamLeader();
 			if (TeamLeader)
 			{
 				AObjectiveActor* TargetObjective = nullptr;

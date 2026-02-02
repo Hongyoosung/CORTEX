@@ -3,6 +3,7 @@
 #include "Perception/AIPerceptionSystem.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
+#include "Team/Components/TeamCommsComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Actor/LeaderCharacter.h"
@@ -435,29 +436,23 @@ TArray<ERaycastHitType> UAgentPerceptionComponent::BuildRaycastHitTypes(int32 Nu
 	return HitTypes;
 }
 
-void UAgentPerceptionComponent::ReportEnemiesToLeader()
-{
-	if (!CachedFollowerComponent) return;
-
-	UTeamLeaderComponent* Leader = CachedFollowerComponent->GetTeamLeader();
-	if (!Leader) return;
-
-	// Register all detected enemies with the team leader
-	for (AActor* Enemy : TrackedEnemies)
-	{
-		if (Enemy)
-		{
-			Leader->RegisterEnemy(Enemy);
-		}
-	}
-}
 
 void UAgentPerceptionComponent::SignalEnemySpotted(AActor* Enemy)
 {
 	if (!Enemy || !CachedFollowerComponent) return;
 
-	UTeamLeaderComponent* Leader = CachedFollowerComponent->GetTeamLeader();
-	if (!Leader)
+	UTeamCommsComponent* TeamComms = GetOwner()->FindComponentByClass<UTeamCommsComponent>();
+	if (!TeamComms)
+	{
+		UE_LOG(LogTemp, Error, TEXT("🔵 [PERCEPTION] %s: No TeamCommsComponent found, cannot report enemy %s"),
+			*GetOwner()->GetName(),
+			*Enemy->GetName());
+	}
+
+	// 2. Get Leader via Comms
+	UTeamLeaderComponent* TeamLeader = TeamComms->GetTeamLeader();
+
+	if (!TeamLeader)
 	{
 		UE_LOG(LogTemp, Error, TEXT("🔵 [PERCEPTION] %s: No Team Leader found, cannot report enemy %s"),
 			*GetOwner()->GetName(),
@@ -466,7 +461,7 @@ void UAgentPerceptionComponent::SignalEnemySpotted(AActor* Enemy)
 	}
 
 	// Register enemy with leader
-	Leader->RegisterEnemy(Enemy);
+	TeamLeader->RegisterEnemy(Enemy);
 
 	// Signal event to leader (high priority)
 	CachedFollowerComponent->SignalEventToLeader(

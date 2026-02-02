@@ -77,11 +77,15 @@ void UIntelManagerComponent::DiscoverWorldObjectives()
 	// Verify discovery
 	if (FriendlyObjective && HostileObjective)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[IntelManager] Successfully discovered both objectives (TeamID: %d)"), TeamID);
+		UE_LOG(LogTemp, Log, TEXT("✅ [IntelManager v9.0] Successfully discovered both objectives (TeamID: %d)"), TeamID);
+
+		// v9.0: Broadcast event to notify subscribers (e.g., FollowerAgentComponent)
+		OnObjectivesDiscovered.Broadcast();
+		UE_LOG(LogTemp, Log, TEXT("📡 [IntelManager v9.0] OnObjectivesDiscovered event broadcast (TeamID: %d)"), TeamID);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[IntelManager] Failed to discover all objectives (TeamID: %d, Friendly: %s, Hostile: %s)"),
+		UE_LOG(LogTemp, Error, TEXT("❌ [IntelManager] Failed to discover all objectives (TeamID: %d, Friendly: %s, Hostile: %s)"),
 			TeamID,
 			FriendlyObjective ? TEXT("OK") : TEXT("MISSING"),
 			HostileObjective ? TEXT("OK") : TEXT("MISSING"));

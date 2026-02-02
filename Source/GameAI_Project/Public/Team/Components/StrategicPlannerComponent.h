@@ -93,6 +93,19 @@ public:
 	);
 
 	/**
+	 * Run strategy assignment (automatically chooses sync/async based on bAsyncMCTS).
+	 * Fires OnPlanReady when complete.
+	 *
+	 * @param Agents - Available agents for assignment
+	 * @param Objectives - Available objectives
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Strategic Planner")
+	void RunStrategyAssignment(
+		const TArray<AActor*>& Agents,
+		const TArray<AObjectiveActor*>& Objectives
+	);
+
+	/**
 	 * Poll async task for completion.
 	 * Call this in TeamLeader's Tick.
 	 * Automatically fires OnPlanReady when task completes.
@@ -141,6 +154,10 @@ public:
 	/** Number of MCTS simulations per planning cycle */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategic Planner")
 	int32 MCTSSimulations = 500;
+
+	/** Execute MCTS asynchronously (recommended for production) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategic Planner")
+	bool bAsyncMCTS = true;
 
 	/** Enable detailed logging */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategic Planner")

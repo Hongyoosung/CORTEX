@@ -88,6 +88,10 @@ public:
 	/** Has InternalRegisterAgents been called this session? */
 	bool bAgentsRegistered = false;
 
+	/** Has environment been reset by Python? (indicates training is active) */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	bool bTrainingActive = false;
+
 	/** Episode counters per logical environment (4 environments = 4 counters) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	TMap<int32, int32> LogicalEnvironmentEpisodes;

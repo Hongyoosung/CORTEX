@@ -17,35 +17,10 @@ void UCombatExecutorComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Cache components
-	CachedHealthComponent = GetOwner()->FindComponentByClass<UHealthComponent>();
-	CachedPerceptionComponent = GetOwner()->FindComponentByClass<UAgentPerceptionComponent>();
-	RewardCalculator = GetOwner()->FindComponentByClass<URewardCalculator>();
+	// v9.0 Phase 3: Components are now injected by character (no FindComponentByClass)
+	// Event binding happens in setter methods below
 
-	// Bind to HealthComponent events for RL reward integration
-	if (CachedHealthComponent)
-	{
-		CachedHealthComponent->OnDamageTaken.AddDynamic(this, &UCombatExecutorComponent::OnDamageTakenEvent);
-		CachedHealthComponent->OnDamageDealt.AddDynamic(this, &UCombatExecutorComponent::OnDamageDealtEvent);
-		CachedHealthComponent->OnKillConfirmed.AddDynamic(this, &UCombatExecutorComponent::OnKillEvent);
-		CachedHealthComponent->OnDeath.AddDynamic(this, &UCombatExecutorComponent::OnDeathEvent);
-
-		UE_LOG(LogTemp, Log, TEXT("[CombatExecutor] '%s': Bound to HealthComponent events for RL rewards"),
-			*GetOwner()->GetName());
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[CombatExecutor] '%s': No HealthComponent found, RL combat rewards disabled"),
-			*GetOwner()->GetName());
-	}
-
-	if (!CachedPerceptionComponent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[CombatExecutor] '%s': No PerceptionComponent found, enemy detection disabled"),
-			*GetOwner()->GetName());
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("CombatExecutorComponent: Initialized on %s"), *GetOwner()->GetName());
+	UE_LOG(LogTemp, Log, TEXT("[CombatExecutor v9.0] '%s': Waiting for dependency injection"), *GetOwner()->GetName());
 }
 
 void UCombatExecutorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -60,6 +35,38 @@ void UCombatExecutorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+//------------------------------------------------------------------------------
+// v9.0 PHASE 3: DEPENDENCY INJECTION
+//------------------------------------------------------------------------------
+
+void UCombatExecutorComponent::SetHealthComponent(UHealthComponent* Health)
+{
+	CachedHealthComponent = Health;
+
+	if (CachedHealthComponent)
+	{
+		// Bind to HealthComponent events for RL reward integration
+		CachedHealthComponent->OnDamageTaken.AddDynamic(this, &UCombatExecutorComponent::OnDamageTakenEvent);
+		CachedHealthComponent->OnDamageDealt.AddDynamic(this, &UCombatExecutorComponent::OnDamageDealtEvent);
+		CachedHealthComponent->OnKillConfirmed.AddDynamic(this, &UCombatExecutorComponent::OnKillEvent);
+		CachedHealthComponent->OnDeath.AddDynamic(this, &UCombatExecutorComponent::OnDeathEvent);
+
+		UE_LOG(LogTemp, Log, TEXT("[CombatExecutor v9.0] '%s': Injected HealthComponent and bound events"),
+			*GetOwner()->GetName());
+	}
+}
+
+void UCombatExecutorComponent::SetPerceptionComponent(UAgentPerceptionComponent* Perception)
+{
+	CachedPerceptionComponent = Perception;
+
+	if (CachedPerceptionComponent)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[CombatExecutor v9.0] '%s': Injected PerceptionComponent"),
+			*GetOwner()->GetName());
+	}
 }
 
 //------------------------------------------------------------------------------

@@ -3,12 +3,13 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Observation/ObservationElement.h"
+#include "Observation/TeamObservation.h"
 #include "ObservationBuilderComponent.generated.h"
 
 // Forward declarations
-class UTeamLeaderComponent;
 class UAgentPerceptionComponent;
 class UHealthComponent;
+class AObjectiveActor;
 
 /**
  * Observation Builder Component
@@ -82,15 +83,23 @@ public:
 	/** Populate objective context fields in observation (friendly and hostile objectives) */
 	void PopulateObjectiveContext(FObservationElement& Observation);
 
+
+	/** v10.0: ����/�ȷο��κ��� ��ǥ�� ������ ���Թ޽��ϴ� (Dependency Injection) */
+	void SetObjectives(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
+
+	/** v10.0: �� ���� ������ ������Ʈ�մϴ� */
+	void UpdateTeamIntel(const FTeamObservation& TeamObs);
+
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 3: DEPENDENCY INJECTION
+	//--------------------------------------------------------------------------
+	/** Set health component (injected by character) */
+	void SetHealthComponent(UHealthComponent* Health);
+
+	/** Set perception component (injected by character) */
+	void SetPerceptionComponent(UAgentPerceptionComponent* Perception);
+
 public:
-	//--------------------------------------------------------------------------
-	// CONFIGURATION
-	//--------------------------------------------------------------------------
-
-	/** Team leader for ally context (optional, can be set externally) */
-	UPROPERTY(BlueprintReadWrite, Category = "Observation|Config")
-	UTeamLeaderComponent* TeamLeader = nullptr;
-
 	//--------------------------------------------------------------------------
 	// COVER DETECTION CONFIG
 	//--------------------------------------------------------------------------
@@ -115,7 +124,7 @@ public:
 	// STATE
 	//--------------------------------------------------------------------------
 
-	/** Local observation (71 features) */
+	/** Local observation (56 features) */
 	UPROPERTY(BlueprintReadOnly, Category = "Observation|State")
 	FObservationElement LocalObservation;
 
@@ -152,16 +161,13 @@ private:
 	UPROPERTY()
 	UAgentPerceptionComponent* CachedPerceptionComponent = nullptr;
 
-	//--------------------------------------------------------------------------
-	// PERFORMANCE PROFILING
-	//--------------------------------------------------------------------------
+	// ĳ�̵� ��ǥ�� (������ �������� �ʰ� ���� �����͸� ����)
+	UPROPERTY()
+	AObjectiveActor* CachedFriendlyObjective = nullptr;
 
-	/** Time spent building observations this episode (ms) */
-	float TotalObservationTime = 0.0f;
+	UPROPERTY()
+	AObjectiveActor* CachedHostileObjective = nullptr;
 
-	/** Time spent on cover queries this episode (ms) */
-	float TotalCoverQueryTime = 0.0f;
-
-	/** Number of cover queries this episode */
-	int32 CoverQueriesThisEpisode = 0;
+	// �� ���� ����
+	FTeamObservation CachedTeamObservation;
 };

@@ -13,6 +13,23 @@ class UTeamCommsComponent;
 class UContextBridgeComponent;
 class UVisualLoggerComponent;
 class URLPolicyNetwork;
+// v9.0 Phase 4: Forward declarations for sub-components (for wrapper API)
+class UTacticalStateComponent;
+class UObservationBuilderComponent;
+class URLAgentComponent;
+class UCombatExecutorComponent;
+class URewardCalculator;
+class UHealthComponent;
+class UWeaponComponent;
+class UAgentPerceptionComponent;
+class UTeamLeaderComponent;
+class AObjectiveActor;
+struct FStrategyAssignment;
+struct FTacticalParameters;
+struct FCombatParameters;
+struct FMacroAction;
+struct FObservationElement;
+struct FTeamObservation;
 
 
 /**
@@ -50,6 +67,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 public:
 	virtual void Tick(float DeltaTime) override;
@@ -62,6 +80,146 @@ public:
 	virtual bool		IsAlive_Implementation				() const override;
 	virtual float		GetWeaponCooldown_Implementation	() const override;
 	virtual bool		CanFireWeapon_Implementation		() const override;
+
+	//==========================================================================
+	// v9.0 PHASE 4: CHARACTER WRAPPER API
+	// Character-as-Central-Hub Pattern - All component access goes through character
+	//==========================================================================
+
+	//--------------------------------------------------------------------------
+	// TACTICAL STATE (wraps TacticalStateComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
+	void SetStrategyAssignment(const FStrategyAssignment& Assignment);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	EStrategyType GetAssignedStrategy() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FStrategyAssignment GetStrategyAssignment() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
+	void SetTacticalParameters(const FTacticalParameters& Params);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FTacticalParameters GetTacticalParameters() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
+	void SetCombatParameters(const FCombatParameters& Params);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FCombatParameters GetCombatParameters() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FMacroAction GetCurrentMacroAction() const;
+
+	//--------------------------------------------------------------------------
+	// OBSERVATION (wraps ObservationBuilderComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
+	FObservationElement BuildLocalObservation();
+
+	UFUNCTION(BlueprintPure, Category = "AI|Observation")
+	FObservationElement GetLocalObservation() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Observation")
+	FObservationElement GetPreviousObservation() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
+	void UpdateObjectiveContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
+	void UpdateTeamIntel(const FTeamObservation& TeamObs);
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
+	bool FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies);
+
+	//--------------------------------------------------------------------------
+	// REINFORCEMENT LEARNING (wraps RLAgentComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|RL")
+	void ProvideReward(float Reward, bool bTerminal = false);
+
+	UFUNCTION(BlueprintCallable, Category = "AI|RL")
+	void AccumulateReward(float Reward);
+
+	UFUNCTION(BlueprintPure, Category = "AI|RL")
+	float GetAccumulatedReward() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|RL")
+	URewardCalculator* GetRewardCalculator() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|RL")
+	URLPolicyNetwork* GetTacticalPolicy() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|RL")
+	bool IsTacticalPolicyReady() const;
+
+	//--------------------------------------------------------------------------
+	// COMBAT (wraps CombatExecutorComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Combat")
+	void ExecuteCombat(const FCombatParameters& Params);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	AActor* GetClosestEnemy(const TArray<AActor*>& Enemies) const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Combat")
+	AActor* GetLowestHPEnemy(const TArray<AActor*>& Enemies) const;
+
+	//--------------------------------------------------------------------------
+	// TEAM COMMUNICATION (wraps TeamCommsComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Team")
+	void SignalEventToLeader(EStrategicEvent Event, AActor* Instigator, FVector Location, int32 Priority);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Team")
+	UTeamLeaderComponent* GetTeamLeader() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Team")
+	int32 GetTeamID() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Team")
+	bool IsRegisteredWithLeader() const;
+
+	//--------------------------------------------------------------------------
+	// CONTEXT BRIDGE (wraps ContextBridgeComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|StateTree")
+	void UpdateContextBridge();
+
+	UFUNCTION(BlueprintPure, Category = "AI|StateTree")
+	UContextBridgeComponent* GetContextBridge() const;
+
+	//--------------------------------------------------------------------------
+	// LIFECYCLE (Character coordinates all components)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Lifecycle")
+	void ResetEpisode();
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Lifecycle")
+	void MarkAsDead();
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Lifecycle")
+	void MarkAsAlive();
+
+	UFUNCTION(BlueprintPure, Category = "AI|State")
+	bool IsAliveState() const;
+
+	//--------------------------------------------------------------------------
+	// COMPONENT ACCESS (for external systems that need direct component access)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	UFollowerAgentComponent* GetFollowerAgentComponent() const { return FollowerAgentComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	UFollowerStateTreeComponent* GetStateTreeComponent() const { return StateTreeComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	UTeamCommsComponent* GetTeamCommsComponent() const { return TeamCommsComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	UVisualLoggerComponent* GetVisualLoggerComponent() const { return VisualLoggerComponent; }
 
 
 public:
@@ -95,4 +253,76 @@ private:
 	/** Handle death event from HealthComponent and coordinate with FollowerAgentComponent */
 	UFUNCTION()
 	void OnHealthComponentDeath(const struct FDeathEventData& DeathEvent);
+
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 4: CACHED SUB-COMPONENT REFERENCES (Dependency Injection)
+	//--------------------------------------------------------------------------
+	/** Cached sub-component references (initialized once in BeginPlay) */
+	UPROPERTY()
+	UTacticalStateComponent* CachedTacticalState = nullptr;
+
+	UPROPERTY()
+	UObservationBuilderComponent* CachedObservationBuilder = nullptr;
+
+	UPROPERTY()
+	URLAgentComponent* CachedRLAgent = nullptr;
+
+	UPROPERTY()
+	UCombatExecutorComponent* CachedCombatExecutor = nullptr;
+
+	UPROPERTY()
+	UHealthComponent* CachedHealthComponent = nullptr;
+
+	UPROPERTY()
+	UWeaponComponent* CachedWeaponComponent = nullptr;
+
+	UPROPERTY()
+	UAgentPerceptionComponent* CachedPerceptionComponent = nullptr;
+
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 4: TEAM COMMUNICATION DATA (merged from TeamCommsComponent)
+	//--------------------------------------------------------------------------
+	/** Cached team leader component reference */
+	UPROPERTY()
+	UTeamLeaderComponent* CachedTeamLeader = nullptr;
+
+	/** Cached team leader actor reference */
+	UPROPERTY()
+	AActor* CachedTeamLeaderActor = nullptr;
+
+	/** Is currently registered with team leader? */
+	bool bIsRegisteredWithLeader = false;
+
+	/** Team ID for this follower (used to find matching leader) */
+	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
+	int32 TeamID = 0;
+
+	/** Automatically register with team leader on BeginPlay */
+	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
+	bool bAutoRegisterWithLeader = true;
+
+	/** Enable verbose logging for team communication debugging */
+	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
+	bool bEnableTeamCommsLogging = false;
+
+	/** Find team leader actor by matching TeamID */
+	AActor* FindTeamLeaderByTeamID();
+
+	/** Resolve TeamLeaderComponent by TeamID matching */
+	bool ResolveTeamLeaderComponent();
+
+	/** Register with team leader (internal implementation) */
+	bool RegisterWithLeader();
+
+	/** Unregister from team leader (internal implementation) */
+	void UnregisterFromLeader();
+
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 4: INITIALIZATION (Dependency Injection Pattern)
+	//--------------------------------------------------------------------------
+	/** Initialize all component references (called once in BeginPlay) */
+	void InitializeComponents();
+
+	/** Inject dependencies between components (called after InitializeComponents) */
+	void InjectDependencies();
 };

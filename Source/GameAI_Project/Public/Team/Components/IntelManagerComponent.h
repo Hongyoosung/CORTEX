@@ -12,6 +12,12 @@
 class AObjectiveActor;
 
 /**
+ * Delegate fired when objectives are discovered and ready for use.
+ * v9.0: Allows followers to defer observation initialization until objectives exist.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnObjectivesDiscovered);
+
+/**
  * Manages enemy tracking, objective discovery, and team observation building.
  * Handles all intelligence gathering for the team leader.
  */
@@ -95,6 +101,15 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Intel Manager")
 	FTeamObservation BuildTeamObservation(const TArray<AActor*>& Followers);
+
+	// ========== Events ==========
+
+	/**
+	 * Event broadcast when objectives are discovered.
+	 * v9.0: Subscribers can safely initialize observations after this event.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Intel Manager")
+	FOnObjectivesDiscovered OnObjectivesDiscovered;
 
 	// ========== Configuration ==========
 

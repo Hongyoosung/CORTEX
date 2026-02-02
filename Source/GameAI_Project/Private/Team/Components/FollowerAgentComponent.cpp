@@ -1,5 +1,4 @@
 #include "Team/Components/FollowerAgentComponent.h"
-#include "Team/Components/TeamLeaderComponent.h"
 #include "Team/ObjectiveActor.h"
 // v8.0 Refactored: New component includes
 #include "RL/Components/TacticalStateComponent.h"
@@ -8,6 +7,7 @@
 #include "Combat/Components/CombatExecutorComponent.h"
 // v9.0 Phase 3: Manager components
 #include "Team/Components/TeamCommsComponent.h"
+#include "Team/Components/IntelManagerComponent.h"
 #include "StateTree/Components/ContextBridgeComponent.h"
 #include "Util/Components/VisualLoggerComponent.h"
 // Other includes
@@ -89,60 +89,6 @@ void UFollowerAgentComponent::BeginPlay()
 	}
 
 	// ========================================
-	// v9.0 PHASE 3: Get team leader from TeamComms
-	// ========================================
-	UTeamLeaderComponent* TeamLeader = TeamComms ? TeamComms->GetTeamLeader() : nullptr;
-
-	// NOTE: TeamLeader may be nullptr at this point if TeamComms hasn't registered yet
-	// TeamComms will handle registration in its own BeginPlay
-
-	// ========================================
-	// v8.0: Set TeamLeader reference in sub-components (if available)
-	// ========================================
-	if (TeamLeader)
-	{
-		if (ObservationBuilder)
-		{
-			ObservationBuilder->TeamLeader = TeamLeader;
-
-			// v9.0 DEBUG: Verify TeamLeader objectives are discovered
-			UE_LOG(LogTemp, Warning, TEXT("✅ [TEAM SETUP v9.0] '%s': TeamLeader '%s' (TeamID=%d) set on ObservationBuilder"),
-				*GetOwner()->GetName(),
-				*TeamLeader->GetOwner()->GetName(),
-				TeamLeader->TeamID);
-
-			AObjectiveActor* FriendlyObj = TeamLeader->GetFriendlyObjective();
-			AObjectiveActor* HostileObj = TeamLeader->GetHostileObjective();
-
-			UE_LOG(LogTemp, Warning, TEXT("   └─ FriendlyObjective: %s, HostileObjective: %s"),
-				FriendlyObj ? *FriendlyObj->GetName() : TEXT("NULL"),
-				HostileObj ? *HostileObj->GetName() : TEXT("NULL"));
-
-			if (!FriendlyObj || !HostileObj)
-			{
-				UE_LOG(LogTemp, Error, TEXT("⚠️ [TEAM SETUP v9.0] '%s': Objectives NOT YET DISCOVERED! Observations will default to max distance (1.0)."),
-					*GetOwner()->GetName());
-				UE_LOG(LogTemp, Error, TEXT("   └─ This is expected during BeginPlay. Objectives should be discovered by TeamLeader's DiscoverWorldObjectives()."));
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("❌ [TEAM SETUP v9.0] '%s': ObservationBuilder component is NULL!"),
-				*GetOwner()->GetName());
-		}
-
-		if (CombatExecutor)
-		{
-			CombatExecutor->TeamLeader = TeamLeader;
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ [TEAM SETUP v9.0] '%s': TeamLeader not yet available (TeamComms will handle registration)"),
-			*GetOwner()->GetName());
-	}
-
-	// ========================================
 	// v8.0: Connect RLAgent RewardCalculator to CombatExecutor
 	// ========================================
 	if (RLAgent && CombatExecutor)
@@ -164,6 +110,8 @@ void UFollowerAgentComponent::BeginPlay()
 		ContextBridge ? TEXT("OK") : TEXT("MISSING"),
 		VisualLogger ? TEXT("OK") : TEXT("MISSING"));
 }
+
+
 
 void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	FActorComponentTickFunction* ThisTickFunction)
@@ -229,13 +177,6 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 			}
 		}
 
-		// Cache state for next event check
-		UAgentPerceptionComponent* PerceptionComp = GetOwner()->FindComponentByClass<UAgentPerceptionComponent>();
-		if (PerceptionComp)
-		{
-			LastEnemyCount = PerceptionComp->GetDetectedEnemies().Num();
-		}
-
 		TicksSinceLastUpdate = 0;
 	}
 
@@ -257,42 +198,30 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 void UFollowerAgentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// Unregister from team leader
-	UnregisterFromTeamLeader();
 
 	// NOTE: Death event unsubscription is handled by FollowerCharacter (owner coordinates components)
 
 	Super::EndPlay(EndPlayReason);
 }
 
+
+void UFollowerAgentComponent::UpdateTacticalContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile, const FTeamObservation& TeamObs)
+{
+	// 2. 하위 컴포넌트로 데이터 전파 (Push)
+	if (ObservationBuilder)
+	{
+		ObservationBuilder->SetObjectives(Friendly, Hostile);
+		ObservationBuilder->UpdateTeamIntel(TeamObs);
+	}
+
+	// 3. (옵션) TacticalState 등 다른 컴포넌트에도 필요하다면 전파
+
+	UE_LOG(LogTemp, Verbose, TEXT("[%s] Tactical Context Updated via Push"), *GetOwner()->GetName());
+}
+
 //------------------------------------------------------------------------------
 // TEAM LEADER COMMUNICATION (v9.0 PHASE 3: Delegates to TeamCommsComponent)
 //------------------------------------------------------------------------------
-
-bool UFollowerAgentComponent::RegisterWithTeamLeader()
-{
-	if (!TeamComms)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Cannot register, missing TeamCommsComponent"),
-			*GetOwner()->GetName());
-		return false;
-	}
-
-	return TeamComms->RegisterWithTeamLeader();
-}
-
-void UFollowerAgentComponent::UnregisterFromTeamLeader()
-{
-	if (!TeamComms)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Cannot unregister, missing TeamCommsComponent"),
-			*GetOwner()->GetName());
-		return;
-	}
-
-	TeamComms->UnregisterFromTeamLeader();
-}
-
 void UFollowerAgentComponent::SignalEventToLeader(
 	EStrategicEvent Event,
 	AActor* Instigator,
@@ -344,12 +273,6 @@ void UFollowerAgentComponent::SetStrategyAssignment(const FStrategyAssignment& A
 	TicksSinceLastUpdate = 999;
 }
 
-AObjectiveActor* UFollowerAgentComponent::GetTargetObjective() const
-{
-	// v9.0: Objectives are now implicit in strategy (Assault→Hostile, Defend→Friendly)
-	// Use StateTreeContext.TargetObjective instead
-	return nullptr;
-}
 
 //------------------------------------------------------------------------------
 // TACTICAL & COMBAT PARAMETERS (Delegates to TacticalStateComponent)
@@ -426,6 +349,8 @@ FCombatParameters UFollowerAgentComponent::GetCombatParameters() const
 	if (!TacticalState) return FCombatParameters();
 	return TacticalState->GetCombatParameters();
 }
+
+
 
 //------------------------------------------------------------------------------
 // STATE MANAGEMENT (Delegates to TacticalStateComponent & CombatExecutorComponent)
@@ -568,11 +493,6 @@ FObservationElement UFollowerAgentComponent::BuildLocalObservation()
 	return Obs;
 }
 
-bool UFollowerAgentComponent::FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies)
-{
-	if (!ObservationBuilder) return false;
-	return ObservationBuilder->FindNearestCover(OutCoverLocation, OutDistance, Enemies);
-}
 
 //------------------------------------------------------------------------------
 // REINFORCEMENT LEARNING (Delegates to RLAgentComponent)
@@ -633,19 +553,10 @@ void UFollowerAgentComponent::ResetEpisode()
 	}
 
 	// Reset event-driven tracking
-	LastEnemyCount = 0;
 	TicksSinceLastUpdate = 0;
 
-	// v9.0 PHASE 3: Clear team leader's known enemies (first follower only)
-	UTeamLeaderComponent* TeamLeader = GetTeamLeader();
-	if (TeamLeader)
-	{
-		TArray<AActor*> AllFollowers = TeamLeader->GetFollowers();
-		if (AllFollowers.Num() > 0 && AllFollowers[0] == GetOwner())
-		{
-			TeamLeader->ClearKnownEnemies();
-		}
-	}
+	// v9.0 REFACTOR: ClearKnownEnemies() now called by TeamLeader::OnEpisodeStart()
+	// No need to call it from follower - the leader owns this state and manages its lifecycle
 }
 
 void UFollowerAgentComponent::OnEpisodeEnded(float EpisodeReward)
@@ -682,23 +593,12 @@ URLPolicyNetwork* UFollowerAgentComponent::GetTacticalPolicy() const
 // UTILITY (v9.0 PHASE 3: Delegates to TeamCommsComponent)
 //------------------------------------------------------------------------------
 
-UTeamLeaderComponent* UFollowerAgentComponent::GetTeamLeader() const
-{
-	if (!TeamComms) return nullptr;
-	return TeamComms->GetTeamLeader();
-}
-
 int32 UFollowerAgentComponent::GetTeamID() const
 {
 	if (!TeamComms) return -1;
 	return TeamComms->GetTeamID();
 }
 
-bool UFollowerAgentComponent::IsRegisteredWithLeader() const
-{
-	if (!TeamComms) return false;
-	return TeamComms->IsRegisteredWithLeader();
-}
 
 //------------------------------------------------------------------------------
 // DEBUG VISUALIZATION (v9.0 PHASE 3: Delegates to VisualLoggerComponent)
@@ -729,14 +629,6 @@ void UFollowerAgentComponent::DrawDebugInfo()
 
 	// Delegate to VisualLogger
 	VisualLogger->DrawFollowerState(Location, Strategy, Health, TacticalParams, TargetObjective);
-
-	// Draw line to team leader
-	UTeamLeaderComponent* TeamLeader = GetTeamLeader();
-	if (TeamLeader && TeamLeader->GetOwner())
-	{
-		FVector LeaderPos = TeamLeader->GetOwner()->GetActorLocation();
-		VisualLogger->DrawLine(Location, LeaderPos, FLinearColor(TeamLeader->TeamColor), 0.0f, 1.0f);
-	}
 }
 
 //------------------------------------------------------------------------------
@@ -754,17 +646,6 @@ void UFollowerAgentComponent::ExecuteCombat()
 	CombatExecutor->ExecuteCombat(CombatParams);
 }
 
-AActor* UFollowerAgentComponent::GetClosestEnemy(const TArray<AActor*>& Enemies) const
-{
-	if (!CombatExecutor) return nullptr;
-	return CombatExecutor->GetClosestEnemy(Enemies);
-}
-
-AActor* UFollowerAgentComponent::GetLowestHPEnemy(const TArray<AActor*>& Enemies) const
-{
-	if (!CombatExecutor) return nullptr;
-	return CombatExecutor->GetLowestHPEnemy(Enemies);
-}
 
 //------------------------------------------------------------------------------
 // EVENT-DRIVEN STRATEGY UPDATES
@@ -786,7 +667,6 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 	{
 		CurrentEnemyCount = PerceptionComp->GetDetectedEnemies().Num();
 	}
-	bool bNewEnemyDetected = CurrentEnemyCount > LastEnemyCount;
 
 	// Check assignment change (delegates to TacticalStateComponent)
 	bool bAssignmentChanged = false;
@@ -801,5 +681,5 @@ bool UFollowerAgentComponent::ShouldUpdateStrategy() const
 	// Fallback: Force update every 30 ticks (~0.5s at 60 FPS)
 	bool bTimeout = TicksSinceLastUpdate > 30;
 
-	return bNewEnemyDetected || bAssignmentChanged || bTimeout;
+	return bAssignmentChanged || bTimeout;
 }

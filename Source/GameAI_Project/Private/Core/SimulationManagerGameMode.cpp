@@ -42,7 +42,7 @@ void ASimulationManagerGameMode::BeginPlay()
 		StartSimulation();
 	}
 
-	UScholaGameInstance* ScholaGI = Cast<UScholaGameInstance>(GetGameInstance());
+	/*UScholaGameInstance* ScholaGI = Cast<UScholaGameInstance>(GetGameInstance());
 	if (ScholaGI)
 	{
 		ScholaGI->StartCommunicationServer(ServerPort);
@@ -50,7 +50,7 @@ void ASimulationManagerGameMode::BeginPlay()
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("[SimulationManager] Failed to get ScholaGameInstance - communication server not started"));
-	}
+	}*/
 }
 
 void ASimulationManagerGameMode::Tick(float DeltaTime)

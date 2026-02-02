@@ -52,25 +52,10 @@ public:
 	//--------------------------------------------------------------------------
 	// TEAM MANAGEMENT
 	//--------------------------------------------------------------------------
-	/** Get number of registered followers */
-	UFUNCTION(BlueprintPure, Category = "AI|Team Leader")
-	int32 GetFollowerCount() const;
 
 	/** Is MCTS currently running? */
 	UFUNCTION(BlueprintPure, Category = "AI|Team Leader")
 	bool IsMCTSRunning() const;
-
-	/** Get last MCTS decision time (ms) */
-	UFUNCTION(BlueprintPure, Category = "AI|Team Leader")
-	float GetLastMCTSDecisionTime() const;
-
-
-	//--------------------------------------------------------------------------
-	// DEBUGGING
-	//--------------------------------------------------------------------------
-	/** Draw debug info for team leader */
-	UFUNCTION(BlueprintCallable, Category = "AI|Debug")
-	void DrawDebugInfo();
 
 
 private:

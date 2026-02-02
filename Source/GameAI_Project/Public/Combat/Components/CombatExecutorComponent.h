@@ -51,6 +51,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Targeting")
 	AActor* GetLowestHPEnemy(const TArray<AActor*>& Enemies) const;
 
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 3: DEPENDENCY INJECTION
+	//--------------------------------------------------------------------------
+	/** Set health component (injected by character) */
+	void SetHealthComponent(UHealthComponent* Health);
+
+	/** Set perception component (injected by character) */
+	void SetPerceptionComponent(UAgentPerceptionComponent* Perception);
+
 public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION

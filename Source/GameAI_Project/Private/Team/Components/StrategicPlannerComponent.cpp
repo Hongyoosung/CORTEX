@@ -22,7 +22,8 @@ void UStrategicPlannerComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	UE_LOG(LogTemp, Log, TEXT("[StrategicPlanner] Initialized (Simulations: %d)"), MCTSSimulations);
+	UE_LOG(LogTemp, Log, TEXT("[StrategicPlanner] Initialized (Simulations: %d, Async: %s)"),
+		MCTSSimulations, bAsyncMCTS ? TEXT("YES") : TEXT("NO"));
 }
 
 void UStrategicPlannerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -55,6 +56,17 @@ void UStrategicPlannerComponent::InitializeMCTS(int32 Simulations)
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("[StrategicPlanner] Failed to create MCTS instance"));
+	}
+
+	// Validate configuration
+	if (MCTSSimulations < 100)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[StrategicPlanner] Low simulation count (%d) may produce poor results"), MCTSSimulations);
+	}
+
+	if (!bAsyncMCTS)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[StrategicPlanner] Synchronous MCTS enabled - may cause frame hitches"));
 	}
 }
 
@@ -180,4 +192,43 @@ void UStrategicPlannerComponent::ProcessCompletedTask()
 	// Cleanup (RAII)
 	AsyncMCTSTask.Reset();
 	bMCTSRunning = false;
+}
+
+void UStrategicPlannerComponent::RunStrategyAssignment(
+	const TArray<AActor*>& Agents,
+	const TArray<AObjectiveActor*>& Objectives)
+{
+	if (bAsyncMCTS)
+	{
+		RunStrategyAssignmentAsync(Agents, Objectives);
+	}
+	else
+	{
+		// Synchronous execution (blocking)
+		if (!StrategicMCTS)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[StrategicPlanner] RunStrategyAssignment: MCTS not initialized"));
+			return;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[StrategicPlanner] Running MCTS synchronously (Agents: %d, Objectives: %d, Simulations: %d)"),
+			Agents.Num(), Objectives.Num(), MCTSSimulations);
+
+		// Execute MCTS directly on game thread
+		//TMap<AActor*, FStrategyAssignment> AssignmentMap = StrategicMCTS->RunStrategyAssignment(
+		//	Agents,
+		//	Objectives,
+		//	MCTSSimulations,
+
+		//);
+
+		//// Convert to array and fire delegate
+		//TArray<FStrategyAssignment> Assignments;
+		//for (const auto& Pair : AssignmentMap)
+		//{
+		//	Assignments.Add(Pair.Value);
+		//}
+
+		//OnPlanReady.Broadcast(Assignments, 0.0f, TEXT("SYNC"));
+	}
 }

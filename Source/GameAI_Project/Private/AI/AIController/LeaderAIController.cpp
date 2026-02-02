@@ -37,12 +37,6 @@ void ALeaderAIController::OnUnPossess()
 void ALeaderAIController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	// Optional: Draw debug info
-	if (bEnableDebugDrawing)
-	{
-		DrawDebugInfo();
-	}
 }
 
 //------------------------------------------------------------------------------
@@ -69,62 +63,14 @@ UTeamLeaderComponent* ALeaderAIController::GetTeamLeaderComponent() const
 // TEAM MANAGEMENT
 //------------------------------------------------------------------------------
 
-int32 ALeaderAIController::GetFollowerCount() const
-{
-	UTeamLeaderComponent* TeamLeaderComp = GetTeamLeaderComponent();
-	if (TeamLeaderComp)
-	{
-		return TeamLeaderComp->GetFollowerCount();
-	}
-	return 0;
-}
-
 bool ALeaderAIController::IsMCTSRunning() const
 {
 	UTeamLeaderComponent* TeamLeaderComp = GetTeamLeaderComponent();
 	if (TeamLeaderComp)
 	{
-		return TeamLeaderComp->IsMCTSRunning();
+		return TeamLeaderComp->IsRunningMCTS();
 	}
 	return false;
-}
-
-float ALeaderAIController::GetLastMCTSDecisionTime() const
-{
-	UTeamLeaderComponent* TeamLeaderComp = GetTeamLeaderComponent();
-	if (TeamLeaderComp)
-	{
-		return TeamLeaderComp->GetLastMCTSDecisionTime();
-	}
-	return 0.0f;
-}
-
-//------------------------------------------------------------------------------
-// DEBUGGING
-//------------------------------------------------------------------------------
-
-void ALeaderAIController::DrawDebugInfo()
-{
-	UTeamLeaderComponent* TeamLeaderComp = GetTeamLeaderComponent();
-	if (TeamLeaderComp)
-	{
-		TeamLeaderComp->DrawDebugInfo();
-	}
-
-	// Draw team info above pawn
-	APawn* ControlledPawn = GetPawn();
-	if (ControlledPawn)
-	{
-		FString LeaderInfo = FString::Printf(TEXT("Leader | Followers: %d"), GetFollowerCount());
-		FVector Location = ControlledPawn->GetActorLocation() + FVector(0, 0, 120);
-		DrawDebugString(GetWorld(), Location, LeaderInfo, nullptr, FColor::Yellow, 0.0f, true);
-
-		if (IsMCTSRunning())
-		{
-			FVector MCTSLocation = ControlledPawn->GetActorLocation() + FVector(0, 0, 140);
-			DrawDebugString(GetWorld(), MCTSLocation, TEXT("MCTS Running..."), nullptr, FColor::Orange, 0.0f, true);
-		}
-	}
 }
 
 //------------------------------------------------------------------------------

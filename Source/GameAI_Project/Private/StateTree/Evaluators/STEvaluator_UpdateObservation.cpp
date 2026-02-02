@@ -5,6 +5,7 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
+#include "Team/Components/TeamCommsComponent.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/WeaponComponent.h"
 #include "Combat/Components/HealthComponent.h"
@@ -65,6 +66,31 @@ void FSTEvaluator_UpdateObservation::Tick(FStateTreeExecutionContext& Context, f
 		return;
 	}
 
+	// v9.0 SAFEGUARD: Skip observation updates if agent is dead (prevents RL corruption)
+	// Get StateTree component early to check alive state
+	UFollowerStateTreeComponent* StateTreeComp = ControlledPawn->FindComponentByClass<UFollowerStateTreeComponent>();
+	if (!StateTreeComp)
+	{
+		static bool bLoggedStateTreeOnce = false;
+		if (!bLoggedStateTreeOnce)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[UPDATE OBS] Cannot find StateTreeComponent!"));
+			bLoggedStateTreeOnce = true;
+		}
+		return;
+	}
+
+	// Get SHARED context reference (this is the SAME context used by tasks)
+	FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
+
+	// v9.0: Skip all updates if agent is dead
+	if (!SharedContext.bIsAlive)
+	{
+		// Dead agents should not update observations or combat state
+		// This prevents corrupting RL training data with invalid observations
+		return;
+	}
+
 	// Check interval - but still update critical combat data every tick
 	InstanceData.TimeAccumulator += DeltaTime;
 	bool bFullUpdate = (InstanceData.TimeAccumulator >= InstanceData.UpdateInterval);
@@ -77,18 +103,6 @@ void FSTEvaluator_UpdateObservation::Tick(FStateTreeExecutionContext& Context, f
 	// Full update (observations, perception, cover) - run at intervals
 	if (bFullUpdate)
 	{
-
-		// Get StateTree component to access shared context
-		UFollowerStateTreeComponent* StateTreeComp = ControlledPawn->FindComponentByClass<UFollowerStateTreeComponent>();
-		if (!StateTreeComp)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[UPDATE OBS] Cannot find StateTreeComponent!"));
-			return;
-		}
-
-		// Get SHARED context reference (this is the SAME context used by tasks)
-		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-
 		// Get observation from follower component
 		SharedContext.PreviousObservation = SharedContext.CurrentObservation;
 		SharedContext.CurrentObservation = FollowerComponent->GetLocalObservation();
@@ -101,25 +115,20 @@ void FSTEvaluator_UpdateObservation::Tick(FStateTreeExecutionContext& Context, f
 	}
 
 	// CRITICAL: Update combat state EVERY tick (LOS, distance) - needed for firing
-	// Get StateTree component to access shared context
-	UFollowerStateTreeComponent* StateTreeComp = ControlledPawn->FindComponentByClass<UFollowerStateTreeComponent>();
-	if (StateTreeComp)
-	{
-		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-		UpdateCombatState(SharedContext, InstanceData, ControlledPawn);
+	// Note: SharedContext already obtained above, and bIsAlive already checked
+	UpdateCombatState(SharedContext, InstanceData, ControlledPawn);
 
-		// Update distance to primary target
-		if (SharedContext.PrimaryTarget)
-		{
-			SharedContext.DistanceToPrimaryTarget = FVector::Dist(
-				ControlledPawn->GetActorLocation(),
-				SharedContext.PrimaryTarget->GetActorLocation()
-			);
-		}
-		else
-		{
-			SharedContext.DistanceToPrimaryTarget = 99999.0f;
-		}
+	// Update distance to primary target
+	if (SharedContext.PrimaryTarget)
+	{
+		SharedContext.DistanceToPrimaryTarget = FVector::Dist(
+			ControlledPawn->GetActorLocation(),
+			SharedContext.PrimaryTarget->GetActorLocation()
+		);
+	}
+	else
+	{
+		SharedContext.DistanceToPrimaryTarget = 99999.0f;
 	}
 
 	// NOTE: No need to "write back" to external context - InstanceData.Context IS the shared context
@@ -186,11 +195,12 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 		}
 	}
 
-	// Optional: Still report to team leader for strategic planning (but don't receive shared knowledge)
-	UFollowerAgentComponent* FollowerComp = ControlledPawn->FindComponentByClass<UFollowerAgentComponent>();
-	if (FollowerComp && FollowerComp->GetTeamLeader())
+	UTeamCommsComponent* TeamComms = ControlledPawn->FindComponentByClass<UTeamCommsComponent>();
+	if (TeamComms)
 	{
-		UTeamLeaderComponent* TeamLeader = FollowerComp->GetTeamLeader();
+		// 2. Get Leader via Comms
+		UTeamLeaderComponent* TeamLeader = TeamComms->GetTeamLeader();
+
 		for (AActor* Enemy : IndividuallyDetected)
 		{
 			if (Enemy)

@@ -57,27 +57,6 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	// ========== Registration ==========
-
-	/**
-	 * Register this follower with the team leader.
-	 * @return True if registration succeeded, false otherwise
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Team Comms")
-	bool RegisterWithTeamLeader();
-
-	/**
-	 * Unregister from the team leader.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Team Comms")
-	void UnregisterFromTeamLeader();
-
-	/**
-	 * Check if currently registered with a team leader.
-	 */
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Team Comms")
-	bool IsRegisteredWithLeader() const { return bIsRegistered; }
-
 	// ========== Event Reporting ==========
 
 	/**
@@ -101,7 +80,7 @@ public:
 	 * Get the team leader component reference.
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Team Comms")
-	UTeamLeaderComponent* GetTeamLeader() const { return TeamLeader; }
+	UTeamLeaderComponent* GetTeamLeader() const;
 
 	/**
 	 * Get the team leader actor reference.
@@ -116,6 +95,33 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Team Comms")
 	int32 GetTeamID() const;
 
+	/**
+	 * Check if currently registered with a team leader.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Team Comms")
+	bool IsRegisteredWithLeader() const { return bIsRegistered; }
+
+
+private:
+	// ========== Registration ==========
+
+	/**
+	 * Register this follower with the team leader.
+	 * @return True if registration succeeded, false otherwise
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Team Comms")
+	bool RegisterWithTeamLeader();
+
+	/**
+	 * Unregister from the team leader.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Team Comms")
+	void UnregisterFromTeamLeader();
+
+	
+
+
+public:
 	// ========== Configuration ==========
 
 	/** Team ID for this follower (used to find matching leader) */
@@ -139,6 +145,8 @@ public:
 	/** Fired when an event is signaled to the leader */
 	UPROPERTY(BlueprintAssignable, Category = "Team Comms")
 	FOnCommsEventSignaled OnEventSignaled;
+
+
 
 private:
 	/** Team leader component reference (resolved by TeamID) */

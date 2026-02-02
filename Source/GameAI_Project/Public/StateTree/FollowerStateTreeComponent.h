@@ -9,6 +9,7 @@
 
 class UFollowerAgentComponent;
 class UHealthComponent;
+class UTeamCommsComponent;
 
 /**
  * Follower State Tree Component
@@ -105,13 +106,17 @@ public:
 
 	
 protected:
-	/** Find FollowerAgentComponent on actor */
+	/** Find components on actor */
 	UFollowerAgentComponent* FindFollowerComponent();
-
 	UHealthComponent* FindHealthComponent();
+	UTeamCommsComponent* FindTeamCommsComponent();
 
 	/** Bind to follower component events */
 	void BindToFollowerEvents();
+
+	/** Handle health component death event (v9.0) */
+	UFUNCTION()
+	void HandleOnHealthComponentDeath(const FDeathEventData& DeathEvent);
 
 	/** Handle controller changed (for Schola Trainer possession) */
 	UFUNCTION()
@@ -142,7 +147,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
 	TObjectPtr<UHealthComponent> HealthComponent;
 
-	/** Auto-find FollowerAgentComponent on same actor */
+	/** Team communications component reference (auto-found if nullptr) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
+	TObjectPtr<UTeamCommsComponent> TeamCommsComponent;
+
+	/** Auto-find components on same actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
 	uint8 bAutoFindFollowerComponent : 1;
 

@@ -3,9 +3,9 @@
 #include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/Utils/FollowerAgentTrainer.h"
+#include "Team/Components/TeamCommsComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Core/ScholaGameInstance.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Communicator/CommunicationManager.h"
 #include "Subsystem/ScholaManagerSubsystem.h"
@@ -56,14 +56,14 @@ void AScholaCombatEnvironment::BeginPlay()
 	BindEpisodeEvents();
 
 	// Auto-discover agents if enabled
-	if (bAutoDiscoverAgents)
+	/*if (bAutoDiscoverAgents)
 	{
 		FTimerHandle UnusedHandle;
 		GetWorldTimerManager().SetTimer(UnusedHandle, [this]()
 			{
 				DiscoverAgents();
 			}, 1.0f, false);
-	}
+	}*/
 
 
 	// NOTE: Do NOT call Super::BeginPlay() here!
@@ -146,10 +146,14 @@ void AScholaCombatEnvironment::ResetEnvironment()
 	// Record this reset timestamp
 	LastReset = CurrentTime;
 
+	// Mark training as active (Python has connected and is resetting the environment)
+	bTrainingActive = true;
+
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] ResetEnvironment() called on %s (EnvID: %d)"), *GetName(), EnvId);
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Managing teams: [%s]"),
 		*FString::JoinBy(TrainingTeamIDs, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); }));
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] Training mode: ACTIVE"));
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
 
 	// CRITICAL FIX: Validate SimulationManager before proceeding
@@ -235,47 +239,18 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Already registered, skipping"));
 		return;
 	}
+	
+	DiscoverAgents();
 
 	OutAgentTrainerPairs.Empty();
-
-	// ===== 수정: CDO를 완전히 필터링하고 실제 에이전트만 처리 =====
-	TArray<UScholaAgentComponent*> ValidComponents;
-
-	// DiscoverAgents()에서 이미 필터링된 RegisteredAgents만 사용
-	for (UScholaAgentComponent* Agent : RegisteredAgents)
-	{
-		if (!Agent || !Agent->GetOwner())
-		{
-			continue;
-		}
-
-		// 이중 체크: CDO와 Archetype 완전히 제외
-		if (Agent->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Filtering CDO: %s"), *Agent->GetName());
-			continue;
-		}
-
-		if (Agent->GetOwner()->HasAnyFlags(RF_ClassDefaultObject))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Filtering CDO owner: %s"),
-				*Agent->GetOwner()->GetName());
-			continue;
-		}
-
-		ValidComponents.Add(Agent);
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Valid components after filtering: %d"),
-		ValidComponents.Num());
 
 	int32 TrainersCreated = 0;
 	int32 TrainersFailed = 0;
 
 	// Process valid agents (only agents from TrainingTeamIDs)
-	for (int32 i = 0; i < ValidComponents.Num(); i++)
+	for (int32 i = 0; i < RegisteredAgents.Num(); i++)
 	{
-		UScholaAgentComponent* Agent = ValidComponents[i];
+		UScholaAgentComponent* Agent = RegisteredAgents[i];
 
 		if (!Agent->FollowerAgent)
 		{
@@ -284,16 +259,12 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 			continue;
 		}
 
-		// Get TeamID for logging - Phase 3: Use GetTeamLeader() method
+		// Get TeamID for logging - v9.0 Phase 4: Use character API
 		int32 TeamID = -1;
-		UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
-		if (FollowerComp)
+		AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(Agent->GetOwner());
+		if (FollowerChar)
 		{
-			UTeamLeaderComponent* Leader = FollowerComp->GetTeamLeader();
-			if (Leader)
-			{
-				TeamID = Leader->TeamID;
-			}
+			TeamID = FollowerChar->GetTeamID();
 		}
 
 		// Validate pawn before creating trainer (critical for Schola)
@@ -317,7 +288,7 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 			FRotator::ZeroRotator,
 			SpawnParams
 		);
-
+		
 		if (Trainer)
 		{
 			Trainer->Initialize(Agent);
@@ -374,7 +345,6 @@ void AScholaCombatEnvironment::DiscoverAgents()
 {
 	RegisteredAgents.Empty();
 	int32 ValidatedCount = 0;
-	int32 SkippedCDO = 0;
 	int32 SkippedTeamFilter = 0;
 
 	// v8.5 VECTORIZED TRAINING: Team ID-based filtering for multi-environment support
@@ -391,12 +361,6 @@ void AScholaCombatEnvironment::DiscoverAgents()
 	{
 		AFollowerCharacter* Follower = *It;
 
-		// 1. Validate and filter CDO/Archetypes
-		if (!IsValid(Follower) || Follower->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
-		{
-			SkippedCDO++;
-			continue;
-		}
 
 		// 2. Extract ScholaAgentComponent
 		UScholaAgentComponent* ScholaComp = Follower->FindComponentByClass<UScholaAgentComponent>();
@@ -416,7 +380,6 @@ void AScholaCombatEnvironment::DiscoverAgents()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Discovery complete: %d agents registered"), ValidatedCount);
-	UE_LOG(LogTemp, Warning, TEXT("  - Skipped (CDO): %d"), SkippedCDO);
 	UE_LOG(LogTemp, Warning, TEXT("  - Skipped (Team Filter): %d"), SkippedTeamFilter);
 	UE_LOG(LogTemp, Warning, TEXT("  - Total Registered: %d"), RegisteredAgents.Num());
 }
@@ -441,21 +404,16 @@ bool AScholaCombatEnvironment::RegisterAgent(UScholaAgentComponent* Agent)
 	{
 		int32 TeamID = -1;
 
-		// Get FollowerAgentComponent to access TeamLeader reference - Phase 3: Use GetTeamLeader() method
-		UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
-		if (FollowerComp)
+		// v9.0 Phase 4: Use character API instead of FindComponentByClass
+		AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(Agent->GetOwner());
+		if (FollowerChar)
 		{
-			UTeamLeaderComponent* Leader = FollowerComp->GetTeamLeader();
-
-			if (Leader)
-			{
-				TeamID = Leader->TeamID;
-			}
-			else
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ⚠️ Agent %s has no TeamLeader reference (check TeamCommsComponent configuration)"),
-					*Agent->GetOwner()->GetName());
-			}
+			TeamID = FollowerChar->GetTeamID();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] ⚠️ Agent %s is not a FollowerCharacter!"),
+				*Agent->GetOwner()->GetName());
 		}
 
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Agent %s detected with TeamID: %d (Training filter: [%s])"),
@@ -495,15 +453,6 @@ bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 	{
 		return false;
 	}
-
-	// Check required components
-	UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
-	if (!FollowerComp || !Agent->TacticalObserver || !Agent->RewardProvider)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Agent %s missing required components (FollowerComp, Observer, or RewardProvider)"), *Agent->GetOwner()->GetName());
-		return false;
-	}
-
 
 	// Initialize components (only done once per agent)
 	Agent->InitializeScholaComponents();

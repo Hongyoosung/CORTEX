@@ -143,13 +143,6 @@ public:
 	//--------------------------------------------------------------------------
 	// TEAM LEADER INTEGRATION
 	//--------------------------------------------------------------------------
-
-	/**
-	 * Report detected enemies to team leader
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Perception|Team")
-	void ReportEnemiesToLeader();
-
 	/**
 	 * Signal enemy spotted event to team leader
 	 * @param Enemy - Detected enemy actor

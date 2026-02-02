@@ -5,6 +5,7 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
+#include "Team/Components/TeamCommsComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
@@ -14,6 +15,10 @@
 #include "EnvironmentQuery/EnvQueryInstanceBlueprintWrapper.h"
 #include "NavigationSystem.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "Schola/ScholaAgentComponent.h"
+#include "Schola/ScholaCombatEnvironment.h"
+// v9.0 Phase 4: Use character API instead of FindComponentByClass
+#include "Actor/FollowerCharacter.h"
 
 EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
@@ -92,6 +97,81 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::Tick(FStateTreeExecutionCon
 	if (!InstanceData.AgentComponent || !InstanceData.ControlledPawn || !InstanceData.AIController)
 	{
 		return EStateTreeRunStatus::Failed;
+	}
+
+	// ========================================
+	// v9.0 FIX: TRAINING MODE CHECK with PIE Override
+	// Allows PIE-only testing without Python connection
+	// ========================================
+
+	APawn* Pawn = InstanceData.ControlledPawn;
+	if (Pawn)
+	{
+		// v9.0 FIX: Check if we're in PIE mode (development testing)
+		const bool bIsPIE = (Pawn->GetWorld()->WorldType == EWorldType::PIE);
+
+		// v9.0 Phase 4: Use character API (ScholaAgent still uses FindComponentByClass as it's not on character interface)
+		UScholaAgentComponent* ScholaAgent = Pawn->FindComponentByClass<UScholaAgentComponent>();
+		if (ScholaAgent && ScholaAgent->ScholaEnvironment)
+		{
+			// v9.0 FIX: Allow PIE testing OR training mode
+			const bool bShouldBypassGate = bIsPIE || ScholaAgent->ScholaEnvironment->bTrainingActive;
+
+			if (!bShouldBypassGate)
+			{
+				// Training not active and not PIE - skip movement
+				static bool bLoggedOnce = false;
+				if (!bLoggedOnce)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("🔒 [TACTICAL v9.0] Movement DISABLED - Waiting for Python training connection"));
+					UE_LOG(LogTemp, Warning, TEXT("   Run docker_train.bat or train_rllib.py to start training"));
+					bLoggedOnce = true;
+				}
+				return EStateTreeRunStatus::Running;
+			}
+			else if (bIsPIE && !ScholaAgent->ScholaEnvironment->bTrainingActive)
+			{
+				// PIE mode without training - log once for clarity
+				static bool bLoggedPIE = false;
+				if (!bLoggedPIE)
+				{
+					UE_LOG(LogTemp, Log, TEXT("🎮 [TACTICAL v9.0] Movement ENABLED - PIE mode (development testing without Python)"));
+					bLoggedPIE = true;
+				}
+			}
+			else
+			{
+				// Training active - log once for clarity
+				static bool bLoggedTraining = false;
+				if (!bLoggedTraining)
+				{
+					UE_LOG(LogTemp, Log, TEXT("✅ [TACTICAL v9.0] Movement ENABLED - Python training connected"));
+					bLoggedTraining = true;
+				}
+			}
+		}
+		else if (!bIsPIE)
+		{
+			// No Schola setup and not PIE - skip movement
+			static bool bLoggedNoSchola = false;
+			if (!bLoggedNoSchola)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("🔒 [TACTICAL v9.0] Movement DISABLED - ScholaAgentComponent not found (not PIE mode)"));
+				UE_LOG(LogTemp, Warning, TEXT("   Add ScholaAgentComponent to agents and connect to Python"));
+				bLoggedNoSchola = true;
+			}
+			return EStateTreeRunStatus::Running;
+		}
+		else
+		{
+			// PIE mode without Schola - allow movement for testing
+			static bool bLoggedPIENoSchola = false;
+			if (!bLoggedPIENoSchola)
+			{
+				UE_LOG(LogTemp, Log, TEXT("🎮 [TACTICAL v9.0] Movement ENABLED - PIE mode without Schola (development testing)"));
+				bLoggedPIENoSchola = true;
+			}
+		}
 	}
 
 	// ========================================
@@ -211,41 +291,6 @@ void FSTTask_ExecuteTacticalMovement::ApplyTacticalParameters(
 	// Execute movement to best position
 	FVector TargetPosition = CandidatePositions[0];
 
-	// v9.0 DIAGNOSTIC: Log if EQS selected position toward or away from objective
-	if (InstanceData.AgentComponent)
-	{
-		UTeamLeaderComponent* TeamLeader = InstanceData.AgentComponent->GetTeamLeader();
-		EStrategyType AssignedStrategy = SharedContext.AssignedStrategy;
-		if (TeamLeader)
-		{
-			AObjectiveActor* TargetObj = nullptr;
-			if (AssignedStrategy == EStrategyType::Assault)
-			{
-				TargetObj = TeamLeader->GetHostileObjective();
-			}
-			else if (AssignedStrategy == EStrategyType::Defend)
-			{
-				TargetObj = TeamLeader->GetFriendlyObjective();
-			}
-
-			if (TargetObj)
-			{
-				FVector CurrentPos = Pawn->GetActorLocation();
-				float CurrentDist = FVector::Dist(CurrentPos, TargetObj->GetActorLocation());
-				float TargetDist = FVector::Dist(TargetPosition, TargetObj->GetActorLocation());
-				float DeltaDist = TargetDist - CurrentDist;
-
-				UE_LOG(LogTemp, Warning, TEXT("🔍 [EQS DIAGNOSTIC] %s (%s): CurrentDist=%.0fcm, TargetDist=%.0fcm, Delta=%+.0fcm | %s"),
-					*Pawn->GetName(),
-					AssignedStrategy == EStrategyType::Assault ? TEXT("Assault") : TEXT("Defend"),
-					CurrentDist,
-					TargetDist,
-					DeltaDist,
-					DeltaDist < -100.0f ? TEXT("✅ CLOSER to objective") : TEXT("❌ NOT closer (EQS ignoring objective!)"));
-			}
-		}
-	}
-
 	ExecuteMovementToTacticalPosition(Context, TargetPosition);
 
 	// Store risk tolerance for retreat logic (used outside EQS)
@@ -359,6 +404,39 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 			break;
 	}
 
+	// v9.0 FIX: Get objective location based on strategy
+	// v9.0 Phase 4: Use character API instead of FindComponentByClass
+	AObjectiveActor* TargetObjective = nullptr;
+	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(Pawn);
+	if (FollowerChar)
+	{
+		// Get Leader via character API (no FindComponentByClass)
+		UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
+		if (TeamLeader)
+		{
+
+			// 4. Determine which objective to use based on strategy
+			switch (AssignedStrategy)
+			{
+			case EStrategyType::Assault:
+				TargetObjective = TeamLeader->GetHostileObjective();
+				break;
+			case EStrategyType::Defend:
+				TargetObjective = TeamLeader->GetFriendlyObjective();
+				break;
+			case EStrategyType::Support:
+				TargetObjective = TeamLeader->GetFriendlyObjective();
+				break;
+			case EStrategyType::Retreat:
+				TargetObjective = TeamLeader->GetFriendlyObjective();
+				break;
+			default:
+				break;
+			}
+			
+		}
+	}
+
 	// Create EQS request with modulated parameters
 	FEnvQueryRequest QueryRequest(Query, Pawn);
 
@@ -402,7 +480,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 		}
 	}
 
-	// v9.0: Include ObjectiveWeight in debug log
+	// v9.0 FIX: Enhanced debug log with objective location validation
 	const TCHAR* StrategyName = nullptr;
 	switch (AssignedStrategy)
 	{
@@ -413,8 +491,19 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 		default: StrategyName = TEXT("Unknown"); break;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TACTICAL v9.0] EQS returned %d positions | Strategy=%s, ObjWeight=%.1f, FormWeight=%.1f (×%.1f) | Aggr=%.2f→MinDist=%.0fcm, Cover=%.2f→Weight=%.1f"),
-		Results.Num(), StrategyName, ObjectiveWeight, FormationWeight, StrategyFormationMultiplier, Params.Aggression, MinDistanceToEnemy, Params.CoverPreference, CoverWeight);
+	if (TargetObjective)
+	{
+		FVector ObjectiveLocation = TargetObjective->GetActorLocation();
+		float DistanceToObjective = FVector::Dist(Pawn->GetActorLocation(), ObjectiveLocation);
+		UE_LOG(LogTemp, Log, TEXT("✅ [EQS v9.0] %s | %d positions | ObjWeight=%.1f, FormWeight=%.1f | Objective='%s' at %.0fcm"),
+			StrategyName, Results.Num(), ObjectiveWeight, FormationWeight,
+			*TargetObjective->GetName(), DistanceToObjective);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ [EQS v9.0] %s | %d positions | ObjWeight=%.1f, FormWeight=%.1f | NO OBJECTIVE AVAILABLE"),
+			StrategyName, Results.Num(), ObjectiveWeight, FormationWeight);
+	}
 
 	// Log top 5 positions with scores for debugging
 	for (int32 i = 0; i < FMath::Min(5, ItemCount); ++i)

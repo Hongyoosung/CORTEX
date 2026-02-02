@@ -9,7 +9,6 @@
 #include "FollowerAgentComponent.generated.h"
 
 // Forward declarations
-class UTeamLeaderComponent;
 class AObjectiveActor;
 // v8.0 Refactored: New component references
 class UTacticalStateComponent;
@@ -86,17 +85,11 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 
+	void UpdateTacticalContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile, const FTeamObservation& TeamObs);
+
 	//--------------------------------------------------------------------------
 	// TEAM LEADER COMMUNICATION
 	//--------------------------------------------------------------------------
-
-	/** Register with team leader */
-	UFUNCTION(BlueprintCallable, Category = "Follower|Team")
-	bool RegisterWithTeamLeader();
-
-	/** Unregister from team leader */
-	UFUNCTION(BlueprintCallable, Category = "Follower|Team")
-	void UnregisterFromTeamLeader();
 
 	/** Signal event to team leader */
 	UFUNCTION(BlueprintCallable, Category = "Follower|Team")
@@ -117,10 +110,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|Strategy")
 	void SetStrategyAssignment(const FStrategyAssignment& Assignment);
 
-	/** v9.0 DEPRECATED: Get target objective (objectives now implicit in strategy - use StateTreeContext)
-	 * Returns nullptr - objectives are determined by strategy in StateTreeContext */
-	UFUNCTION(BlueprintPure, Category = "Follower|Strategy", meta = (DeprecatedFunction, DeprecationMessage = "v9.0: Objectives are implicit in strategy. Use StateTreeContext.TargetObjective instead."))
-	AObjectiveActor* GetTargetObjective() const;
 
 	//--------------------------------------------------------------------------
 	// INDIVIDUAL STRATEGY (v8.0: MCTS-Assigned, RL-Controlled Parameters)
@@ -190,9 +179,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|Observation")
 	FObservationElement BuildLocalObservation();
 
-	/** Find nearest cover position (delegates to ObservationBuilderComponent) */
-	UFUNCTION(BlueprintCallable, Category = "Follower|Tactical")
-	bool FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies);
+
 
 	//--------------------------------------------------------------------------
 	// REINFORCEMENT LEARNING
@@ -232,10 +219,6 @@ public:
 	// UTILITY
 	//--------------------------------------------------------------------------
 
-	/** Get team leader (delegates to TeamCommsComponent) */
-	UFUNCTION(BlueprintPure, Category = "Follower|Team")
-	UTeamLeaderComponent* GetTeamLeader() const;
-
 	/** Get Team ID */
 	UFUNCTION(BlueprintPure, Category = "Follower|Team")
 	int32 GetTeamID() const;
@@ -260,13 +243,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|Combat")
 	void ExecuteCombat();
 
-	/** Get closest enemy from perception (delegates to CombatExecutorComponent) */
-	UFUNCTION(BlueprintPure, Category = "Follower|Combat")
-	AActor* GetClosestEnemy(const TArray<AActor*>& Enemies) const;
 
-	/** Get enemy with lowest HP (delegates to CombatExecutorComponent) */
-	UFUNCTION(BlueprintPure, Category = "Follower|Combat")
-	AActor* GetLowestHPEnemy(const TArray<AActor*>& Enemies) const;
+	/** * 리더에 의해 호출됨: 팀의 목표 및 관측 정보를 주입받음 (Push 방식)
+	 * v10.0: 팔로워는 더 이상 리더의 IntelManager를 직접 참조하지 않음
+	 */
+	/** 리더로부터 전략 과제를 할당받음 */
+	void AssignStrategy(FStrategyAssignment NewAssignment);
 
 public:
 	//--------------------------------------------------------------------------
@@ -326,11 +308,16 @@ private:
 	EStrategyType CurrentStrategy = EStrategyType::Assault;
 
 	//--------------------------------------------------------------------------
-	// EVENT-DRIVEN STRATEGY UPDATES
+	// v9.0: EVENT-BASED INITIALIZATION
 	//--------------------------------------------------------------------------
 
-	/** Last enemy count at strategy update */
-	int32 LastEnemyCount = 0;
+
+	/** Flag to track if observation builder is initialized */
+	bool bObservationBuilderInitialized = false;
+
+	//--------------------------------------------------------------------------
+	// EVENT-DRIVEN STRATEGY UPDATES
+	//--------------------------------------------------------------------------
 
 	/** Ticks since last strategy update */
 	int32 TicksSinceLastUpdate = 0;

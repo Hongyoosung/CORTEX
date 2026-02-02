@@ -6,6 +6,9 @@
 #include "Team/Components/IntelManagerComponent.h"
 #include "Team/Components/StrategicPlannerComponent.h"
 #include "Util/Components/VisualLoggerComponent.h"
+// v9.0 Phase 4: Additional includes for wrapper API
+#include "Team/TeamTypes.h"
+#include "Observation/TeamObservation.h"
 
 ALeaderCharacter::ALeaderCharacter()
 {
@@ -19,7 +22,6 @@ ALeaderCharacter::ALeaderCharacter()
 	TeamLeaderComponent = CreateDefaultSubobject<UTeamLeaderComponent>(TEXT("TeamLeaderComponent"));
 
 	// Manager components (v9.0 Phase 3)
-	SquadManagerComponent = CreateDefaultSubobject<USquadManagerComponent>(TEXT("SquadManagerComponent"));
 	IntelManagerComponent = CreateDefaultSubobject<UIntelManagerComponent>(TEXT("IntelManagerComponent"));
 	StrategicPlannerComponent = CreateDefaultSubobject<UStrategicPlannerComponent>(TEXT("StrategicPlannerComponent"));
 
@@ -30,11 +32,8 @@ ALeaderCharacter::ALeaderCharacter()
 	// Component Configuration
 	//--------------------------------------------------------------------------
 
-	// Squad Manager: Max followers = 4 (default)
-	if (SquadManagerComponent)
-	{
-		SquadManagerComponent->MaxFollowers = 4;
-	}
+	// v9.0 Phase 4: Squad management is now merged into character (no separate component)
+	// Configuration: MaxFollowers = 4, TeamID = 0 (set in header defaults)
 
 	// Intel Manager: Set default objective tags
 	if (IntelManagerComponent)
@@ -104,6 +103,12 @@ void ALeaderCharacter::BeginPlay()
 void ALeaderCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// v9.0 Phase 4: Process deferred follower registrations (merged from SquadManager)
+	if (PendingFollowerRegistration.Num() > 0)
+	{
+		ProcessDeferredRegistrations();
+	}
 
 	// Update combat timers
 	UpdateTimers(DeltaTime);
@@ -226,5 +231,184 @@ void ALeaderCharacter::UpdateWeaponCooldown(float DeltaTime)
 	if (CombatStats.CurrentWeaponCooldown > 0.0f)
 	{
 		CombatStats.CurrentWeaponCooldown = FMath::Max(0.0f, CombatStats.CurrentWeaponCooldown - DeltaTime);
+	}
+}
+
+//==============================================================================
+// v9.0 PHASE 4: CHARACTER WRAPPER API IMPLEMENTATIONS (Leader)
+//==============================================================================
+
+//------------------------------------------------------------------------------
+// SQUAD MANAGEMENT (v9.0 Phase 4: merged from SquadManagerComponent)
+//------------------------------------------------------------------------------
+
+bool ALeaderCharacter::RegisterFollower(AActor* Follower)
+{
+	if (!Follower)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LeaderCharacter v9.0] RegisterFollower: Null follower provided"));
+		return false;
+	}
+
+	if (RegisteredFollowers.Contains(Follower))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LeaderCharacter v9.0] RegisterFollower: %s already registered"), *Follower->GetName());
+		return false;
+	}
+
+	if (RegisteredFollowers.Num() >= MaxFollowers)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LeaderCharacter v9.0] RegisterFollower: Squad full (%d/%d), cannot register %s"),
+			RegisteredFollowers.Num(), MaxFollowers, *Follower->GetName());
+		return false;
+	}
+
+	// Add to roster
+	RegisteredFollowers.Add(Follower);
+
+	UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter v9.0] Registered follower: %s (Total: %d/%d)"),
+		*Follower->GetName(), RegisteredFollowers.Num(), MaxFollowers);
+
+	return true;
+}
+
+bool ALeaderCharacter::UnregisterFollower(AActor* Follower)
+{
+	if (!Follower)
+	{
+		return false;
+	}
+
+	int32 RemovedCount = RegisteredFollowers.Remove(Follower);
+
+	if (RemovedCount > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter v9.0] Unregistered follower: %s (Remaining: %d)"),
+			*Follower->GetName(), RegisteredFollowers.Num());
+
+		return true;
+	}
+
+	return false;
+}
+
+TArray<AActor*> ALeaderCharacter::GetFollowers() const
+{
+	return RegisteredFollowers;
+}
+
+TArray<AActor*> ALeaderCharacter::GetAliveFollowers() const
+{
+	TArray<AActor*> AliveFollowers;
+
+	for (AActor* Follower : RegisteredFollowers)
+	{
+		if (!Follower)
+		{
+			continue;
+		}
+
+		// Assume all registered followers are alive (TODO: integrate with health system)
+		AliveFollowers.Add(Follower);
+	}
+
+	return AliveFollowers;
+}
+
+int32 ALeaderCharacter::GetFollowerCount() const
+{
+	return RegisteredFollowers.Num();
+}
+
+bool ALeaderCharacter::IsSquadFull() const
+{
+	return RegisteredFollowers.Num() >= MaxFollowers;
+}
+
+//------------------------------------------------------------------------------
+// INTELLIGENCE WRAPPERS (delegate to IntelManagerComponent)
+//------------------------------------------------------------------------------
+
+void ALeaderCharacter::RegisterEnemy(AActor* Enemy)
+{
+	if (IntelManagerComponent)
+	{
+		IntelManagerComponent->RegisterEnemy(Enemy);
+	}
+}
+
+void ALeaderCharacter::UnregisterEnemy(AActor* Enemy)
+{
+	if (IntelManagerComponent)
+	{
+		IntelManagerComponent->UnregisterEnemy(Enemy);
+	}
+}
+
+AObjectiveActor* ALeaderCharacter::GetFriendlyObjective() const
+{
+	return IntelManagerComponent ? IntelManagerComponent->GetFriendlyObjective() : nullptr;
+}
+
+AObjectiveActor* ALeaderCharacter::GetHostileObjective() const
+{
+	return IntelManagerComponent ? IntelManagerComponent->GetHostileObjective() : nullptr;
+}
+
+FTeamObservation ALeaderCharacter::BuildTeamObservation(const TArray<AActor*>& Followers)
+{
+	return IntelManagerComponent ? IntelManagerComponent->BuildTeamObservation(Followers) : FTeamObservation();
+}
+
+bool ALeaderCharacter::AreObjectivesDiscovered() const
+{
+	return IntelManagerComponent ? IntelManagerComponent->AreObjectivesDiscovered() : false;
+}
+
+//------------------------------------------------------------------------------
+// STRATEGIC PLANNING WRAPPERS (delegate to StrategicPlannerComponent)
+//------------------------------------------------------------------------------
+
+void ALeaderCharacter::RunStrategyAssignmentAsync(const TArray<AActor*>& Agents, const TArray<AObjectiveActor*>& Objectives)
+{
+	if (StrategicPlannerComponent)
+	{
+		StrategicPlannerComponent->RunStrategyAssignmentAsync(Agents, Objectives);
+	}
+}
+
+bool ALeaderCharacter::IsRunningMCTS() const
+{
+	return StrategicPlannerComponent ? StrategicPlannerComponent->IsRunningMCTS() : false;
+}
+
+void ALeaderCharacter::ApplyStrategyAssignment(const TArray<FStrategyAssignment>& Assignments)
+{
+	// This is typically handled by TeamLeaderComponent, delegate to it
+	if (TeamLeaderComponent)
+	{
+		TeamLeaderComponent->ApplyStrategyAssignment(Assignments);
+	}
+}
+
+//------------------------------------------------------------------------------
+// v9.0 PHASE 4: SQUAD MANAGEMENT HELPERS (merged from SquadManagerComponent)
+//------------------------------------------------------------------------------
+
+void ALeaderCharacter::ProcessDeferredRegistrations()
+{
+	if (PendingFollowerRegistration.Num() == 0)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter v9.0] Processing %d pending registrations"), PendingFollowerRegistration.Num());
+
+	TArray<AActor*> ToProcess = PendingFollowerRegistration;
+	PendingFollowerRegistration.Empty();
+
+	for (AActor* Follower : ToProcess)
+	{
+		RegisterFollower(Follower);
 	}
 }

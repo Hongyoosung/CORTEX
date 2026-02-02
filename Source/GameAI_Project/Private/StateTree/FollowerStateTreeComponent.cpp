@@ -3,6 +3,7 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeSchema.h"
 #include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/TeamCommsComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "RL/RLPolicyNetwork.h"
@@ -30,6 +31,8 @@ const FGameplayTag UFollowerStateTreeComponent::Event_FollowerRespawned =
 UFollowerStateTreeComponent::UFollowerStateTreeComponent()
 	: Super()
 	, FollowerComponent(nullptr)
+	, HealthComponent(nullptr)
+	, TeamCommsComponent(nullptr)
 	, bAutoFindFollowerComponent(true)
 	, TickLogCounter(0)
 {
@@ -45,11 +48,22 @@ void UFollowerStateTreeComponent::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("🔵 UFollowerStateTreeComponent::BeginPlay CALLED for '%s'"),
 		GetOwner() ? *GetOwner()->GetName() : TEXT("NULL_OWNER"));
 
-	// CRITICAL: Find FollowerComponent and initialize context BEFORE Super::BeginPlay()
+	// CRITICAL: Find components and initialize context BEFORE Super::BeginPlay()
 	// Super::BeginPlay() may start the StateTree, and evaluators need valid context
-	if (!FollowerComponent && bAutoFindFollowerComponent)
+	if (bAutoFindFollowerComponent)
 	{
-		FollowerComponent = FindFollowerComponent();
+		if (!FollowerComponent)
+		{
+			FollowerComponent = FindFollowerComponent();
+		}
+		if (!HealthComponent)
+		{
+			HealthComponent = FindHealthComponent();
+		}
+		if (!TeamCommsComponent)
+		{
+			TeamCommsComponent = FindTeamCommsComponent();
+		}
 	}
 
 	if (!FollowerComponent)
@@ -58,10 +72,14 @@ void UFollowerStateTreeComponent::BeginPlay()
 		return;
 	}
 
-	HealthComponent = FindHealthComponent();
 	if (!HealthComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: ⚠️ HealthComponent not found!"));
+	}
+
+	if (!TeamCommsComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: ⚠️ TeamCommsComponent not found!"));
 	}
 
 	// Initialize context BEFORE Super::BeginPlay() starts the tree
@@ -300,10 +318,17 @@ void UFollowerStateTreeComponent::InitializeContext()
 		}
 	}
 
-	// Set component references
-	if (!Context.TeamLeader && Context.FollowerComponent)
+	// Set component references (v9.0: Use TeamCommsComponent)
+	if (!Context.TeamLeader && TeamCommsComponent)
 	{
-		Context.TeamLeader = Context.FollowerComponent->GetTeamLeader();
+		Context.TeamLeader = TeamCommsComponent->GetTeamLeader();
+		UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: TeamLeader set to '%s'"),
+			Context.TeamLeader ? *Context.TeamLeader->GetName() : TEXT("NULL"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: TeamLeader already set to '%s'"),
+			Context.TeamLeader ? *Context.TeamLeader->GetName() : TEXT("NULL"));
 	}
 
 	if (!Context.TacticalPolicy && Context.FollowerComponent)
@@ -343,17 +368,18 @@ void UFollowerStateTreeComponent::UpdateContextFromFollower()
 	// - Retreat → No specific objective
 	Context.AssignedStrategy = FollowerComponent->GetAssignedStrategy();
 
-	// v9.0: Compute implicit target objective based on strategy
-	if (Context.TeamLeader)
+	// v9.0: Compute implicit target objective based on strategy (use TeamCommsComponent)
+	UTeamLeaderComponent* TeamLeader = TeamCommsComponent ? TeamCommsComponent->GetTeamLeader() : nullptr;
+	if (TeamLeader)
 	{
 		if (Context.AssignedStrategy == EStrategyType::Assault ||
 		    Context.AssignedStrategy == EStrategyType::Support)
 		{
-			Context.TargetObjective = Context.TeamLeader->GetHostileObjective();
+			Context.TargetObjective = TeamLeader->GetHostileObjective();
 		}
 		else if (Context.AssignedStrategy == EStrategyType::Defend)
 		{
-			Context.TargetObjective = Context.TeamLeader->GetFriendlyObjective();
+			Context.TargetObjective = TeamLeader->GetFriendlyObjective();
 		}
 		else // Retreat
 		{
@@ -491,20 +517,17 @@ bool UFollowerStateTreeComponent::CollectExternalData(const FStateTreeExecutionC
         }
         else if (Desc.Name == FName(TEXT("TeamLeader")))
         {
-            // Access from the cached context member (if available)
-            UTeamLeaderComponent* TeamLeader = Context.TeamLeader; // This won't work!
-            
-            // Better: Store as component member
-            UTeamLeaderComponent* CachedTeamLeader = nullptr;
-            if (FollowerComponent)
+            // v9.0: Get TeamLeader via TeamCommsComponent
+            UTeamLeaderComponent* TeamLeader = nullptr;
+            if (TeamCommsComponent)
             {
-                CachedTeamLeader = FollowerComponent->GetTeamLeader();
+                TeamLeader = TeamCommsComponent->GetTeamLeader();
             }
-            
-            OutDataViews[Index] = FStateTreeDataView(CachedTeamLeader);
+
+            OutDataViews[Index] = FStateTreeDataView(TeamLeader);
             bProvided = true;
             UE_LOG(LogTemp, Log, TEXT("  ✅ [%d] TeamLeader: %s"), Index,
-                CachedTeamLeader ? TEXT("Valid") : TEXT("NULL (Optional)"));
+                TeamLeader ? TEXT("Valid") : TEXT("NULL (Optional)"));
         }
         else if (Desc.Name == FName(TEXT("TacticalPolicy")))
         {
@@ -588,6 +611,24 @@ UHealthComponent* UFollowerStateTreeComponent::FindHealthComponent()
 	return OwnerHealthComp;
 }
 
+UTeamCommsComponent* UFollowerStateTreeComponent::FindTeamCommsComponent()
+{
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return nullptr;
+	}
+
+	UTeamCommsComponent* OwnerTeamCommsComp = Owner->FindComponentByClass<UTeamCommsComponent>();
+
+	if (!OwnerTeamCommsComp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: No TeamCommsComponent found on '%s'"), *Owner->GetName());
+	}
+
+	return OwnerTeamCommsComp;
+}
+
 void UFollowerStateTreeComponent::BindToFollowerEvents()
 {
 	if (!FollowerComponent)
@@ -595,8 +636,32 @@ void UFollowerStateTreeComponent::BindToFollowerEvents()
 		return;
 	}
 
+	// Bind to HealthComponent death event (v9.0 - Dead state support)
+	if (HealthComponent)
+	{
+		HealthComponent->OnDeath.AddDynamic(this, &UFollowerStateTreeComponent::HandleOnHealthComponentDeath);
+		UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Bound to HealthComponent::OnDeath"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: HealthComponent not found - death events will not work!"));
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Bound to FollowerAgentComponent events"));
+}
+
+void UFollowerStateTreeComponent::HandleOnHealthComponentDeath(const FDeathEventData& DeathEvent)
+{
+	// v9.0: Called when HealthComponent broadcasts OnDeath event
+	// Delegates to OnFollowerDied() which updates context and sends StateTree event
+
+	AActor* Owner = GetOwner();
+	UE_LOG(LogTemp, Warning, TEXT("💀 [DEATH EVENT] %s died (Killer: %s, Damage: %.1f)"),
+		Owner ? *Owner->GetName() : TEXT("NULL"),
+		DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("NULL"),
+		DeathEvent.FinalDamage);
+
+	OnFollowerDied();
 }
 
 void UFollowerStateTreeComponent::OnFollowerDied()

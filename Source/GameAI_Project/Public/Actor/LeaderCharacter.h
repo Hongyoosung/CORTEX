@@ -12,6 +12,10 @@ class USquadManagerComponent;
 class UIntelManagerComponent;
 class UStrategicPlannerComponent;
 class UVisualLoggerComponent;
+// v9.0 Phase 4: Forward declarations for wrapper API
+class AObjectiveActor;
+struct FStrategyAssignment;
+struct FTeamObservation;
 
 /**
  * Leader Character - v9.0
@@ -60,6 +64,79 @@ public:
 	virtual bool		IsAlive_Implementation				() const override;
 	virtual float		GetWeaponCooldown_Implementation	() const override;
 	virtual bool		CanFireWeapon_Implementation		() const override;
+
+	//==========================================================================
+	// v9.0 PHASE 4: CHARACTER WRAPPER API (Leader)
+	//==========================================================================
+
+	//--------------------------------------------------------------------------
+	// SQUAD MANAGEMENT (wraps SquadManagerComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Squad")
+	bool RegisterFollower(AActor* Follower);
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Squad")
+	bool UnregisterFollower(AActor* Follower);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Squad")
+	TArray<AActor*> GetFollowers() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Squad")
+	TArray<AActor*> GetAliveFollowers() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Squad")
+	int32 GetFollowerCount() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Squad")
+	bool IsSquadFull() const;
+
+	//--------------------------------------------------------------------------
+	// INTELLIGENCE (wraps IntelManagerComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Intel")
+	void RegisterEnemy(AActor* Enemy);
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Intel")
+	void UnregisterEnemy(AActor* Enemy);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Intel")
+	AObjectiveActor* GetFriendlyObjective() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Intel")
+	AObjectiveActor* GetHostileObjective() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Intel")
+	FTeamObservation BuildTeamObservation(const TArray<AActor*>& Followers);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Intel")
+	bool AreObjectivesDiscovered() const;
+
+	//--------------------------------------------------------------------------
+	// STRATEGIC PLANNING (wraps StrategicPlannerComponent)
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category = "AI|Strategy")
+	void RunStrategyAssignmentAsync(const TArray<AActor*>& Agents, const TArray<AObjectiveActor*>& Objectives);
+
+	UFUNCTION(BlueprintPure, Category = "AI|Strategy")
+	bool IsRunningMCTS() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Strategy")
+	void ApplyStrategyAssignment(const TArray<FStrategyAssignment>& Assignments);
+
+	//--------------------------------------------------------------------------
+	// COMPONENT ACCESS
+	//--------------------------------------------------------------------------
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	UTeamLeaderComponent* GetTeamLeaderComponent() const { return TeamLeaderComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	USquadManagerComponent* GetSquadManagerComponent() const { return SquadManagerComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	UIntelManagerComponent* GetIntelManagerComponent() const { return IntelManagerComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "AI|Components")
+	UStrategicPlannerComponent* GetStrategicPlannerComponent() const { return StrategicPlannerComponent; }
 
 
 	//--------------------------------------------------------------------------
@@ -126,4 +203,26 @@ private:
 
 	/** Is character dead? */
 	bool bIsDead = false;
+
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 4: SQUAD DATA (merged from SquadManagerComponent)
+	//--------------------------------------------------------------------------
+	/** Registered followers */
+	UPROPERTY()
+	TArray<AActor*> RegisteredFollowers;
+
+	/** Pending followers (registered during BeginPlay, processed on first tick) */
+	UPROPERTY()
+	TArray<AActor*> PendingFollowerRegistration;
+
+	/** Maximum number of followers allowed */
+	UPROPERTY(EditAnywhere, Category = "AI|Squad", meta = (AllowPrivateAccess = "true"))
+	int32 MaxFollowers = 4;
+
+	/** Team ID for this leader */
+	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
+	int32 TeamID = 0;
+
+	/** Process pending follower registrations */
+	void ProcessDeferredRegistrations();
 };

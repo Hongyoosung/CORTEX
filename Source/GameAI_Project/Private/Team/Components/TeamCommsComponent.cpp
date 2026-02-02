@@ -13,12 +13,6 @@ UTeamCommsComponent::UTeamCommsComponent()
 void UTeamCommsComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// Auto-register with team leader if enabled
-	if (bAutoRegisterWithLeader)
-	{
-		RegisterWithTeamLeader();
-	}
 }
 
 void UTeamCommsComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -125,6 +119,19 @@ void UTeamCommsComponent::SignalEventToLeader(
 			static_cast<int32>(Event),
 			Priority);
 	}
+}
+
+UTeamLeaderComponent* UTeamCommsComponent::GetTeamLeader() const
+{
+	if(!TeamLeader)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TeamComms] %s: GetTeamLeader called but TeamLeader is null"),
+			*GetOwner()->GetName());
+
+		return nullptr;
+	}
+
+	return TeamLeader;
 }
 
 int32 UTeamCommsComponent::GetTeamID() const

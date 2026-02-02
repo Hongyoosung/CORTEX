@@ -2,11 +2,15 @@
 
 #include "RL/Components/RewardCalculator.h"
 #include "Team/Components/FollowerAgentComponent.h"
+#include "Team/Components/SquadManagerComponent.h"
+#include "Team/Components/TeamCommsComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
+// v9.0 Phase 4: Use character API instead of FindComponentByClass
+#include "Actor/FollowerCharacter.h"
 
 URewardCalculator::URewardCalculator()
 {
@@ -18,23 +22,29 @@ void URewardCalculator::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Find component references
-	AActor* Owner = GetOwner();
-	if (Owner)
+	// v9.0 Phase 4: Use character API instead of FindComponentByClass
+	// Character injects component references via InitializeComponents()
+	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(GetOwner());
+	if (!FollowerChar)
 	{
-		FollowerComponent = Owner->FindComponentByClass<UFollowerAgentComponent>();
-		HealthComponent = Owner->FindComponentByClass<UHealthComponent>();
+		UE_LOG(LogTemp, Error, TEXT("[RewardCalculator v9.0] RewardCalculator must be attached to FollowerCharacter! Owner: %s"),
+			*GetOwner()->GetName());
+		return;
+	}
 
-		if (!FollowerComponent)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("RewardCalculator: No FollowerAgentComponent found on %s"), *Owner->GetName());
-		}
-		else
-		{
-			// Initialize previous observation for delta calculations
-			PreviousObservation = FollowerComponent->BuildLocalObservation();
-			UE_LOG(LogTemp, Log, TEXT("[REWARD INIT] '%s': PreviousObservation initialized"), *Owner->GetName());
-		}
+	// Get components through character wrapper API (no FindComponentByClass)
+	FollowerComponent = FollowerChar->GetFollowerAgentComponent();
+	HealthComponent = Cast<UHealthComponent>(FollowerChar->FindComponentByClass<UHealthComponent>()); // Temp: will be injected in Phase 3
+
+	if (!FollowerComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[RewardCalculator v9.0] No FollowerAgentComponent found on %s"), *FollowerChar->GetName());
+	}
+	else
+	{
+		// Initialize previous observation for delta calculations using character API
+		PreviousObservation = FollowerChar->BuildLocalObservation();
+		UE_LOG(LogTemp, Log, TEXT("[REWARD INIT v9.0] '%s': PreviousObservation initialized via character API"), *FollowerChar->GetName());
 	}
 
 	// Reset state
@@ -66,8 +76,13 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 		return;
 	}
 
-	// Build current observation
-	FObservationElement CurrentObs = FollowerComponent->BuildLocalObservation();
+	// v9.0 Phase 4: Build current observation using character API
+	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(GetOwner());
+	if (!FollowerChar)
+	{
+		return;
+	}
+	FObservationElement CurrentObs = FollowerChar->BuildLocalObservation();
 
 	float StepReward = 0.0f;
 
@@ -887,18 +902,20 @@ bool URewardCalculator::IsInFormation() const
 	}
 
 	// Check if near teammates
-	AActor* Owner = GetOwner();
-	if (!Owner)
+	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(GetOwner());
+	if (!FollowerChar)
 	{
 		return false;
 	}
 
-	UTeamLeaderComponent* TeamLeader = FollowerComponent->GetTeamLeader();
+	// v9.0 Phase 4: Use character API instead of FindComponentByClass
+	UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
 	if (!TeamLeader)
 	{
 		return false;
 	}
 
+	UIntelManagerComponent* IntelManager = TeamLeader->GetIntelManager();
 	// Get team members
 	TArray<AActor*> TeamMembers = TeamLeader->GetFollowers();
 	if (TeamMembers.Num() <= 1)
