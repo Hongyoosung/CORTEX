@@ -292,6 +292,7 @@ def create_env_config():
     config = {
         "host": SBDAPMConfig.HOST,
         "base_port": SBDAPMConfig.PORT,
+        "num_envs": SBDAPMConfig.NUM_UE5_ENVIRONMENTS,  # Pass environment count to Python env
         "normalize_returns": False,  # v9.0.2: DISABLED - rewards already normalized in C++
     }
 
@@ -502,6 +503,12 @@ def train(args):
         num_workers = int(os.environ["NUM_WORKERS"])
         SBDAPMConfig.NUM_WORKERS = num_workers
         print(f"[Docker] NUM_WORKERS overridden to {num_workers}")
+
+    # Override NUM_UE5_ENVIRONMENTS from environment if set
+    if "NUM_UE5_ENVIRONMENTS" in os.environ:
+        num_envs = int(os.environ["NUM_UE5_ENVIRONMENTS"])
+        SBDAPMConfig.NUM_UE5_ENVIRONMENTS = num_envs
+        print(f"[Config] NUM_UE5_ENVIRONMENTS overridden to {num_envs}")
 
     # Check if resuming from checkpoint
     resume_checkpoint = None

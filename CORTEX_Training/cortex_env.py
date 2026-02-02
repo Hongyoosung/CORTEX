@@ -149,12 +149,14 @@ if SCHOLA_AVAILABLE:
                 )
                 print(f"[CORTEX v9.0] ✅ Connected!")
 
-                # Verify environment structure
-                if len(self.schola_env.ids) == self.num_envs:
-                    total_agents = sum(len(a) for a in self.schola_env.ids)
-                    print(f"[CORTEX v9.0] ✅ Verified {self.num_envs} environments with {total_agents} total agents")
-                else:
-                    print(f"[CORTEX v9.0] ⚠️  WARNING: Expected {self.num_envs} environments but got {len(self.schola_env.ids)}")
+                # Auto-discover actual number of environments from UE5
+                actual_num_envs = len(self.schola_env.ids)
+                if actual_num_envs != self.num_envs:
+                    print(f"[CORTEX v9.0] 🔄 Auto-adjusting: Expected {self.num_envs} environments, discovered {actual_num_envs} from UE5")
+                    self.num_envs = actual_num_envs
+
+                total_agents = sum(len(a) for a in self.schola_env.ids)
+                print(f"[CORTEX v9.0] ✅ Verified {self.num_envs} environments with {total_agents} total agents")
 
             except Exception as e:
                 print(f"[ERROR] Connection failed: {e}")
