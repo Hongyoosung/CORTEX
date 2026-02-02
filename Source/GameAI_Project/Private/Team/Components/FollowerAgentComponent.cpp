@@ -430,8 +430,9 @@ void UFollowerAgentComponent::SetStrategyAssignment(const FStrategyAssignment& A
 
 AObjectiveActor* UFollowerAgentComponent::GetTargetObjective() const
 {
-	if (!TacticalState) return nullptr;
-	return TacticalState->GetTargetObjective();
+	// v9.0: Objectives are now implicit in strategy (Assault→Hostile, Defend→Friendly)
+	// Use StateTreeContext.TargetObjective instead
+	return nullptr;
 }
 
 //------------------------------------------------------------------------------
@@ -453,6 +454,26 @@ FMacroAction UFollowerAgentComponent::GetCurrentMacroAction() const
 {
 	if (!TacticalState) return FMacroAction();
 	return TacticalState->GetCurrentMacroAction();
+}
+
+FAllyContext UFollowerAgentComponent::GetAllyContext() const
+{
+	FAllyContext Context;
+
+	if (!ObservationBuilder)
+	{
+		return Context; // Return empty context if ObservationBuilder is missing
+	}
+
+	// Extract ally context from current observation
+	const FObservationElement& Obs = ObservationBuilder->GetLocalObservation();
+	Context.bAllyNeedsHelp = Obs.bAllyNeedsHelp;
+	Context.AllyHealth = Obs.AllyHealth;
+	Context.AllyDistance = Obs.AllyDistance;
+	Context.AllyDirection = Obs.AllyDirection;
+	Context.ClosestAlly = Obs.ClosestAlly;
+
+	return Context;
 }
 
 void UFollowerAgentComponent::SetTacticalParameters(const FTacticalParameters& Params)

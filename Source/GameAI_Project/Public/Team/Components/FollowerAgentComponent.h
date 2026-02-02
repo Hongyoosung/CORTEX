@@ -106,8 +106,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Follower|Strategy")
 	void SetStrategyAssignment(const FStrategyAssignment& Assignment);
 
-	/** Get target objective from current assignment (delegates to TacticalStateComponent) */
-	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
+	/** v9.0 DEPRECATED: Get target objective (objectives now implicit in strategy - use StateTreeContext)
+	 * Returns nullptr - objectives are determined by strategy in StateTreeContext */
+	UFUNCTION(BlueprintPure, Category = "Follower|Strategy", meta = (DeprecatedFunction, DeprecationMessage = "v9.0: Objectives are implicit in strategy. Use StateTreeContext.TargetObjective instead."))
 	AObjectiveActor* GetTargetObjective() const;
 
 	//--------------------------------------------------------------------------
@@ -148,7 +149,7 @@ public:
 
 	/** Get ally context for support strategy (delegates to ObservationBuilderComponent) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Strategy")
-	FAllyContext GetAllyContext() const { return CachedAllyContext; }
+	FAllyContext GetAllyContext() const;
 
 	//--------------------------------------------------------------------------
 	// STATE MANAGEMENT
@@ -315,20 +316,11 @@ public:
 
 private:
 	//--------------------------------------------------------------------------
-	// BACKWARDS COMPATIBILITY (v7.0 DEPRECATED)
+	// BACKWARDS COMPATIBILITY (v7.0 DEPRECATED - Temporary for observation building)
 	//--------------------------------------------------------------------------
 
-	/** v7.0 DEPRECATED: Cached ally context (now in ObservationBuilderComponent) */
-	FAllyContext CachedAllyContext;
-
-	/** v7.0 DEPRECATED: Current strategy (now in TacticalStateComponent) */
+	/** v7.0 DEPRECATED: Current strategy - Used only for observation AssignedStrategyIndex */
 	EStrategyType CurrentStrategy = EStrategyType::Assault;
-
-	/** v7.0 DEPRECATED: Current macro action (now in TacticalStateComponent) */
-	FMacroAction CurrentMacroAction;
-
-	/** v7.0 DEPRECATED: Current assignment (now in TacticalStateComponent) */
-	FStrategyAssignment CurrentAssignment;
 
 	//--------------------------------------------------------------------------
 	// EVENT-DRIVEN STRATEGY UPDATES
