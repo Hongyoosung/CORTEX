@@ -1,4 +1,5 @@
 #include "Core/SimulationManagerGameMode.h"
+#include "Core/ScholaGameInstance.h"
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Team/ObjectiveActor.h"
@@ -19,25 +20,11 @@ void ASimulationManagerGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Auto-discover objective actor if not manually assigned
-	if (!ObjectiveActor)
-	{
-		ObjectiveActor = FindObjectiveActor();
-		if (ObjectiveActor)
-		{
-			UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Auto-discovered ObjectiveActor: %s"), *ObjectiveActor->GetName());
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[SimulationManager] No ObjectiveActor found with tag '%s'. Objective proximity rewards disabled."), *ObjectiveActorTag.ToString());
-		}
-	}
 
 	// Bind all ObjectiveActor defeat events for episode termination
-	TArray<AActor*> FoundObjectives;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), ObjectiveActors);
 
-	for (AActor* ObjActor : FoundObjectives)
+	for (AActor* ObjActor : ObjectiveActors)
 	{
 		AObjectiveActor* Objective = Cast<AObjectiveActor>(ObjActor);
 		if (Objective)
@@ -48,11 +35,21 @@ void ASimulationManagerGameMode::BeginPlay()
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound %d ObjectiveActor defeat delegates"), FoundObjectives.Num());
+	UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound %d ObjectiveActor defeat delegates"), ObjectiveActors.Num());
 
 	if (bAutoStartSimulation)
 	{
 		StartSimulation();
+	}
+
+	UScholaGameInstance* ScholaGI = Cast<UScholaGameInstance>(GetGameInstance());
+	if (ScholaGI)
+	{
+		ScholaGI->StartCommunicationServer(ServerPort);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SimulationManager] Failed to get ScholaGameInstance - communication server not started"));
 	}
 }
 
@@ -1372,10 +1369,9 @@ void ASimulationManagerGameMode::StartNewEpisode(int32 EnvironmentID, int32 Envi
 
 	// v8.0: Reset all ObjectiveActors in the world
 	// CRITICAL: Without this, objectives retain durability damage from previous episodes
-	TArray<AActor*> FoundObjectives;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), ObjectiveActors);
 
-	for (AActor* ObjActor : FoundObjectives)
+	for (AActor* ObjActor : ObjectiveActors)
 	{
 		AObjectiveActor* Objective = Cast<AObjectiveActor>(ObjActor);
 		if (Objective)
@@ -1386,7 +1382,7 @@ void ASimulationManagerGameMode::StartNewEpisode(int32 EnvironmentID, int32 Envi
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset %d ObjectiveActor(s)"), FoundObjectives.Num());
+	UE_LOG(LogTemp, Warning, TEXT("SimulationManager: Reset %d ObjectiveActor(s)"), ObjectiveActors.Num());
 
 
 	// Count agents in THIS environment only
@@ -1602,33 +1598,4 @@ void ASimulationManagerGameMode::AwardObjectiveCaptureBonus(int32 TeamID)
 			FollowerComp->AccumulateReward(CaptureBonus);
 		}
 	}
-}
-
-//------------------------------------------------------------------------------
-// OBJECTIVE MANAGEMENT
-//------------------------------------------------------------------------------
-
-AActor* ASimulationManagerGameMode::FindObjectiveActor()
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return nullptr;
-	}
-
-	// Search for actors with the objective tag
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsWithTag(World, ObjectiveActorTag, FoundActors);
-
-	if (FoundActors.Num() > 0)
-	{
-		if (FoundActors.Num() > 1)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[SimulationManager] Found %d actors with tag '%s', using first one: %s"),
-				FoundActors.Num(), *ObjectiveActorTag.ToString(), *FoundActors[0]->GetName());
-		}
-		return FoundActors[0];
-	}
-
-	return nullptr;
 }

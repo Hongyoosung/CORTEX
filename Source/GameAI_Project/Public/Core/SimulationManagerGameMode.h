@@ -491,12 +491,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
 	FEpisodeResult GetLastEpisodeResult() const { return LastEpisodeResult; }
 
-	/**
-	 * Find objective actor by tag (auto-discovery helper)
-	 * @return First actor with ObjectiveActorTag, or nullptr if not found
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Objective")
-	AActor* FindObjectiveActor();
 
 	/** Delegate broadcast when episode ends - includes EnvironmentID for multi-env support */
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeEnded, int32, EnvironmentID, const FEpisodeResult&, Result);
@@ -519,6 +513,9 @@ public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION
 	//--------------------------------------------------------------------------
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Config")
+	int32 ServerPort = 50051;
+
 	/** Auto-start simulation on BeginPlay */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Config")
 	bool bAutoStartSimulation = true;
@@ -582,12 +579,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
 	AActor* ObjectiveActor = nullptr;
 
-	/** Tag to search for objective actor if not manually assigned (default: "Objective") */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
-	FName ObjectiveActorTag = TEXT("Objective");
-
 
 private:
+	/** Objective Actors */
+	TArray<AActor*> ObjectiveActors;
+
 	/** Registered teams */
 	UPROPERTY()
 	TMap<int32, FTeamInfo> RegisteredTeams;

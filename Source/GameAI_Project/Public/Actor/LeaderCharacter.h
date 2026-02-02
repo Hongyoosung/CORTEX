@@ -8,22 +8,36 @@
 #include "LeaderCharacter.generated.h"
 
 class UTeamLeaderComponent;
+class USquadManagerComponent;
+class UIntelManagerComponent;
+class UStrategicPlannerComponent;
+class UVisualLoggerComponent;
 
 /**
- * Leader Character
+ * Leader Character - v9.0
  *
  * This character manages a team of follower agents using event-driven MCTS.
  *
- * Architecture:
- * - TeamLeaderComponent: Runs MCTS for strategic decisions, issues commands to followers
+ * Architecture (v9.0 - Decomposed):
+ * - TeamLeaderComponent: Coordinator for all manager components
+ * - SquadManagerComponent: Follower roster and capacity management
+ * - IntelManagerComponent: Enemy tracking, objective discovery, team observations
+ * - StrategicPlannerComponent: Async MCTS strategic planning with RAII pattern
+ * - VisualLoggerComponent: Debug visualization (optional)
  * - No State Tree/BT: Leader only makes decisions, doesn't execute tactical actions
  * - Combat stats: Health, stamina, weapon system (same as followers)
  *
  * Usage:
  * 1. Spawn this character with LeaderAIController
- * 2. Register followers via TeamLeaderComponent->RegisterFollower()
- * 3. MCTS runs automatically on strategic events
+ * 2. Register followers via TeamLeaderComponent->RegisterFollower() (delegates to SquadManager)
+ * 3. MCTS runs automatically on strategic events via StrategicPlanner
  * 4. Commands are automatically issued to followers
+ *
+ * v9.0 Changes:
+ * - Added 4 new manager components for separation of concerns
+ * - TeamLeaderComponent now acts as coordinator, delegates to managers
+ * - RAII async MCTS execution for automatic resource cleanup
+ * - Debug visualization separated into VisualLoggerComponent
  */
 UCLASS()
 class GAMEAI_PROJECT_API ALeaderCharacter : public ACharacter, public ICombatStatsInterface
@@ -78,11 +92,27 @@ private:
 
 public:
 	//--------------------------------------------------------------------------
-	// COMPONENTS
+	// COMPONENTS (v9.0 - Decomposed Architecture)
 	//--------------------------------------------------------------------------
-	/** Team leader component (strategic MCTS decision-making) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components")
+	/** Team leader component (coordinator for all manager components) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Core")
 	UTeamLeaderComponent* TeamLeaderComponent;
+
+	/** Squad manager component (follower roster, capacity management) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Managers")
+	USquadManagerComponent* SquadManagerComponent;
+
+	/** Intel manager component (enemy tracking, objectives, team observations) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Managers")
+	UIntelManagerComponent* IntelManagerComponent;
+
+	/** Strategic planner component (async MCTS planning with RAII) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Managers")
+	UStrategicPlannerComponent* StrategicPlannerComponent;
+
+	/** Visual logger component (debug visualization - optional) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Debug")
+	UVisualLoggerComponent* VisualLoggerComponent;
 
 	//--------------------------------------------------------------------------
 	// COMBAT PROPERTIES

@@ -6,6 +6,10 @@
 #include "Observation/Components/ObservationBuilderComponent.h"
 #include "RL/Components/RLAgentComponent.h"
 #include "Combat/Components/CombatExecutorComponent.h"
+// v9.0 Phase 3: Manager components
+#include "Team/Components/TeamCommsComponent.h"
+#include "StateTree/Components/ContextBridgeComponent.h"
+#include "Util/Components/VisualLoggerComponent.h"
 // Other includes
 #include "RL/RLPolicyNetwork.h"
 #include "RL/Components/RewardCalculator.h"
@@ -34,91 +38,66 @@ void UFollowerAgentComponent::BeginPlay()
 	RLAgent = GetOwner()->FindComponentByClass<URLAgentComponent>();
 	CombatExecutor = GetOwner()->FindComponentByClass<UCombatExecutorComponent>();
 
+	// ========================================
+	// v9.0 PHASE 3: Find manager components
+	// ========================================
+	TeamComms = GetOwner()->FindComponentByClass<UTeamCommsComponent>();
+	ContextBridge = GetOwner()->FindComponentByClass<UContextBridgeComponent>();
+	VisualLogger = GetOwner()->FindComponentByClass<UVisualLoggerComponent>();
+
 	// Validate required components
 	if (!TacticalState)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v8.0] '%s': Missing TacticalStateComponent! Agent will not function correctly."),
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Missing TacticalStateComponent! Agent will not function correctly."),
 			*GetOwner()->GetName());
 	}
 
 	if (!ObservationBuilder)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v8.0] '%s': Missing ObservationBuilderComponent! Observations will fail."),
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Missing ObservationBuilderComponent! Observations will fail."),
 			*GetOwner()->GetName());
 	}
 
 	if (!RLAgent)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v8.0] '%s': Missing RLAgentComponent! RL functionality disabled."),
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Missing RLAgentComponent! RL functionality disabled."),
 			*GetOwner()->GetName());
 	}
 
 	if (!CombatExecutor)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v8.0] '%s': Missing CombatExecutorComponent! Combat will fail."),
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Missing CombatExecutorComponent! Combat will fail."),
+			*GetOwner()->GetName());
+	}
+
+	if (!TeamComms)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Missing TeamCommsComponent! Team communication disabled."),
+			*GetOwner()->GetName());
+	}
+
+	if (!ContextBridge)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent v9.0] '%s': Missing ContextBridgeComponent! StateTree context updates disabled."),
+			*GetOwner()->GetName());
+	}
+
+	if (!VisualLogger)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent v9.0] '%s': Missing VisualLoggerComponent! Debug visualization disabled."),
 			*GetOwner()->GetName());
 	}
 
 	// ========================================
-	// Find team leader component
+	// v9.0 PHASE 3: Get team leader from TeamComms
 	// ========================================
-	if (!TeamLeader)
-	{
-		// Option 1: Get from TeamLeaderActor if specified
-		if (TeamLeaderActor)
-		{
-			TeamLeader = TeamLeaderActor->FindComponentByClass<UTeamLeaderComponent>();
-			if (TeamLeader)
-			{
-				UE_LOG(LogTemp, Log, TEXT("[FollowerAgent] '%s': Found TeamLeader on specified actor '%s'"),
-					*GetOwner()->GetName(), *TeamLeaderActor->GetName());
-			}
-			else
-			{
-				UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': TeamLeaderActor '%s' has no TeamLeaderComponent!"),
-					*GetOwner()->GetName(), *TeamLeaderActor->GetName());
-			}
-		}
-		// Option 2: Auto-find by tag
-		else if (TeamLeaderTag != NAME_None)
-		{
-			TArray<AActor*> FoundActors;
-			UGameplayStatics::GetAllActorsWithTag(GetWorld(), TeamLeaderTag, FoundActors);
+	UTeamLeaderComponent* TeamLeader = TeamComms ? TeamComms->GetTeamLeader() : nullptr;
 
-			UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Searching for TeamLeader by tag '%s' - found %d actors"),
-				*GetOwner()->GetName(), *TeamLeaderTag.ToString(), FoundActors.Num());
-
-			if (FoundActors.Num() > 0)
-			{
-				TeamLeaderActor = FoundActors[0];
-				TeamLeader = TeamLeaderActor->FindComponentByClass<UTeamLeaderComponent>();
-
-				if (TeamLeader)
-				{
-					UE_LOG(LogTemp, Log, TEXT("[FollowerAgent] '%s': ✓ Auto-found TeamLeader on actor '%s' by tag '%s' (TeamID: %d)"),
-						*GetOwner()->GetName(), *TeamLeaderActor->GetName(), *TeamLeaderTag.ToString(), TeamLeader->TeamID);
-				}
-				else
-				{
-					UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ Found actor '%s' with tag '%s' but NO TeamLeaderComponent!"),
-						*GetOwner()->GetName(), *TeamLeaderActor->GetName(), *TeamLeaderTag.ToString());
-				}
-			}
-			else
-			{
-				UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ No actor found with tag '%s' - cannot register!"),
-					*GetOwner()->GetName(), *TeamLeaderTag.ToString());
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ TeamLeaderTag is NONE - cannot auto-find leader!"),
-				*GetOwner()->GetName());
-		}
-	}
+	// NOTE: TeamLeader may be nullptr at this point if TeamComms hasn't registered yet
+	// TeamComms will handle registration in its own BeginPlay
 
 	// ========================================
-	// v8.0: Set TeamLeader reference in sub-components
+	// v8.0: Set TeamLeader reference in sub-components (if available)
 	// ========================================
 	if (TeamLeader)
 	{
@@ -159,7 +138,7 @@ void UFollowerAgentComponent::BeginPlay()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [TEAM SETUP v9.0] '%s': TeamLeader is NULL - ObservationBuilder will fail to populate objective context!"),
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ [TEAM SETUP v9.0] '%s': TeamLeader not yet available (TeamComms will handle registration)"),
 			*GetOwner()->GetName());
 	}
 
@@ -173,37 +152,17 @@ void UFollowerAgentComponent::BeginPlay()
 
 	// NOTE: Death event subscription is handled by FollowerCharacter (owner coordinates components)
 
-	// Auto-register with team leader
-	if (bAutoRegisterWithLeader)
-	{
-		if (TeamLeader)
-		{
-			bool bIsRegistered = RegisterWithTeamLeader();
-			if (!bIsRegistered)
-			{
-				UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ FAILED to register with TeamLeader '%s'!"),
-					*GetOwner()->GetName(), *TeamLeader->TeamName);
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ NO TEAM LEADER FOUND! Cannot register."),
-				*GetOwner()->GetName());
-			UE_LOG(LogTemp, Error, TEXT("    → TeamLeaderActor: %s"), TeamLeaderActor ? *TeamLeaderActor->GetName() : TEXT("NOT SET"));
-			UE_LOG(LogTemp, Error, TEXT("    → TeamLeaderTag: %s"), *TeamLeaderTag.ToString());
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': Auto-register disabled (bAutoRegisterWithLeader=false)"),
-			*GetOwner()->GetName());
-	}
+	// v9.0 PHASE 3: Registration is now handled by TeamCommsComponent
+	// TeamComms has its own BeginPlay that will auto-register if enabled
 
 	// Initialize strategy update timestamp
 	LastStrategyUpdateTime = FPlatformTime::Seconds();
 
-	UE_LOG(LogTemp, Log, TEXT("[FollowerAgent v8.0 REFACTORED] Initialized on %s (TeamLeader: %s)"),
-		*GetOwner()->GetName(), TeamLeader ? *TeamLeader->TeamName : TEXT("NONE"));
+	UE_LOG(LogTemp, Log, TEXT("[FollowerAgent v9.0 REFACTORED] Initialized on %s (TeamComms: %s, ContextBridge: %s, VisualLogger: %s)"),
+		*GetOwner()->GetName(),
+		TeamComms ? TEXT("OK") : TEXT("MISSING"),
+		ContextBridge ? TEXT("OK") : TEXT("MISSING"),
+		VisualLogger ? TEXT("OK") : TEXT("MISSING"));
 }
 
 void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -256,6 +215,15 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 					TacticalState->SetCombatParameters(NewAction.CombatParams);
 				}
 
+				// v9.0 PHASE 3: Update ContextBridge for StateTree
+				if (ContextBridge)
+				{
+					ContextBridge->SetStrategy(AssignedStrategy);
+					ContextBridge->SetTacticalParameters(NewAction.TacticalParams);
+					ContextBridge->SetCombatParameters(NewAction.CombatParams);
+					ContextBridge->SetIsAlive(GetIsAlive());
+				}
+
 				// Update timestamp
 				LastStrategyUpdateTime = FPlatformTime::Seconds();
 			}
@@ -280,8 +248,8 @@ void UFollowerAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	// ========================================
 	ExecuteCombat();
 
-	// Draw debug info if enabled
-	if (bEnableDebugDrawing)
+	// Draw debug info if enabled - Phase 3: Check VisualLogger setting
+	if (VisualLogger && VisualLogger->bEnableDebugDrawing)
 	{
 		DrawDebugInfo();
 	}
@@ -298,48 +266,31 @@ void UFollowerAgentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 }
 
 //------------------------------------------------------------------------------
-// TEAM LEADER COMMUNICATION
+// TEAM LEADER COMMUNICATION (v9.0 PHASE 3: Delegates to TeamCommsComponent)
 //------------------------------------------------------------------------------
 
 bool UFollowerAgentComponent::RegisterWithTeamLeader()
 {
-	if (!TeamLeader)
+	if (!TeamComms)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': No TeamLeader set, cannot register"),
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Cannot register, missing TeamCommsComponent"),
 			*GetOwner()->GetName());
 		return false;
 	}
 
-	bool bSuccess = TeamLeader->RegisterFollower(GetOwner());
-
-	if (bSuccess)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[FollowerAgent] '%s': Registered with TeamLeader '%s'"),
-			*GetOwner()->GetName(), *TeamLeader->TeamName);
-
-		// NOTE: SimulationManager registration is now handled by TeamLeader->RegisterFollower()
-		// This eliminates duplicate registration calls and simplifies the flow
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': FAILED to register with TeamLeader '%s'"),
-			*GetOwner()->GetName(), *TeamLeader->TeamName);
-
-	}
-
-	return bSuccess;
+	return TeamComms->RegisterWithTeamLeader();
 }
 
 void UFollowerAgentComponent::UnregisterFromTeamLeader()
 {
-	if (!TeamLeader) return;
-
-	if (IsRegisteredWithLeader())
+	if (!TeamComms)
 	{
-		TeamLeader->UnregisterFollower(GetOwner());
-		UE_LOG(LogTemp, Log, TEXT("[FollowerAgent] '%s': Unregistered from TeamLeader"),
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Cannot unregister, missing TeamCommsComponent"),
 			*GetOwner()->GetName());
+		return;
 	}
+
+	TeamComms->UnregisterFromTeamLeader();
 }
 
 void UFollowerAgentComponent::SignalEventToLeader(
@@ -348,33 +299,14 @@ void UFollowerAgentComponent::SignalEventToLeader(
 	FVector Location,
 	int32 Priority)
 {
-	if (!TeamLeader)
+	if (!TeamComms)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent] '%s': ❌ Cannot signal event, no TeamLeader!"),
+		UE_LOG(LogTemp, Error, TEXT("[FollowerAgent v9.0] '%s': Cannot signal event, missing TeamCommsComponent"),
 			*GetOwner()->GetName());
 		return;
 	}
 
-	// Use owner's location if not specified
-	if (Location.IsZero() && GetOwner())
-	{
-		Location = GetOwner()->GetActorLocation();
-	}
-
-	FString EventName = UEnum::GetValueAsString(Event);
-	FString InstigatorName = Instigator ? Instigator->GetName() : TEXT("None");
-
-	UE_LOG(LogTemp, Warning, TEXT("[FollowerAgent] '%s': 📡 Signaling event '%s' to Team Leader '%s' (Instigator: %s, Priority: %d)"),
-		*GetOwner()->GetName(),
-		*EventName,
-		*TeamLeader->TeamName,
-		*InstigatorName,
-		Priority);
-
-	TeamLeader->ProcessStrategicEvent(Event, Instigator, Location, Priority);
-
-	// Broadcast event
-	OnEventSignaled.Broadcast(Event, Instigator, Priority);
+	TeamComms->SignalEventToLeader(Event, Instigator, Location, Priority);
 }
 
 //------------------------------------------------------------------------------
@@ -392,39 +324,23 @@ void UFollowerAgentComponent::SetStrategyAssignment(const FStrategyAssignment& A
 
 	TacticalState->SetStrategyAssignment(Assignment);
 
-	// v9.0 FIX: Synchronize strategy to RewardCalculator (CRITICAL for strategy-specific rewards)
+	// Synchronize strategy to RewardCalculator (required for strategy-specific rewards)
 	if (RLAgent)
 	{
-		URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator();
-		if (RewardCalc)
+		if (URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator())
 		{
 			RewardCalc->SetCurrentStrategy(Assignment.Strategy);
-
-			UE_LOG(LogTemp, Display, TEXT("✅ [STRATEGY SYNC v9.0] '%s': RewardCalculator updated to strategy '%s'"),
-				*GetOwner()->GetName(),
-				*UEnum::GetValueAsString(Assignment.Strategy));
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY SYNC v9.0] '%s': RLAgent has no RewardCalculator!"),
-				*GetOwner()->GetName());
 		}
 	}
-	else
+
+	// Update ContextBridge for StateTree
+	if (ContextBridge)
 	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY SYNC v9.0] '%s': No RLAgent component - strategy sync failed!"),
-			*GetOwner()->GetName());
+		ContextBridge->SetStrategy(Assignment.Strategy);
 	}
 
-	// v9.0: Objective implicit in reward function, not explicit assignment
-	UE_LOG(LogTemp, Warning, TEXT("📝 [FOLLOWER v9.0] '%s': Strategy assignment received - Strategy=%s"),
-		*GetOwner()->GetName(),
-		*UEnum::GetValueAsString(Assignment.Strategy));
-
-	// Broadcast event for StateTree or other systems
+	// Broadcast event and force update
 	OnStrategyAssignmentReceived.Broadcast(Assignment);
-
-	// Force strategy update on next tick
 	TicksSinceLastUpdate = 999;
 }
 
@@ -527,6 +443,12 @@ void UFollowerAgentComponent::MarkAsDead()
 		CombatExecutor->bIsAlive = false;
 	}
 
+	// v9.0 PHASE 3: Update ContextBridge
+	if (ContextBridge)
+	{
+		ContextBridge->SetIsAlive(false);
+	}
+
 	// Deactivate the actor: disable collision and make invisible
 	AActor* Owner = GetOwner();
 	if (Owner)
@@ -559,6 +481,12 @@ void UFollowerAgentComponent::MarkAsAlive()
 	if (CombatExecutor)
 	{
 		CombatExecutor->bIsAlive = true;
+	}
+
+	// v9.0 PHASE 3: Update ContextBridge
+	if (ContextBridge)
+	{
+		ContextBridge->SetIsAlive(true);
 	}
 
 	// Reactivate the actor: enable collision and make visible
@@ -698,21 +626,18 @@ void UFollowerAgentComponent::ResetEpisode()
 		RLAgent->ResetEpisode();
 	}
 
+	// v9.0 PHASE 3: Reset ContextBridge instead of direct StateTree manipulation
+	if (ContextBridge)
+	{
+		ContextBridge->ResetContext();
+	}
+
 	// Reset event-driven tracking
 	LastEnemyCount = 0;
 	TicksSinceLastUpdate = 0;
 
-	// Clear StateTree context
-	UFollowerStateTreeComponent* StateTreeComp = GetOwner()->FindComponentByClass<UFollowerStateTreeComponent>();
-	if (StateTreeComp)
-	{
-		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
-		SharedContext.VisibleEnemies.Empty();
-		SharedContext.PrimaryTarget = nullptr;
-		SharedContext.DistanceToPrimaryTarget = 99999.0f;
-	}
-
-	// Clear team leader's known enemies (first follower only)
+	// v9.0 PHASE 3: Clear team leader's known enemies (first follower only)
+	UTeamLeaderComponent* TeamLeader = GetTeamLeader();
 	if (TeamLeader)
 	{
 		TArray<AActor*> AllFollowers = TeamLeader->GetFollowers();
@@ -754,57 +679,63 @@ URLPolicyNetwork* UFollowerAgentComponent::GetTacticalPolicy() const
 }
 
 //------------------------------------------------------------------------------
-// UTILITY
+// UTILITY (v9.0 PHASE 3: Delegates to TeamCommsComponent)
 //------------------------------------------------------------------------------
+
+UTeamLeaderComponent* UFollowerAgentComponent::GetTeamLeader() const
+{
+	if (!TeamComms) return nullptr;
+	return TeamComms->GetTeamLeader();
+}
 
 int32 UFollowerAgentComponent::GetTeamID() const
 {
-	if (TeamLeader)
-	{
-		return TeamLeader->TeamID;
-	}
-	else
-	{
-		return -1; // Invalid team
-	}
+	if (!TeamComms) return -1;
+	return TeamComms->GetTeamID();
 }
 
 bool UFollowerAgentComponent::IsRegisteredWithLeader() const
 {
-	if (!TeamLeader) return false;
-	return TeamLeader->IsFollowerRegistered(GetOwner());
+	if (!TeamComms) return false;
+	return TeamComms->IsRegisteredWithLeader();
 }
 
 //------------------------------------------------------------------------------
-// DEBUG VISUALIZATION
+// DEBUG VISUALIZATION (v9.0 PHASE 3: Delegates to VisualLoggerComponent)
 //------------------------------------------------------------------------------
 
 void UFollowerAgentComponent::DrawDebugInfo()
 {
+	if (!VisualLogger || !VisualLogger->bEnableDebugDrawing)
+	{
+		return; // Visual logger not available or disabled
+	}
+
 	if (!GetOwner() || !TacticalState) return;
 
-	UWorld* World = GetWorld();
-	if (!World) return;
+	// Get current state
+	FVector Location = GetOwner()->GetActorLocation();
+	EStrategyType Strategy = GetAssignedStrategy();
 
-	FVector FollowerPos = GetOwner()->GetActorLocation() + FVector(0, 0, 120);
+	// Get health from HealthComponent if available
+	float Health = 1.0f;
+	if (UHealthComponent* HealthComp = GetOwner()->FindComponentByClass<UHealthComponent>())
+	{
+		Health = HealthComp->GetHealthPercentage();
+	}
 
-	// v9.0: Draw strategy assignment info (objective implicit)
-	FStrategyAssignment Assignment = TacticalState->GetStrategyAssignment();
-	FString StrategyStr = UEnum::GetValueAsString(Assignment.Strategy);
+	FTacticalParameters TacticalParams = GetTacticalParameters();
+	AObjectiveActor* TargetObjective = nullptr; // v9.0: Objectives implicit, but can show for debugging
 
-	FString StateText = FString::Printf(TEXT("Alive: %s\nStrategy: %s"),
-		GetIsAlive() ? TEXT("Yes") : TEXT("Dead"),
-		*StrategyStr);
-
-	DrawDebugString(World, FollowerPos, StateText, nullptr, FColor::Cyan, 0.0f, true);
-
-	// v9.0: Objective visualization removed (objectives implicit in reward functions)
+	// Delegate to VisualLogger
+	VisualLogger->DrawFollowerState(Location, Strategy, Health, TacticalParams, TargetObjective);
 
 	// Draw line to team leader
+	UTeamLeaderComponent* TeamLeader = GetTeamLeader();
 	if (TeamLeader && TeamLeader->GetOwner())
 	{
 		FVector LeaderPos = TeamLeader->GetOwner()->GetActorLocation();
-		DrawDebugLine(World, FollowerPos, LeaderPos, TeamLeader->TeamColor.ToFColor(true), false, -1.0f, 0, 1.0f);
+		VisualLogger->DrawLine(Location, LeaderPos, FLinearColor(TeamLeader->TeamColor), 0.0f, 1.0f);
 	}
 }
 

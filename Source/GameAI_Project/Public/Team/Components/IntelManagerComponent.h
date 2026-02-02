@@ -102,13 +102,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Intel Manager")
 	int32 TeamID = 0;
 
-	/** Tag to search for friendly objectives */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Intel Manager")
-	FName FriendlyObjectiveTag = TEXT("FriendlyObjective");
-
-	/** Tag to search for hostile objectives */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Intel Manager")
-	FName HostileObjectiveTag = TEXT("HostileObjective");
 
 private:
 	/** Known enemy actors */

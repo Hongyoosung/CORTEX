@@ -157,11 +157,15 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 	int32 EnvironmentID = Env->GetEnvId();
 	
 
-	// Optional: Get TeamID for logging purposes
+	// Optional: Get TeamID for logging purposes - Phase 3: Use GetTeamLeader() method
 	int32 InTeamID = -1;
-	if (FollowerAgent && FollowerAgent->TeamLeader)
+	if (FollowerAgent)
 	{
-		InTeamID = FollowerAgent->TeamLeader->TeamID;
+		UTeamLeaderComponent* Leader = FollowerAgent->GetTeamLeader();
+		if (Leader)
+		{
+			InTeamID = Leader->TeamID;
+		}
 	}
 
 	// Check per-environment termination flags for THIS environment
@@ -230,10 +234,14 @@ void AFollowerAgentTrainer::GetInfo(TMap<FString, FString>& Info)
 	}
 	Info.Add(TEXT("environment_id"), FString::FromInt(EnvironmentID));
 
-	// Also include team ID for debugging
-	if (FollowerAgent && FollowerAgent->TeamLeader)
+	// Also include team ID for debugging - Phase 3: Use GetTeamLeader() method
+	if (FollowerAgent)
 	{
-		Info.Add(TEXT("team_id"), FString::FromInt(FollowerAgent->TeamLeader->TeamID));
+		UTeamLeaderComponent* Leader = FollowerAgent->GetTeamLeader();
+		if (Leader)
+		{
+			Info.Add(TEXT("team_id"), FString::FromInt(Leader->TeamID));
+		}
 	}
 
 	// DIAGNOSTIC: Add current training status to info

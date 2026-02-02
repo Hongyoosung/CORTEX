@@ -17,6 +17,10 @@ class UObservationBuilderComponent;
 class URLAgentComponent;
 class UCombatExecutorComponent;
 class URLPolicyNetwork;
+// v9.0 Phase 3: Specialized manager components
+class UTeamCommsComponent;
+class UContextBridgeComponent;
+class UVisualLoggerComponent;
 
 /**
  * Delegate for follower events (v8.0)
@@ -34,32 +38,39 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 );
 
 /**
- * Follower Agent Component - Tactical Execution (v8.0 Refactored)
+ * Follower Agent Component - Tactical Execution Coordinator (v9.0 Phase 3)
  *
- * ARCHITECTURE CHANGE (v8.0):
- * This component has been refactored from a 1,461-line monolithic class into a coordinator
- * that delegates to specialized sub-components:
+ * ARCHITECTURE EVOLUTION:
+ * v8.0: Refactored from 1,461-line monolith into tactical coordinator
+ * v9.0 Phase 3: Further decomposed into specialized manager components
  *
- * - TacticalStateComponent: Strategy assignment, tactical/combat parameters, state management
+ * v8.0 Sub-Components (Tactical Execution):
+ * - TacticalStateComponent: Strategy assignment, tactical/combat parameters
  * - ObservationBuilderComponent: Observation building, cover detection
- * - RLAgentComponent: Reward tracking, episode management, policy network interaction
- * - CombatExecutorComponent: Combat execution, target selection, event handling
+ * - RLAgentComponent: Reward tracking, episode management, policy network
+ * - CombatExecutorComponent: Combat execution, target selection
  *
- * Responsibilities (Refactored):
- * - Team leader registration/communication
- * - Component lifecycle management
- * - Strategy assignment reception (delegates to TacticalStateComponent)
- * - Component coordination
+ * v9.0 Phase 3 Manager Components (Communication & Context):
+ * - TeamCommsComponent: Team leader communication, registration, event signaling
+ * - ContextBridgeComponent: StateTree dependency decoupling, shared data board
+ * - VisualLoggerComponent: Centralized debug visualization
+ *
+ * Responsibilities (v9.0):
+ * - Coordinate tactical execution components
+ * - Coordinate manager components
+ * - Strategy assignment reception and synchronization
+ * - RL inference and parameter updates
+ * - Combat execution coordination
  *
  * Usage:
- * 1. Attach to an AI-controlled Actor (e.g., AGameAICharacter)
- * 2. Ensure sub-components are also attached (TacticalState, ObservationBuilder, RLAgent, CombatExecutor)
- * 3. Set TeamLeader reference
- * 4. Component will automatically register with leader
- * 5. Leader will issue commands, component will coordinate execution
+ * 1. Attach to an AI-controlled Actor (e.g., AFollowerCharacter)
+ * 2. Ensure all sub-components are attached (8 total components)
+ * 3. TeamComms will automatically register with leader on BeginPlay
+ * 4. Leader issues strategy assignments via SetStrategyAssignment()
+ * 5. Component coordinates RL inference and tactical execution
  *
  * Backwards Compatibility:
- * All public methods remain the same, but now delegate to sub-components internally.
+ * All public methods remain the same, internally delegating to specialized components.
  */
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UFollowerAgentComponent : public UActorComponent
@@ -221,9 +232,9 @@ public:
 	// UTILITY
 	//--------------------------------------------------------------------------
 
-	/** Get team leader */
+	/** Get team leader (delegates to TeamCommsComponent) */
 	UFUNCTION(BlueprintPure, Category = "Follower|Team")
-	UTeamLeaderComponent* GetTeamLeader() const { return TeamLeader; }
+	UTeamLeaderComponent* GetTeamLeader() const;
 
 	/** Get Team ID */
 	UFUNCTION(BlueprintPure, Category = "Follower|Team")
@@ -259,30 +270,6 @@ public:
 
 public:
 	//--------------------------------------------------------------------------
-	// CONFIGURATION
-	//--------------------------------------------------------------------------
-
-	/** Team leader actor (will find TeamLeaderComponent on this actor) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follower|Config")
-	AActor* TeamLeaderActor = nullptr;
-
-	/** Team leader component reference (auto-set from TeamLeaderActor) */
-	UPROPERTY(BlueprintReadOnly, Category = "Follower|Config")
-	UTeamLeaderComponent* TeamLeader = nullptr;
-
-	/** Automatically register with team leader on BeginPlay */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follower|Config")
-	bool bAutoRegisterWithLeader = true;
-
-	/** Auto-find team leader by tag (if TeamLeaderActor not set) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follower|Config")
-	FName TeamLeaderTag = TEXT("TeamLeader");
-
-	/** Enable debug visualization */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follower|Debug")
-	bool bEnableDebugDrawing = false;
-
-	//--------------------------------------------------------------------------
 	// v8.0 REFACTORED: SUB-COMPONENT REFERENCES
 	//--------------------------------------------------------------------------
 
@@ -301,6 +288,22 @@ public:
 	/** Combat executor component (combat execution, target selection) */
 	UPROPERTY(BlueprintReadOnly, Category = "Follower|Components")
 	UCombatExecutorComponent* CombatExecutor = nullptr;
+
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 3: SPECIALIZED MANAGER COMPONENTS
+	//--------------------------------------------------------------------------
+
+	/** Team communications component (leader registration, event signaling) */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|Components")
+	UTeamCommsComponent* TeamComms = nullptr;
+
+	/** Context bridge component (StateTree dependency decoupling) */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|Components")
+	UContextBridgeComponent* ContextBridge = nullptr;
+
+	/** Visual logger component (debug visualization) */
+	UPROPERTY(BlueprintReadOnly, Category = "Follower|Components")
+	UVisualLoggerComponent* VisualLogger = nullptr;
 
 	//--------------------------------------------------------------------------
 	// EVENTS

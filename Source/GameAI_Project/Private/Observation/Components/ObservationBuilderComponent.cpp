@@ -17,6 +17,8 @@ void UObservationBuilderComponent::BeginPlay()
 	// Cache components to avoid repeated FindComponentByClass calls
 	CachedHealthComponent = GetOwner()->FindComponentByClass<UHealthComponent>();
 	CachedPerceptionComponent = GetOwner()->FindComponentByClass<UAgentPerceptionComponent>();
+	UFollowerAgentComponent* FollowerComp = GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
+	TeamLeader = FollowerComp->GetTeamLeader();
 
 	if (!CachedHealthComponent)
 	{

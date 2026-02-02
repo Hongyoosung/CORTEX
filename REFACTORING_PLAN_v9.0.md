@@ -849,12 +849,12 @@ struct FObservationElement;
 ### Phase 3: Architectural Decomposition
 - [x] Implement `SquadManagerComponent` and Unit Test ✅ (Day 1 - Step 1)
 - [x] Implement `IntelManagerComponent` and Test Objective Discovery ✅ (Day 1 - Step 2)
-- [ ] Implement `StrategicPlannerComponent` (ensure `FAsyncTask` is fully encapsulated) - IN PROGRESS
-- [ ] Implement `TeamCommsComponent` and Test Leader Registration
-- [ ] Implement `VisualLoggerComponent` and migrate debug drawing
-- [ ] Implement `ContextBridgeComponent` to remove StateTree dependency
-- [ ] Convert `TeamLeaderComponent` to Coordinator
-- [ ] Check for Compile and Runtime Errors
+- [x] Implement `StrategicPlannerComponent` (ensure `FAsyncTask` is fully encapsulated) - IN PROGRESS
+- [x] Implement `TeamCommsComponent` and Test Leader Registration
+- [x] Implement `VisualLoggerComponent` and migrate debug drawing
+- [x] Implement `ContextBridgeComponent` to remove StateTree dependency
+- [x] Convert `TeamLeaderComponent` to Coordinator
+- [x] Check for Compile and Runtime Errors
 
 ### Phase 3.1: Add Documentation
 - [ ] Add `Team/README.md`

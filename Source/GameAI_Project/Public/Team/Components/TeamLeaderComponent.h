@@ -9,6 +9,10 @@
 // Forward declarations
 class UMCTS;
 class AObjectiveActor;
+class USquadManagerComponent;
+class UIntelManagerComponent;
+class UStrategicPlannerComponent;
+class UVisualLoggerComponent;
 
 /**
  * Delegate for strategic decision events (v8.0 - Strategy Assignment)
@@ -75,20 +79,31 @@ struct FStrategicExperience
 };
 
 /**
- * Team Leader Component - Strategic Decision Making
+ * Team Leader Component - Strategic Coordinator (v9.0 Phase 3)
  *
- * Responsibilities:
- * - Manage team of follower agents
+ * ARCHITECTURE (Phase 3 - Coordinator Pattern):
+ * This component has been refactored from a monolithic class into a coordinator
+ * that delegates to specialized manager components:
+ *
+ * - SquadManagerComponent: Follower roster management
+ * - IntelManagerComponent: Enemy tracking, objective management, observations
+ * - StrategicPlannerComponent: MCTS-based strategic planning (async)
+ * - VisualLoggerComponent: Centralized debug visualization
+ *
+ * Responsibilities (Refactored):
+ * - Coordinate manager components
  * - Process strategic events
- * - Run event-driven MCTS for team-level decisions
- * - Issue commands to followers
- * - Track team performance
+ * - Broadcast strategy assignments to followers
+ * - Track team performance metrics
+ * - Handle episode lifecycle
  *
  * Usage:
- * 1. Attach to an Actor (player, AI, or dedicated manager)
- * 2. Register followers via RegisterFollower()
- * 3. Followers signal events via ProcessStrategicEvent()
- * 4. Leader runs MCTS and issues commands to followers
+ * 1. Attach to an Actor (team leader character)
+ * 2. Ensure manager components are attached to the same actor
+ * 3. Followers register via RegisterFollower() (delegates to SquadManager)
+ * 4. Followers signal events via ProcessStrategicEvent()
+ * 5. StrategicPlanner runs MCTS and fires OnPlanReady delegate
+ * 6. Coordinator applies assignments via ApplyStrategyAssignment()
  */
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UTeamLeaderComponent : public UActorComponent
@@ -116,22 +131,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|Followers")
 	void UnregisterFollower(AActor* Follower);
 
-	/** Get all followers */
+	/** Get all followers - Phase 3: Delegate to SquadManager */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
-	TArray<AActor*> GetFollowers() const { return Followers; }
+	TArray<AActor*> GetFollowers() const;
 
 
 	/** Get alive followers */
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|Followers")
 	TArray<AActor*> GetAliveFollowers() const;
 
-	/** Get follower count */
+	/** Get follower count - Phase 3: Delegate to SquadManager */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
-	int32 GetFollowerCount() const { return Followers.Num(); }
+	int32 GetFollowerCount() const;
 
-	/** Is follower registered? */
+	/** Is follower registered? - Phase 3: Delegate to SquadManager */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
-	bool IsFollowerRegistered(AActor* Follower) const { return Followers.Contains(Follower); }
+	bool IsFollowerRegistered(AActor* Follower) const;
 
 	//--------------------------------------------------------------------------
 	// EVENT PROCESSING
@@ -163,8 +178,10 @@ public:
 	FTeamObservation BuildTeamObservation();
 
 
-	/** Run strategy assignment decision-making (sync) - v8.0 MCTS Strategy Assignment */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS")
+	/** Run strategy assignment decision-making (sync) - v8.0 MCTS Strategy Assignment
+	 * @deprecated Phase 3: Use RunStrategyAssignmentAsync() instead
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Team Leader|MCTS", meta = (DeprecatedFunction, DeprecationMessage = "Use RunStrategyAssignmentAsync() instead"))
 	void RunStrategyAssignment();
 
 	/** Run strategy assignment decision-making (async) - v8.0 MCTS Strategy Assignment */
@@ -222,16 +239,16 @@ public:
 	bool IsRunningMCTS() const { return bMCTSRunning; }
 
 	//--------------------------------------------------------------------------
-	// v9.0: OBJECTIVE ACCESSORS
+	// v9.0: OBJECTIVE ACCESSORS - Phase 3: Delegate to IntelManager
 	//--------------------------------------------------------------------------
 
 	/** Get friendly objective (for Defend strategy) */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
-	AObjectiveActor* GetFriendlyObjective() const { return FriendlyObjective; }
+	AObjectiveActor* GetFriendlyObjective() const;
 
 	/** Get hostile objective (for Assault/Support strategies) */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
-	AObjectiveActor* GetHostileObjective() const { return HostileObjective; }
+	AObjectiveActor* GetHostileObjective() const;
 
 	//--------------------------------------------------------------------------
 	// EPISODE MANAGEMENT
@@ -252,11 +269,24 @@ private:
 	/** Check if MCTS cooldown has expired */
 	bool IsMCTSOnCooldown() const;
 
-	/** Initialize MCTS engine */
+	/** Initialize MCTS engine
+	 * @deprecated Phase 3: Use StrategicPlannerComponent->InitializeMCTS() instead
+	 */
+	UE_DEPRECATED(5.6, "InitializeMCTS is deprecated. Use StrategicPlannerComponent->InitializeMCTS() instead.")
 	void InitializeMCTS();
 
-	/** Discover objectives from the level (v8.0) */
+	/** Discover objectives from the level (v8.0)
+	 * Phase 3: This is a convenience wrapper that delegates to IntelManager
+	 */
 	void DiscoverWorldObjectives();
+
+	/** Phase 3: Handler for StrategicPlanner completion (v9.0) */
+	UFUNCTION()
+	void OnPlanReady(const TArray<FStrategyAssignment>& Assignments, float ExecutionTimeMs, FString BatchKey);
+
+	/** Phase 3: Handler for SquadManager follower registration (v9.0) */
+	UFUNCTION()
+	void OnSquadFollowerRegistered(AActor* Follower);
 
 
 public:
@@ -323,18 +353,14 @@ public:
 	// v8.0: Objectives discovered dynamically in DiscoverWorldObjectives()
 
 	//--------------------------------------------------------------------------
-	// STATE
+	// STATE (Phase 3: Coordinator-specific state only)
 	//--------------------------------------------------------------------------
-
-	/** Registered followers */
-	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
-	TArray<AActor*> Followers;
 
 	/** Current strategy assignments for each follower (v8.0) */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
 	TMap<AActor*, FStrategyAssignment> CurrentAssignments;
 
-	/** Is MCTS currently running? */
+	/** Is MCTS currently running? (Synced with StrategicPlanner) */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
 	bool bMCTSRunning = false;
 
@@ -350,25 +376,38 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
 	FTeamObservation CurrentTeamObservation;
 
-	/** Known enemy actors */
-	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
-	TSet<AActor*> KnownEnemies;
+	// Phase 3: REMOVED duplicate state variables (now in manager components):
+	// - Followers → SquadManager->GetFollowers()
+	// - KnownEnemies → IntelManager->GetKnownEnemies()
+	// - FriendlyObjective → IntelManager->GetFriendlyObjective()
+	// - HostileObjective → IntelManager->GetHostileObjective()
 
 	//--------------------------------------------------------------------------
 	// COMPONENTS
 	//--------------------------------------------------------------------------
 
-	/** MCTS decision engine */
-	UPROPERTY()
-	UMCTS* StrategicMCTS;
+	/** Phase 3: Manager Components (v9.0 Coordinator Pattern) */
 
-	/** Friendly objective actor (v8.0 - defend this) */
-	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
-	AObjectiveActor* FriendlyObjective = nullptr;
+	/** Squad management (follower roster) */
+	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|Components")
+	USquadManagerComponent* SquadManager = nullptr;
 
-	/** Hostile objective actor (v8.0 - assault this) */
-	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|State")
-	AObjectiveActor* HostileObjective = nullptr;
+	/** Intelligence gathering (enemy tracking, objectives, observations) */
+	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|Components")
+	UIntelManagerComponent* IntelManager = nullptr;
+
+	/** Strategic planning (MCTS-based decision making) */
+	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|Components")
+	UStrategicPlannerComponent* StrategicPlanner = nullptr;
+
+	/** Debug visualization (centralized drawing) */
+	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|Components")
+	UVisualLoggerComponent* VisualLogger = nullptr;
+
+	// Phase 3: REMOVED deprecated components (now in manager components):
+	// - StrategicMCTS → StrategicPlanner->StrategicMCTS
+	// - FriendlyObjective → IntelManager->GetFriendlyObjective()
+	// - HostileObjective → IntelManager->GetHostileObjective()
 
 	//--------------------------------------------------------------------------
 	// EVENTS
@@ -392,8 +431,7 @@ public:
 
 
 private:
-	/** Async task for MCTS (using FAsyncTask to check completion and get results) */
-	FAsyncTask<class FMCTSAsyncTask>* AsyncMCTSTask;
+	// Phase 3: REMOVED - AsyncMCTSTask now in StrategicPlanner (TUniquePtr with RAII)
 
 	/** Statistics tracking */
 	int32 TotalCommandsIssued = 0;
@@ -415,12 +453,13 @@ private:
 	/** SimulationManager�� ������ ���������� ��ϵǾ����� ���� */
 	bool bIsRegisteredToManager = false;
 
-	/** ������ ��ϵǱ� ���� ���� ������ �ȷο� ��⿭ */
-	UPROPERTY()
-	TArray<AActor*> PendingFollowerRegistration;
+	// Phase 3: REMOVED - PendingFollowerRegistration now in SquadManager
 
 	FString CurrentBatchKey;
 
-	/** ��⿭�� �ִ� �ȷο����� �Ŵ����� ����ϴ� ���� �Լ� */
+	/** Process pending follower registrations
+	 * @deprecated Phase 3: SquadManager now handles this automatically
+	 */
+	UE_DEPRECATED(5.6, "ProcessPendingRegistrations is deprecated. SquadManager handles registrations automatically.")
 	void ProcessPendingRegistrations();
 };

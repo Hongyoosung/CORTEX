@@ -3,6 +3,12 @@
 #include "Team/ObjectiveActor.h"  // v8.0: For durability-based objectives
 #include "AI/MCTS/MCTS.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
+
+// Phase 3: Manager Component Includes (v9.0)
+#include "Team/Components/SquadManagerComponent.h"
+#include "Team/Components/IntelManagerComponent.h"
+#include "Team/Components/StrategicPlannerComponent.h"
+#include "Util/Components/VisualLoggerComponent.h"
 #include "Observation/ObservationElement.h"
 #include "RL/RLTypes.h"  // v8.0: EStrategyType, FStrategyAssignment
 #include "RL/RLPolicyNetwork.h"  // v8.0: For value estimates
@@ -24,7 +30,6 @@
 //==============================================================================
 
 UTeamLeaderComponent::UTeamLeaderComponent()
-	: AsyncMCTSTask(nullptr)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickInterval = 0.5f;  // Update every 0.5s
@@ -33,24 +38,70 @@ UTeamLeaderComponent::UTeamLeaderComponent()
 void UTeamLeaderComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	InitializeMCTS();
 
+	//==========================================================================
+	// Phase 3: Resolve Manager Components (v9.0 Coordinator Pattern)
+	//==========================================================================
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] BeginPlay: No owner actor!"));
+		return;
+	}
+
+	SquadManager = Owner->FindComponentByClass<USquadManagerComponent>();
+	IntelManager = Owner->FindComponentByClass<UIntelManagerComponent>();
+	StrategicPlanner = Owner->FindComponentByClass<UStrategicPlannerComponent>();
+	VisualLogger = Owner->FindComponentByClass<UVisualLoggerComponent>();
+
+	// Verify required components exist
+	if (!SquadManager || !IntelManager || !StrategicPlanner)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] %s: Missing required manager components! Squad=%s Intel=%s Planner=%s"),
+			*Owner->GetName(),
+			SquadManager ? TEXT("OK") : TEXT("MISSING"),
+			IntelManager ? TEXT("OK") : TEXT("MISSING"),
+			StrategicPlanner ? TEXT("OK") : TEXT("MISSING"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Display, TEXT("✅ [TeamLeader] '%s': All manager components resolved (Squad, Intel, Planner, VisualLogger=%s)"),
+		*TeamName, VisualLogger ? TEXT("OK") : TEXT("MISSING"));
+
+	//==========================================================================
+	// Initialize Manager Components
+	//==========================================================================
+
+	// Initialize StrategicPlanner (replaces InitializeMCTS)
+	StrategicPlanner->InitializeMCTS(MCTSSimulations);
+	StrategicPlanner->OnPlanReady.AddDynamic(this, &UTeamLeaderComponent::OnPlanReady);
+	UE_LOG(LogTemp, Log, TEXT("[TeamLeader] '%s': StrategicPlanner initialized with %d simulations"), *TeamName, MCTSSimulations);
+
+	// Subscribe to SquadManager events
+	SquadManager->OnFollowerRegistered.AddDynamic(this, &UTeamLeaderComponent::OnSquadFollowerRegistered);
+
+	// Configure IntelManager
+	IntelManager->TeamID = TeamID;
+
+	//==========================================================================
+	// SimulationManager Registration (unchanged)
+	//==========================================================================
 	if (bAutoRegisterWithSimManager)
 	{
 		ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
 		if (SimManager)
 		{
-			// 리더 등록 시도
+			// Register team
 			if (SimManager->RegisterTeam(TeamID, this, TeamName, TeamColor))
 			{
-				bIsRegisteredToManager = true; // 등록 상태 확인
+				bIsRegisteredToManager = true;
 				UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Registered with SimulationManager"), *TeamName);
 
-				// 환경 등록
+				// Register environment
 				int32 EnvironmentID = TeamID / 2;
 				SimManager->RegisterTeamEnvironment(TeamID, EnvironmentID);
 
-				// 대기 중이던 팔로워들을 이제 등록 처리
+				// Process pending registrations (delegated to SquadManager)
 				ProcessPendingRegistrations();
 			}
 			SimManager->OnEpisodeStarted.AddDynamic(this, &UTeamLeaderComponent::OnEpisodeStart);
@@ -58,21 +109,24 @@ void UTeamLeaderComponent::BeginPlay()
 		}
 	}
 
-	// RACE CONDITION FIX: Delay objective discovery to allow GameMode to setup enemy relationships
-	// GameMode Blueprint has a 0.2s delay before calling "Set Mutual Enemies"
-	// We delay discovery by 0.3s to ensure enemy setup is complete
+	//==========================================================================
+	// Delayed Objective Discovery (delegated to IntelManager)
+	//==========================================================================
 	FTimerHandle DelayedDiscoveryTimer;
 	GetWorld()->GetTimerManager().SetTimer(
 		DelayedDiscoveryTimer,
 		[this]()
 		{
-			DiscoverWorldObjectives();
+			if (IntelManager)
+			{
+				IntelManager->DiscoverWorldObjectives();
+			}
 		},
 		0.3f,  // 0.3s delay (after GameMode's 0.2s delay)
 		false  // No loop
 	);
 
-	UE_LOG(LogTemp, Log, TEXT("TeamLeaderComponent: Initialized team '%s' (objective discovery scheduled for 0.3s delay)"), *TeamName);
+	UE_LOG(LogTemp, Log, TEXT("[TeamLeader] '%s': Initialized (objective discovery scheduled for 0.3s delay)"), *TeamName);
 }
 
 void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -87,139 +141,50 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		return;
 	}
 
-	// Update team observation (for next decision)
-	if (Followers.Num() > 0)
+	// Phase 3: Update team observation (delegated to IntelManager)
+	if (SquadManager && SquadManager->GetFollowerCount() > 0)
 	{
 		CurrentTeamObservation = BuildTeamObservation();
 	}
 
 	//--------------------------------------------------------------------------
-	// CONTINUOUS PLANNING (v3.0 Sprint 6)
+	// CONTINUOUS PLANNING (v3.0 Sprint 6) - Phase 3: Use StrategicPlanner
 	//--------------------------------------------------------------------------
-	if (bContinuousPlanning)
+	if (bContinuousPlanning && StrategicPlanner)
 	{
 		TimeSinceLastPlanning += DeltaTime;
 
 		// Check if we should run proactive planning
 		if (TimeSinceLastPlanning >= ContinuousPlanningInterval &&
-			!bMCTSRunning &&
+			!StrategicPlanner->IsMCTSRunning() &&
 			GetAliveFollowers().Num() > 0)
 		{
 			UE_LOG(LogTemp, Display, TEXT("[CONTINUOUS PLANNING] '%s': Planning interval reached (%.2fs), triggering MCTS"),
 				*TeamName, TimeSinceLastPlanning);
 
 			TimeSinceLastPlanning = 0.0f;
-
-			if (bAsyncMCTS)
-			{
-				RunStrategyAssignmentAsync();
-			}
-			else
-			{
-				RunStrategyAssignment();
-			}
+			RunStrategyAssignmentAsync();
 		}
 	}
 
-	// Check if async MCTS task completed (v8.0)
-	if (AsyncMCTSTask != nullptr && AsyncMCTSTask->IsDone())
+	// Phase 3: Poll StrategicPlanner for async task completion
+	if (StrategicPlanner)
 	{
-		// Get results from completed task (v8.0 API)
-		TMap<AActor*, FStrategyAssignment> AssignmentMap = AsyncMCTSTask->GetTask().GetResults();
-		float ExecutionTime = AsyncMCTSTask->GetTask().GetExecutionTime();
+		StrategicPlanner->PollAsyncTask();
+		// Note: Results are delivered via OnPlanReady delegate (no manual processing needed)
 
-		// Convert map to array for ApplyStrategyAssignment
-		TArray<FStrategyAssignment> Assignments;
-		for (const auto& Pair : AssignmentMap)
-		{
-			Assignments.Add(Pair.Value);
-		}
-
-		UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v8.0] '%s': Async task completed in %.2fms - %d assignments"),
-			*TeamName, ExecutionTime, Assignments.Num());
-
-		// Update performance stats
-		MCTSExecutionCount++;
-		AverageMCTSExecutionTime = ((AverageMCTSExecutionTime * (MCTSExecutionCount - 1)) + ExecutionTime) / MCTSExecutionCount;
-
-		// Performance warning if exceeding target
-		const float TargetTime = 50.0f;
-		if (ExecutionTime > TargetTime)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("⚠️ [PERFORMANCE] '%s': MCTS took %.2fms (exceeds target of %.0fms) - Avg: %.2fms over %d runs"),
-				*TeamName, ExecutionTime, TargetTime, AverageMCTSExecutionTime, MCTSExecutionCount);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Log, TEXT("✓ [PERFORMANCE] '%s': MCTS took %.2fms (within target) - Avg: %.2fms over %d runs"),
-				*TeamName, ExecutionTime, AverageMCTSExecutionTime, MCTSExecutionCount);
-		}
-
-		// Delete completed task (FAsyncTask requires manual cleanup)
-		delete AsyncMCTSTask;
-		AsyncMCTSTask = nullptr;
-
-		// Process results on game thread (v8.0)
-		ApplyStrategyAssignment(Assignments);
+		// Sync bMCTSRunning state with StrategicPlanner
+		bMCTSRunning = StrategicPlanner->IsMCTSRunning();
 	}
 
 	// Process pending events (can interrupt if critical and bAllowEventInterrupts=true)
 	ProcessPendingEvents();
 
-	// ============================================================================
-	// PROXIMITY DIAGNOSIS: Log inter-agent distances every 2 seconds
-	// ============================================================================
-	TimeSinceLastFormationLog += DeltaTime;
-	if (TimeSinceLastFormationLog >= 2.0f)
-	{
-		TimeSinceLastFormationLog = 0.0f;
+	// Phase 3: Formation diagnosis moved to VisualLoggerComponent
+	// (VisualLogger->DrawFormationInfo handles this)
 
-		TArray<AActor*> AliveFollowers = GetAliveFollowers();
-		if (AliveFollowers.Num() >= 2)
-		{
-			//UE_LOG(LogTemp, Warning, TEXT("[FORMATION] '%s': Inter-agent distances (%d agents):"), *TeamName, AliveFollowers.Num());
-
-			// Calculate all pairwise distances
-			float MinDistance = FLT_MAX;
-			float MaxDistance = 0.0f;
-			float TotalDistance = 0.0f;
-			int32 PairCount = 0;
-
-			for (int32 i = 0; i < AliveFollowers.Num(); ++i)
-			{
-				AActor* Agent1 = AliveFollowers[i];
-				if (!Agent1) continue;
-
-				for (int32 j = i + 1; j < AliveFollowers.Num(); ++j)
-				{
-					AActor* Agent2 = AliveFollowers[j];
-					if (!Agent2) continue;
-
-					float Distance = FVector::Dist(Agent1->GetActorLocation(), Agent2->GetActorLocation());
-
-					/*UE_LOG(LogTemp, Warning, TEXT("[FORMATION]   '%s' <-> '%s': %.1f cm"),
-						*Agent1->GetName(),
-						*Agent2->GetName(),
-						Distance);*/
-
-					MinDistance = FMath::Min(MinDistance, Distance);
-					MaxDistance = FMath::Max(MaxDistance, Distance);
-					TotalDistance += Distance;
-					PairCount++;
-				}
-			}
-
-			if (PairCount > 0)
-			{
-				float AvgDistance = TotalDistance / PairCount;
-				/*UE_LOG(LogTemp, Warning, TEXT("[FORMATION] '%s': Distance stats - Min: %.1f cm, Max: %.1f cm, Avg: %.1f cm"),
-					*TeamName, MinDistance, MaxDistance, AvgDistance);*/
-			}
-		}
-	}
-
-	// Draw debug info if enabled
-	if (bEnableDebugDrawing)
+	// Draw debug info if enabled - Phase 3: Delegates to VisualLogger
+	if (VisualLogger && VisualLogger->bEnableDebugDrawing)
 	{
 		DrawDebugInfo();
 	}
@@ -227,14 +192,9 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 void UTeamLeaderComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// Clean up any running async tasks
-	if (AsyncMCTSTask != nullptr)
-	{
-		// FAsyncTask requires manual cleanup
-		AsyncMCTSTask->EnsureCompletion();  // Wait for task to finish
-		delete AsyncMCTSTask;
-		AsyncMCTSTask = nullptr;
-	}
+	// Phase 3: Async task cleanup now handled automatically by StrategicPlanner's RAII (TUniquePtr)
+	// No manual cleanup needed - StrategicPlanner's EndPlay handles it
+	UE_LOG(LogTemp, Log, TEXT("[TeamLeader] '%s': EndPlay - cleanup delegated to manager components"), *TeamName);
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -245,139 +205,18 @@ void UTeamLeaderComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void UTeamLeaderComponent::InitializeMCTS()
 {
-	StrategicMCTS = NewObject<UMCTS>(this);
-	if (StrategicMCTS)
-	{
-		// Initialize MCTS for team-level decisions
-		StrategicMCTS->InitializeTeamMCTS(MCTSSimulations, 1.41f);
-
-		// Also set properties directly for compatibility
-		StrategicMCTS->MaxSimulations = MCTSSimulations;
-		StrategicMCTS->ExplorationParameter = 1.41f;
-		StrategicMCTS->DiscountFactor = 0.95f;
-
-		UE_LOG(LogTemp, Log, TEXT("TeamLeaderComponent: MCTS initialized with %d simulations"), MCTSSimulations);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("TeamLeaderComponent: Failed to create MCTS"));
-	}
+	// DEPRECATED: Use StrategicPlannerComponent->InitializeMCTS() instead
 }
 
 void UTeamLeaderComponent::DiscoverWorldObjectives()
 {
-	if (!GetWorld()) return;
-
-	//==========================================================================
-	// v8.0: ObjectiveActor Discovery for Strategy Assignment
-	// MCTS now assigns strategies directly to objectives
-	//
-	// v8.5 MULTI-ENVIRONMENT FIX:
-	// In vectorized training (4 environments, 8 teams total), we must filter
-	// objectives by environment to prevent cross-environment assignments.
-	//
-	// Environment mapping: EnvironmentID = TeamID / 2
-	//   - Team 0, 1 → Environment 0
-	//   - Team 2, 3 → Environment 1
-	//   - Team 4, 5 → Environment 2
-	//   - Team 6, 7 → Environment 3
-	//==========================================================================
-
-	// Calculate which environment this team belongs to
-	int32 MyEnvironmentID = TeamID / 2;
-
-	// Get SimulationManager to query enemy relationships
-	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(
-		UGameplayStatics::GetGameMode(GetWorld())
-	);
-
-	// Find all ObjectiveActors in the world
-	TArray<AActor*> FoundObjectives;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), FoundObjectives);
-
-	UE_LOG(LogTemp, Display, TEXT("[v8.5 DISCOVERY] TeamLeader '%s' (TeamID=%d, Env %d): Scanning %d total objectives..."),
-		*TeamName, TeamID, MyEnvironmentID, FoundObjectives.Num());
-
-	// Find friendly and hostile objectives (environment-filtered)
-	for (AActor* Actor : FoundObjectives)
-	{
-		AObjectiveActor* Objective = Cast<AObjectiveActor>(Actor);
-		if (!Objective) continue;
-
-		// Calculate objective's environment
-		int32 ObjectiveEnvironmentID = Objective->OwnerTeamID / 2;
-
-		// CRITICAL: Skip objectives from different environments
-		if (ObjectiveEnvironmentID != MyEnvironmentID)
-		{
-			UE_LOG(LogTemp, Verbose, TEXT("  ⏭️ Skipping objective '%s' (Team %d, Env %d) - different environment"),
-				*Objective->GetName(), Objective->OwnerTeamID, ObjectiveEnvironmentID);
-			continue;
-		}
-
-		// Check if friendly (same team)
-		if (Objective->OwnerTeamID == TeamID)
-		{
-			FriendlyObjective = Objective;
-			UE_LOG(LogTemp, Display, TEXT("✅ [v8.5 DISCOVERY] TeamLeader '%s' (TeamID=%d, Env %d): Found FRIENDLY ObjectiveActor '%s' (Team %d)"),
-				*TeamName, TeamID, MyEnvironmentID,
-				*FriendlyObjective->GetName(),
-				Objective->OwnerTeamID);
-		}
-		// Check if hostile using SimulationManager's enemy relationship system
-		else if (SimManager && SimManager->AreTeamsEnemies(TeamID, Objective->OwnerTeamID))
-		{
-			HostileObjective = Objective;
-			UE_LOG(LogTemp, Display, TEXT("✅ [v8.5 DISCOVERY] TeamLeader '%s' (TeamID=%d, Env %d): Found HOSTILE ObjectiveActor '%s' (Team %d)"),
-				*TeamName, TeamID, MyEnvironmentID,
-				*HostileObjective->GetName(),
-				Objective->OwnerTeamID);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("  ⚠️ Objective '%s' (Team %d, Env %d) is in same environment but not friendly/hostile - neutral?"),
-				*Objective->GetName(), Objective->OwnerTeamID, ObjectiveEnvironmentID);
-		}
-	}
-
-	// Validate discovery
-	if (!FriendlyObjective)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [v8.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): No friendly ObjectiveActor found!"),
-			*TeamName, TeamID);
-	}
-
-	if (!HostileObjective)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [v8.0 DISCOVERY] TeamLeader '%s' (TeamID=%d): No hostile ObjectiveActor found!"),
-			*TeamName, TeamID);
-	}
-
-	if (FriendlyObjective && HostileObjective)
-	{
-		UE_LOG(LogTemp, Display, TEXT("✅ [v8.0 DISCOVERY] TeamLeader '%s': Ready for strategy assignment (Defend: %s, Assault: %s)"),
-			*TeamName,
-			*FriendlyObjective->GetName(),
-			*HostileObjective->GetName());
-	}
+	// Phase 3: Delegate to IntelManager
+	if (IntelManager) IntelManager->DiscoverWorldObjectives();
 }
 
 void UTeamLeaderComponent::ProcessPendingRegistrations()
 {
-	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
-	if (!SimManager || PendingFollowerRegistration.Num() == 0) return;
-
-	UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Processing %d pending followers..."), *TeamName, PendingFollowerRegistration.Num());
-
-	for (AActor* Follower : PendingFollowerRegistration)
-	{
-		if (Follower)
-		{
-			SimManager->RegisterTeamMember(TeamID, Follower);
-		}
-	}
-
-	PendingFollowerRegistration.Empty();
+	// DEPRECATED: SquadManager handles this automatically
 }
 
 //------------------------------------------------------------------------------
@@ -386,89 +225,113 @@ void UTeamLeaderComponent::ProcessPendingRegistrations()
 
 bool UTeamLeaderComponent::RegisterFollower(AActor* Follower)
 {
-	if (!Follower) return false;
-
-	if (Followers.Num() >= MaxFollowers) {
-		UE_LOG(LogTemp, Error, TEXT("❌ TeamLeader '%s': Max followers reached!"), *TeamName);
+	// Phase 3: Delegate to SquadManager
+	if (!SquadManager)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] '%s': SquadManager not initialized!"), *TeamName);
 		return false;
 	}
 
-	if (Followers.Contains(Follower)) return false;
+	bool bSuccess = false;
 
-	// 리스트에는 먼저 추가
-	Followers.Add(Follower);
+	// Check if already registered
+	if (SquadManager->IsFollowerRegistered(Follower))
+	{
+		return false;
+	}
 
+	// Try registration
 	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
 
-	// 핵심 수정: 리더가 아직 매니저에 등록되지 않았다면 대기열로 보냄
+	// If leader is registered with SimManager, register immediately
 	if (SimManager && bIsRegisteredToManager)
 	{
-		SimManager->RegisterTeamMember(TeamID, Follower);
-		UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Registered %s (Immediate)"), *TeamName, *Follower->GetName());
+		bSuccess = SquadManager->RegisterFollower(Follower);
+		if (bSuccess)
+		{
+			SimManager->RegisterTeamMember(TeamID, Follower);
+			UE_LOG(LogTemp, Log, TEXT("[TeamLeader] '%s': Registered %s (Immediate)"), *TeamName, *Follower->GetName());
+		}
 	}
 	else
 	{
-		PendingFollowerRegistration.Add(Follower);
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': %s added to PENDING queue (Leader not registered yet)"), *TeamName, *Follower->GetName());
+		// Queue for later registration
+		SquadManager->QueueFollowerRegistration(Follower);
+		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': %s queued (Leader not registered yet)"), *TeamName, *Follower->GetName());
+		bSuccess = true;
 	}
 
-	OnFollowerRegistered.Broadcast(Follower, Followers.Num());
-	return true;
+	return bSuccess;
 }
 
 void UTeamLeaderComponent::UnregisterFollower(AActor* Follower)
 {
-	if (!Follower) return;
-
-	if (!Followers.Contains(Follower))
+	// Phase 3: Delegate to SquadManager
+	if (!SquadManager || !Follower)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': Follower %s not registered"),
+		return;
+	}
+
+	if (!SquadManager->IsFollowerRegistered(Follower))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': Follower %s not registered"),
 			*TeamName, *Follower->GetName());
 		return;
 	}
 
-	Followers.Remove(Follower);
+	// Unregister from squad
+	SquadManager->UnregisterFollower(Follower);
+
+	// Remove from current assignments
 	CurrentAssignments.Remove(Follower);
 
-	// Unregister from SimulationManager (fix for team ID detection)
+	// Unregister from SimulationManager
 	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
 	if (SimManager)
 	{
 		SimManager->UnregisterTeamMember(TeamID, Follower);
-		UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Unregistered follower %s from SimulationManager (TeamID: %d, %d remaining)"),
-			*TeamName, *Follower->GetName(), TeamID, Followers.Num());
+		UE_LOG(LogTemp, Log, TEXT("[TeamLeader] '%s': Unregistered follower %s from SimulationManager (TeamID: %d, %d remaining)"),
+			*TeamName, *Follower->GetName(), TeamID, SquadManager->GetFollowerCount());
 	}
 
 	TotalFollowersLost++;
 
-	// Broadcast event
-	OnFollowerUnregistered.Broadcast(Follower, Followers.Num());
+	// Broadcast event (note: SquadManager also broadcasts OnFollowerUnregistered)
+	OnFollowerUnregistered.Broadcast(Follower, SquadManager->GetFollowerCount());
 
 	// If all followers dead, trigger critical event
-	if (GetAliveFollowers().Num() == 0 && Followers.Num() > 0)
+	if (SquadManager->GetAliveFollowers().Num() == 0 && SquadManager->GetFollowerCount() > 0)
 	{
 		ProcessStrategicEvent(EStrategicEvent::Custom, nullptr, FVector::ZeroVector, 10);
-		UE_LOG(LogTemp, Warning, TEXT("TeamLeader '%s': All followers eliminated!"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': All followers eliminated!"), *TeamName);
 	}
+}
+
+TArray<AActor*> UTeamLeaderComponent::GetFollowers() const
+{
+	return SquadManager ? SquadManager->GetFollowers() : TArray<AActor*>();
 }
 
 
 TArray<AActor*> UTeamLeaderComponent::GetAliveFollowers() const
 {
-	TArray<AActor*> Alive;
-
-	for (AActor* Follower : Followers)
+	// Phase 3: Delegate to SquadManager
+	if (SquadManager)
 	{
-		if (!Follower) continue;
-
-		// Simple alive check - can be extended with health component check
-		if (!Follower->IsPendingKillPending())
-		{
-			Alive.Add(Follower);
-		}
+		return SquadManager->GetAliveFollowers();
 	}
 
-	return Alive;
+	return TArray<AActor*>();
+}
+
+int32 UTeamLeaderComponent::GetFollowerCount() const
+{
+	return SquadManager ? SquadManager->GetFollowerCount() : 0;
+}
+
+bool UTeamLeaderComponent::IsFollowerRegistered(AActor* Follower) const
+{
+	return SquadManager ? SquadManager->IsFollowerRegistered(Follower) : false;
 }
 
 //------------------------------------------------------------------------------
@@ -622,6 +485,16 @@ bool UTeamLeaderComponent::ShouldTriggerMCTS(const FStrategicEventContext& Conte
 }
 
 
+AObjectiveActor* UTeamLeaderComponent::GetFriendlyObjective() const
+{
+	return IntelManager ? IntelManager->GetFriendlyObjective() : nullptr;
+}
+
+AObjectiveActor* UTeamLeaderComponent::GetHostileObjective() const
+{
+	return IntelManager ? IntelManager->GetHostileObjective() : nullptr;
+}
+
 void UTeamLeaderComponent::OnEpisodeStart(int32 EnvironmentID, int32 EpisodeNumber)
 {
 	// 1. 내 환경인지 확인 (EnvironmentID = TeamID / 2)
@@ -639,7 +512,7 @@ void UTeamLeaderComponent::OnEpisodeStart(int32 EnvironmentID, int32 EpisodeNumb
 	CurrentAssignments.Empty();
 
 	// 3. 목표물 재탐색 (에피소드 리셋 후 객체 상태가 변경되었을 수 있으므로 안전장치)
-	if (!FriendlyObjective || !HostileObjective)
+	if (IntelManager && !IntelManager->AreObjectivesDiscovered())
 	{
 		DiscoverWorldObjectives();
 	}
@@ -657,83 +530,30 @@ void UTeamLeaderComponent::OnEpisodeStart(int32 EnvironmentID, int32 EpisodeNumb
 
 void UTeamLeaderComponent::OnEpisodeComplete(int32 EnvironmentID, const FEpisodeResult& Result)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[EPISODE END v9.0] 🏁 Team %d (%s): Episode complete received for Env %d"),
-		TeamID, *TeamName, EnvironmentID);
-
-	// 1. [Multi-Env Filter] 이 이벤트가 우리 환경에서 발생한 것인지 확인
-	// 가정: EnvironmentID = TeamID / 2 (0,1팀 -> Env0 | 2,3팀 -> Env1 ...)
+	// Filter: Only process events for our environment
 	int32 MyEnvironmentID = TeamID / 2;
+	if (EnvironmentID != MyEnvironmentID) return;
 
-	if (EnvironmentID != MyEnvironmentID)
-	{
-		// 다른 환경(병렬 훈련 중인 다른 팀들)의 결과이므로 무시
-		UE_LOG(LogTemp, Verbose, TEXT("[EPISODE END v9.0] Team %d: Ignoring Env %d (MyEnv=%d)"),
-			TeamID, EnvironmentID, MyEnvironmentID);
-		return;
-	}
-
-
-	// 2. [Result Mapping] 전역 결과를 팀 관점의 결과로 변환
+	// Map global result to team-specific result
 	ETeamEpisodeResult LocalResult = ETeamEpisodeResult::Draw;
+	if (Result.WinningTeamID == TeamID) LocalResult = ETeamEpisodeResult::Win;
+	else if (Result.LosingTeamID == TeamID) LocalResult = ETeamEpisodeResult::Loss;
 
-	if (Result.WinningTeamID == TeamID)
+	// Update MCTS cache - Phase 3: Delegate to StrategicPlanner
+	if (StrategicPlanner && StrategicPlanner->GetMCTS() && !CurrentBatchKey.IsEmpty())
 	{
-		LocalResult = ETeamEpisodeResult::Win;
-	}
-	else if (Result.LosingTeamID == TeamID)
-	{
-		LocalResult = ETeamEpisodeResult::Loss;
-	}
-	else
-	{
-		// 승자도 패자도 아닌 경우 (타임아웃) 혹은 무승부
-		// Timeout일 경우 보통 WinningTeamID = -1, LosingTeamID = -1
-		LocalResult = ETeamEpisodeResult::Draw;
-	}
+		StrategicPlanner->GetMCTS()->UpdateBatchCache(CurrentAssignments, LocalResult);
 
-	// 3. [MCTS Update] 배치 캐시 업데이트
-	if (StrategicMCTS)
-	{
-		if (!CurrentBatchKey.IsEmpty())
+		// Periodic cache persistence (every 10 episodes)
+		static int32 EpisodeCounter = 0;
+		if (++EpisodeCounter % 10 == 0)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[MCTS CACHE UPDATE v9.0] Team %d: Updating batch '%s' with result..."),
-				TeamID, *CurrentBatchKey);
-
-			StrategicMCTS->UpdateBatchCache(CurrentAssignments, LocalResult);
-
-			// 로그 출력 (디버깅용)
-			FString ResultStr;
-			switch (LocalResult)
-			{
-			case ETeamEpisodeResult::Win: ResultStr = TEXT("WIN 🏆"); break;
-			case ETeamEpisodeResult::Loss: ResultStr = TEXT("LOSS ❌"); break;
-			case ETeamEpisodeResult::Draw: ResultStr = TEXT("DRAW ➖"); break;
-			}
-
-			UE_LOG(LogTemp, Warning, TEXT("[MCTS CACHE UPDATE v9.0] ✅ Team %d | Batch '%s' → %s"),
-				TeamID, *CurrentBatchKey, *ResultStr);
-
-			// 4. [Persistence] 캐시 저장 (옵션: 에피소드 10회마다 저장)
-			static int32 EpisodeCounter = 0;
-			if (++EpisodeCounter % 10 == 0)
-			{
-				FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
-				StrategicMCTS->SaveBatchCache(CachePath);
-				UE_LOG(LogTemp, Warning, TEXT("[MCTS CACHE v9.0] 💾 Saved cache to disk (Episode %d)"), EpisodeCounter);
-			}
-		}
-		else
-		{
-			// 이 로그가 뜨면 MCTS가 에피소드 중에 한 번도 안 돈 것입니다.
-			UE_LOG(LogTemp, Error, TEXT("❌ [MCTS CACHE UPDATE v9.0 FAILED] Team %d: CurrentBatchKey is EMPTY! MCTS did not run this episode."), TeamID);
+			FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
+			StrategicPlanner->GetMCTS()->SaveBatchCache(CachePath);
 		}
 	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [MCTS CACHE UPDATE v9.0 FAILED] Team %d: StrategicMCTS is NULL!"), TeamID);
-	}
 
-	// 5. [Reset] 다음 에피소드를 위해 상태 초기화
+	// Reset for next episode
 	CurrentBatchKey.Empty();
 	CurrentAssignments.Empty();
 }
@@ -784,20 +604,13 @@ bool UTeamLeaderComponent::IsMCTSOnCooldown() const
 
 FTeamObservation UTeamLeaderComponent::BuildTeamObservation()
 {
-	// Gather all follower observations
-	TArray<AActor*> AliveFollowers = GetAliveFollowers();
-	TArray<AActor*> Enemies = GetKnownEnemies();
+	// Phase 3: Delegate to IntelManager
+	if (IntelManager && SquadManager)
+	{
+		return IntelManager->BuildTeamObservation(SquadManager->GetFollowers());
+	}
 
-	// v8.0: Use discovered friendly objective
-	AActor* FriendlyObj = FriendlyObjective;
-
-	FTeamObservation TeamObs = FTeamObservation::BuildFromTeam(
-		AliveFollowers,
-		FriendlyObj,
-		Enemies
-	);
-
-	return TeamObs;
+	return FTeamObservation();
 }
 
 
@@ -807,58 +620,8 @@ FTeamObservation UTeamLeaderComponent::BuildTeamObservation()
 
 void UTeamLeaderComponent::RunStrategyAssignment()
 {
-	if (bMCTSRunning)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MCTS already running"));
-		return;
-	}
-
-	TArray<AActor*> AliveAgents = GetAliveFollowers();
-	if (AliveAgents.Num() == 0)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("No alive agents"));
-		return;
-	}
-
-	// [Fix] CachedObservations 수집 로직 추가
-	TMap<AActor*, FObservationElement> CachedObservations;
-	for (AActor* Agent : AliveAgents)
-	{
-		if (UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>())
-		{
-			// 각 팔로워의 현재 관측 정보를 빌드하여 맵에 저장
-			CachedObservations.Add(Agent, FollowerComp->BuildLocalObservation());
-		}
-	}
-
-	// v8.20: Call new batch-level implementation
-	// (CachedObservations 변수 사용 가능해짐)
-	TMap<AActor*, FStrategyAssignment> Assignments =
-		StrategicMCTS->RunStrategyAssignment_v820(
-			AliveAgents,
-			{ FriendlyObjective, HostileObjective }, // Objective 멤버 변수명은 확인 필요
-			MCTSSimulations,
-			CachedObservations);
-
-	if (Assignments.Num() != AliveAgents.Num())
-	{
-		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] Batch assignment incomplete! Got %d, Expected %d"),
-			Assignments.Num(), AliveAgents.Num());
-		return;
-	}
-
-	// Store for end-of-episode cache update
-	CurrentBatchKey = StrategicMCTS->GetBatchKey(Assignments);
-	CurrentAssignments = Assignments;
-
-	UE_LOG(LogTemp, Warning, TEXT("[MCTS BATCH STORED v9.0] Team %d: BatchKey='%s' (%d assignments)"),
-		TeamID, *CurrentBatchKey, CurrentAssignments.Num());
-
-	// [Fix] TMap의 값들을 TArray로 변환하여 전달
-	TArray<FStrategyAssignment> AssignmentList;
-	Assignments.GenerateValueArray(AssignmentList); // Map의 Value들만 추출
-
-	ApplyStrategyAssignment(AssignmentList);
+	// DEPRECATED: Use RunStrategyAssignmentAsync() instead
+	RunStrategyAssignmentAsync();
 }
 
 
@@ -868,92 +631,62 @@ void UTeamLeaderComponent::RunStrategyAssignment()
 
 void UTeamLeaderComponent::RunStrategyAssignmentAsync()
 {
-	if (bMCTSRunning)
+	// Phase 3: Delegate to StrategicPlanner
+	if (!StrategicPlanner)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': MCTS already running"), *TeamName);
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] '%s': StrategicPlanner not initialized"), *TeamName);
 		return;
 	}
 
-	if (!StrategicMCTS)
+	if (StrategicPlanner->IsMCTSRunning())
 	{
-		UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Missing MCTS"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': MCTS already running"), *TeamName);
 		return;
 	}
 
-	TArray<AActor*> AliveAgents = GetAliveFollowers();
-
+	// Get alive agents from SquadManager
+	TArray<AActor*> AliveAgents = SquadManager ? SquadManager->GetAliveFollowers() : TArray<AActor*>();
 	if (AliveAgents.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': No alive agents, skipping MCTS"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': No alive agents, skipping MCTS"), *TeamName);
 		return;
 	}
 
-	if (!FriendlyObjective || !HostileObjective)
+	// Get objectives from IntelManager
+	if (!IntelManager || !IntelManager->AreObjectivesDiscovered())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🎯 TeamLeader '%s': Missing objectives, retrying discovery..."), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': Missing objectives, retrying discovery..."), *TeamName);
 
-		// RACE CONDITION FIX: Enemy team may not have registered yet during BeginPlay
-		// Retry objective discovery now that all teams should be registered
-		DiscoverWorldObjectives();
+		// Retry objective discovery
+		if (IntelManager)
+		{
+			IntelManager->DiscoverWorldObjectives();
+		}
 
 		// Check again after retry
-		if (!FriendlyObjective || !HostileObjective)
+		if (!IntelManager || !IntelManager->AreObjectivesDiscovered())
 		{
-			UE_LOG(LogTemp, Error, TEXT("🎯 TeamLeader '%s': Still missing objectives after retry! Friendly=%s, Hostile=%s"),
-				*TeamName,
-				FriendlyObjective ? TEXT("OK") : TEXT("NULL"),
-				HostileObjective ? TEXT("OK") : TEXT("NULL"));
+			UE_LOG(LogTemp, Error, TEXT("[TeamLeader] '%s': Still missing objectives after retry!"), *TeamName);
 			return;
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("✅ TeamLeader '%s': Objectives found after retry!"), *TeamName);
+		UE_LOG(LogTemp, Warning, TEXT("✅ [TeamLeader] '%s': Objectives found after retry!"), *TeamName);
 	}
 
+	// Update state
 	bMCTSRunning = true;
 	LastMCTSTime = FPlatformTime::Seconds();
 
-	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v8.0] '%s': STARTED (ASYNC) - %d agents"),
-		*TeamName,
-		AliveAgents.Num());
-
-	// v8.0: Pre-cache observations on game thread for thread-safe async execution
-	TMap<AActor*, FObservationElement> CachedObservations;
-	for (AActor* Agent : AliveAgents)
-	{
-		if (!Agent) continue;
-
-		UFollowerAgentComponent* FollowerComp = Agent->FindComponentByClass<UFollowerAgentComponent>();
-		if (FollowerComp)
-		{
-			// Build observation NOW on the game thread (safe to call GetWorld() here)
-			FObservationElement Obs = FollowerComp->BuildLocalObservation();
-			CachedObservations.Add(Agent, Obs);
-		}
-	}
-
-	UE_LOG(LogTemp, Verbose, TEXT("🎯 [MCTS v8.0] '%s': Cached %d observations for async execution"),
-		*TeamName,
-		CachedObservations.Num());
-
-	// Build objectives array (v8.0)
+	// Build objectives array
 	TArray<AObjectiveActor*> Objectives;
-	if (FriendlyObjective) Objectives.Add(FriendlyObjective);
-	if (HostileObjective) Objectives.Add(HostileObjective);
+	if (IntelManager->GetFriendlyObjective()) Objectives.Add(IntelManager->GetFriendlyObjective());
+	if (IntelManager->GetHostileObjective()) Objectives.Add(IntelManager->GetHostileObjective());
 
-	// Create async task (v8.0 API)
-	AsyncMCTSTask = new FAsyncTask<FMCTSAsyncTask>(
-		StrategicMCTS,
-		AliveAgents,
-		Objectives,
-		MCTSSimulations,
-		CachedObservations // Pass cached observations for thread safety
-	);
+	// Delegate to StrategicPlanner
+	StrategicPlanner->RunStrategyAssignmentAsync(AliveAgents, Objectives);
 
-	// Start background execution
-	AsyncMCTSTask->StartBackgroundTask();
-
-	UE_LOG(LogTemp, Verbose, TEXT("🎯 [MCTS v8.0] '%s': Async task started, will poll for completion in Tick"),
-		*TeamName);
+	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v9.0] '%s': STARTED (ASYNC) - %d agents"),
+		*TeamName, AliveAgents.Num());
 }
 
 
@@ -1031,9 +764,10 @@ void UTeamLeaderComponent::ApplyStrategyAssignment(const TArray<FStrategyAssignm
 		}
 	}
 
-	if (StrategicMCTS && CurrentAssignments.Num() > 0)
+	// Phase 3: Get batch key from StrategicPlanner
+	if (StrategicPlanner && StrategicPlanner->GetMCTS() && CurrentAssignments.Num() > 0)
 	{
-		FString NewBatchKey = StrategicMCTS->GetBatchKey(CurrentAssignments);
+		FString NewBatchKey = StrategicPlanner->GetMCTS()->GetBatchKey(CurrentAssignments);
 
 		if (NewBatchKey != OldBatchKey)
 		{
@@ -1067,7 +801,8 @@ void UTeamLeaderComponent::ApplyStrategyAssignment(const TArray<FStrategyAssignm
 
 void UTeamLeaderComponent::RegisterEnemy(AActor* Enemy)
 {
-	if (!Enemy) return;
+	// Phase 3: Delegate to IntelManager
+	if (!IntelManager || !Enemy) return;
 
 	// Filter out Leader characters - they should not be registered as enemies
 	if (Enemy->IsA<ALeaderCharacter>())
@@ -1075,25 +810,23 @@ void UTeamLeaderComponent::RegisterEnemy(AActor* Enemy)
 		return;
 	}
 
-	if (!KnownEnemies.Contains(Enemy))
-	{
-		KnownEnemies.Add(Enemy);
-		UE_LOG(LogTemp, Warning, TEXT("[TEAM LEADER] '%s': Registered NEW enemy: %s (Total enemies: %d)"),
-			*TeamName, *Enemy->GetName(), KnownEnemies.Num());
-	}
+	IntelManager->RegisterEnemy(Enemy);
 }
 
 void UTeamLeaderComponent::UnregisterEnemy(AActor* Enemy)
 {
-	if (!Enemy) return;
+	// Phase 3: Delegate to IntelManager
+	if (!IntelManager || !Enemy) return;
 
+	// Check if enemy was registered before updating stats
+	TArray<AActor*> KnownEnemies = IntelManager->GetKnownEnemies();
 	if (KnownEnemies.Contains(Enemy))
 	{
-		KnownEnemies.Remove(Enemy);
+		IntelManager->UnregisterEnemy(Enemy);
 		TotalEnemiesEliminated++;
 
-		UE_LOG(LogTemp, Log, TEXT("TeamLeader '%s': Enemy %s eliminated (Remaining: %d)"),
-			*TeamName, *Enemy->GetName(), KnownEnemies.Num());
+		UE_LOG(LogTemp, Log, TEXT("[TeamLeader] '%s': Enemy %s eliminated (Remaining: %d)"),
+			*TeamName, *Enemy->GetName(), IntelManager->GetKnownEnemyCount());
 
 		// Trigger event
 		ProcessStrategicEvent(EStrategicEvent::EnemyEliminated, Enemy, Enemy->GetActorLocation(), 6);
@@ -1102,16 +835,26 @@ void UTeamLeaderComponent::UnregisterEnemy(AActor* Enemy)
 
 TArray<AActor*> UTeamLeaderComponent::GetKnownEnemies() const
 {
-	return KnownEnemies.Array();
+	// Phase 3: Delegate to IntelManager
+	if (IntelManager)
+	{
+		return IntelManager->GetKnownEnemies();
+	}
+
+	return TArray<AActor*>();
 }
 
 void UTeamLeaderComponent::ClearKnownEnemies()
 {
-	int32 ClearedCount = KnownEnemies.Num();
-	KnownEnemies.Empty();
+	// Phase 3: Delegate to IntelManager
+	if (IntelManager)
+	{
+		int32 ClearedCount = IntelManager->GetKnownEnemyCount();
+		IntelManager->ClearKnownEnemies();
 
-	UE_LOG(LogTemp, Warning, TEXT("[TEAM LEADER] '%s': Cleared %d known enemies (episode reset)"),
-		*TeamName, ClearedCount);
+		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': Cleared %d known enemies (episode reset)"),
+			*TeamName, ClearedCount);
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -1122,7 +865,8 @@ FTeamMetrics UTeamLeaderComponent::GetTeamMetrics() const
 {
 	FTeamMetrics Metrics;
 
-	Metrics.TotalFollowers = Followers.Num();
+	// Phase 3: Get follower counts from SquadManager
+	Metrics.TotalFollowers = SquadManager ? SquadManager->GetFollowerCount() : 0;
 	Metrics.AliveFollowers = GetAliveFollowers().Num();
 	Metrics.AverageHealth = CurrentTeamObservation.AverageTeamHealth;
 	Metrics.EnemiesEliminated = TotalEnemiesEliminated;
@@ -1148,138 +892,67 @@ FTeamMetrics UTeamLeaderComponent::GetTeamMetrics() const
 
 void UTeamLeaderComponent::DrawDebugInfo()
 {
-	if (!GetOwner()) return;
-
-	UWorld* World = GetWorld();
-	if (!World) return;
+	// Phase 3: Delegate to VisualLoggerComponent
+	if (!VisualLogger || !GetOwner()) return;
 
 	FVector LeaderPos = GetOwner()->GetActorLocation();
+	int32 AliveCount = GetAliveFollowers().Num();
+	int32 TotalCount = SquadManager ? SquadManager->GetFollowerCount() : 0;
+	bool bMCTSActive = StrategicPlanner ? StrategicPlanner->IsMCTSRunning() : false;
+	float AvgHealth = CurrentTeamObservation.AverageTeamHealth;
 
-	// Draw team centroid
-	if (CurrentTeamObservation.AliveFollowers > 0)
+	// Draw team leader state
+	VisualLogger->DrawTeamLeaderState(LeaderPos, AliveCount, TotalCount, bMCTSActive, AvgHealth);
+
+	// Draw formation info
+	if (SquadManager)
 	{
-		DrawDebugSphere(World, CurrentTeamObservation.TeamCentroid, 100.0f, 12,
-			TeamColor.ToFColor(true), false, 0.5f, 0, 3.0f);
+		VisualLogger->DrawFormationInfo(CurrentTeamObservation.TeamCentroid, SquadManager->GetAliveFollowers());
 	}
 
-	// ============================================
-	// v8.0: MCTS Strategy Assignment Visualization
-	// ============================================
-	if (bEnableDebugDrawing)
+	// Draw objective markers
+	if (IntelManager)
 	{
-		for (const auto& Pair : CurrentAssignments)
-		{
-			AActor* Agent = Pair.Key;
-			const FStrategyAssignment& Assignment = Pair.Value;
-
-			if (!Agent) continue;
-
-			FVector AgentPos = Agent->GetActorLocation();
-
-			// v9.0: Get implicit objective based on strategy
-			FVector ObjectivePos = FVector::ZeroVector;
-			AObjectiveActor* ImplicitObjective = nullptr;
-
-			// Assault/Support → Hostile objective, Defend → Friendly objective
-			if (Assignment.Strategy == EStrategyType::Assault || Assignment.Strategy == EStrategyType::Support)
-			{
-				ImplicitObjective = HostileObjective;
-			}
-			else if (Assignment.Strategy == EStrategyType::Defend)
-			{
-				ImplicitObjective = FriendlyObjective;
-			}
-			// Retreat has no specific objective
-
-			if (ImplicitObjective && IsValid(ImplicitObjective))
-			{
-				ObjectivePos = ImplicitObjective->GetActorLocation();
-			}
-
-			// Draw MCTS assignment arrow (yellow arrow: Agent → Implicit Objective)
-			if (!ObjectivePos.IsZero())
-			{
-				DrawDebugDirectionalArrow(
-					World,
-					AgentPos,
-					ObjectivePos,
-					100.0f,  // Arrow size
-					FColor::Yellow,
-					false, -1.0f, 0, 3.0f  // Thickness
-				);
-			}
-
-			// Draw strategy and value estimate (green text above agent)
-			FString InfoText = FString::Printf(TEXT("%s | V=%.2f"),
-				*UEnum::GetValueAsString(Assignment.Strategy),
-				Assignment.ExpectedValue);
-
-			DrawDebugString(
-				World,
-				AgentPos + FVector(0, 0, 150),
-				InfoText,
-				nullptr,
-				FColor::Green,
-				-1.0f,
-				true  // Draw shadow
-			);
-
-			// Draw implicit objective type (cyan text above objective)
-			if (ImplicitObjective && !ObjectivePos.IsZero())
-			{
-				FString ObjectiveText = ImplicitObjective->GetName();
-				DrawDebugString(
-					World,
-					ObjectivePos + FVector(0, 0, 100),
-					ObjectiveText,
-					nullptr,
-					FColor::Cyan,
-					-1.0f,
-					true  // Draw shadow
-				);
-			}
-		}
+		VisualLogger->DrawObjectiveMarkers(
+			IntelManager->GetFriendlyObjective(),
+			IntelManager->GetHostileObjective()
+		);
 	}
-	// ============================================
-	// End v8.0 MCTS Visualization
-	// ============================================
+}
 
-	// Draw lines to each follower (legacy)
-	for (AActor* Follower : GetAliveFollowers())
+//------------------------------------------------------------------------------
+// Phase 3: Manager Component Handlers (v9.0)
+//------------------------------------------------------------------------------
+
+void UTeamLeaderComponent::OnPlanReady(const TArray<FStrategyAssignment>& Assignments, float ExecutionTimeMs, FString BatchKey)
+{
+	UE_LOG(LogTemp, Warning, TEXT("🎯 [MCTS v9.0] '%s': Plan ready in %.2fms - %d assignments (Batch: %s)"),
+		*TeamName, ExecutionTimeMs, Assignments.Num(), *BatchKey);
+
+	// Update performance stats
+	MCTSExecutionCount++;
+	AverageMCTSExecutionTime = ((AverageMCTSExecutionTime * (MCTSExecutionCount - 1)) + ExecutionTimeMs) / MCTSExecutionCount;
+
+	// Performance warning if exceeding target
+	const float TargetTime = 50.0f;
+	if (ExecutionTimeMs > TargetTime)
 	{
-		if (!Follower) continue;
-
-		FVector FollowerPos = Follower->GetActorLocation();
-		DrawDebugLine(World, LeaderPos, FollowerPos, TeamColor.ToFColor(true), false, -1.0f, 0, 2.0f);
-
-		// Draw strategy type above follower (v8.0 legacy - redundant with v8.0 visualization)
-		if (!bEnableDebugDrawing)
-		{
-			if (const FStrategyAssignment* AssignmentPtr = CurrentAssignments.Find(Follower))
-			{
-				FString StrategyText = UEnum::GetValueAsString(AssignmentPtr->Strategy);
-				// Use 0.0f duration to prevent overlapping text from multiple frames
-				DrawDebugString(World, FollowerPos + FVector(0, 0, 180), StrategyText, nullptr, FColor::White, -1.0f, true);
-			}
-		}
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ [PERFORMANCE] '%s': MCTS took %.2fms (exceeds target of %.0fms) - Avg: %.2fms over %d runs"),
+			*TeamName, ExecutionTimeMs, TargetTime, AverageMCTSExecutionTime, MCTSExecutionCount);
 	}
 
-	// Draw enemy indicators
-	for (AActor* Enemy : KnownEnemies)
+	// Store batch key
+	CurrentBatchKey = BatchKey;
+
+	// Apply strategy assignments to followers
+	ApplyStrategyAssignment(Assignments);
+}
+
+void UTeamLeaderComponent::OnSquadFollowerRegistered(AActor* Follower)
+{
+	// Propagate to our own OnFollowerRegistered delegate for backwards compatibility
+	if (SquadManager)
 	{
-		if (!Enemy) continue;
-
-		FVector EnemyPos = Enemy->GetActorLocation();
-		DrawDebugSphere(World, EnemyPos, 50.0f, 8, FColor::Red, false, 0.5f);
+		OnFollowerRegistered.Broadcast(Follower, SquadManager->GetFollowerCount());
 	}
-
-	// Draw team info
-	FString TeamInfo = FString::Printf(TEXT("%s\nFollowers: %d/%d\nHealth: %.1f%%\nEnemies: %d"),
-		*TeamName,
-		GetAliveFollowers().Num(),
-		Followers.Num(),
-		CurrentTeamObservation.AverageTeamHealth,
-		KnownEnemies.Num());
-
-	DrawDebugString(World, LeaderPos + FVector(0, 0, 200), TeamInfo, nullptr, TeamColor.ToFColor(true), -1.0f, true);
 }

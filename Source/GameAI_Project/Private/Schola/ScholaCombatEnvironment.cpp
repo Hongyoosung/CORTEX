@@ -39,7 +39,6 @@ void AScholaCombatEnvironment::BeginPlay()
 	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv] Environment Actor initialized: %s                 ║"), *GetName());
 	UE_LOG(LogTemp, Warning, TEXT("║ Architecture: Multi-Actor (1 actor = 1 physical environment)  ║"));
 	UE_LOG(LogTemp, Warning, TEXT("║ Managing Teams: [%s]                                          ║"), *TeamsStr);
-	UE_LOG(LogTemp, Warning, TEXT("║ Port: %d | Training: %s                                        ║"), ServerPort, bEnableTraining ? TEXT("ON") : TEXT("OFF"));
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════╝"));
 
 	// Reset registration flag for new PIE session
@@ -59,7 +58,11 @@ void AScholaCombatEnvironment::BeginPlay()
 	// Auto-discover agents if enabled
 	if (bAutoDiscoverAgents)
 	{
-		DiscoverAgents();
+		FTimerHandle UnusedHandle;
+		GetWorldTimerManager().SetTimer(UnusedHandle, [this]()
+			{
+				DiscoverAgents();
+			}, 1.0f, false);
 	}
 
 
@@ -81,8 +84,7 @@ void AScholaCombatEnvironment::BeginPlay()
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Initialized with %d agents (Training: %s, Port: %d)"),
-		RegisteredAgents.Num(), bEnableTraining ? TEXT("ON") : TEXT("OFF"), ServerPort);
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Initialized with %d agents"), RegisteredAgents.Num());
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Base class: %s"), *GetClass()->GetSuperClass()->GetName());
 
 	// List all registered agents
@@ -96,8 +98,6 @@ void AScholaCombatEnvironment::BeginPlay()
 				i, *Agent->GetName(), *Agent->GetOwner()->GetName());
 		}
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Waiting for Python GymConnector to connect on port %d..."), ServerPort);
 }
 
 void AScholaCombatEnvironment::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -284,16 +284,12 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 			continue;
 		}
 
-		// Get TeamID for logging
+		// Get TeamID for logging - Phase 3: Use GetTeamLeader() method
 		int32 TeamID = -1;
 		UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
 		if (FollowerComp)
 		{
-			UTeamLeaderComponent* Leader = FollowerComp->TeamLeader;
-			if (!Leader && FollowerComp->TeamLeaderActor)
-			{
-				Leader = FollowerComp->TeamLeaderActor->FindComponentByClass<UTeamLeaderComponent>();
-			}
+			UTeamLeaderComponent* Leader = FollowerComp->GetTeamLeader();
 			if (Leader)
 			{
 				TeamID = Leader->TeamID;
@@ -445,17 +441,11 @@ bool AScholaCombatEnvironment::RegisterAgent(UScholaAgentComponent* Agent)
 	{
 		int32 TeamID = -1;
 
-		// Get FollowerAgentComponent to access TeamLeader reference
+		// Get FollowerAgentComponent to access TeamLeader reference - Phase 3: Use GetTeamLeader() method
 		UFollowerAgentComponent* FollowerComp = Agent->GetOwner()->FindComponentByClass<UFollowerAgentComponent>();
 		if (FollowerComp)
 		{
-			// Try to get TeamLeader (may be set in editor or via TeamLeaderActor property)
-			UTeamLeaderComponent* Leader = FollowerComp->TeamLeader;
-			if (!Leader && FollowerComp->TeamLeaderActor)
-			{
-				// Fallback: Get from TeamLeaderActor if not cached yet
-				Leader = FollowerComp->TeamLeaderActor->FindComponentByClass<UTeamLeaderComponent>();
-			}
+			UTeamLeaderComponent* Leader = FollowerComp->GetTeamLeader();
 
 			if (Leader)
 			{
@@ -463,7 +453,7 @@ bool AScholaCombatEnvironment::RegisterAgent(UScholaAgentComponent* Agent)
 			}
 			else
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ⚠️ Agent %s has no TeamLeader reference (set TeamLeaderActor in FollowerAgentComponent)"),
+				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] ⚠️ Agent %s has no TeamLeader reference (check TeamCommsComponent configuration)"),
 					*Agent->GetOwner()->GetName());
 			}
 		}

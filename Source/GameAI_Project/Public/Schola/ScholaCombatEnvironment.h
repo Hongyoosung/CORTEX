@@ -51,19 +51,6 @@ public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION
 	//--------------------------------------------------------------------------
-
-	/** Enable Schola training (starts gRPC server) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
-	bool bEnableTraining = true;
-
-	/**
-	 * gRPC server port for Python RLlib communication
-	 * NOTE: Only ONE environment actor should have bEnableTraining=true in multi-actor setup
-	 * The others will be discovered automatically via CollectEnvironments()
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
-	int32 ServerPort = 50051;
-
 	/** Auto-discover agents in level (finds all ScholaAgentComponents) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoDiscoverAgents = true;
@@ -81,13 +68,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	TArray<int32> TrainingTeamIDs;
 
-	/**
-	 * DEPRECATED: Team-to-Environment mapping (use TrainingTeamIDs instead)
-	 * In multi-actor architecture, each actor IS its own environment.
-	 * Use TrainingTeamIDs to specify which teams this actor manages.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|Deprecated", meta = (DeprecationMessage = "Use TrainingTeamIDs instead"))
-	TMap<int32, int32> TeamToEnvironmentMap;
 
 	//--------------------------------------------------------------------------
 	// STATE

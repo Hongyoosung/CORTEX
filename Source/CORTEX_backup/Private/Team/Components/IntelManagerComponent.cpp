@@ -3,6 +3,7 @@
 
 #include "Team/Components/IntelManagerComponent.h"
 #include "Team/ObjectiveActor.h"
+#include "Core/SimulationManagerGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 
@@ -20,56 +21,68 @@ void UIntelManagerComponent::BeginPlay()
 
 void UIntelManagerComponent::DiscoverWorldObjectives()
 {
-	if (!GetWorld())
+	UWorld* World = GetWorld();
+	if (!World)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[IntelManager] DiscoverWorldObjectives: No world context"));
 		return;
 	}
 
-	// Search for friendly objective
-	TArray<AActor*> FriendlyFound;
-	UGameplayStatics::GetAllActorsWithTag(GetWorld(), FriendlyObjectiveTag, FriendlyFound);
+	// Get SimulationManager for enemy relationship queries
+	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(
+		UGameplayStatics::GetGameMode(World)
+	);
 
-	if (FriendlyFound.Num() > 0)
+	if (!SimManager)
 	{
-		FriendlyObjective = Cast<AObjectiveActor>(FriendlyFound[0]);
-		if (FriendlyObjective)
+		UE_LOG(LogTemp, Error, TEXT("[IntelManager] No SimulationManagerGameMode found - cannot discover objectives"));
+		return;
+	}
+
+	// Find all ObjectiveActors in world
+	TArray<AActor*> AllObjectives;
+	UGameplayStatics::GetAllActorsOfClass(World, AObjectiveActor::StaticClass(), AllObjectives);
+
+	if (AllObjectives.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[IntelManager] No ObjectiveActors found in world"));
+		return;
+	}
+
+	// Classify objectives based on TeamID and enemy relationships
+	for (AActor* Actor : AllObjectives)
+	{
+		AObjectiveActor* Objective = Cast<AObjectiveActor>(Actor);
+		if (!Objective)
 		{
+			continue;
+		}
+
+		// Friendly objective: OwnerTeamID matches our TeamID
+		if (Objective->OwnerTeamID == this->TeamID)
+		{
+			FriendlyObjective = Objective;
 			UE_LOG(LogTemp, Log, TEXT("[IntelManager] Discovered friendly objective: %s (TeamID: %d)"),
-				*FriendlyObjective->GetName(), FriendlyObjective->OwnerTeamID);
+				*Objective->GetName(), Objective->OwnerTeamID);
 		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[IntelManager] No friendly objective found with tag: %s"), *FriendlyObjectiveTag.ToString());
-	}
-
-	// Search for hostile objective
-	TArray<AActor*> HostileFound;
-	UGameplayStatics::GetAllActorsWithTag(GetWorld(), HostileObjectiveTag, HostileFound);
-
-	if (HostileFound.Num() > 0)
-	{
-		HostileObjective = Cast<AObjectiveActor>(HostileFound[0]);
-		if (HostileObjective)
+		// Hostile objective: SimManager confirms enemy relationship
+		else if (SimManager->AreTeamsEnemies(this->TeamID, Objective->OwnerTeamID))
 		{
+			HostileObjective = Objective;
 			UE_LOG(LogTemp, Log, TEXT("[IntelManager] Discovered hostile objective: %s (TeamID: %d)"),
-				*HostileObjective->GetName(), HostileObjective->OwnerTeamID);
+				*Objective->GetName(), Objective->OwnerTeamID);
 		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[IntelManager] No hostile objective found with tag: %s"), *HostileObjectiveTag.ToString());
 	}
 
 	// Verify discovery
 	if (FriendlyObjective && HostileObjective)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[IntelManager] Successfully discovered both objectives"));
+		UE_LOG(LogTemp, Log, TEXT("[IntelManager] Successfully discovered both objectives (TeamID: %d)"), TeamID);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[IntelManager] Failed to discover all objectives (Friendly: %s, Hostile: %s)"),
+		UE_LOG(LogTemp, Error, TEXT("[IntelManager] Failed to discover all objectives (TeamID: %d, Friendly: %s, Hostile: %s)"),
+			TeamID,
 			FriendlyObjective ? TEXT("OK") : TEXT("MISSING"),
 			HostileObjective ? TEXT("OK") : TEXT("MISSING"));
 	}

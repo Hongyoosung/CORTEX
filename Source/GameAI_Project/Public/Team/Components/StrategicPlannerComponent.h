@@ -120,6 +120,13 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Strategic Planner")
 	FString GetLastBatchKey() const { return LastBatchKey; }
 
+	/**
+	 * Get the MCTS instance.
+	 * Used by TeamLeaderComponent for batch cache operations.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Strategic Planner")
+	UMCTS* GetMCTS() const { return StrategicMCTS; }
+
 	// ========== Events ==========
 
 	/**
