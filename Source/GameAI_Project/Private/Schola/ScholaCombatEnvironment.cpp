@@ -3,7 +3,7 @@
 #include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/Utils/FollowerAgentTrainer.h"
-#include "Team/Components/TeamCommsComponent.h"
+// v9.0 PHASE 4: TeamCommsComponent merged into character (unused include removed)
 #include "Core/SimulationManagerGameMode.h"
 #include "Core/ScholaGameInstance.h"
 #include "Team/Components/TeamLeaderComponent.h"
@@ -54,17 +54,6 @@ void AScholaCombatEnvironment::BeginPlay()
 
 	// Bind to episode events
 	BindEpisodeEvents();
-
-	// Auto-discover agents if enabled
-	/*if (bAutoDiscoverAgents)
-	{
-		FTimerHandle UnusedHandle;
-		GetWorldTimerManager().SetTimer(UnusedHandle, [this]()
-			{
-				DiscoverAgents();
-			}, 1.0f, false);
-	}*/
-
 
 	// NOTE: Do NOT call Super::BeginPlay() here!
 	// The ScholaManagerSubsystem will call Initialize() via GymConnector->Init()

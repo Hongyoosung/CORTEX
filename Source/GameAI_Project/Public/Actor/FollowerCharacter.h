@@ -113,6 +113,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
 	FMacroAction GetCurrentMacroAction() const;
 
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FAllyContext GetAllyContext() const;
+
 	//--------------------------------------------------------------------------
 	// OBSERVATION (wraps ObservationBuilderComponent)
 	//--------------------------------------------------------------------------
@@ -124,6 +127,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "AI|Observation")
 	FObservationElement GetPreviousObservation() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
+	void UpdateLocalObservation(const FObservationElement& NewObservation);
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
 	void UpdateObjectiveContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
@@ -155,6 +161,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|RL")
 	bool IsTacticalPolicyReady() const;
 
+	bool IsUsingRLPolicy() const;
+
 	//--------------------------------------------------------------------------
 	// COMBAT (wraps CombatExecutorComponent)
 	//--------------------------------------------------------------------------
@@ -171,7 +179,7 @@ public:
 	// TEAM COMMUNICATION (wraps TeamCommsComponent)
 	//--------------------------------------------------------------------------
 	UFUNCTION(BlueprintCallable, Category = "AI|Team")
-	void SignalEventToLeader(EStrategicEvent Event, AActor* Instigator, FVector Location, int32 Priority);
+	void SignalEventToLeader(EStrategicEvent Event, AActor* InstigatorActor, FVector Location, int32 Priority);
 
 	UFUNCTION(BlueprintPure, Category = "AI|Team")
 	UTeamLeaderComponent* GetTeamLeader() const;
@@ -198,6 +206,9 @@ public:
 	void ResetEpisode();
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Lifecycle")
+	void OnEpisodeEnded(float EpisodeReward);
+
+	UFUNCTION(BlueprintCallable, Category = "AI|Lifecycle")
 	void MarkAsDead();
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Lifecycle")
@@ -216,10 +227,8 @@ public:
 	UFollowerStateTreeComponent* GetStateTreeComponent() const { return StateTreeComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "AI|Components")
-	UTeamCommsComponent* GetTeamCommsComponent() const { return TeamCommsComponent; }
-
-	UFUNCTION(BlueprintPure, Category = "AI|Components")
 	UVisualLoggerComponent* GetVisualLoggerComponent() const { return VisualLoggerComponent; }
+
 
 
 public:
@@ -233,10 +242,6 @@ public:
 	/** State Tree component (tactical state management) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Core")
 	UFollowerStateTreeComponent* StateTreeComponent;
-
-	/** Team comms component (leader communication, auto-registration) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Communication")
-	UTeamCommsComponent* TeamCommsComponent;
 
 	/** Context bridge component (StateTree data bridge - dependency inversion) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|StateTree")
@@ -316,6 +321,24 @@ private:
 
 	/** Unregister from team leader (internal implementation) */
 	void UnregisterFromLeader();
+
+	//--------------------------------------------------------------------------
+	// v9.0 PHASE 5: DECISION LOOP (merged from FollowerAgentComponent)
+	//--------------------------------------------------------------------------
+	/** Last time strategy was updated (for rate-limiting RL inference) */
+	double LastStrategyUpdateTime = 0.0;
+
+	/** Ticks since last RL update (for timeout fallback) */
+	int32 TicksSinceLastUpdate = 0;
+
+	/** Minimum interval between RL policy updates (seconds) */
+	float MinStrategyUpdateInterval = 0.05f;  // 50ms = 20 Hz max
+
+	/** Should we update strategy/tactical params this tick? (rate-limiting) */
+	bool ShouldUpdateStrategy() const;
+
+	/** Execute combat using current tactical parameters */
+	void ExecuteCombatInternal();
 
 	//--------------------------------------------------------------------------
 	// v9.0 PHASE 4: INITIALIZATION (Dependency Injection Pattern)

@@ -2,14 +2,13 @@
 
 #include "RL/Components/RewardCalculator.h"
 #include "Team/Components/FollowerAgentComponent.h"
-#include "Team/Components/SquadManagerComponent.h"
-#include "Team/Components/TeamCommsComponent.h"
+// v9.0 PHASE 4: SquadManagerComponent and TeamCommsComponent merged into character (includes removed)
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
-// v9.0 Phase 4: Use character API instead of FindComponentByClass
+// v9.0 PHASE 5: Use FollowerCharacter API (Character-as-Central-Hub)
 #include "Actor/FollowerCharacter.h"
 
 URewardCalculator::URewardCalculator()
@@ -890,60 +889,6 @@ void URewardCalculator::SetCurrentStrategy(EStrategyType Strategy)
 	}
 }
 
-//--------------------------------------------------------------------------
-// COORDINATION TRACKING
-//--------------------------------------------------------------------------
-
-bool URewardCalculator::IsInFormation() const
-{
-	if (!FollowerComponent)
-	{
-		return false;
-	}
-
-	// Check if near teammates
-	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(GetOwner());
-	if (!FollowerChar)
-	{
-		return false;
-	}
-
-	// v9.0 Phase 4: Use character API instead of FindComponentByClass
-	UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
-	if (!TeamLeader)
-	{
-		return false;
-	}
-
-	UIntelManagerComponent* IntelManager = TeamLeader->GetIntelManager();
-	// Get team members
-	TArray<AActor*> TeamMembers = TeamLeader->GetFollowers();
-	if (TeamMembers.Num() <= 1)
-	{
-		return false; // No teammates
-	}
-
-	// Count nearby teammates
-	FVector OwnerLocation = Owner->GetActorLocation();
-	int32 NearbyCount = 0;
-
-	for (AActor* MemberActor : TeamMembers)
-	{
-		if (MemberActor == Owner || !MemberActor)
-		{
-			continue;
-		}
-
-		float Distance = FVector::Dist(OwnerLocation, MemberActor->GetActorLocation());
-		if (Distance <= FormationDistanceThreshold)
-		{
-			NearbyCount++;
-		}
-	}
-
-	// Consider "in formation" if at least 1 teammate nearby
-	return NearbyCount >= 1;
-}
 
 void URewardCalculator::RegisterCombinedFire(AActor* Target)
 {

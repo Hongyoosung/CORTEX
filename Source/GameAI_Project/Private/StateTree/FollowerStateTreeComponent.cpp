@@ -3,7 +3,8 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeSchema.h"
 #include "Team/Components/FollowerAgentComponent.h"
-#include "Team/Components/TeamCommsComponent.h"
+// v9.0 PHASE 4: TeamCommsComponent merged into character
+#include "Actor/FollowerCharacter.h"
 #include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "RL/RLPolicyNetwork.h"
@@ -32,7 +33,7 @@ UFollowerStateTreeComponent::UFollowerStateTreeComponent()
 	: Super()
 	, FollowerComponent(nullptr)
 	, HealthComponent(nullptr)
-	, TeamCommsComponent(nullptr)
+	// v9.0 PHASE 4: TeamCommsComponent merged into character (removed from init list)
 	, bAutoFindFollowerComponent(true)
 	, TickLogCounter(0)
 {
@@ -60,10 +61,7 @@ void UFollowerStateTreeComponent::BeginPlay()
 		{
 			HealthComponent = FindHealthComponent();
 		}
-		if (!TeamCommsComponent)
-		{
-			TeamCommsComponent = FindTeamCommsComponent();
-		}
+		// v9.0 PHASE 4: TeamCommsComponent merged into character (no component to find)
 	}
 
 	if (!FollowerComponent)
@@ -77,10 +75,7 @@ void UFollowerStateTreeComponent::BeginPlay()
 		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: ⚠️ HealthComponent not found!"));
 	}
 
-	if (!TeamCommsComponent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: ⚠️ TeamCommsComponent not found!"));
-	}
+	// v9.0 PHASE 4: TeamCommsComponent merged into character (no component check needed)
 
 	// Initialize context BEFORE Super::BeginPlay() starts the tree
 	InitializeContext();
@@ -318,12 +313,16 @@ void UFollowerStateTreeComponent::InitializeContext()
 		}
 	}
 
-	// Set component references (v9.0: Use TeamCommsComponent)
-	if (!Context.TeamLeader && TeamCommsComponent)
+	// Set component references (v9.0 PHASE 4: Use FollowerCharacter)
+	if (!Context.TeamLeader)
 	{
-		Context.TeamLeader = TeamCommsComponent->GetTeamLeader();
-		UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: TeamLeader set to '%s'"),
-			Context.TeamLeader ? *Context.TeamLeader->GetName() : TEXT("NULL"));
+		AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
+		if (OwnerCharacter)
+		{
+			Context.TeamLeader = OwnerCharacter->GetTeamLeader();
+			UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: TeamLeader set to '%s'"),
+				Context.TeamLeader ? *Context.TeamLeader->GetName() : TEXT("NULL"));
+		}
 	}
 	else
 	{
@@ -368,8 +367,9 @@ void UFollowerStateTreeComponent::UpdateContextFromFollower()
 	// - Retreat → No specific objective
 	Context.AssignedStrategy = FollowerComponent->GetAssignedStrategy();
 
-	// v9.0: Compute implicit target objective based on strategy (use TeamCommsComponent)
-	UTeamLeaderComponent* TeamLeader = TeamCommsComponent ? TeamCommsComponent->GetTeamLeader() : nullptr;
+	// v9.0 PHASE 4: Compute implicit target objective based on strategy (use FollowerCharacter)
+	AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
+	UTeamLeaderComponent* TeamLeader = OwnerCharacter ? OwnerCharacter->GetTeamLeader() : nullptr;
 	if (TeamLeader)
 	{
 		if (Context.AssignedStrategy == EStrategyType::Assault ||
@@ -517,11 +517,12 @@ bool UFollowerStateTreeComponent::CollectExternalData(const FStateTreeExecutionC
         }
         else if (Desc.Name == FName(TEXT("TeamLeader")))
         {
-            // v9.0: Get TeamLeader via TeamCommsComponent
+            // v9.0 PHASE 4: Get TeamLeader via FollowerCharacter
             UTeamLeaderComponent* TeamLeader = nullptr;
-            if (TeamCommsComponent)
+            AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
+            if (OwnerCharacter)
             {
-                TeamLeader = TeamCommsComponent->GetTeamLeader();
+                TeamLeader = OwnerCharacter->GetTeamLeader();
             }
 
             OutDataViews[Index] = FStateTreeDataView(TeamLeader);
@@ -611,23 +612,7 @@ UHealthComponent* UFollowerStateTreeComponent::FindHealthComponent()
 	return OwnerHealthComp;
 }
 
-UTeamCommsComponent* UFollowerStateTreeComponent::FindTeamCommsComponent()
-{
-	AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		return nullptr;
-	}
-
-	UTeamCommsComponent* OwnerTeamCommsComp = Owner->FindComponentByClass<UTeamCommsComponent>();
-
-	if (!OwnerTeamCommsComp)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: No TeamCommsComponent found on '%s'"), *Owner->GetName());
-	}
-
-	return OwnerTeamCommsComp;
-}
+// v9.0 PHASE 4: FindTeamCommsComponent removed (merged into character)
 
 void UFollowerStateTreeComponent::BindToFollowerEvents()
 {

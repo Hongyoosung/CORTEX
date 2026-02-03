@@ -3,7 +3,8 @@
 #include "Perception/AIPerceptionSystem.h"
 #include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
-#include "Team/Components/TeamCommsComponent.h"
+// v9.0 PHASE 4: TeamCommsComponent merged into character
+#include "Actor/FollowerCharacter.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Actor/LeaderCharacter.h"
@@ -441,16 +442,18 @@ void UAgentPerceptionComponent::SignalEnemySpotted(AActor* Enemy)
 {
 	if (!Enemy || !CachedFollowerComponent) return;
 
-	UTeamCommsComponent* TeamComms = GetOwner()->FindComponentByClass<UTeamCommsComponent>();
-	if (!TeamComms)
+	// v9.0 PHASE 4: TeamComms merged into character
+	AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
+	if (!OwnerCharacter)
 	{
-		UE_LOG(LogTemp, Error, TEXT("🔵 [PERCEPTION] %s: No TeamCommsComponent found, cannot report enemy %s"),
+		UE_LOG(LogTemp, Error, TEXT("🔵 [PERCEPTION] %s: Owner is not a FollowerCharacter, cannot report enemy %s"),
 			*GetOwner()->GetName(),
 			*Enemy->GetName());
+		return;
 	}
 
-	// 2. Get Leader via Comms
-	UTeamLeaderComponent* TeamLeader = TeamComms->GetTeamLeader();
+	// 2. Get Leader via Character
+	UTeamLeaderComponent* TeamLeader = OwnerCharacter->GetTeamLeader();
 
 	if (!TeamLeader)
 	{

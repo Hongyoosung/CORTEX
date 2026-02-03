@@ -9,7 +9,8 @@
 // Forward declarations
 class UMCTS;
 class AObjectiveActor;
-class USquadManagerComponent;
+// v9.0 PHASE 5: SquadManagerComponent merged into LeaderCharacter
+class ALeaderCharacter;
 class UIntelManagerComponent;
 class UStrategicPlannerComponent;
 class UVisualLoggerComponent;
@@ -79,28 +80,33 @@ struct FStrategicExperience
 };
 
 /**
- * Team Leader Component - Strategic Coordinator (v9.0 Phase 3)
+ * Team Leader Component - Strategic Coordinator (v9.0 Phase 5)
  *
- * ARCHITECTURE (Phase 3 - Coordinator Pattern):
- * This component has been refactored from a monolithic class into a coordinator
- * that delegates to specialized manager components:
+ * ARCHITECTURE (Phase 5 - Coordinator Pattern):
+ * This component is a STRATEGIC COORDINATOR that orchestrates team-level decision making.
+ * It delegates to specialized manager components for specific responsibilities:
  *
- * - SquadManagerComponent: Follower roster management
+ * - LeaderCharacter: Follower roster management (Phase 5: merged from SquadManagerComponent)
  * - IntelManagerComponent: Enemy tracking, objective management, observations
  * - StrategicPlannerComponent: MCTS-based strategic planning (async)
  * - VisualLoggerComponent: Centralized debug visualization
  *
- * Responsibilities (Refactored):
+ * Key Difference from FollowerAgentComponent:
+ * - FollowerAgentComponent: Thin wrapper (character-level decision loop moved to FollowerCharacter)
+ * - TeamLeaderComponent: Strategic coordinator (team-level orchestration stays in component)
+ *
+ * Responsibilities (Phase 5):
  * - Coordinate manager components
- * - Process strategic events
+ * - Schedule MCTS planning (continuous or event-driven)
+ * - Process and route strategic events
  * - Broadcast strategy assignments to followers
  * - Track team performance metrics
  * - Handle episode lifecycle
  *
  * Usage:
- * 1. Attach to an Actor (team leader character)
+ * 1. Attach to an Actor (team leader character - LeaderCharacter)
  * 2. Ensure manager components are attached to the same actor
- * 3. Followers register via RegisterFollower() (delegates to SquadManager)
+ * 3. Followers register via RegisterFollower() (Phase 5: delegates to LeaderCharacter)
  * 4. Followers signal events via ProcessStrategicEvent()
  * 5. StrategicPlanner runs MCTS and fires OnPlanReady delegate
  * 6. Coordinator applies assignments via ApplyStrategyAssignment()
@@ -131,11 +137,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Team Leader|Followers")
 	void UnregisterFollower(AActor* Follower);
 
-	/** Get squad max capacity - Phase 3: Delegate to SquadManager */
+	/** Get squad max capacity - Phase 5: Returns constant (LeaderCharacter MaxFollowers is private) */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
 	int32 GetMaxFollowers() const;
 
-	/** Is follower registered? - Phase 3: Delegate to SquadManager */
+	/** Is follower registered? - Phase 5: Delegate to LeaderCharacter */
 	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
 	bool IsFollowerRegistered(AActor* Follower) const;
 
@@ -245,7 +251,7 @@ private:
 	UFUNCTION()
 	void OnPlanReady(const TArray<FStrategyAssignment>& Assignments, float ExecutionTimeMs, FString BatchKey);
 
-	/** Phase 3: Handler for SquadManager follower registration (v9.0) */
+	/** Phase 5: Handler for LeaderCharacter follower registration (v9.0) */
 	UFUNCTION()
 	void OnSquadFollowerRegistered(AActor* Follower);
 
@@ -322,12 +328,7 @@ public:
 	// COMPONENTS
 	//--------------------------------------------------------------------------
 
-	/** Phase 3: Manager Components (v9.0 Coordinator Pattern) */
-
-	/** Squad management (follower roster) */
-	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|Components")
-	USquadManagerComponent* SquadManager = nullptr;
-
+	/** Manager Components */
 	/** Intelligence gathering (enemy tracking, objectives, observations) */
 	UPROPERTY(BlueprintReadOnly, Category = "Team Leader|Components")
 	UIntelManagerComponent* IntelManager = nullptr;
@@ -364,6 +365,9 @@ public:
 
 private:
 	// Phase 3: REMOVED - AsyncMCTSTask now in StrategicPlanner (TUniquePtr with RAII)
+	// Phase 5: ADDED - Cached LeaderCharacter reference (owner)
+	UPROPERTY()
+	ALeaderCharacter* LeaderCharacter = nullptr;
 
 	/** Statistics tracking */
 	int32 TotalCommandsIssued = 0;
@@ -385,7 +389,7 @@ private:
 	/** SimulationManager�� ������ ���������� ��ϵǾ����� ���� */
 	bool bIsRegisteredToManager = false;
 
-	// Phase 3: REMOVED - PendingFollowerRegistration now in SquadManager
+	// Phase 5: REMOVED - PendingFollowerRegistration now in LeaderCharacter
 
 	FString CurrentBatchKey;
 };

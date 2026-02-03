@@ -4,8 +4,8 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "Team/ObjectiveActor.h"
-#include "Team/Components/TeamLeaderComponent.h"    
-#include "Team/Components/TeamCommsComponent.h"
+#include "Team/Components/TeamLeaderComponent.h"
+#include "Actor/FollowerCharacter.h"  // v9.0 PHASE 5: Use character API
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -27,11 +27,12 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 		FFollowerStateTreeContext& SharedContext = StateTreeComp->GetSharedContext();
 		EStrategyType Strategy = SharedContext.AssignedStrategy;
 
-		UTeamCommsComponent* CommsComp = QueryOwner->FindComponentByClass<UTeamCommsComponent>();
+		// v9.0 PHASE 5: Use FollowerCharacter API (TeamCommsComponent deleted)
+		AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(QueryOwner);
 
-		if (CommsComp)
+		if (FollowerChar)
 		{
-			UTeamLeaderComponent* TeamLeader = CommsComp->GetTeamLeader();
+			UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
 			if (TeamLeader)
 			{
 				AObjectiveActor* TargetObjective = nullptr;
@@ -96,7 +97,7 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 			static int32 NoFollowerCount = 0;
 			if (++NoFollowerCount % 100 == 0)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[EQS CONTEXT v9.0] %s: No FollowerAgentComponent (count=%d)"), *QueryOwner->GetName(), NoFollowerCount);
+				UE_LOG(LogTemp, Warning, TEXT("[EQS CONTEXT v9.0] %s: Not a FollowerCharacter (count=%d)"), *QueryOwner->GetName(), NoFollowerCount);
 			}
 		}
 	}

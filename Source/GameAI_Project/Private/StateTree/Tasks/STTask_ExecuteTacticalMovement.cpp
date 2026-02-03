@@ -3,9 +3,7 @@
 #include "StateTree/Tasks/STTask_ExecuteTacticalMovement.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
-#include "Team/Components/TeamCommsComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
@@ -17,7 +15,7 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/ScholaCombatEnvironment.h"
-// v9.0 Phase 4: Use character API instead of FindComponentByClass
+// v9.0 PHASE 5: Use FollowerCharacter API (Character-as-Central-Hub)
 #include "Actor/FollowerCharacter.h"
 
 EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
@@ -94,7 +92,9 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::Tick(FStateTreeExecutionCon
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	if (!InstanceData.AgentComponent || !InstanceData.ControlledPawn || !InstanceData.AIController)
+	// v9.0 PHASE 5: Get FollowerCharacter (Character-as-Central-Hub)
+	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(InstanceData.ControlledPawn);
+	if (!FollowerChar || !InstanceData.AIController)
 	{
 		return EStateTreeRunStatus::Failed;
 	}
@@ -192,8 +192,8 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::Tick(FStateTreeExecutionCon
 
 	InstanceData.TicksSinceLastUpdate = 0;
 
-	// Get current macro action from RL policy (tactical + combat parameters)
-	FMacroAction CurrentAction = InstanceData.AgentComponent->GetCurrentMacroAction();
+	// v9.0 PHASE 5: Get current macro action from FollowerCharacter (Character-as-Central-Hub)
+	FMacroAction CurrentAction = FollowerChar->GetCurrentMacroAction();
 	FTacticalParameters TacticalParams = CurrentAction.TacticalParams;
 
 	// Clamp parameters to [0,1] range (safety check)
@@ -294,18 +294,15 @@ void FSTTask_ExecuteTacticalMovement::ApplyTacticalParameters(
 	ExecuteMovementToTacticalPosition(Context, TargetPosition);
 
 	// Store risk tolerance for retreat logic (used outside EQS)
-	if (InstanceData.AgentComponent)
-	{
-		// Risk tolerance determines when to retreat (health threshold)
-		// High risk (0.9) = fight to near death (10% HP)
-		// Low risk (0.1) = retreat early (70% HP)
-		float RetreatThreshold = FMath::Lerp(0.7f, 0.1f, Params.RiskTolerance);
+	// Risk tolerance determines when to retreat (health threshold)
+	// High risk (0.9) = fight to near death (10% HP)
+	// Low risk (0.1) = retreat early (70% HP)
+	float RetreatThreshold = FMath::Lerp(0.7f, 0.1f, Params.RiskTolerance);
 
-		// This can be used by combat logic to trigger retreat strategy
-		// For now, just log it (full retreat integration happens in v8.5)
-		UE_LOG(LogTemp, Verbose, TEXT("[TACTICAL v8.0] '%s': Retreat threshold set to %.0f%% HP (Risk=%.2f)"),
-			*Pawn->GetName(), RetreatThreshold * 100.0f, Params.RiskTolerance);
-	}
+	// This can be used by combat logic to trigger retreat strategy
+	// For now, just log it (full retreat integration happens in v8.5)
+	UE_LOG(LogTemp, Verbose, TEXT("[TACTICAL v8.0] '%s': Retreat threshold set to %.0f%% HP (Risk=%.2f)"),
+		*Pawn->GetName(), RetreatThreshold * 100.0f, Params.RiskTolerance);
 }
 
 TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(

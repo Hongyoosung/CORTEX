@@ -1,7 +1,7 @@
 #include "Core/SimulationManagerGameMode.h"
 #include "Core/ScholaGameInstance.h"
 #include "Team/Components/TeamLeaderComponent.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/LeaderCharacter.h"
 #include "Team/ObjectiveActor.h"
 #include "Combat/Components/HealthComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"

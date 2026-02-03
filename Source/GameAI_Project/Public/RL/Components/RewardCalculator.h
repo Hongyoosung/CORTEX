@@ -397,11 +397,6 @@ public:
 	//--------------------------------------------------------------------------
 	// COORDINATION TRACKING
 	//--------------------------------------------------------------------------
-
-	/** Check if agent is in formation with teammates */
-	UFUNCTION(BlueprintPure, Category = "Reward")
-	bool IsInFormation() const;
-
 	/** Register combined fire event (multiple agents targeting same enemy) */
 	void RegisterCombinedFire(AActor* Target);
 

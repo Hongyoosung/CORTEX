@@ -3,9 +3,9 @@
 #include "StateTree/Evaluators/STEvaluator_UpdateObservation.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
-#include "Team/Components/TeamCommsComponent.h"
+// v9.0 PHASE 5: Use FollowerCharacter API (Character-as-Central-Hub)
+#include "Actor/FollowerCharacter.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/WeaponComponent.h"
 #include "Combat/Components/HealthComponent.h"
@@ -31,25 +31,25 @@ void FSTEvaluator_UpdateObservation::Tick(FStateTreeExecutionContext& Context, f
 {
 	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
 
-	// Get components from context owner
-	UFollowerAgentComponent* FollowerComponent = nullptr;
+	// v9.0 PHASE 5: Get FollowerCharacter from context owner (Character-as-Central-Hub)
+	AFollowerCharacter* FollowerChar = nullptr;
 	APawn* ControlledPawn = nullptr;
 
 	if (const UObject* ContextOwner = Context.GetOwner())
 	{
 		if (const AActor* OwnerActor = Cast<AActor>(ContextOwner))
 		{
-			FollowerComponent = OwnerActor->FindComponentByClass<UFollowerAgentComponent>();
+			FollowerChar = const_cast<AFollowerCharacter*>(Cast<AFollowerCharacter>(OwnerActor));
 			ControlledPawn = const_cast<APawn*>(Cast<APawn>(OwnerActor));
 		}
 	}
 
-	if (!FollowerComponent)
+	if (!FollowerChar)
 	{
 		static bool bLoggedOnce = false;
 		if (!bLoggedOnce)
 		{
-			UE_LOG(LogTemp, Error, TEXT("[UPDATE OBS] Missing FollowerComponent!"));
+			UE_LOG(LogTemp, Error, TEXT("[UPDATE OBS] Missing FollowerCharacter!"));
 			bLoggedOnce = true;
 		}
 		return;
@@ -103,9 +103,9 @@ void FSTEvaluator_UpdateObservation::Tick(FStateTreeExecutionContext& Context, f
 	// Full update (observations, perception, cover) - run at intervals
 	if (bFullUpdate)
 	{
-		// Get observation from follower component
+		// v9.0 PHASE 5: Get observation from FollowerCharacter (Character-as-Central-Hub)
 		SharedContext.PreviousObservation = SharedContext.CurrentObservation;
-		SharedContext.CurrentObservation = FollowerComponent->GetLocalObservation();
+		SharedContext.CurrentObservation = FollowerChar->GetLocalObservation();
 
 		// Update target tracking from perception system
 		ScanForEnemies(SharedContext, InstanceData, ControlledPawn, ControlledPawn->GetWorld());
@@ -142,19 +142,19 @@ void FSTEvaluator_UpdateObservation::TreeStop(FStateTreeExecutionContext& Contex
 
 FObservationElement FSTEvaluator_UpdateObservation::GatherObservationData(FStateTreeExecutionContext& Context) const
 {
-	// NOTE: Observation building delegated to FollowerAgentComponent::BuildLocalObservation() (lines 420-499)
-	// This evaluator retrieves pre-built observations via FollowerComponent->GetLocalObservation() (line 103)
+	// v9.0 PHASE 5: Observation building delegated to FollowerCharacter::BuildLocalObservation()
+	// This evaluator retrieves pre-built observations via FollowerChar->GetLocalObservation()
 	return FObservationElement();
 }
 
 void FSTEvaluator_UpdateObservation::UpdateAgentState(FObservationElement& Observation, APawn* ControlledPawn) const
 {
-	// NOTE: Delegated to FollowerAgentComponent::BuildLocalObservation()
+	// v9.0 PHASE 5: Delegated to FollowerCharacter::BuildLocalObservation()
 }
 
 void FSTEvaluator_UpdateObservation::PerformRaycastPerception(FObservationElement& Observation, APawn* ControlledPawn, UWorld* World) const
 {
-	// NOTE: Delegated to FollowerAgentComponent::BuildLocalObservation()
+	// v9.0 PHASE 5: Delegated to FollowerCharacter::BuildLocalObservation()
 }
 
 void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& SharedContext, FSTEvaluator_UpdateObservationInstanceData& InstanceData, APawn* ControlledPawn, UWorld* World) const
@@ -195,17 +195,20 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 		}
 	}
 
-	UTeamCommsComponent* TeamComms = ControlledPawn->FindComponentByClass<UTeamCommsComponent>();
-	if (TeamComms)
+	// v9.0 PHASE 4: TeamComms merged into character
+	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(ControlledPawn);
+	if (FollowerChar)
 	{
-		// 2. Get Leader via Comms
-		UTeamLeaderComponent* TeamLeader = TeamComms->GetTeamLeader();
-
-		for (AActor* Enemy : IndividuallyDetected)
+		// 2. Get Leader via FollowerCharacter
+		UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
+		if (TeamLeader)
 		{
-			if (Enemy)
+			for (AActor* Enemy : IndividuallyDetected)
 			{
-				TeamLeader->RegisterEnemy(Enemy);
+				if (Enemy)
+				{
+					TeamLeader->RegisterEnemy(Enemy);
+				}
 			}
 		}
 	}

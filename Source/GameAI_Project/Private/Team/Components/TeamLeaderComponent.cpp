@@ -5,7 +5,6 @@
 #include "AI/MCTS/MCTSAsyncTask.h"
 
 // Phase 3: Manager Component Includes (v9.0)
-#include "Team/Components/SquadManagerComponent.h"
 #include "Team/Components/IntelManagerComponent.h"
 #include "Team/Components/StrategicPlannerComponent.h"
 #include "Util/Components/VisualLoggerComponent.h"
@@ -40,7 +39,8 @@ void UTeamLeaderComponent::BeginPlay()
 	Super::BeginPlay();
 
 	//==========================================================================
-	// Phase 3: Resolve Manager Components (v9.0 Coordinator Pattern)
+	// Phase 3-5: Resolve Manager Components (v9.0 Coordinator Pattern)
+	// Phase 5: LeaderCharacter merged into LeaderCharacter
 	//==========================================================================
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -49,24 +49,30 @@ void UTeamLeaderComponent::BeginPlay()
 		return;
 	}
 
-	SquadManager = Owner->FindComponentByClass<USquadManagerComponent>();
+	// v9.0 PHASE 5: Verify owner is LeaderCharacter
+	LeaderCharacter = Cast<ALeaderCharacter>(Owner);
+	if (!LeaderCharacter)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] %s: Owner is not a LeaderCharacter!"), *Owner->GetName());
+		return;
+	}
+
 	IntelManager = Owner->FindComponentByClass<UIntelManagerComponent>();
 	StrategicPlanner = Owner->FindComponentByClass<UStrategicPlannerComponent>();
 	VisualLogger = Owner->FindComponentByClass<UVisualLoggerComponent>();
 
 	// Verify required components exist
-	if (!SquadManager || !IntelManager || !StrategicPlanner)
+	if (!IntelManager || !StrategicPlanner)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] %s: Missing required manager components! Squad=%s Intel=%s Planner=%s"),
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] %s: Missing required manager components! Intel=%s Planner=%s"),
 			*Owner->GetName(),
-			SquadManager ? TEXT("OK") : TEXT("MISSING"),
 			IntelManager ? TEXT("OK") : TEXT("MISSING"),
 			StrategicPlanner ? TEXT("OK") : TEXT("MISSING"));
 		return;
 	}
 
 
-	UE_LOG(LogTemp, Display, TEXT("✅ [TeamLeader] '%s': All manager components resolved"), *TeamName);
+	UE_LOG(LogTemp, Display, TEXT("✅ [TeamLeader Phase5] '%s': All manager components resolved"), *TeamName);
 
 	//==========================================================================
 	// Initialize Manager Components
@@ -78,20 +84,19 @@ void UTeamLeaderComponent::BeginPlay()
 	StrategicPlanner->InitializeMCTS();
 	StrategicPlanner->OnPlanReady.AddDynamic(this, &UTeamLeaderComponent::OnPlanReady);
 
-	// Subscribe to SquadManager events
-	SquadManager->OnFollowerRegistered.AddDynamic(this, &UTeamLeaderComponent::OnSquadFollowerRegistered);
-	SquadManager->OnFollowerRegistered.AddDynamic(this, &UTeamLeaderComponent::OnNewFollowerJoined);
+	// v9.0 PHASE 5: LeaderCharacter events removed (merged into LeaderCharacter)
+	// Follower registration now handled directly by LeaderCharacter methods
 
 	// Configure IntelManager
 	IntelManager->TeamID = TeamID;
 
 
 	//==========================================================================
-	// Comprehensive Configuration Log
+	// Comprehensive Configuration Log (v9.0 Phase 5)
 	//==========================================================================
-	UE_LOG(LogTemp, Display, TEXT("✅ [TeamLeader] '%s' Configuration:"), *TeamName);
+	UE_LOG(LogTemp, Display, TEXT("✅ [TeamLeader Phase5] '%s' Configuration:"), *TeamName);
 	UE_LOG(LogTemp, Display, TEXT("   ├─ Team: ID=%d, Color=(%s)"), TeamID, *TeamColor.ToString());
-	UE_LOG(LogTemp, Display, TEXT("   ├─ Squad: MaxFollowers=%d"), SquadManager->MaxFollowers);
+	UE_LOG(LogTemp, Display, TEXT("   ├─ Squad: CurrentFollowers=%d"), LeaderCharacter->GetFollowerCount());
 	UE_LOG(LogTemp, Display, TEXT("   ├─ Intel: TeamID=%d"), IntelManager->TeamID);
 	UE_LOG(LogTemp, Display, TEXT("   ├─ Planner: Simulations=%d, Async=%s"),
 		StrategicPlanner->MCTSSimulations, StrategicPlanner->bAsyncMCTS ? TEXT("YES") : TEXT("NO"));
@@ -119,7 +124,7 @@ void UTeamLeaderComponent::BeginPlay()
 				int32 EnvironmentID = TeamID / 2;
 				SimManager->RegisterTeamEnvironment(TeamID, EnvironmentID);
 
-				// Note: Pending follower registrations now handled automatically by SquadManager
+				// Note: Pending follower registrations now handled automatically by LeaderCharacter
 			}
 			SimManager->OnEpisodeStarted.AddDynamic(this, &UTeamLeaderComponent::OnEpisodeStart);
 			SimManager->OnEpisodeEnded.AddDynamic(this, &UTeamLeaderComponent::OnEpisodeComplete);
@@ -149,6 +154,20 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	//==========================================================================
+	// v9.0 PHASE 5: STRATEGIC COORDINATOR PATTERN
+	//
+	// TeamLeaderComponent is a COORDINATOR, not a thin wrapper like FollowerAgentComponent.
+	// Its TickComponent logic is legitimately component-level (MCTS scheduling, event routing).
+	//
+	// Architecture:
+	// - LeaderCharacter: Follower roster management (Phase 5)
+	// - TeamLeaderComponent: Strategic coordination (MCTS, event processing)
+	// - IntelManager: Enemy tracking, observations
+	// - StrategicPlanner: Async MCTS execution
+	// - VisualLogger: Debug visualization
+	//==========================================================================
+
 	// Check if simulation is running
 	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
 	if (SimManager && !SimManager->IsSimulationRunning())
@@ -156,8 +175,8 @@ void UTeamLeaderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		return;
 	}
 
-	// Phase 3: Update team observation (delegated to IntelManager)
-	if (SquadManager && SquadManager->GetFollowerCount() > 0)
+	// Phase 5: Update team observation (delegated to IntelManager)
+	if (LeaderCharacter && LeaderCharacter->GetFollowerCount() > 0)
 	{
 		CurrentTeamObservation = BuildTeamObservation();
 	}
@@ -235,17 +254,17 @@ TArray<AObjectiveActor*> UTeamLeaderComponent::GetObjectivesArray() const
 
 bool UTeamLeaderComponent::RegisterFollower(AActor* Follower)
 {
-	// Phase 3: Delegate to SquadManager
-	if (!SquadManager)
+	// Phase 3: Delegate to LeaderCharacter
+	if (!LeaderCharacter)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] '%s': SquadManager not initialized!"), *TeamName);
+		UE_LOG(LogTemp, Error, TEXT("[TeamLeader] '%s': LeaderCharacter not initialized!"), *TeamName);
 		return false;
 	}
 
 	bool bSuccess = false;
 
 	// Check if already registered
-	if (SquadManager->IsFollowerRegistered(Follower))
+	if (LeaderCharacter->IsFollowerRegistered(Follower))
 	{
 		return false;
 	}
@@ -256,7 +275,7 @@ bool UTeamLeaderComponent::RegisterFollower(AActor* Follower)
 	// If leader is registered with SimManager, register immediately
 	if (SimManager && bIsRegisteredToManager)
 	{
-		bSuccess = SquadManager->RegisterFollower(Follower);
+		bSuccess = LeaderCharacter->RegisterFollower(Follower);
 		if (bSuccess)
 		{
 			SimManager->RegisterTeamMember(TeamID, Follower);
@@ -266,7 +285,7 @@ bool UTeamLeaderComponent::RegisterFollower(AActor* Follower)
 	else
 	{
 		// Queue for later registration
-		SquadManager->QueueFollowerRegistration(Follower);
+		LeaderCharacter->QueueFollowerRegistration(Follower);
 		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': %s queued (Leader not registered yet)"), *TeamName, *Follower->GetName());
 		bSuccess = true;
 	}
@@ -276,13 +295,13 @@ bool UTeamLeaderComponent::RegisterFollower(AActor* Follower)
 
 void UTeamLeaderComponent::UnregisterFollower(AActor* Follower)
 {
-	// Phase 3: Delegate to SquadManager
-	if (!SquadManager || !Follower)
+	// Phase 3: Delegate to LeaderCharacter
+	if (!LeaderCharacter || !Follower)
 	{
 		return;
 	}
 
-	if (!SquadManager->IsFollowerRegistered(Follower))
+	if (!LeaderCharacter->IsFollowerRegistered(Follower))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': Follower %s not registered"),
 			*TeamName, *Follower->GetName());
@@ -290,7 +309,7 @@ void UTeamLeaderComponent::UnregisterFollower(AActor* Follower)
 	}
 
 	// Unregister from squad
-	SquadManager->UnregisterFollower(Follower);
+	LeaderCharacter->UnregisterFollower(Follower);
 
 	// Remove from current assignments
 	CurrentAssignments.Remove(Follower);
@@ -301,16 +320,16 @@ void UTeamLeaderComponent::UnregisterFollower(AActor* Follower)
 	{
 		SimManager->UnregisterTeamMember(TeamID, Follower);
 		UE_LOG(LogTemp, Log, TEXT("[TeamLeader] '%s': Unregistered follower %s from SimulationManager (TeamID: %d, %d remaining)"),
-			*TeamName, *Follower->GetName(), TeamID, SquadManager->GetFollowerCount());
+			*TeamName, *Follower->GetName(), TeamID, LeaderCharacter->GetFollowerCount());
 	}
 
 	TotalFollowersLost++;
 
-	// Broadcast event (note: SquadManager also broadcasts OnFollowerUnregistered)
-	OnFollowerUnregistered.Broadcast(Follower, SquadManager->GetFollowerCount());
+	// Broadcast event (note: LeaderCharacter also broadcasts OnFollowerUnregistered)
+	OnFollowerUnregistered.Broadcast(Follower, LeaderCharacter->GetFollowerCount());
 
 	// If all followers dead, trigger critical event
-	if (SquadManager->GetAliveFollowers().Num() == 0 && SquadManager->GetFollowerCount() > 0)
+	if (LeaderCharacter->GetAliveFollowers().Num() == 0 && LeaderCharacter->GetFollowerCount() > 0)
 	{
 		ProcessStrategicEvent(EStrategicEvent::Custom, nullptr, FVector::ZeroVector, 10);
 		UE_LOG(LogTemp, Warning, TEXT("[TeamLeader] '%s': All followers eliminated!"), *TeamName);
@@ -320,12 +339,13 @@ void UTeamLeaderComponent::UnregisterFollower(AActor* Follower)
 
 int32 UTeamLeaderComponent::GetMaxFollowers() const
 {
-	return SquadManager ? SquadManager->MaxFollowers : 4;
+	// v9.0 PHASE 5: MaxFollowers is private in LeaderCharacter, return constant
+	return 4;
 }
 
 bool UTeamLeaderComponent::IsFollowerRegistered(AActor* Follower) const
 {
-	return SquadManager ? SquadManager->IsFollowerRegistered(Follower) : false;
+	return LeaderCharacter ? LeaderCharacter->IsFollowerRegistered(Follower) : false;
 }
 
 //------------------------------------------------------------------------------
@@ -557,9 +577,9 @@ void UTeamLeaderComponent::ProcessPendingEvents()
 FTeamObservation UTeamLeaderComponent::BuildTeamObservation()
 {
 	// Phase 3: Delegate to IntelManager
-	if (IntelManager && SquadManager)
+	if (IntelManager && LeaderCharacter)
 	{
-		return IntelManager->BuildTeamObservation(SquadManager->GetFollowers());
+		return IntelManager->BuildTeamObservation(LeaderCharacter->GetFollowers());
 	}
 
 	return FTeamObservation();
@@ -677,8 +697,8 @@ FTeamMetrics UTeamLeaderComponent::GetTeamMetrics() const
 {
 	FTeamMetrics Metrics;
 
-	// Phase 3: Get follower counts from SquadManager
-	Metrics.TotalFollowers = SquadManager ? SquadManager->GetFollowerCount() : 0;
+	// Phase 3: Get follower counts from LeaderCharacter
+	Metrics.TotalFollowers = LeaderCharacter ? LeaderCharacter->GetFollowerCount() : 0;
 	Metrics.AverageHealth = CurrentTeamObservation.AverageTeamHealth;
 	Metrics.EnemiesEliminated = TotalEnemiesEliminated;
 	Metrics.FollowersLost = TotalFollowersLost;
@@ -707,14 +727,14 @@ void UTeamLeaderComponent::DrawDebugInfo()
 	if (!VisualLogger || !GetOwner()) return;
 
 	FVector LeaderPos = GetOwner()->GetActorLocation();
-	int32 TotalCount = SquadManager ? SquadManager->GetFollowerCount() : 0;
+	int32 TotalCount = LeaderCharacter ? LeaderCharacter->GetFollowerCount() : 0;
 	bool bMCTSActive = StrategicPlanner ? StrategicPlanner->IsMCTSRunning() : false;
 	float AvgHealth = CurrentTeamObservation.AverageTeamHealth;
 
 	// Draw formation info
-	if (SquadManager)
+	if (LeaderCharacter)
 	{
-		VisualLogger->DrawFormationInfo(CurrentTeamObservation.TeamCentroid, SquadManager->GetAliveFollowers());
+		VisualLogger->DrawFormationInfo(CurrentTeamObservation.TeamCentroid, LeaderCharacter->GetAliveFollowers());
 	}
 
 	// Draw objective markers
@@ -763,9 +783,9 @@ void UTeamLeaderComponent::OnPlanReady(const TArray<FStrategyAssignment>& Assign
 void UTeamLeaderComponent::OnSquadFollowerRegistered(AActor* Follower)
 {
 	// Propagate to our own OnFollowerRegistered delegate for backwards compatibility
-	if (SquadManager)
+	if (LeaderCharacter)
 	{
-		OnFollowerRegistered.Broadcast(Follower, SquadManager->GetFollowerCount());
+		OnFollowerRegistered.Broadcast(Follower, LeaderCharacter->GetFollowerCount());
 	}
 }
 
@@ -776,9 +796,9 @@ void UTeamLeaderComponent::HandleObjectivesDiscovered()
 	AObjectiveActor* Hostile = IntelManager ? IntelManager->GetHostileObjective() : nullptr;
 
 	// 2. 모든 팔로워에게 Push
-	if (SquadManager)
+	if (LeaderCharacter)
 	{
-		for (AActor* Follower : SquadManager->GetAliveFollowers())
+		for (AActor* Follower : LeaderCharacter->GetAliveFollowers())
 		{
 			PushContextToFollower(Follower, Friendly, Hostile);
 		}
@@ -787,15 +807,15 @@ void UTeamLeaderComponent::HandleObjectivesDiscovered()
 
 void UTeamLeaderComponent::BroadcastTacticalContext()
 {
-	if (!IntelManager || !SquadManager) return;
+	if (!IntelManager || !LeaderCharacter) return;
 
 	AObjectiveActor* Friendly = IntelManager->GetFriendlyObjective();
 	AObjectiveActor* Hostile = IntelManager->GetHostileObjective();
 
 	// 모든 살아있는 팔로워에게 Push
-	for (AActor* Follower : SquadManager->GetAliveFollowers())
+	for (AActor* Follower : LeaderCharacter->GetAliveFollowers())
 	{
-		NotifyFollowerContext(Follower, Friendly, Hostile);
+		PushContextToFollower(Follower, Friendly, Hostile);
 	}
 }
 

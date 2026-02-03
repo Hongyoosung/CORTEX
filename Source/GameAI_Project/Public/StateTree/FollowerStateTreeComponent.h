@@ -109,7 +109,7 @@ protected:
 	/** Find components on actor */
 	UFollowerAgentComponent* FindFollowerComponent();
 	UHealthComponent* FindHealthComponent();
-	UTeamCommsComponent* FindTeamCommsComponent();
+	// v9.0 PHASE 4: FindTeamCommsComponent removed (merged into character)
 
 	/** Bind to follower component events */
 	void BindToFollowerEvents();
@@ -147,9 +147,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
 	TObjectPtr<UHealthComponent> HealthComponent;
 
-	/** Team communications component reference (auto-found if nullptr) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
-	TObjectPtr<UTeamCommsComponent> TeamCommsComponent;
+	// v9.0 PHASE 4: TeamCommsComponent merged into FollowerCharacter (no longer a separate component)
 
 	/** Auto-find components on same actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")

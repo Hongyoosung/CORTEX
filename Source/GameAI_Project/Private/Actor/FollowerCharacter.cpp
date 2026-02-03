@@ -2,7 +2,6 @@
 
 #include "Actor/FollowerCharacter.h"
 #include "Team/Components/FollowerAgentComponent.h"
-#include "Team/Components/TeamCommsComponent.h"
 #include "Team/Components/TeamLeaderComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/Components/ContextBridgeComponent.h"
@@ -25,6 +24,9 @@
 #include "AIController.h"
 // v9.0 Phase 4: Team communication includes
 #include "EngineUtils.h"
+// v9.0 Phase 5: Simulation manager for decision loop
+#include "Core/SimulationManagerGameMode.h"
+#include "Kismet/GameplayStatics.h"
 
 AFollowerCharacter::AFollowerCharacter()
 {
@@ -43,6 +45,8 @@ AFollowerCharacter::AFollowerCharacter()
 
 	// Debug visualization (optional - can be disabled in editor)
 	VisualLoggerComponent = CreateDefaultSubobject<UVisualLoggerComponent>(TEXT("VisualLoggerComponent"));
+
+
 
 	//--------------------------------------------------------------------------
 	// Component Configuration
@@ -165,6 +169,83 @@ void AFollowerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AFollowerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	//==========================================================================
+	// v9.0 PHASE 5: DECISION LOOP (merged from FollowerAgentComponent)
+	//==========================================================================
+
+	// Check if simulation is running
+	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(GetWorld()->GetAuthGameMode());
+	if (SimManager && !SimManager->IsSimulationRunning())
+	{
+		return;
+	}
+
+	// Skip if not alive
+	if (!IsAliveState())
+	{
+		return;
+	}
+
+	// ========================================
+	// HIERARCHICAL DECISION MAKING (v9.0)
+	//
+	// Layer 1 (Strategic - MCTS): Team Leader assigns STRATEGIES to agents
+	// Layer 2 (Tactical - RL): Follower outputs TACTICAL PARAMETERS + COMBAT CHOICES
+	// Layer 3 (Execution - EQS): EQS uses tactical parameters as query weights
+	// Layer 4 (Execution - Rules): Combat execution with learned target priority
+	// ========================================
+	if (ShouldUpdateStrategy())
+	{
+		// Build observation
+		FObservationElement Obs = BuildLocalObservation();
+
+		// Get assigned strategy from MCTS
+		EStrategyType AssignedStrategy = GetAssignedStrategy();
+
+		// Query RL policy for tactical parameters + combat choices
+		if (CachedRLAgent && IsTacticalPolicyReady())
+		{
+			URLPolicyNetwork* Policy = GetTacticalPolicy();
+			if (Policy)
+			{
+				// Run RL inference (2-4ms if batched)
+				FMacroAction NewAction = Policy->GetMacroAction(Obs, AssignedStrategy);
+
+				// Update tactical state
+				SetTacticalParameters(NewAction.TacticalParams);
+				SetCombatParameters(NewAction.CombatParams);
+
+				// Update ContextBridge for StateTree
+				if (ContextBridgeComponent)
+				{
+					ContextBridgeComponent->SetStrategy(AssignedStrategy);
+					ContextBridgeComponent->SetTacticalParameters(NewAction.TacticalParams);
+					ContextBridgeComponent->SetCombatParameters(NewAction.CombatParams);
+					ContextBridgeComponent->SetIsAlive(IsAliveState());
+				}
+
+				// Update timestamp
+				LastStrategyUpdateTime = FPlatformTime::Seconds();
+			}
+		}
+
+		TicksSinceLastUpdate = 0;
+	}
+
+	// Always increment tick counter (for timeout fallback)
+	TicksSinceLastUpdate++;
+
+	// ========================================
+	// Combat execution (every tick, 60 Hz)
+	// ========================================
+	ExecuteCombatInternal();
+
+	// Draw debug info if enabled
+	if (VisualLoggerComponent && VisualLoggerComponent->bEnableDebugDrawing)
+	{
+		// TODO: DrawDebugInfo() - implement if needed
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -229,11 +310,25 @@ void AFollowerCharacter::SetStrategyAssignment(const FStrategyAssignment& Assign
 	{
 		CachedTacticalState->SetStrategyAssignment(Assignment);
 	}
+
+	// Synchronize strategy to RewardCalculator (required for strategy-specific rewards)
+	if (CachedRLAgent)
+	{
+		if (URewardCalculator* RewardCalc = CachedRLAgent->GetRewardCalculator())
+		{
+			RewardCalc->SetCurrentStrategy(Assignment.Strategy);
+		}
+	}
+
+	if (ContextBridgeComponent)
+	{
+		ContextBridgeComponent->SetStrategy(Assignment.Strategy);
+	}
 }
 
 EStrategyType AFollowerCharacter::GetAssignedStrategy() const
 {
-	return CachedTacticalState ? CachedTacticalState->GetAssignedStrategy() : EStrategyType::None;
+	return CachedTacticalState ? CachedTacticalState->GetAssignedStrategy() : EStrategyType::Assault;
 }
 
 FStrategyAssignment AFollowerCharacter::GetStrategyAssignment() const
@@ -272,6 +367,25 @@ FMacroAction AFollowerCharacter::GetCurrentMacroAction() const
 	return CachedTacticalState ? CachedTacticalState->GetCurrentMacroAction() : FMacroAction();
 }
 
+FAllyContext AFollowerCharacter::GetAllyContext() const
+{
+	FAllyContext Context;
+
+	if (!CachedObservationBuilder)
+	{
+		return Context; // Return empty context if ObservationBuilder is missing
+	}
+
+	// Extract ally context from current observation
+	const FObservationElement& Obs = CachedObservationBuilder->GetLocalObservation();
+	Context.bAllyNeedsHelp = Obs.bAllyNeedsHelp;
+	Context.AllyHealth = Obs.AllyHealth;
+	Context.AllyDistance = Obs.AllyDistance;
+	Context.AllyDirection = Obs.AllyDirection;
+
+	return Context;
+}
+
 //------------------------------------------------------------------------------
 // OBSERVATION WRAPPERS (delegate to ObservationBuilderComponent)
 //------------------------------------------------------------------------------
@@ -289,6 +403,14 @@ FObservationElement AFollowerCharacter::GetLocalObservation() const
 FObservationElement AFollowerCharacter::GetPreviousObservation() const
 {
 	return CachedObservationBuilder ? CachedObservationBuilder->GetPreviousObservation() : FObservationElement();
+}
+
+void AFollowerCharacter::UpdateLocalObservation(const FObservationElement& NewObservation)
+{
+	if (CachedObservationBuilder)
+	{
+		CachedObservationBuilder->UpdateLocalObservation(NewObservation);
+	}
 }
 
 void AFollowerCharacter::UpdateObjectiveContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile)
@@ -346,6 +468,11 @@ URewardCalculator* AFollowerCharacter::GetRewardCalculator() const
 	return CachedRLAgent ? CachedRLAgent->GetRewardCalculator() : nullptr;
 }
 
+bool AFollowerCharacter::IsUsingRLPolicy() const
+{
+	return CachedRLAgent ? CachedRLAgent->bUseRLPolicy : false;
+}
+
 URLPolicyNetwork* AFollowerCharacter::GetTacticalPolicy() const
 {
 	return CachedRLAgent ? CachedRLAgent->GetTacticalPolicy() : nullptr;
@@ -382,7 +509,7 @@ AActor* AFollowerCharacter::GetLowestHPEnemy(const TArray<AActor*>& Enemies) con
 // TEAM COMMUNICATION WRAPPERS (v9.0 Phase 4: merged from TeamCommsComponent)
 //------------------------------------------------------------------------------
 
-void AFollowerCharacter::SignalEventToLeader(EStrategicEvent Event, AActor* Instigator, FVector Location, int32 Priority)
+void AFollowerCharacter::SignalEventToLeader(EStrategicEvent Event, AActor* InstigatorActor, FVector Location, int32 Priority)
 {
 	if (!CachedTeamLeader)
 	{
@@ -395,7 +522,7 @@ void AFollowerCharacter::SignalEventToLeader(EStrategicEvent Event, AActor* Inst
 	}
 
 	// Forward event to team leader
-	CachedTeamLeader->ProcessStrategicEvent(Event, Instigator, Location, Priority);
+	CachedTeamLeader->ProcessStrategicEvent(Event, InstigatorActor, Location, Priority);
 
 	if (bEnableTeamCommsLogging)
 	{
@@ -466,12 +593,20 @@ void AFollowerCharacter::ResetEpisode()
 		CachedRLAgent->ResetEpisode();
 	}
 
-	if (FollowerAgentComponent)
+	if (ContextBridgeComponent)
 	{
-		FollowerAgentComponent->ResetEpisode();
+		ContextBridgeComponent->ResetContext();
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter] '%s': Episode reset complete"), *GetName());
+}
+
+void AFollowerCharacter::OnEpisodeEnded(float EpisodeReward)
+{
+	if (CachedRLAgent)
+	{
+		CachedRLAgent->OnEpisodeEnded(EpisodeReward);
+	}
 }
 
 void AFollowerCharacter::MarkAsDead()
@@ -481,10 +616,24 @@ void AFollowerCharacter::MarkAsDead()
 		CachedTacticalState->MarkAsDead();
 	}
 
-	if (FollowerAgentComponent)
+	// TODO: remove CombatExecutor -> move to state tree task
+	if (CachedCombatExecutor)
 	{
-		FollowerAgentComponent->MarkAsDead();
+		ContextBridgeComponent->SetIsAlive(false);
+	}	
+
+	if (ContextBridgeComponent)
+	{
+		ContextBridgeComponent->SetIsAlive(false);
 	}
+
+	if (StateTreeComponent)
+	{
+		StateTreeComponent->OnFollowerDied();
+	}
+
+	SetActorEnableCollision(false);
+	SetActorHiddenInGame(true);
 }
 
 void AFollowerCharacter::MarkAsAlive()
@@ -494,10 +643,28 @@ void AFollowerCharacter::MarkAsAlive()
 		CachedTacticalState->MarkAsAlive();
 	}
 
-	if (FollowerAgentComponent)
+	if (CachedCombatExecutor)
 	{
-		FollowerAgentComponent->MarkAsAlive();
+		ContextBridgeComponent->SetIsAlive(true);
 	}
+
+	if (ContextBridgeComponent)
+	{
+		ContextBridgeComponent->SetIsAlive(true);
+	}
+
+	if (CachedHealthComponent)
+	{
+		CachedHealthComponent->ResetHealth();
+	}
+
+	if (StateTreeComponent)
+	{
+		StateTreeComponent->OnFollowerRespawned();
+	}
+
+	SetActorEnableCollision(true);
+	SetActorHiddenInGame(false);
 }
 
 bool AFollowerCharacter::IsAliveState() const
@@ -769,4 +936,58 @@ void AFollowerCharacter::UnregisterFromLeader()
 			UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0] '%s': Unregistered from leader"), *GetName());
 		}
 	}
+}
+
+//------------------------------------------------------------------------------
+// v9.0 PHASE 5: DECISION LOOP (merged from FollowerAgentComponent)
+//------------------------------------------------------------------------------
+
+bool AFollowerCharacter::ShouldUpdateStrategy() const
+{
+	// RATE LIMIT: Prevent oscillation - minimum 50ms between updates
+	double CurrentTime = FPlatformTime::Seconds();
+	if (CurrentTime - LastStrategyUpdateTime < MinStrategyUpdateInterval)
+	{
+		return false;
+	}
+
+	// Check if strategy assignment changed
+	bool bAssignmentChanged = false;
+	if (CachedTacticalState)
+	{
+		FStrategyAssignment Current = CachedTacticalState->GetStrategyAssignment();
+		FStrategyAssignment Last = CachedTacticalState->GetLastAssignment();
+		// v9.0: Only check strategy change (objectives are implicit in rewards)
+		bAssignmentChanged = (Current.Strategy != Last.Strategy);
+	}
+
+	// Fallback: Force update every 30 ticks (~0.5s at 60 FPS)
+	bool bTimeout = TicksSinceLastUpdate > 30;
+
+	return bAssignmentChanged || bTimeout;
+}
+
+void AFollowerCharacter::ExecuteCombatInternal()
+{
+	if (!CachedCombatExecutor || !CachedTacticalState)
+	{
+		return;
+	}
+
+	FCombatParameters CombatParams = CachedTacticalState->GetCombatParameters();
+	CachedCombatExecutor->ExecuteCombat(CombatParams);
+}
+
+void AFollowerCharacter::UpdateTacticalContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile, const FTeamObservation& TeamObs)
+{
+	// 2. 하위 컴포넌트로 데이터 전파 (Push)
+	if (ObservationBuilder)
+	{
+		ObservationBuilder->SetObjectives(Friendly, Hostile);
+		ObservationBuilder->UpdateTeamIntel(TeamObs);
+	}
+
+	// 3. (옵션) TacticalState 등 다른 컴포넌트에도 필요하다면 전파
+
+	UE_LOG(LogTemp, Verbose, TEXT("[%s] Tactical Context Updated via Push"), *GetOwner()->GetName());
 }
