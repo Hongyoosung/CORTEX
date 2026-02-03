@@ -7,12 +7,14 @@
 #include "Components/ActorComponent.h"
 #include "Team/TeamTypes.h"
 #include "Async/AsyncWork.h"
-#include "AI/MCTS/MCTSAsyncTask.h"  // Required for TUniquePtr<FAsyncTask<FMCTSAsyncTask>>
+#include "AI/MCTS/MCTSAsyncTask.h"  
 #include "StrategicPlannerComponent.generated.h"
 
-// Forward declarations
+
+
 class UMCTS;
 class AObjectiveActor;
+
 
 /**
  * Delegate fired when MCTS planning completes.
@@ -26,8 +28,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 	float, ExecutionTimeMs,
 	FString, BatchKey
 );
+ 
 
-/**
+/** //===============================================================
  * Strategic Planner Component
  *
  * Manages MCTS-based strategic planning with async execution.
@@ -45,7 +48,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
  * 2. Call RunStrategyAssignmentAsync(agents, objectives)
  * 3. Poll with PollAsyncTask() in Tick
  * 4. Listen to OnPlanReady delegate for results
- */
+ */ //===============================================================
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UStrategicPlannerComponent : public UActorComponent
 {
@@ -53,16 +56,12 @@ class GAMEAI_PROJECT_API UStrategicPlannerComponent : public UActorComponent
 
 public:
 	UStrategicPlannerComponent();
-
-	// Custom destructor required for TUniquePtr with forward-declared type
 	virtual ~UStrategicPlannerComponent();
-
-	// ========== Lifecycle ==========
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	// ========== Configuration ==========
+
 
 	/**
 	 * Initialize MCTS with simulation count.
@@ -71,11 +70,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Strategic Planner")
 	void InitializeMCTS(int32 Simulations = 500);
 
-	/**
-	 * Set MCTS instance directly (alternative to InitializeMCTS).
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Strategic Planner")
-	void SetMCTS(UMCTS* InMCTS);
 
 	// ========== Planning Execution ==========
 
@@ -140,8 +134,14 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Strategic Planner")
 	UMCTS* GetMCTS() const { return StrategicMCTS; }
 
-	// ========== Events ==========
 
+private:
+	/** Process completed async task */
+	void ProcessCompletedTask();
+
+
+public:
+	// ========== Events ==========
 	/**
 	 * Fired when MCTS planning completes.
 	 * Subscribe to this to receive strategy assignments.
@@ -149,6 +149,8 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Strategic Planner")
 	FOnPlanReady OnPlanReady;
 
+
+public:
 	// ========== Configuration Properties ==========
 
 	/** Number of MCTS simulations per planning cycle */
@@ -163,26 +165,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategic Planner")
 	bool bEnableVerboseLogging = false;
 
-private:
-	/** MCTS instance */
-	UPROPERTY()
-	UMCTS* StrategicMCTS = nullptr;
 
-	/**
-	 * Async MCTS task (RAII managed via TUniquePtr).
-	 * Automatically cleaned up when reset or component destroyed.
-	 */
+
+private:
 	TUniquePtr<FAsyncTask<FMCTSAsyncTask>> AsyncMCTSTask;
 
-	/** Is MCTS currently running? */
-	bool bMCTSRunning = false;
+	UPROPERTY()
+	UMCTS*		StrategicMCTS = nullptr;
 
-	/** Last execution time (milliseconds) */
-	float LastExecutionTime = 0.0f;
+	bool		bMCTSRunning = false;
 
-	/** Last selected batch key */
-	FString LastBatchKey;
+	float		LastExecutionTime = 0.0f;
 
-	/** Process completed async task */
-	void ProcessCompletedTask();
+	FString		LastBatchKey;
 };

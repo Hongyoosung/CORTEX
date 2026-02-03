@@ -18,7 +18,7 @@ struct FStrategyAssignment;
 struct FTeamObservation;
 
 
-/** ==========================================================================
+/** //===============================================================
  * Leader Character - v9.0
  *
  * This character manages a team of follower agents using event-driven MCTS.
@@ -27,7 +27,7 @@ struct FTeamObservation;
  * - TeamLeaderComponent now acts as coordinator, delegates to managers
  * - RAII async MCTS execution for automatic resource cleanup
  * - Debug visualization separated into VisualLoggerComponent
- */ //========================================================================
+ */ //===============================================================
 UCLASS()
 class GAMEAI_PROJECT_API ALeaderCharacter : public ACharacter
 {
@@ -45,9 +45,9 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 
-	//==========================================================================
+	//===============================================================
 	// Team Management API
-	//==========================================================================
+	//===============================================================
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Squad")
 	bool				RegisterFollower(AActor* Follower);
@@ -57,9 +57,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "AI|Squad")
 	TArray<AActor*>		GetFollowers() const;
-
-	UFUNCTION(BlueprintPure, Category = "AI|Squad")
-	TArray<AActor*>		GetAliveFollowers() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|Squad")
 	int32				GetFollowerCount() const;
@@ -87,9 +84,9 @@ public:
 
 	
 
-	//==========================================================================
+	//===============================================================
 	// STRATEGIC PLANNING API
-	//==========================================================================
+	//===============================================================
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Strategy")
 	void RunStrategyAssignmentAsync(const TArray<AActor*>& Agents, const TArray<AObjectiveActor*>& Objectives);
@@ -97,17 +94,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Strategy")
 	bool IsRunningMCTS() const;
 
-	UFUNCTION(BlueprintCallable, Category = "AI|Strategy")
-	void ApplyStrategyAssignment(const TArray<FStrategyAssignment>& Assignments);
 
+	//===============================================================
+	// EVENT HANDLERS
+	//===============================================================
+	void OnAllAgentsRegisterd();
+	void OnSimulationStart();
 
 
 private:
-	//==========================================================================
-	// Event Handlers
-	//==========================================================================
-	UFUNCTION()
-	void OnObjectiveDicoveredCompleted();
 
 
 
@@ -126,6 +121,10 @@ public:
 	UPROPERTY(VisibleAnywhere,				BlueprintReadOnly, Category = "AI|Components|Debug")
 	TObjectPtr<UVisualLoggerComponent>		VisualLoggerComponent;
 
+
+
+	//=============== CACHED =====================
+	ASimulationManagerGameMode* GameMode;
 
 
 	//============= COMBAT STATS =================

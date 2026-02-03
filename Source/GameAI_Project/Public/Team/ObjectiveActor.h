@@ -76,7 +76,7 @@ public:
 
 	/** Check if this objective belongs to the given team */
 	UFUNCTION(BlueprintPure, Category = "Objective")
-	bool IsFriendlyTo(int32 AgentTeamID) const { return OwnerTeamID == AgentTeamID; }
+	bool IsFriendlyTo(int32 AgentTeamID) const { return TeamInfo.TeamID == AgentTeamID; }
 
 	/** Check if this objective is hostile to the given team (v8.5: Multi-environment support) */
 	UFUNCTION(BlueprintPure, Category = "Objective")

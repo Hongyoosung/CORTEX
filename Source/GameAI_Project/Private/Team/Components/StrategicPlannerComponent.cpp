@@ -7,6 +7,7 @@
 #include "Team/ObjectiveActor.h"
 #include "Engine/World.h"
 
+
 UStrategicPlannerComponent::UStrategicPlannerComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -58,30 +59,13 @@ void UStrategicPlannerComponent::InitializeMCTS(int32 Simulations)
 		UE_LOG(LogTemp, Error, TEXT("[StrategicPlanner] Failed to create MCTS instance"));
 	}
 
-	// Validate configuration
-	if (MCTSSimulations < 100)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[StrategicPlanner] Low simulation count (%d) may produce poor results"), MCTSSimulations);
-	}
-
 	if (!bAsyncMCTS)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[StrategicPlanner] Synchronous MCTS enabled - may cause frame hitches"));
 	}
 }
 
-void UStrategicPlannerComponent::SetMCTS(UMCTS* InMCTS)
-{
-	if (InMCTS)
-	{
-		StrategicMCTS = InMCTS;
-		UE_LOG(LogTemp, Log, TEXT("[StrategicPlanner] MCTS instance set externally"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[StrategicPlanner] SetMCTS: Null MCTS provided"));
-	}
-}
+
 
 void UStrategicPlannerComponent::RunStrategyAssignmentAsync(
 	const TArray<AActor*>& Agents,

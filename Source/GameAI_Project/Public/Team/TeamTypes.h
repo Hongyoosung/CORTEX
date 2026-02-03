@@ -42,11 +42,14 @@ struct GAMEAI_PROJECT_API FTeamInfo
 	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
 	int32 EnvID;
 
+	int32 AgnetCount;
+
 	FLinearColor TeamColor;
 
 	FTeamInfo()
 		: TeamID(0)
 		, EnvID(0)
+		, AgnetCount(0)
 		, TeamColor(FLinearColor::White)
 	{}
 };

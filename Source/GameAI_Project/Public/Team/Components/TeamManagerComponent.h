@@ -15,9 +15,11 @@ class AObjectiveActor;
 
 /**
  * Delegate fired when objectives are discovered and ready for use.
- * v9.0: Allows followers to defer observation initialization until objectives exist.
+ * Allows followers to defer observation initialization until objectives exist.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnObjectivesDiscovered);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAllAgentsRegistered, int32, AgentCount)
 
 /**
  * Manages enemy tracking, objective discovery, and team observation building.
@@ -65,13 +67,6 @@ public:
 	// ObjectiveActor Tracking
 	//=====================================================
 
-	/**
-	 * Discover objectives in the world by searching for actors with specific tags.
-	 * Call this after a delay (e.g., 0.3s) to ensure objectives have spawned.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Team Manager")
-	void DiscoverWorldObjectives();
-
 	void PushContextToFollower(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
 
 	/**
@@ -102,13 +97,13 @@ public:
 	 * Register an enemy actor for tracking.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Team Manager")
-	void RegisterEnemy(AActor* Enemy);
+	void			RegisterEnemy(AActor* Enemy);
 
 	/**
 	 * Unregister an enemy actor.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Team Manager")
-	void UnregisterEnemy(AActor* Enemy);
+	void			UnregisterEnemy(AActor* Enemy);
 
 	/**
 	 * Get all known enemies.
@@ -120,13 +115,13 @@ public:
 	 * Clear all known enemies (useful for episode reset).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Team Manager")
-	void ClearVisibleEnemies();
+	void			ClearVisibleEnemies();
 
 	/**
 	 * Get number of known enemies.
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Team Manager")
-	int32 GetVisibleEnemyCount() const { return VisibleEnemies.Num(); }
+	FORCEINLINE		int32		GetVisibleEnemyCount() const { return VisibleEnemies.Num(); }
 
 
 
@@ -149,16 +144,19 @@ public:
 	FTeamInfo GetTeamInfo() const { return TeamInfo; }
 
 
+	//=====================================================
+	// Event Handler
+	//=====================================================
+
+
+
 public:
 	// ========== Events ==========
-
-	/**
-	 * Event broadcast when objectives are discovered.
-	 * v9.0: Subscribers can safely initialize observations after this event.
-	 */
 	UPROPERTY(BlueprintAssignable, Category = "Team Manager")
-	FOnObjectivesDiscovered OnObjectivesDiscovered;
+	FOnObjectivesDiscovered OnObjectivesDiscovered_Delegate;
 
+	UPROPERTY(BlueprintAssignable, Category = "Team Manager")
+	FOnAllAgentsRegistered OnAllAgentsRegistered_Delegate;
 
 
 public:

@@ -9,11 +9,11 @@
 #include "Team/TeamTypes.h"
 #include "FollowerStateTreeContext.generated.h"
 
-class UFollowerAgentComponent;
+class AFollowerCharacter;
+class ALeaderCharacter;
 class URLPolicyNetwork;
 class AAIController;
 class APawn;
-class UTeamLeaderComponent;
 class AObjectiveActor;
 
 /**
@@ -39,7 +39,11 @@ struct GAMEAI_PROJECT_API FFollowerStateTreeContext
 
 	/** Follower agent component reference */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UFollowerAgentComponent> FollowerComponent = nullptr;
+	TObjectPtr<AFollowerCharacter> Follower = nullptr;
+
+	/** Team leader component reference */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<ALeaderCharacter> Leader = nullptr;
 
 	/** AI Controller controlling this follower */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -47,10 +51,6 @@ struct GAMEAI_PROJECT_API FFollowerStateTreeContext
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<APawn> ControlledPawn = nullptr;
-
-	/** Team leader component reference */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UTeamLeaderComponent> TeamLeader = nullptr;
 
 	/** RL policy network for tactical decisions */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")

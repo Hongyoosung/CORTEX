@@ -7,40 +7,12 @@
 #include "StateTree/FollowerStateTreeSchema.h"
 #include "FollowerStateTreeComponent.generated.h"
 
-class UFollowerAgentComponent;
+class AFollowerCharacter;
 class UHealthComponent;
 class UTeamCommsComponent;
 
-/**
- * Follower State Tree Component
- *
- * Manages State Tree execution for follower agents.
- * Replaces both StateMachine + BehaviorTree with a unified State Tree system.
- *
- * Architecture:
- * - Team Leader issues strategic commands
- * - FollowerAgentComponent receives commands
- * - FollowerStateTreeComponent executes commands via State Tree
- * - RL policy selects tactical actions within states
- *
- * Setup:
- * 1. Add this component to your AI pawn/character
- * 2. Assign StateTreeAsset (create in editor: Right Click > Gameplay > State Tree)
- * 3. Set FollowerComponent reference (auto-found if on same actor)
- * 4. Component auto-starts State Tree on BeginPlay
- *
- * State Tree Asset Structure (Sprint 3 - Mission-Driven):
- * Root (Selector)
- * ├─ [IsAlive == false] DeadState
- * ├─ [CurrentMission != null] ExecuteMissionState
- * │  └─ ExecuteMission (universal task, handles all Mission types)
- * └─ IdleState
- *
- * Evaluators (Global):
- * - UpdateObservation (runs every tick, gathers 71-feature observation)
- * - SpatialContext (computes FActionSpaceMask based on environment, 5Hz)
- * - SyncCommand (syncs command from FollowerAgentComponent)
- */
+
+
 UCLASS(ClassGroup = "StateTree", meta = (BlueprintSpawnableComponent, DisplayName = "Follower StateTree Component"))
 class GAMEAI_PROJECT_API UFollowerStateTreeComponent : public UStateTreeComponent
 {
@@ -56,6 +28,7 @@ public:
 	virtual TValueOrError<void, FString> HasValidStateTreeReference() const override;
 	virtual void ValidateStateTreeReference() override;
 
+
 	UFUNCTION(BlueprintPure, Category = "State Tree")
     virtual TSubclassOf<UStateTreeSchema> GetSchema() const override;
 
@@ -68,6 +41,8 @@ public:
 		TArrayView<const FStateTreeExternalDataDesc> Descs,
 		TArrayView<FStateTreeDataView> OutDataViews
 	) const override;
+
+
 
 	//--------------------------------------------------------------------------
 	// API
@@ -107,9 +82,9 @@ public:
 	
 protected:
 	/** Find components on actor */
-	UFollowerAgentComponent* FindFollowerComponent();
+	AFollowerCharacter* FindFollowerCharacter();
+
 	UHealthComponent* FindHealthComponent();
-	// v9.0 PHASE 4: FindTeamCommsComponent removed (merged into character)
 
 	/** Bind to follower component events */
 	void BindToFollowerEvents();
@@ -142,7 +117,7 @@ public:
 
 	/** Follower agent component reference (auto-found if nullptr) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
-	TObjectPtr<UFollowerAgentComponent> FollowerComponent;
+	TObjectPtr<AFollowerCharacter> Follower;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State Tree")
 	TObjectPtr<UHealthComponent> HealthComponent;
@@ -161,18 +136,15 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "State Tree")
 	FFollowerStateTreeContext Context;
 
-	//--------------------------------------------------------------------------
-	// STATE TREE EVENTS (for event-driven transitions)
-	//--------------------------------------------------------------------------
+	int32 TickLogCounter;
 
-	/** Event tag: Mission received */
-	static const FGameplayTag Event_MissionReceived;
+
+private:
+	//============= StateTree Event =================
 
 	/** Event tag: Follower died */
 	static const FGameplayTag Event_FollowerDied;
 
 	/** Event tag: Follower respawned */
 	static const FGameplayTag Event_FollowerRespawned;
-
-	int32 TickLogCounter;
 };

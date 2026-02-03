@@ -6,8 +6,7 @@
 #include "Components/StateTreeComponent.h"
 #include "AI/AIController/FollowerAIController.h"
 #include "Actor/FollowerCharacter.h"
-#include "Team/Components/FollowerAgentComponent.h"
-#include "Team/Components/TeamLeaderComponent.h"
+#include "Actor/LeaderCharacter.h"
 #include "RL/RLPolicyNetwork.h"
 #include "StateTree/Conditions/STCondition_IsAlive.h"
 #include "StateTree/Tasks/STTask_ExecuteTacticalMovement.h"
@@ -72,7 +71,7 @@ UFollowerStateTreeSchema::UFollowerStateTreeSchema()
 
 	// 2. FollowerComponent
 	{
-		FStateTreeExternalDataDesc Desc(FName(TEXT("FollowerComponent")), UFollowerAgentComponent::StaticClass(), FGuid(0x4F111111, 0x11112222, 0x33334444, 0x00000002));
+		FStateTreeExternalDataDesc Desc(FName(TEXT("FollowerCharacter")), AFollowerCharacter::StaticClass(), FGuid(0x4F111111, 0x11112222, 0x33334444, 0x00000002));
 		Desc.Requirement = EStateTreeExternalDataRequirement::Required;
 		ContextDataDescs.Add(Desc);
 	}
@@ -86,7 +85,7 @@ UFollowerStateTreeSchema::UFollowerStateTreeSchema()
 
 	// 4. TeamLeader
 	{
-		FStateTreeExternalDataDesc Desc(FName(TEXT("TeamLeader")), UTeamLeaderComponent::StaticClass(), FGuid(0x4F111111, 0x11112222, 0x33334444, 0x00000004));
+		FStateTreeExternalDataDesc Desc(FName(TEXT("LeaderCharacter")), ALeaderCharacter::StaticClass(), FGuid(0x4F111111, 0x11112222, 0x33334444, 0x00000004));
 		Desc.Requirement = EStateTreeExternalDataRequirement::Optional;
 		ContextDataDescs.Add(Desc);
 	}
@@ -237,8 +236,8 @@ bool UFollowerStateTreeSchema::IsClassAllowed(const UClass* InClass) const
 	{
 		if (InClass->IsChildOf(AAIController::StaticClass()) ||
 			InClass->IsChildOf(APawn::StaticClass()) ||
-			InClass->IsChildOf(UFollowerAgentComponent::StaticClass()) ||
-			InClass->IsChildOf(UTeamLeaderComponent::StaticClass()) ||
+			InClass->IsChildOf(AFollowerCharacter::StaticClass()) ||
+			InClass->IsChildOf(ALeaderCharacter::StaticClass()) ||
 			InClass->IsChildOf(URLPolicyNetwork::StaticClass()) ||
 			InClass->IsChildOf(UFollowerStateTreeComponent::StaticClass()))
 		{

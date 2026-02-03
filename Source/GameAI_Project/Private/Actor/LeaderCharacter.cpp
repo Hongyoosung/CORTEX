@@ -1,13 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actor/LeaderCharacter.h"
-#include "Actor/FollowerCharacter.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Team/Components/TeamManagerComponent.h"
 #include "Team/Components/StrategicPlannerComponent.h"
+#include "Team/ObjectiveActor.h"
 #include "Util/Components/VisualLoggerComponent.h"
 #include "Team/TeamTypes.h"
 #include "Observation/TeamObservation.h"
+#include "Kismet/GameplayStatics.h"
 
 
 ALeaderCharacter::ALeaderCharacter()
@@ -31,14 +32,10 @@ void ALeaderCharacter::BeginPlay()
 
 	if (TeamManagerComponent)
 	{
-		TeamManagerComponent->DiscoverWorldObjectives(); // 이걸 게임모드나 다른 곳에서 호출하도록 변경해야함
-		
+		TeamManagerComponent->OnAllAgentsRegistered_Delegate.AddDynamic(this, &ALeaderCharacter::OnAllAgentsRegisterd);
+
 		UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter] '%s': Objectives discovered"), *GetName());
 	}
-
-
-	ASimulationManagerGameMode* GameMode = Cast<ASimulationManagerGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
-	GameMode->RegisterTeam(TeamManagerComponent->GetTeamInfo());
 
 
 	// Strategic Planner: Initialize MCTS with configured simulation count
@@ -48,6 +45,11 @@ void ALeaderCharacter::BeginPlay()
 		UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter] '%s': MCTS initialized with %d simulations"),
 			*GetName(), StrategicPlannerComponent->MCTSSimulations);
 	}
+
+
+	GameMode = Cast<ASimulationManagerGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+	GameMode->OnSimulationStart_Delegate.AddDynamic(this, &ALeaderCharacter::OnSimulationStart);
+	
 
 	UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter] '%s': All manager components initialized"), *GetName());
 }
@@ -77,28 +79,6 @@ TArray<AActor*> ALeaderCharacter::GetFollowers() const
 	return TeamManagerComponent ? TeamManagerComponent->GetFollowers() : TArray<AActor*>();
 }
 
-TArray<AActor*> ALeaderCharacter::GetAliveFollowers() const
-{
-	TArray<AActor*> AliveFollowers;
-	TArray<AActor*> RegisteredFollowers = TeamManagerComponent->GetFollowers();
-
-	for (AActor* Follower : RegisteredFollowers)
-	{
-		if (!Follower)
-		{
-			continue;
-		}
-
-		AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(Follower);
-
-		if (FollowerChar->IsAlive_Implementation())
-		{
-			AliveFollowers.Add(Follower);
-		}
-	}
-
-	return AliveFollowers;
-}
 
 int32 ALeaderCharacter::GetFollowerCount() const
 {
@@ -180,7 +160,28 @@ bool ALeaderCharacter::IsRunningMCTS() const
 	return StrategicPlannerComponent ? StrategicPlannerComponent->IsMCTSRunning() : false;
 }
 
-void ALeaderCharacter::ApplyStrategyAssignment(const TArray<FStrategyAssignment>& Assignments)
-{
 
+
+void ALeaderCharacter::OnAllAgentsRegisterd()
+{
+	bool Success = GameMode->RegisterTeam(TeamManagerComponent->GetTeamInfo());
+
+	if (Success)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter] '%s': All agents registered with GameMode"), *GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LeaderCharacter] '%s': Failed to register agents with GameMode"), *GetName());
+	}
+}
+
+void ALeaderCharacter::OnSimulationStart()
+{
+	AObjectiveActor* Friendly;
+	AObjectiveActor* Hostile;
+
+	GameMode->GetObjectives(TeamManagerComponent->GetTeamInfo().TeamID, Friendly, Hostile);
+
+	TeamManagerComponent->PushContextToFollower(Friendly, Hostile);
 }

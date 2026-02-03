@@ -13,6 +13,11 @@ class AObjectiveActor;
 struct FDeathEventData;
 
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSimulationStart);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSimulationStop);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeStarted, int32, EnvironmentID, int32, EpisodeNumber);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeEnded, int32, EnvironmentID, const FEpisodeResult&, Result);
+
 
 /**
  * Simulation statistics
@@ -23,10 +28,10 @@ struct FSimulationStats
 	GENERATED_BODY()
 
 	UPROPERTY(BlueprintReadOnly, Category = "Stats")
-	int32 TotalTeams = 0;
+	int32 TotalEnvironments = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Stats")
-	int32 ActiveTeams = 0;
+	int32 TotalTeams = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Stats")
 	float SimulationTime = 0.0f;
@@ -62,6 +67,8 @@ struct FEpisodeResult
 	int32 TotalSteps = 0;
 };
 
+
+
 /** //==========================================================================
  * Simulation Manager GameMode
  *
@@ -92,6 +99,8 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
+
+
 	//==========================================================================
 	// TEAM REGISTRATION
 	//==========================================================================
@@ -108,157 +117,12 @@ public:
 	 * @param TeamID - Team to unregister
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Teams")
-	void UnregisterTeam(int32 TeamID);
+	bool UnRegisterTeam(FTeamInfo TeamInfo);
 
-	/**
-	 * Register an agent as a member of a team
-	 * @param TeamID - Team ID
-	 * @param Agent - Agent actor to register
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Teams")
-	bool RegisterTeamMember(int32 TeamID, AActor* Agent);
 
-	/**
-	 * Unregister an agent from a team
-	 * @param TeamID - Team ID
-	 * @param Agent - Agent to unregister
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Teams")
-	void UnregisterTeamMember(int32 TeamID, AActor* Agent);
-
-	/**
-	 * Associate a team with an environment (v8.5 Vectorized Training)
-	 * @param TeamID - Team ID to associate
-	 * @param EnvironmentID - Environment ID that owns this team
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Teams")
-	void RegisterTeamEnvironment(int32 TeamID, int32 EnvironmentID);
-
-	/**
-	 * Get team ID for an actor
-	 * @param Agent - Actor to query
-	 * @return Team ID (returns -1 if not found)
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Teams")
-	int32 GetTeamIDForActor(AActor* Agent) const;
-
-	//--------------------------------------------------------------------------
-	// ENEMY TEAM MANAGEMENT
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Set enemy teams for a team (replaces existing enemies)
-	 * @param TeamID - Team to configure
-	 * @param EnemyTeamIDs - Array of enemy team IDs
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Enemies")
-	void SetEnemyTeams(int32 TeamID, const TArray<int32>& EnemyTeamIDs);
-
-	/**
-	 * Add a single enemy team
-	 * @param TeamID - Team to configure
-	 * @param EnemyTeamID - Enemy team to add
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Enemies")
-	void AddEnemyTeam(int32 TeamID, int32 EnemyTeamID);
-
-	/**
-	 * Remove an enemy team
-	 * @param TeamID - Team to configure
-	 * @param EnemyTeamID - Enemy team to remove
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Enemies")
-	void RemoveEnemyTeam(int32 TeamID, int32 EnemyTeamID);
-
-	/**
-	 * Set bidirectional enemy relationship (both teams become enemies of each other)
-	 * @param TeamID1 - First team
-	 * @param TeamID2 - Second team
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Enemies")
-	void SetMutualEnemies(int32 TeamID1, int32 TeamID2);
-
-	/**
-	 * Check if two teams are enemies
-	 * @param TeamID1 - First team
-	 * @param TeamID2 - Second team
-	 * @return true if teams are enemies
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Enemies")
-	bool AreTeamsEnemies(int32 TeamID1, int32 TeamID2) const;
-
-	/**
-	 * Check if two actors are on enemy teams
-	 * @param Actor1 - First actor
-	 * @param Actor2 - Second actor
-	 * @return true if actors are on enemy teams
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Enemies")
-	bool AreActorsEnemies(AActor* Actor1, AActor* Actor2) const;
-
-	/**
-	 * Get all enemy team IDs for a team
-	 * @param TeamID - Team to query
-	 * @return Array of enemy team IDs
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Enemies")
-	TArray<int32> GetEnemyTeamIDs(int32 TeamID) const;
-
-	/**
-	 * Get all enemy actors for a team
-	 * @param TeamID - Team to query
-	 * @return Array of enemy actors
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Enemies")
-	TArray<AActor*> GetEnemyActors(int32 TeamID) const;
-
-	//--------------------------------------------------------------------------
-	// TEAM QUERIES
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Get team info
-	 * @param TeamID - Team to query
-	 * @param OutTeamInfo - Output team info
-	 * @return true if team exists
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Teams")
-	bool GetTeamInfo(int32 TeamID, FTeamInfo& OutTeamInfo) const;
-
-	/**
-	 * Get team leader component
-	 * @param TeamID - Team to query
-	 * @return Team leader component (nullptr if not found)
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Teams")
-	UTeamLeaderComponent* GetTeamLeader(int32 TeamID) const;
-
-	/**
-	 * Get all team members
-	 * @param TeamID - Team to query
-	 * @return Array of team member actors
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Teams")
-	TArray<AActor*> GetTeamMembers(int32 TeamID) const;
-
-	/**
-	 * Get all registered team IDs
-	 * @return Array of all team IDs
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Teams")
-	TArray<int32> GetAllTeamIDs() const;
-
-	/**
-	 * Check if team exists
-	 * @param TeamID - Team to check
-	 * @return true if team is registered
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Teams")
-	bool IsTeamRegistered(int32 TeamID) const;
-
-	//--------------------------------------------------------------------------
-	// OBJECTIVE REGISTRATION (v9.0 REFACTOR)
-	//--------------------------------------------------------------------------
+	//==========================================================================
+	// OBJECTIVE MANAGEMENT
+	//==========================================================================
 
 	/**
 	 * Register an ObjectiveActor to the simulation
@@ -269,9 +133,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Objectives")
 	void RegisterObjective(AObjectiveActor* Objective);
 
-	//--------------------------------------------------------------------------
+	/**
+	 * Unregister an ObjectiveActor from the simulation
+	 * @param Objective - ObjectiveActor to unregister
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Objectives")
+	void UnRegisterObjective(AObjectiveActor* Objective);
+
+	void GetObjectives(int32 TeamID, AObjectiveActor*& Friendly, AObjectiveActor*& Hostile) const;
+
+
+
+	//==========================================================================
 	// SIMULATION CONTROL
-	//--------------------------------------------------------------------------
+	//==========================================================================
 
 	/**
 	 * Start simulation (enables all teams)
@@ -291,45 +166,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Control")
 	void ResetSimulation();
 
-	/**
-	 * Is simulation running?
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Control")
-	bool IsSimulationRunning() const { return bSimulationRunning; }
 
-	/**
-	 * Get simulation statistics
-	 */
+
+	//==========================================================================
+	// VALIDATION & QUERIES
+	//==========================================================================
+	UFUNCTION(BlueprintPure, Category = "Simulation|Control")
+	FORCEINLINE bool IsSimulationRunning() const { return bSimulationRunning; }
+
 	UFUNCTION(BlueprintPure, Category = "Simulation|Stats")
 	FSimulationStats GetSimulationStats() const;
 
-	//--------------------------------------------------------------------------
-	// EPISODE MANAGEMENT (RL Training)
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Check if a team is eliminated (all members dead)
-	 * @param TeamID - Team to check
-	 * @return true if all team members are dead
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	bool IsTeamEliminated(int32 TeamID) const;
-
-	/**
-	 * Get number of alive agents in a team
-	 * @param TeamID - Team to query
-	 * @return Number of alive agents
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	int32 GetAliveAgentCount(int32 TeamID) const;
-
-	/**
-	 * Called when an agent dies - checks for episode termination
-	 * Bind this to HealthComponent::OnDeath delegate
-	 * @param DeathEvent - Death event data containing the dead agent
-	 */
-	UFUNCTION()
-	void OnAgentDied(const FDeathEventData& DeathEvent);
 
 	/**
 	 * Called when an objective is defeated (durability reaches 0)
@@ -339,105 +186,6 @@ public:
 	UFUNCTION()
 	void OnObjectiveDefeated(int32 DefeatedTeamID);
 
-	/**
-	 * Check episode termination conditions (called internally by OnAgentDied)
-	 */
-	void CheckEpisodeTermination();
-
-	/**
-	 * End the current episode and distribute rewards
-	 * @param WinningTeamID - ID of winning team (-1 for draw)
-	 * @param LosingTeamID - ID of losing team (-1 for draw)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Episode")
-	void EndEpisode(int32 WinningTeamID, int32 LosingTeamID, int32 EnvironmentID = 0);
-
-	/**
-	 * Start a new episode (resets agents to spawn positions)
-	 * @param EnvironmentEpisodeNumber - Episode number for the calling environment (for multi-env support)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Episode")
-	void StartNewEpisode(int32 EnvironmentID, int32 EnvironmentEpisodeNumber);
-
-	/**
-	 * Check if episode is currently ending (team annihilation or timeout)
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	bool IsEpisodeEnding() const { return bEpisodeEnding; }
-
-	/**
-	 * Get episode start time (wall-clock reference)
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	float GetEpisodeStartTime() const { return EpisodeStartTime; }
-
-	/**
-	 * Get episode game time (accumulated DeltaTime, unaffected by observation collection)
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	float GetEpisodeGameTime() const { return EpisodeGameTime; }
-
-	/**
-	 * Get max steps per episode
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	int32 GetMaxStepsPerEpisode() const { return MaxStepsPerEpisode; }
-
-	/**
-	 * Get max episode duration
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	float GetMaxEpisodeDuration() const { return MaxEpisodeDuration; }
-
-
-	/** DEPRECATED: Use per-environment versions */
-	FORCEINLINE bool GetLastEpisodeWasTerminated() const { return bLastEpisodeWasTerminated; }
-
-	/** DEPRECATED: Use per-environment versions */
-	FORCEINLINE bool GetLastEpisodeWasTimeout() const { return bLastEpisodeWasTimeout; }
-
-	/** DEPRECATED: Use per-environment versions */
-	void SetLastEpisodeWasTerminated(bool bTerminated) { bLastEpisodeWasTerminated = bTerminated; }
-
-	/** DEPRECATED: Use per-environment versions */
-	void SetLastEpisodeWasTimeout(bool bTimeout) { bLastEpisodeWasTimeout = bTimeout; }
-
-	/**
-	 * v8.5 VECTORIZED TRAINING: Per-environment episode state queries
-	 */
-
-	/** Check if a specific environment's episode is ending */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	bool IsEnvironmentEpisodeEnding(int32 EnvironmentID) const;
-
-	/** Check if a specific environment's last episode was terminated */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	bool GetEnvironmentLastTerminated(int32 EnvironmentID) const;
-
-	/** Check if a specific environment's last episode was a timeout */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	bool GetEnvironmentLastTimeout(int32 EnvironmentID) const;
-
-	/** Set per-environment termination flags */
-	void SetEnvironmentTerminationFlags(int32 EnvironmentID, bool bEnding, bool bTerminated, bool bTimeout);
-
-	/** Get environment ID for a team */
-	int32 GetEnvironmentIDForTeam(int32 TeamID) const;
-
-	/**
-	 * Schedule a team to respawn after delay (for continuous training)
-	 * @param TeamID - Team to respawn
-	 * @param Delay - Delay in seconds before respawn
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Respawn")
-	void ScheduleTeamRespawn(int32 TeamID, float Delay);
-
-	/**
-	 * Respawn a team at their spawn positions (for continuous training)
-	 * @param TeamID - Team to respawn
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Respawn")
-	void RespawnTeam(int32 TeamID);
 
 	/**
 	 * Award objective capture bonus to winning team
@@ -445,37 +193,20 @@ public:
 	 */
 	void AwardObjectiveCaptureBonus(int32 TeamID);
 
-	/**
-	 * Get current episode number
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	/** DEPRECATED: Use per-environment episode tracking (EnvironmentEpisodes map) in v8.5+ */
-	int32 GetCurrentEpisode() const { return CurrentEpisode; }
-
-	/**
-	 * Get current step within episode
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	int32 GetCurrentStep() const { return CurrentStep; }
-
-	/**
-	 * Get last episode result
-	 */
-	UFUNCTION(BlueprintPure, Category = "Simulation|Episode")
-	FEpisodeResult GetLastEpisodeResult() const { return LastEpisodeResult; }
 
 
-	/** Delegate broadcast when episode ends - includes EnvironmentID for multi-env support */
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeEnded, int32, EnvironmentID, const FEpisodeResult&, Result);
+
+
+public:
+	//============ Event Delegates ============
+
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
-	FOnEpisodeEnded OnEpisodeEnded;
+	FOnSimulationStart	OnSimulationStart_Delegate;
 
-	/** Delegate broadcast when new episode starts - includes EnvironmentID for multi-env support */
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeStarted, int32, EnvironmentID, int32, EpisodeNumber);
 	UPROPERTY(BlueprintAssignable, Category = "Simulation|Episode")
-	FOnEpisodeStarted OnEpisodeStarted;
+	FOnSimulationStop	OnSimulationStop_Delegate;
 
-
+	
 
 private:
 	/** Draw debug information */
@@ -486,162 +217,31 @@ private:
 
 
 public:
-	//--------------------------------------------------------------------------
-	// CONFIGURATION
-	//--------------------------------------------------------------------------
+	//============ CONFIGURATION ============
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Config")
-	TArray<AActor*> ScholaEnvironmentsArray;
+	bool	bAutoStartSimulation;
 
-	TMap<int32, AScholaCombatEnvironment*> ScholaEnvironmentsMap;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Config")
-	int32 ServerPort = 50051;
 
-	/** Auto-start simulation on BeginPlay */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Config")
-	bool bAutoStartSimulation = true;
-
-	/** Enable debug visualization */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Debug")
-	bool bDrawDebugInfo = false;
+	bool	bDrawDebugInfo;
 
-	/** Debug draw update interval */
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Debug")
-	float DebugDrawInterval = 1.0f;
-
-	//--------------------------------------------------------------------------
-	// EPISODE CONFIG
-	//--------------------------------------------------------------------------
-	/** Delay before starting new episode (for visualization) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	float EpisodeRestartDelay = 2.0f;
-
-	/** Max steps per episode (0 = unlimited) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	int32 MaxStepsPerEpisode = 0;
-
-	/** Max episode duration in seconds (0 = unlimited, default = 60s for 4v4 objective capture) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	float MaxEpisodeDuration = 60.0f;
-
-	/** Win reward for episode victory */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	float WinReward = 100.0f;
-
-	/** Lose penalty for episode loss */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	float LosePenalty = -50.0f;
-
-	/** Include team leader in elimination checks? (If false, team is eliminated when all followers are dead) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Episode")
-	bool bIncludeLeaderInElimination = true;
-
-	//--------------------------------------------------------------------------
-	// CONTINUOUS TRAINING CONFIG (Respawn System)
-	//--------------------------------------------------------------------------
-
-	/** Enable continuous training (teams respawn after elimination instead of ending episode) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
-	bool bEnableContinuousTraining = false;
-
-	/** Delay before respawning eliminated team (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
-	float RespawnDelay = 5.0f;
-
-	/** Reward per second for staying near objective (within ObjectiveProximityRadius) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
-	float ObjectiveProximityReward = 0.5f;
-
-	/** Radius (cm) for objective proximity rewards */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
-	float ObjectiveProximityRadius = 500.0f;
-
-	/** Objective actor (set in BeginPlay, via Blueprint, or auto-discovered by tag) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|ContinuousTraining")
-	AActor* ObjectiveActor = nullptr;
+	float	DebugDrawInterval;
 
 
 private:
-	/** Objective Actors */
-	TArray<AActor*> ObjectiveActors;
-
-	/** Registered teams */
 	UPROPERTY()
-	TMap<int32, FTeamInfo> RegisteredTeams;
+	TArray<AActor*>							ScholaEnvironmentsArray;
 
-	/** Actor to team ID mapping (for fast lookup) */
 	UPROPERTY()
-	TMap<AActor*, int32> ActorToTeamMap;
+	TMap<int32, AScholaCombatEnvironment*>	ScholaEnvironmentsMap;
 
-	/** Initial spawn transforms (for episode reset) */
-	UPROPERTY()
-	TMap<AActor*, FTransform> SpawnTransforms;
+	int32	TotalAgents;
 
-	/** Is simulation running? */
-	bool bSimulationRunning = false;
+	bool	bSimulationRunning;
 
-	/** Simulation start time */
-	float SimulationStartTime = 0.0f;
+	float	SimulationStartTime;
 
-	/** Last debug draw time */
-	float LastDebugDrawTime = 0.0f;
-
-	//--------------------------------------------------------------------------
-	// EPISODE STATE
-	//--------------------------------------------------------------------------
-
-	/**
-	 * DEPRECATED: Global episode number - Use EnvironmentEpisodes map for multi-env training
-	 * Kept for backward compatibility with legacy single-environment mode
-	 */
-	int32 CurrentEpisode = 0;
-
-	/**
-	 * DEPRECATED: Global step counter - Use EnvironmentSteps map for multi-env training
-	 * Kept for backward compatibility with legacy single-environment mode
-	 */
-	int32 CurrentStep = 0;
-
-	/** v8.5 VECTORIZED TRAINING: Per-environment episode tracking */
-	TMap<int32, int32> EnvironmentEpisodes;  // EnvironmentID → Episode Number
-	TMap<int32, int32> EnvironmentSteps;     // EnvironmentID → Current Step
-	TMap<int32, int32> TeamToEnvironmentMap;  // TeamID → EnvironmentID
-
-	/** Episode start time (wall-clock for reference) */
-	float EpisodeStartTime = 0.0f;
-
-	/** Accumulated game time for this episode (DeltaTime sum, unaffected by observation collection pauses) */
-	float EpisodeGameTime = 0.0f;
-
-	/** Last episode result */
-	FEpisodeResult LastEpisodeResult;
-
-	/** Pending restart timer handle */
-	FTimerHandle EpisodeRestartTimerHandle;
-
-	/** DEPRECATED: Global episode ending flag - Use EnvironmentEpisodeEnding map for multi-env training */
-	bool bEpisodeEnding = false;
-
-	/** DEPRECATED: Global termination flag - Use EnvironmentLastTerminated map for multi-env training */
-	bool bLastEpisodeWasTerminated = false;
-
-	/** DEPRECATED: Global timeout flag - Use EnvironmentLastTimeout map for multi-env training */
-	bool bLastEpisodeWasTimeout = false;
-
-	/** v8.5 VECTORIZED TRAINING: Per-environment episode state tracking */
-	TMap<int32, bool> EnvironmentEpisodeEnding;  // EnvironmentID → Is episode ending?
-	TMap<int32, bool> EnvironmentLastTerminated;  // EnvironmentID → Was last episode terminated?
-	TMap<int32, bool> EnvironmentLastTimeout;  // EnvironmentID → Was last episode a timeout?
-	TMap<int32, float> EnvironmentEpisodeStartTimes;  // EnvironmentID → Episode start time
-	TMap<int32, float> EnvironmentEpisodeGameTimes;  // EnvironmentID → Accumulated game time
-
-	//--------------------------------------------------------------------------
-	// CONTINUOUS TRAINING STATE (Respawn System)
-	//--------------------------------------------------------------------------
-
-	/** Team respawn timer handles (one per team) */
-	TMap<int32, FTimerHandle> TeamRespawnTimers;
-
-	/** Teams currently in respawn queue (prevents double-respawn) */
-	TSet<int32> RespawningTeams;
+	float	LastDebugDrawTime;
 };

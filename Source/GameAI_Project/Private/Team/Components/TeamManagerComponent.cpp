@@ -4,7 +4,6 @@
 #include "Team/Components/TeamManagerComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "Actor/FollowerCharacter.h"
-#include "Core/SimulationManagerGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 
@@ -45,7 +44,17 @@ bool UTeamManagerComponent::RegisterFollower(AActor* Follower)
 		return false;
 	}
 
+
 	RegisteredFollowers.Add(Follower);
+	TeamInfo.AgnetCount++;
+
+	if(RegisteredFollowers.Num() >= MaxFollowers)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TeamManager] Squad has reached maximum capacity (%d/%d)"),
+			RegisteredFollowers.Num(), MaxFollowers);
+
+		OnAllAgentsRegistered_Delegate.Broadcast(RegisteredFollowers.Num());
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("[TeamManager] Registered follower: %s (Total: %d/%d)"),
 		*Follower->GetName(), RegisteredFollowers.Num(), MaxFollowers);
@@ -61,6 +70,7 @@ bool UTeamManagerComponent::UnregisterFollower(AActor* Follower)
 	}
 
 	int32 RemovedCount = RegisteredFollowers.Remove(Follower);
+	TeamInfo.AgnetCount = FMath::Max(0, TeamInfo.AgnetCount - 1);
 
 	if (RemovedCount <= 0)
 	{
@@ -87,78 +97,6 @@ bool UTeamManagerComponent::IsFollowerRegistered(AActor* Follower) const
 	return RegisteredFollowers.Contains(Follower);
 }
 
-void UTeamManagerComponent::DiscoverWorldObjectives()
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[TeamManager] DiscoverWorldObjectives: No world context"));
-		return;
-	}
-
-	// Get SimulationManager for enemy relationship queries
-	ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(
-		UGameplayStatics::GetGameMode(World)
-	);
-
-	if (!SimManager)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[TeamManager] No SimulationManagerGameMode found - cannot discover objectives"));
-		return;
-	}
-
-	// Find all ObjectiveActors in world
-	TArray<AActor*> AllObjectives;
-	UGameplayStatics::GetAllActorsOfClass(World, AObjectiveActor::StaticClass(), AllObjectives);
-
-	if (AllObjectives.Num() == 0)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[TeamManager] No ObjectiveActors found in world"));
-		return;
-	}
-
-	// Classify objectives based on TeamID and enemy relationships
-	for (AActor* Actor : AllObjectives)
-	{
-		AObjectiveActor* Objective = Cast<AObjectiveActor>(Actor);
-		if (!Objective)
-		{
-			continue;
-		}
-
-		// Friendly objective: OwnerTeamID matches our TeamID
-		if (Objective->OwnerTeamID == this->TeamID)
-		{
-			FriendlyObjective = Objective;
-			UE_LOG(LogTemp, Log, TEXT("[TeamManager] Discovered friendly objective: %s (TeamID: %d)"),
-				*Objective->GetName(), Objective->OwnerTeamID);
-		}
-		// Hostile objective: SimManager confirms enemy relationship
-		else if (SimManager->AreTeamsEnemies(this->TeamID, Objective->OwnerTeamID))
-		{
-			HostileObjective = Objective;
-			UE_LOG(LogTemp, Log, TEXT("[TeamManager] Discovered hostile objective: %s (TeamID: %d)"),
-				*Objective->GetName(), Objective->OwnerTeamID);
-		}
-	}
-
-	// Verify discovery
-	if (FriendlyObjective && HostileObjective)
-	{
-		UE_LOG(LogTemp, Log, TEXT("✅ [TeamManager v9.0] Successfully discovered both objectives (TeamID: %d)"), TeamID);
-
-		// v9.0: Broadcast event to notify subscribers (e.g., FollowerAgentComponent)
-		OnObjectivesDiscovered.Broadcast();
-		UE_LOG(LogTemp, Log, TEXT("📡 [TeamManager v9.0] OnObjectivesDiscovered event broadcast (TeamID: %d)"), TeamID);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [TeamManager] Failed to discover all objectives (TeamID: %d, Friendly: %s, Hostile: %s)"),
-			TeamID,
-			FriendlyObjective ? TEXT("OK") : TEXT("MISSING"),
-			HostileObjective ? TEXT("OK") : TEXT("MISSING"));
-	}
-}
 
 void UTeamManagerComponent::PushContextToFollower(AObjectiveActor* Friendly, AObjectiveActor* Hostile)
 {

@@ -15,24 +15,24 @@ AObjectiveActor::AObjectiveActor()
 	PrimaryActorTick.bCanEverTick = true;
 
 	// Create pillar mesh (root component)
-	PillarMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PillarMesh"));
-	RootComponent = PillarMesh;
-	PillarMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	PillarMesh->SetCollisionObjectType(ECC_WorldStatic);
+	PillarMesh		= CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PillarMesh"));
+	RootComponent	= PillarMesh;
+	PillarMesh		->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	PillarMesh		->SetCollisionObjectType(ECC_WorldStatic);
 
 	// Create capture volume (spherical trigger)
-	CaptureVolume = CreateDefaultSubobject<USphereComponent>(TEXT("CaptureVolume"));
-	CaptureVolume->SetupAttachment(RootComponent);
-	CaptureVolume->SetSphereRadius(CaptureRadius);
-	CaptureVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	CaptureVolume->SetCollisionResponseToAllChannels(ECR_Ignore);
-	CaptureVolume->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-	CaptureVolume->SetGenerateOverlapEvents(true);
+	CaptureVolume	= CreateDefaultSubobject<USphereComponent>(TEXT("CaptureVolume"));
+	CaptureVolume	->SetupAttachment(RootComponent);
+	CaptureVolume	->SetSphereRadius(CaptureRadius);
+	CaptureVolume	->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	CaptureVolume	->SetCollisionResponseToAllChannels(ECR_Ignore);
+	CaptureVolume	->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CaptureVolume	->SetGenerateOverlapEvents(true);
 
 	// Visual feedback for capture zone (visible in editor and debug builds)
-	CaptureVolume->SetVisibility(true);
-	CaptureVolume->SetHiddenInGame(false);
-	CaptureVolume->ShapeColor = FColor::Green;
+	CaptureVolume	->SetVisibility(true);
+	CaptureVolume	->SetHiddenInGame(false);
+	CaptureVolume	->ShapeColor = FColor::Green;
 
 	CurrentDurability = MaxDurability;
 }
@@ -46,7 +46,7 @@ void AObjectiveActor::BeginPlay()
 	CaptureVolume->OnComponentEndOverlap.AddDynamic(this, &AObjectiveActor::OnCaptureVolumeEndOverlap);
 
 	// Create dynamic material for visual feedback
-	UpdateMaterial();
+	//UpdateMaterial();
 
 	// Start durability update timer (10Hz for performance)
 	GetWorld()->GetTimerManager().SetTimer(
@@ -57,11 +57,9 @@ void AObjectiveActor::BeginPlay()
 		true   // Loop
 	);
 
-	// DIAGNOSTIC: Enhanced logging for multi-environment debugging
-	int32 EnvironmentID = OwnerTeamID / 2;
-	FVector Location = GetActorLocation();
+
 	UE_LOG(LogTemp, Warning, TEXT("[OBJECTIVE SPAWN] '%s' - TeamID: %d, EnvironmentID: %d, Durability: %.1f, Radius: %.1f, Location: %s"),
-		*GetName(), OwnerTeamID, EnvironmentID, CurrentDurability, CaptureRadius, *Location.ToString());
+		*GetName(), TeamInfo.TeamID, TeamInfo.EnvID, CurrentDurability, CaptureRadius, *GetActorLocation().ToString());
 }
 
 void AObjectiveActor::Tick(float DeltaTime)

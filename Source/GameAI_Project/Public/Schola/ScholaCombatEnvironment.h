@@ -13,6 +13,9 @@ class UEnvRegistryComponent;
 class UEpisodeManagerComponent;
 
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnScholaEnvironmentInitialized);
+
+
 /** //==========================================================================
  * Schola Combat Environment
  *
@@ -61,35 +64,34 @@ public:
 	// TEAM MANAGEMENT INTERFACE
 	//==========================================================================
 	bool RegisterTeam(int32 TeamID);
-
 	bool RegisterObjective(AObjectiveActor* Objective);
+	bool UnRegisterTeam(int32 TeamID);
+	bool UnRegisterObjective(AObjectiveActor* Objective);
+
+	FORCEINLINE int32 GetRegisterTeamCount()		const { return EnvRegistry ? EnvRegistry->GetRegisteredTeams().Num() : 0; }
+	FORCEINLINE int32 GetRegisteredObjectiveCount() const { return EnvRegistry ? EnvRegistry->GetRegisteredObjectives().Num() : 0; }
+	
 
 
 	//==========================================================================
-	// UTILITY
+	// GETTERS
 	//==========================================================================
 
 	/** Get the environment ID assigned by Schola */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
-	int32 GetEnvId() const { return ScholaEnvID; }
-
-	/** Discover all ScholaAgentComponents in level */
-	UFUNCTION(BlueprintCallable, Category = "Schola")
-	void DiscoverAgents();
-
-	/** Register a single agent manually */
-	UFUNCTION(BlueprintCallable, Category = "Schola")
-	bool RegisterAgent(UScholaAgentComponent* Agent);
-
-	/** Get team IDs managed by this environment (delegates to EnvRegistry) */
-	UFUNCTION(BlueprintCallable, Category = "Schola")
-	TArray<int32> GetTrainingTeamIDs() const;
+	FORCEINLINE		int32	GetEnvId() const { return ScholaEnvID; }
 
 
 
 private:
 	/** Validate agent for training (has required components) */
 	bool ValidateAgent(UScholaAgentComponent* Agent) const;
+
+
+
+public:
+	//=========================== Delegated ===============================
+	FOnScholaEnvironmentInitialized OnScholaEnvironmentInitialized_Delegate;
 
 
 

@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Core/SimulationManagerGameMode.h"
 #include "EpisodeManagerComponent.generated.h"
 
 /**
@@ -26,15 +25,6 @@ class GAMEAI_PROJECT_API UEpisodeManagerComponent : public UActorComponent
 public:
 	UEpisodeManagerComponent();
 
-	//--------------------------------------------------------------------------
-	// INITIALIZATION
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Bind to SimulationManager episode events
-	 * @param Manager - SimulationManagerGameMode reference
-	 */
-	void BindToSimulationManager(ASimulationManagerGameMode* Manager);
 
 	//--------------------------------------------------------------------------
 	// EPISODE LIFECYCLE
@@ -72,30 +62,8 @@ public:
 	 */
 	int32 GetEnvironmentID() const { return EnvironmentID; }
 
-	//--------------------------------------------------------------------------
-	// EVENT HANDLERS
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Called when an episode starts
-	 * @param BroadcastEnvID - Environment ID from broadcast
-	 * @param EpisodeNumber - Episode number
-	 */
-	UFUNCTION()
-	void OnEpisodeStarted(int32 BroadcastEnvID, int32 EpisodeNumber);
-
-	/**
-	 * Called when an episode ends
-	 * @param BroadcastEnvID - Environment ID from broadcast
-	 * @param Result - Episode result data
-	 */
-	UFUNCTION()
-	void OnEpisodeEnded(int32 BroadcastEnvID, const FEpisodeResult& Result);
 
 private:
-	/** Reference to SimulationManagerGameMode */
-	UPROPERTY()
-	ASimulationManagerGameMode* SimulationManager = nullptr;
 
 	/** Episode counters per environment (EnvID -> Episode Number) */
 	UPROPERTY()

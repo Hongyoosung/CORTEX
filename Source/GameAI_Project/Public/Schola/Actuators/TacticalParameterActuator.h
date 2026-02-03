@@ -8,7 +8,9 @@
 #include "RL/RLTypes.h"
 #include "TacticalParameterActuator.generated.h"
 
-class UFollowerAgentComponent;
+
+class AFollowerCharacter;
+
 
 /**
  * v8.0 Schola actuator that receives tactical parameters from Python.
@@ -36,10 +38,6 @@ public:
 	virtual void InitializeActuator() override;
 	virtual void ResetActuator() override;
 
-	/** The follower agent component to control */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
-	UFollowerAgentComponent* FollowerAgent = nullptr;
-
 	/** Auto-find follower agent on owner actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
 	bool bAutoFindFollower = true;
@@ -52,10 +50,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Actuator")
 	FTacticalParameters GetLastTacticalParameters() const { return LastTacticalParams; }
 
-protected:
-	/** Find follower agent component on owner */
-	UFollowerAgentComponent* FindFollowerAgent() const;
 
+
+protected:
 	/** Last received tactical parameters (cached for debugging) */
 	FTacticalParameters LastTacticalParams;
+
+	TObjectPtr<AFollowerCharacter> Follower;
 };

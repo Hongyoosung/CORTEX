@@ -1,10 +1,10 @@
 // TacticalParameterActuator.cpp - v8.0 tactical parameter actuator implementation
 
 #include "Schola/Actuators/TacticalParameterActuator.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
 #include "GameFramework/Pawn.h"
+#include "Actor/FollowerCharacter.h"
 
 UTacticalParameterActuator::UTacticalParameterActuator()
 {
@@ -30,9 +30,9 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 
 void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 {
-	if (!FollowerAgent || !FollowerAgent->IsValidLowLevel() || !FollowerAgent->GetOwner())
+	if (!Follower)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalParamActuator] %s: FollowerAgent not found or invalid!"),
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalParamActuator] %s: OwnerActor not found or invalid!"),
 			*GetNameSafe(GetOuter()));
 		return;
 	}
@@ -59,7 +59,7 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 	LastTacticalParams = Params;
 
 	// Apply to follower agent
-	FollowerAgent->SetTacticalParameters(Params);
+	Follower->SetTacticalParameters(Params);
 
 	if (bDebugLogging)
 	{
@@ -71,21 +71,18 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 
 void UTacticalParameterActuator::InitializeActuator()
 {
-	// Auto-find follower agent if enabled
-	if (bAutoFindFollower && !FollowerAgent)
-	{
-		FollowerAgent = FindFollowerAgent();
-	}
+	AActor* Owner = GetTypedOuter<AActor>();
+	Follower = Cast<AFollowerCharacter>(Owner);
 
-	if (!FollowerAgent)
+	if (!Follower)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalParamActuator] %s: Failed to find FollowerAgentComponent!"),
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalParamActuator] %s: Failed to find FollowerActor!"),
 			*GetNameSafe(GetOuter()));
 		return;
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[TacticalParamActuator] %s: Initialized (Follower=%s, ActionSpace=Box([0,1]^4))"),
-		*GetNameSafe(GetOuter()), *GetNameSafe(FollowerAgent));
+		*GetNameSafe(GetOuter()), *GetNameSafe(Follower));
 }
 
 void UTacticalParameterActuator::ResetActuator()
@@ -93,19 +90,9 @@ void UTacticalParameterActuator::ResetActuator()
 	// Reset to neutral parameters
 	LastTacticalParams = FTacticalParameters(0.5f, 0.5f, 0.5f, 0.5f);
 
-	if (FollowerAgent && FollowerAgent->IsValidLowLevel())
+	if (Follower->IsValidLowLevel())
 	{
-		FollowerAgent->SetTacticalParameters(LastTacticalParams);
+		Follower->SetTacticalParameters(LastTacticalParams);
 	}
 }
 
-UFollowerAgentComponent* UTacticalParameterActuator::FindFollowerAgent() const
-{
-	AActor* Owner = GetTypedOuter<AActor>();
-	if (!Owner)
-	{
-		return nullptr;
-	}
-
-	return Owner->FindComponentByClass<UFollowerAgentComponent>();
-}

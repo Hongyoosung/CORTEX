@@ -2,10 +2,10 @@
 
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeSchema.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/FollowerCharacter.h"
 // v9.0 PHASE 4: TeamCommsComponent merged into character
 #include "Actor/FollowerCharacter.h"
-#include "Team/Components/TeamLeaderComponent.h"
+#include "Actor/LeaderCharacter.h"
 #include "Combat/Components/HealthComponent.h"
 #include "RL/RLPolicyNetwork.h"
 #include "StateTreeExecutionContext.h"
@@ -21,17 +21,15 @@
 #include "StateTreeDelegates.h"
 #endif
 
-// Define StateTree event tags
-const FGameplayTag UFollowerStateTreeComponent::Event_MissionReceived =
-	FGameplayTag::RequestGameplayTag(FName("StateTree.Follower.MissionReceived"));
-const FGameplayTag UFollowerStateTreeComponent::Event_FollowerDied =
-	FGameplayTag::RequestGameplayTag(FName("StateTree.Follower.Died"));
-const FGameplayTag UFollowerStateTreeComponent::Event_FollowerRespawned =
-	FGameplayTag::RequestGameplayTag(FName("StateTree.Follower.Respawned"));
+
+
+const FGameplayTag UFollowerStateTreeComponent::Event_FollowerDied = FGameplayTag::RequestGameplayTag(FName("StateTree.Follower.Died"));
+const FGameplayTag UFollowerStateTreeComponent::Event_FollowerRespawned = FGameplayTag::RequestGameplayTag(FName("StateTree.Follower.Respawned"));
+
 
 UFollowerStateTreeComponent::UFollowerStateTreeComponent()
 	: Super()
-	, FollowerComponent(nullptr)
+	, Follower(nullptr)
 	, HealthComponent(nullptr)
 	// v9.0 PHASE 4: TeamCommsComponent merged into character (removed from init list)
 	, bAutoFindFollowerComponent(true)
@@ -53,18 +51,17 @@ void UFollowerStateTreeComponent::BeginPlay()
 	// Super::BeginPlay() may start the StateTree, and evaluators need valid context
 	if (bAutoFindFollowerComponent)
 	{
-		if (!FollowerComponent)
+		if (!Follower)
 		{
-			FollowerComponent = FindFollowerComponent();
+			Follower = FindFollowerCharacter();
 		}
 		if (!HealthComponent)
 		{
 			HealthComponent = FindHealthComponent();
 		}
-		// v9.0 PHASE 4: TeamCommsComponent merged into character (no component to find)
 	}
 
-	if (!FollowerComponent)
+	if (!Follower)
 	{
 		UE_LOG(LogTemp, Error, TEXT("UFollowerStateTreeComponent: ❌ FollowerComponent not found!"));
 		return;
@@ -124,13 +121,13 @@ void UFollowerStateTreeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	// v9.0 FIX: Increment counter to prevent spam
 	TickLogCounter++;
 
-	// Deferred initialization if BeginPlay failed to find FollowerComponent
-	if (!FollowerComponent && bAutoFindFollowerComponent)
+	// Deferred initialization if BeginPlay failed to find Follower
+	if (!Follower && bAutoFindFollowerComponent)
 	{
-		FollowerComponent = FindFollowerComponent();
-		if (FollowerComponent)
+		Follower = FindFollowerCharacter();
+		if (Follower)
 		{
-			UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: FollowerComponent found on deferred initialization for '%s'"), *GetOwner()->GetName());
+			UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Follower found on deferred initialization for '%s'"), *GetOwner()->GetName());
 			InitializeContext();
 			BindToFollowerEvents();
 		}
@@ -140,7 +137,7 @@ void UFollowerStateTreeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 			static float LastErrorTime = 0.0f;
 			if (GetWorld()->GetTimeSeconds() - LastErrorTime > 2.0f)
 			{
-				UE_LOG(LogTemp, Error, TEXT("UFollowerStateTreeComponent: FollowerComponent still not found on '%s'. Ensure UFollowerAgentComponent is added to the same actor!"), *GetOwner()->GetName());
+				UE_LOG(LogTemp, Error, TEXT("UFollowerStateTreeComponent: Follower still not found on '%s'. Ensure UFollowerAgent is added to the same actor!"), *GetOwner()->GetName());
 				LastErrorTime = GetWorld()->GetTimeSeconds();
 			}
 		}
@@ -148,7 +145,7 @@ void UFollowerStateTreeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	}
 
 	// Update context from follower component every tick
-	if (FollowerComponent)
+	if (Follower)
 	{
 		UpdateContextFromFollower();
 	}
@@ -163,11 +160,6 @@ void UFollowerStateTreeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 			return; // Stay stopped while dead
 		}
 
-		// Schola 학습 중에는 컨트롤러가 늦게 붙을 수 있으므로
-		// 컨트롤러가 유효해질 때까지 재시도를 반복하는 것은 괜찮으나,
-		// 종료 이유(Succeeded/Failed)를 확인해야 함.
-
-		// 1초에 한 번만 재시작 시도 로그 출력 (스팸 방지)
 		if (TickLogCounter % 60 == 0)
 		{
 			// CheckRequirementsAndStart 내부 로그가 이미 있으므로 여기선 생략 가능
@@ -207,10 +199,10 @@ bool UFollowerStateTreeComponent::SetContextRequirements(FStateTreeExecutionCont
 		if (bLogErrors) UE_LOG(LogTemp, Error, TEXT("  ❌ Failed to set FollowerContext"));
 	}
 
-	// (B) Follower Component
-	if (!InContext.SetContextDataByName(FName(TEXT("FollowerComponent")), FStateTreeDataView(FollowerComponent)))
+	// (B) Follower 
+	if (!InContext.SetContextDataByName(FName(TEXT("Follower")), FStateTreeDataView(Follower)))
 	{
-		if (bLogErrors) UE_LOG(LogTemp, Error, TEXT("  ❌ Failed to set FollowerComponent"));
+		if (bLogErrors) UE_LOG(LogTemp, Error, TEXT("  ❌ Failed to set Follower"));
 	}
 
 	// (C) Follower State Tree Component
@@ -221,9 +213,9 @@ bool UFollowerStateTreeComponent::SetContextRequirements(FStateTreeExecutionCont
 
 
 	// (D) Team Leader (Optional)
-	if (Context.TeamLeader)
+	if (Context.Leader)
 	{
-		InContext.SetContextDataByName(FName(TEXT("TeamLeader")), FStateTreeDataView(Context.TeamLeader));
+		InContext.SetContextDataByName(FName(TEXT("Leader")), FStateTreeDataView(Context.Leader));
 	}
 	else
 	{
@@ -292,15 +284,15 @@ void UFollowerStateTreeComponent::ValidateStateTreeReference()
 
 void UFollowerStateTreeComponent::InitializeContext()
 {
-	if (!FollowerComponent)
+	if (!Follower)
 	{
-		UE_LOG(LogTemp, Error, TEXT("UFollowerStateTreeComponent::InitializeContext: FollowerComponent not found on '%s'!"),
+		UE_LOG(LogTemp, Error, TEXT("UFollowerStateTreeComponent::InitializeContext: Follower not found on '%s'!"),
 			GetOwner() ? *GetOwner()->GetName() : TEXT("Unknown"));
 		return;
 	}
 
 	// Set context component reference
-	Context.FollowerComponent = FollowerComponent;
+	Context.Follower = Follower;
 
 	// Auto-find Pawn and AIController
 	if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
@@ -314,33 +306,33 @@ void UFollowerStateTreeComponent::InitializeContext()
 	}
 
 	// Set component references (v9.0 PHASE 4: Use FollowerCharacter)
-	if (!Context.TeamLeader)
+	if (!Context.Leader)
 	{
 		AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
 		if (OwnerCharacter)
 		{
-			Context.TeamLeader = OwnerCharacter->GetTeamLeader();
+			Context.Leader = OwnerCharacter->GetTeamLeader();
 			UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: TeamLeader set to '%s'"),
-				Context.TeamLeader ? *Context.TeamLeader->GetName() : TEXT("NULL"));
+				Context.Leader ? *Context.Leader->GetName() : TEXT("NULL"));
 		}
 	}
 	else
 	{
 		UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: TeamLeader already set to '%s'"),
-			Context.TeamLeader ? *Context.TeamLeader->GetName() : TEXT("NULL"));
+			Context.Leader ? *Context.Leader->GetName() : TEXT("NULL"));
 	}
 
-	if (!Context.TacticalPolicy && Context.FollowerComponent)
+	if (!Context.TacticalPolicy && Context.Follower)
 	{
-		Context.TacticalPolicy = Context.FollowerComponent->GetTacticalPolicy();
+		Context.TacticalPolicy = Context.Follower->GetTacticalPolicy();
 	}
 
 	// Initialize state flags
 	Context.bIsAlive = HealthComponent.Get()->bIsAlive;
-	Context.bUseRLPolicy = FollowerComponent->IsUsingRLPolicy();
+	Context.bUseRLPolicy = Follower->IsUsingRLPolicy();
 
 	// Initialize observation
-	Context.CurrentObservation = FollowerComponent->GetLocalObservation();
+	Context.CurrentObservation = Follower->GetLocalObservation();
 
 	UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Initialized context for '%s' - ControlledPawn: %s, AIController: %s"),
 		*GetOwner()->GetName(),
@@ -350,26 +342,26 @@ void UFollowerStateTreeComponent::InitializeContext()
 
 void UFollowerStateTreeComponent::UpdateContextFromFollower()
 {
-	if (!FollowerComponent)
+	if (!Follower)
 	{
 		return;
 	}
 
-	// Sync basic state from follower component (v3.0)
+	// Sync basic state from follower  (v3.0)
 	// (Detailed observation updates are handled by STEvaluator_UpdateObservation)
 	Context.bIsAlive = HealthComponent->bIsAlive;
-	Context.AccumulatedReward = FollowerComponent->GetAccumulatedReward();
+	Context.AccumulatedReward = Follower->GetAccumulatedReward();
 
 	// v9.0: Sync strategy assignment and compute implicit objective from team leader
 	// Objectives are no longer explicitly assigned - they're implicit in the strategy:
 	// - Assault/Support → Hostile objective
 	// - Defend → Friendly objective
 	// - Retreat → No specific objective
-	Context.AssignedStrategy = FollowerComponent->GetAssignedStrategy();
+	Context.AssignedStrategy = Follower->GetAssignedStrategy();
 
 	// v9.0 PHASE 4: Compute implicit target objective based on strategy (use FollowerCharacter)
 	AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
-	UTeamLeaderComponent* TeamLeader = OwnerCharacter ? OwnerCharacter->GetTeamLeader() : nullptr;
+	ALeaderCharacter* TeamLeader = OwnerCharacter ? OwnerCharacter->GetTeamLeader() : nullptr;
 	if (TeamLeader)
 	{
 		if (Context.AssignedStrategy == EStrategyType::Assault ||
@@ -492,13 +484,13 @@ bool UFollowerStateTreeComponent::CollectExternalData(const FStateTreeExecutionC
             bProvided = true;
             UE_LOG(LogTemp, Log, TEXT("  ✅ [%d] StateTreeComponent (self) provided"), Index);
         }
-        else if (Desc.Name == FName(TEXT("FollowerComponent")))
+        else if (Desc.Name == FName(TEXT("Follower")))
         {
-            if (FollowerComponent)
+            if (Follower)
             {
-                OutDataViews[Index] = FStateTreeDataView(FollowerComponent);
+                OutDataViews[Index] = FStateTreeDataView(Follower);
                 bProvided = true;
-                UE_LOG(LogTemp, Log, TEXT("  ✅ [%d] FollowerComponent provided"), Index);
+                UE_LOG(LogTemp, Log, TEXT("  ✅ [%d] Follower provided"), Index);
             }
             else
             {
@@ -518,25 +510,25 @@ bool UFollowerStateTreeComponent::CollectExternalData(const FStateTreeExecutionC
         else if (Desc.Name == FName(TEXT("TeamLeader")))
         {
             // v9.0 PHASE 4: Get TeamLeader via FollowerCharacter
-            UTeamLeaderComponent* TeamLeader = nullptr;
+            ALeaderCharacter* Leader = nullptr;
             AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
             if (OwnerCharacter)
             {
-                TeamLeader = OwnerCharacter->GetTeamLeader();
+                Leader = OwnerCharacter->GetTeamLeader();
             }
 
-            OutDataViews[Index] = FStateTreeDataView(TeamLeader);
+            OutDataViews[Index] = FStateTreeDataView(Leader);
             bProvided = true;
             UE_LOG(LogTemp, Log, TEXT("  ✅ [%d] TeamLeader: %s"), Index,
-                TeamLeader ? TEXT("Valid") : TEXT("NULL (Optional)"));
+                Leader ? TEXT("Valid") : TEXT("NULL (Optional)"));
         }
         else if (Desc.Name == FName(TEXT("TacticalPolicy")))
         {
             // Same issue - need to cache this separately
             URLPolicyNetwork* CachedPolicy = nullptr;
-            if (FollowerComponent)
+            if (Follower)
             {
-                CachedPolicy = FollowerComponent->GetTacticalPolicy(); // Implement this getter
+                CachedPolicy = Follower->GetTacticalPolicy(); // Implement this getter
             }
             
             OutDataViews[Index] = FStateTreeDataView(CachedPolicy);
@@ -576,7 +568,7 @@ bool UFollowerStateTreeComponent::CollectExternalData(const FStateTreeExecutionC
 
 
 
-UFollowerAgentComponent* UFollowerStateTreeComponent::FindFollowerComponent()
+AFollowerCharacter* UFollowerStateTreeComponent::FindFollowerCharacter()
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -584,14 +576,14 @@ UFollowerAgentComponent* UFollowerStateTreeComponent::FindFollowerComponent()
 		return nullptr;
 	}
 
-	UFollowerAgentComponent* OwnerFollowerComp = Owner->FindComponentByClass<UFollowerAgentComponent>();
+	Follower = Cast<AFollowerCharacter>(Owner);
 
-	if (!OwnerFollowerComp)
+	if (!Follower)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: No FollowerAgentComponent found on '%s'"), *Owner->GetName());
 	}
 
-	return OwnerFollowerComp;
+	return Follower;
 }
 
 UHealthComponent* UFollowerStateTreeComponent::FindHealthComponent()
@@ -616,30 +608,26 @@ UHealthComponent* UFollowerStateTreeComponent::FindHealthComponent()
 
 void UFollowerStateTreeComponent::BindToFollowerEvents()
 {
-	if (!FollowerComponent)
+	if (!Follower)
 	{
 		return;
 	}
 
 	// Bind to HealthComponent death event (v9.0 - Dead state support)
-	if (HealthComponent)
-	{
-		HealthComponent->OnDeath.AddDynamic(this, &UFollowerStateTreeComponent::HandleOnHealthComponentDeath);
-		UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Bound to HealthComponent::OnDeath"));
-	}
-	else
+	if (!HealthComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UFollowerStateTreeComponent: HealthComponent not found - death events will not work!"));
+		return;
 	}
+
+	HealthComponent->OnDeath.AddDynamic(this, &UFollowerStateTreeComponent::HandleOnHealthComponentDeath);
+	
 
 	UE_LOG(LogTemp, Log, TEXT("UFollowerStateTreeComponent: Bound to FollowerAgentComponent events"));
 }
 
 void UFollowerStateTreeComponent::HandleOnHealthComponentDeath(const FDeathEventData& DeathEvent)
 {
-	// v9.0: Called when HealthComponent broadcasts OnDeath event
-	// Delegates to OnFollowerDied() which updates context and sends StateTree event
-
 	AActor* Owner = GetOwner();
 	UE_LOG(LogTemp, Warning, TEXT("💀 [DEATH EVENT] %s died (Killer: %s, Damage: %.1f)"),
 		Owner ? *Owner->GetName() : TEXT("NULL"),
@@ -719,9 +707,7 @@ bool UFollowerStateTreeComponent::CheckRequirementsAndStart()
 		return true;
 	}
 
-	// FIX (Issue #2): Only require FollowerComponent, make AIController truly optional
-	// StateTree should start immediately without waiting for AIController assignment
-	if (!FollowerComponent)
+	if (!Follower)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:⏳ FollowerComponent = NULL for '%s'"), *OwnerName);
 		return false;
@@ -746,8 +732,7 @@ bool UFollowerStateTreeComponent::CheckRequirementsAndStart()
 		StopLogic("Restart");
 	}
 
-	// FIX (Issue #2): Start immediately - AIController will be updated later when available
-	// This ensures all agents start simultaneously instead of one-by-one
+
 	UE_LOG(LogTemp, Warning, TEXT("  UFollowerStateTreeComponent:🚀 Starting StateTree immediately (AIController=%s)"),
 		Context.AIController ? TEXT("Valid") : TEXT("NULL - will update when assigned"));
 	StartLogic();

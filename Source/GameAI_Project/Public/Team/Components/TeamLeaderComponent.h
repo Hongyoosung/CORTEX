@@ -124,109 +124,6 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	
-	//--------------------------------------------------------------------------
-	// FOLLOWER MANAGEMENT
-	//--------------------------------------------------------------------------
-
-	/** Register a follower */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Followers")
-	bool RegisterFollower(AActor* Follower);
-
-	/** Unregister a follower */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Followers")
-	void UnregisterFollower(AActor* Follower);
-
-	/** Get squad max capacity - Phase 5: Returns constant (LeaderCharacter MaxFollowers is private) */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
-	int32 GetMaxFollowers() const;
-
-	/** Is follower registered? - Phase 5: Delegate to LeaderCharacter */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Followers")
-	bool IsFollowerRegistered(AActor* Follower) const;
-
-	//--------------------------------------------------------------------------
-	// EVENT PROCESSING
-	//--------------------------------------------------------------------------
-
-	/** Process a strategic event */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Events")
-	void ProcessStrategicEvent(
-		EStrategicEvent Event,
-		AActor* Instigator = nullptr,
-		FVector Location = FVector::ZeroVector,
-		int32 Priority = 5
-	);
-
-	/** Process event with full context */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Events")
-	void ProcessStrategicEventWithContext(const FStrategicEventContext& Context);
-
-	/** Should this event trigger MCTS? */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Events")
-	bool ShouldTriggerMCTS(const FStrategicEventContext& Context) const;
-
-	//--------------------------------------------------------------------------
-	// MCTS EXECUTION
-	//--------------------------------------------------------------------------
-
-	/** Build team observation */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Observation")
-	FTeamObservation BuildTeamObservation();
-
-	/** Apply strategy assignment to followers (v8.0) */
-	void ApplyStrategyAssignment(const TArray<FStrategyAssignment>& Assignments);
-
-	/** Is MCTS currently running? */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Debug")
-	bool IsRunningMCTS() const;
-
-	//--------------------------------------------------------------------------
-	// ENEMY TRACKING - Phase 3: Delegate to IntelManager
-	//--------------------------------------------------------------------------
-
-	/** Register enemy for tracking (delegates to IntelManager) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Intel")
-	void RegisterEnemy(AActor* Enemy);
-
-	/** Unregister enemy from tracking (delegates to IntelManager) */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Intel")
-	void UnregisterEnemy(AActor* Enemy);
-
-	//--------------------------------------------------------------------------
-	// METRICS & DEBUGGING
-	//--------------------------------------------------------------------------
-
-	/** Get team performance metrics */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Metrics")
-	FTeamMetrics GetTeamMetrics() const;
-
-	/** Draw debug info */
-	UFUNCTION(BlueprintCallable, Category = "Team Leader|Debug")
-	void DrawDebugInfo();
-
-	/** Get pending events count */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Debug")
-	int32 GetPendingEventsCount() const { return PendingEvents.Num(); }
-
-
-	//--------------------------------------------------------------------------
-	// v9.0: Follower
-	//--------------------------------------------------------------------------
-	
-
-
-	//--------------------------------------------------------------------------
-	// v9.0: OBJECTIVE ACCESSORS - Phase 3: Delegate to IntelManager
-	//--------------------------------------------------------------------------
-
-	/** Get friendly objective (for Defend strategy) */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
-	AObjectiveActor* GetFriendlyObjective() const;
-
-	/** Get hostile objective (for Assault/Support strategies) */
-	UFUNCTION(BlueprintPure, Category = "Team Leader|Objectives")
-	AObjectiveActor* GetHostileObjective() const;
 
 	//--------------------------------------------------------------------------
 	// EPISODE MANAGEMENT
@@ -241,11 +138,6 @@ public:
 
 
 private:
-	/** Process pending events */
-	void ProcessPendingEvents();
-
-	/** Get objectives array for MCTS (Phase 3: Delegate to IntelManager) */
-	TArray<AObjectiveActor*> GetObjectivesArray() const;
 
 	/** Phase 3: Handler for StrategicPlanner completion (v9.0) */
 	UFUNCTION()

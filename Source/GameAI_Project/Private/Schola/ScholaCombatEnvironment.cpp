@@ -5,7 +5,6 @@
 #include "Schola/Utils/FollowerAgentTrainer.h"
 #include "Schola/Components/EnvRegistryComponent.h"
 #include "Schola/Components/EpisodeManagerComponent.h"
-// v9.0 PHASE 4: TeamCommsComponent merged into character (unused include removed)
 #include "Core/SimulationManagerGameMode.h"
 #include "Core/ScholaGameInstance.h"
 #include "Team/Components/TeamLeaderComponent.h"
@@ -23,9 +22,9 @@ AScholaCombatEnvironment::AScholaCombatEnvironment(const FObjectInitializer& Obj
 {
 	PrimaryActorTick.bCanEverTick = false;
 
-	// v9.0 REFACTOR: Create components automatically
-	EnvRegistry = CreateDefaultSubobject<UEnvRegistryComponent>(TEXT("EnvRegistry"));
-	EpisodeManager = CreateDefaultSubobject<UEpisodeManagerComponent>(TEXT("EpisodeManager"));
+
+	EnvRegistry			= CreateDefaultSubobject<UEnvRegistryComponent>(TEXT("EnvRegistry"));
+	EpisodeManager		= CreateDefaultSubobject<UEpisodeManagerComponent>(TEXT("EpisodeManager"));
 }
 
 void AScholaCombatEnvironment::BeginPlay()
@@ -37,16 +36,6 @@ void AScholaCombatEnvironment::BeginPlay()
 	// Each actor manages agents from teams specified in EnvRegistry->TeamIDs
 	// Schola's CollectEnvironments() will find all actors and create TrainingDefinition
 
-	// v9.0 REFACTOR: Get team IDs from EnvRegistry component
-	FString TeamsStr = EnvRegistry && EnvRegistry->TeamIDs.Num() > 0
-		? FString::JoinBy(EnvRegistry->TeamIDs, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
-		: TEXT("ALL TEAMS");
-
-	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════════════════════════════╗"));
-	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv v9.0] Environment Actor initialized: %s            ║"), *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("║ Architecture: Component-based (SRP refactoring)               ║"));
-	UE_LOG(LogTemp, Warning, TEXT("║ Managing Teams: [%s]                                          ║"), *TeamsStr);
-	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════════════════════════════╝"));
 
 	// Reset registration flag for new PIE session
 	bAgentsRegistered = false;
@@ -59,11 +48,7 @@ void AScholaCombatEnvironment::BeginPlay()
 		return;
 	}
 
-	// v9.0 REFACTOR: Initialize components
-	if (EnvRegistry)
-	{
-		EnvRegistry->Initialize(SimulationManager);
-	}
+
 
 	if (EpisodeManager)
 	{
@@ -119,15 +104,6 @@ void AScholaCombatEnvironment::InitializeEnvironment()
 {
 	// Called by AAbstractScholaEnvironment::Initialize()
 	// Setup any environment-specific initialization here
-
-	// v9.0 REFACTOR: Get team IDs from EnvRegistry
-	FString TeamsStr = EnvRegistry && EnvRegistry->TeamIDs.Num() > 0
-		? FString::JoinBy(EnvRegistry->TeamIDs, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
-		: TEXT("ALL TEAMS");
-
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] InitializeEnvironment called on %s"), *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] Component-based architecture: This actor manages teams [%s]"), *TeamsStr);
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] EnvID will be assigned by ScholaManagerSubsystem (0-based index)"));
 }
 
 void AScholaCombatEnvironment::ResetEnvironment()
@@ -146,8 +122,8 @@ void AScholaCombatEnvironment::ResetEnvironment()
 	bTrainingActive = true;
 
 	// v9.0 REFACTOR: Get team IDs from EnvRegistry
-	FString TeamsStr = EnvRegistry && EnvRegistry->TeamIDs.Num() > 0
-		? FString::JoinBy(EnvRegistry->TeamIDs, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
+	FString TeamsStr = EnvRegistry && EnvRegistry->GetRegisteredTeams().Num() > 0
+		? FString::JoinBy(EnvRegistry->GetRegisteredTeams(), TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
 		: TEXT("ALL TEAMS");
 
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
@@ -155,49 +131,6 @@ void AScholaCombatEnvironment::ResetEnvironment()
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET v9.0] Managing teams: [%s]"), *TeamsStr);
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET v9.0] Training mode: ACTIVE"));
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================"));
-
-	// CRITICAL FIX: Validate SimulationManager before proceeding
-	if (!SimulationManager || !IsValid(SimulationManager))
-	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] SimulationManager is null or invalid! Attempting to reacquire..."));
-		SimulationManager = Cast<ASimulationManagerGameMode>(UGameplayStatics::GetGameMode(this));
-
-		if (!SimulationManager)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] CRITICAL: Failed to reacquire SimulationManager!"));
-			return;
-		}
-
-		// v9.0 REFACTOR: Re-bind episode events using EpisodeManager
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] Re-binding episode events to new SimulationManager..."));
-		if (EpisodeManager)
-		{
-			EpisodeManager->BindToSimulationManager(SimulationManager);
-		}
-	}
-
-	// Verify teams are registered
-	TArray<int32> AllTeamIDs = SimulationManager->GetAllTeamIDs();
-	if (AllTeamIDs.Num() == 0)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Reset blocked - no teams registered"));
-		return;
-	}
-
-	if (!SimulationManager->IsSimulationRunning())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Simulation not running - starting simulation before reset"));
-		SimulationManager->StartSimulation();
-	}
-
-	// v9.0 REFACTOR: Use EpisodeManager to start new episode
-	// EnvID from Schola matches the actor index (0-3)
-	FString TeamsStrLog = EnvRegistry && EnvRegistry->TeamIDs.Num() > 0
-		? FString::JoinBy(EnvRegistry->TeamIDs, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
-		: TEXT("ALL TEAMS");
-
-	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET v9.0] Resetting environment %d (teams: %s)..."),
-		EnvId, *TeamsStrLog);
 
 	if (EpisodeManager)
 	{
@@ -213,12 +146,8 @@ void AScholaCombatEnvironment::ResetEnvironment()
 		return;
 	}
 
-	// Verify simulation is still running after reset
-	if (!SimulationManager->IsSimulationRunning())
-	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] CRITICAL: Simulation stopped after StartNewEpisode()! Restarting..."));
-		SimulationManager->StartSimulation();
-	}
+
+	OnScholaEnvironmentInitialized_Delegate.Broadcast();
 
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET] ResetEnvironment() complete - ready for Python poll()"));
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================\n"));
@@ -226,9 +155,8 @@ void AScholaCombatEnvironment::ResetEnvironment()
 
 void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAgentTrainerPairs)
 {
-	// v9.0 REFACTOR: Get team IDs from EnvRegistry
-	FString TeamsStr = EnvRegistry && EnvRegistry->TeamIDs.Num() > 0
-		? FString::JoinBy(EnvRegistry->TeamIDs, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
+	FString TeamsStr = EnvRegistry && EnvRegistry->GetRegisteredTeams().Num() > 0
+		? FString::JoinBy(EnvRegistry->GetRegisteredTeams(), TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
 		: TEXT("ALL TEAMS");
 
 	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
@@ -243,8 +171,6 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 		return;
 	}
 	
-	DiscoverAgents();
-
 	OutAgentTrainerPairs.Empty();
 
 	int32 TrainersCreated = 0;
@@ -280,6 +206,12 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 			continue;
 		}
 
+		if (ValidateAgent(Agent))
+		{
+			Agent->ScholaEnvironment = this;
+		}
+		
+
 		// Spawn trainer (EnvID will be assigned by Schola based on actor order)
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Name = FName(*FString::Printf(TEXT("Trainer_Team%d_%s"),
@@ -309,8 +241,8 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 	}
 
 	// v9.0 REFACTOR: Get team IDs from EnvRegistry
-	FString TeamsStrReg = EnvRegistry && EnvRegistry->TeamIDs.Num() > 0
-		? FString::JoinBy(EnvRegistry->TeamIDs, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
+	FString TeamsStrReg = EnvRegistry && EnvRegistry->GetRegisteredTeams().Num() > 0
+		? FString::JoinBy(EnvRegistry->GetRegisteredTeams(), TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
 		: TEXT("ALL TEAMS");
 
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] === REGISTRATION COMPLETE ==="));
@@ -364,117 +296,26 @@ bool AScholaCombatEnvironment::RegisterObjective(AObjectiveActor* Objective)
 	EnvRegistry->RegisterObjectiveActor(Objective);
 }
 
-//------------------------------------------------------------------------------
-// AGENT DISCOVERY & REGISTRATION
-//------------------------------------------------------------------------------
-
-void AScholaCombatEnvironment::DiscoverAgents()
+bool AScholaCombatEnvironment::UnRegisterTeam(int32 TeamID)
 {
-	RegisteredAgents.Empty();
-	int32 ValidatedCount = 0;
-	int32 SkippedTeamFilter = 0;
-
-	// v9.0 REFACTOR: Get team ID filter from EnvRegistry
-	TArray<int32> TeamFilter = EnvRegistry ? EnvRegistry->TeamIDs : TArray<int32>();
-	FString TeamFilterString = TeamFilter.Num() > 0
-		? FString::JoinBy(TeamFilter, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); })
-		: TEXT("ALL TEAMS");
-
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] Starting agent discovery..."));
-	UE_LOG(LogTemp, Warning, TEXT("  - Training Team Filter: [%s]"), *TeamFilterString);
-	UE_LOG(LogTemp, Warning, TEXT("  - Team Filtering: %s"), TeamFilter.Num() > 0 ? TEXT("ENABLED") : TEXT("DISABLED (all teams)"));
-
-	// Iterate through all AFollowerCharacter actors
-	for (TActorIterator<AFollowerCharacter> It(GetWorld()); It; ++It)
+	if (!EnvRegistry)
 	{
-		AFollowerCharacter* Follower = *It;
-
-
-		// 2. Extract ScholaAgentComponent
-		UScholaAgentComponent* ScholaComp = Follower->FindComponentByClass<UScholaAgentComponent>();
-
-		if (ScholaComp)
-		{
-			// 3. Register agent (team filtering happens inside RegisterAgent())
-			if (RegisterAgent(ScholaComp))
-			{
-				ValidatedCount++;
-			}
-			else
-			{
-				SkippedTeamFilter++;
-			}
-		}
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Discovery complete: %d agents registered"), ValidatedCount);
-	UE_LOG(LogTemp, Warning, TEXT("  - Skipped (Team Filter): %d"), SkippedTeamFilter);
-	UE_LOG(LogTemp, Warning, TEXT("  - Total Registered: %d"), RegisteredAgents.Num());
-}
-
-bool AScholaCombatEnvironment::RegisterAgent(UScholaAgentComponent* Agent)
-{
-	if (!Agent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] RegisterAgent failed: Agent is null"));
 		return false;
 	}
 
-	// Validate agent has required components
-	if (!ValidateAgent(Agent))
+	return EnvRegistry->UnRegisterTeam(TeamID);
+}
+
+bool AScholaCombatEnvironment::UnRegisterObjective(AObjectiveActor* Objective)
+{
+	if (!EnvRegistry)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Agent %s failed validation"), *Agent->GetOwner()->GetName());
 		return false;
 	}
 
-	// v9.0 REFACTOR: Check team filter using EnvRegistry
-	TArray<int32> TeamFilter = EnvRegistry ? EnvRegistry->TeamIDs : TArray<int32>();
-	if (TeamFilter.Num() > 0)
-	{
-		int32 TeamID = -1;
-
-		// v9.0 Phase 4: Use character API instead of FindComponentByClass
-		AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(Agent->GetOwner());
-		if (FollowerChar)
-		{
-			TeamID = FollowerChar->GetTeamID();
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] ⚠️ Agent %s is not a FollowerCharacter!"),
-				*Agent->GetOwner()->GetName());
-		}
-
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] Agent %s detected with TeamID: %d (Training filter: [%s])"),
-			*Agent->GetOwner()->GetName(), TeamID,
-			*FString::JoinBy(TeamFilter, TEXT(", "), [](int32 ID) { return FString::FromInt(ID); }));
-
-		if (!TeamFilter.Contains(TeamID))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] ✗ Skipping agent %s (Team %d not in training list)"),
-				*Agent->GetOwner()->GetName(), TeamID);
-			return false;
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] ✓ Agent %s accepted (Team %d is in training list)"),
-				*Agent->GetOwner()->GetName(), TeamID);
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v9.0] No team filter active (accepting all teams)"));
-	}
-
-	// Add to registered agents
-	RegisteredAgents.AddUnique(Agent);
-
-	// Link agent to this environment
-	Agent->ScholaEnvironment = this;
-
-	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v9.0] ✓ Successfully registered agent: %s"), *Agent->GetOwner()->GetName());
-	return true;
+	return EnvRegistry->UnRegisterObjectiveActor(Objective);
 }
+
 
 bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 {
@@ -488,13 +329,3 @@ bool AScholaCombatEnvironment::ValidateAgent(UScholaAgentComponent* Agent) const
 
 	return true;
 }
-
-TArray<int32> AScholaCombatEnvironment::GetTrainingTeamIDs() const
-{
-	return EnvRegistry ? EnvRegistry->TeamIDs : TArray<int32>();
-}
-
-//------------------------------------------------------------------------------
-// NOTE: v9.0 REFACTOR - Episode event handling moved to EpisodeManagerComponent
-// BindEpisodeEvents, OnEpisodeStarted, OnEpisodeEnded removed
-//------------------------------------------------------------------------------
