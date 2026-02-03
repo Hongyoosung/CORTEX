@@ -82,6 +82,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Intel")
 	bool				AreObjectivesDiscovered() const;
 
+	int32				GetTeamID() const;
+
 	
 
 	//===============================================================

@@ -140,6 +140,11 @@ bool ALeaderCharacter::AreObjectivesDiscovered() const
 }
 
 
+int32 ALeaderCharacter::GetTeamID() const
+{
+	return TeamManagerComponent ? TeamManagerComponent->GetTeamInfo().TeamID : -1;
+}
+
 
 //------------------------------------------------------------------------------
 // STRATEGIC PLANNING WRAPPERS (delegate to StrategicPlannerComponent)

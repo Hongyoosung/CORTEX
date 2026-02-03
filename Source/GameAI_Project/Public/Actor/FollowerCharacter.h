@@ -208,7 +208,7 @@ private:
 	// TEAM COMMUNICATION HELPERS
 	//==========================================================================
 	/** Find team leader actor by matching TeamID */
-	AActor* FindTeamLeaderByTeamID();
+	void FindTeamByTeamID();
 
 
 	//==========================================================================

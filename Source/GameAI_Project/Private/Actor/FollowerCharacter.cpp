@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actor/FollowerCharacter.h"
+#include "Actor/LeaderCharacter.h"
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/Components/ContextBridgeComponent.h"
 #include "Util/Components/VisualLoggerComponent.h"
@@ -95,6 +96,12 @@ void AFollowerCharacter::BeginPlay()
 		UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0] '%s': ContextBridge initialized with default tactical params"),
 			*GetName());
 	}
+
+	if (bAutoRegisterWithLeader)
+	{
+		FindTeamByTeamID();
+	}
+
 
 	UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0] '%s': All v9.0 components initialized"), *GetName());
 }
@@ -649,10 +656,50 @@ void AFollowerCharacter::InjectDependencies()
 }
 
 
-AActor* AFollowerCharacter::FindTeamLeaderByTeamID()
+void AFollowerCharacter::FindTeamByTeamID()
 {
 	
-	return nullptr;
+	if (!GetWorld())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': FindTeamByTeamID() - Invalid World"), *GetName());
+		return;
+	}
+
+	// Iterate through all ALeaderCharacter actors in the world
+	for (TActorIterator<ALeaderCharacter> It(GetWorld()); It; ++It)
+	{
+		ALeaderCharacter* Leader = *It;
+		if (!Leader || !Leader->TeamManagerComponent)
+		{
+			continue;
+		}
+
+		// Check if this leader's TeamID matches our TeamID
+		if (Leader->GetTeamID() == TeamID)
+		{
+			// Found matching leader - register this follower
+			bool bSuccess = Leader->RegisterFollower(this);
+
+			if (bSuccess)
+			{
+				UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter] '%s': Successfully registered with Leader '%s' (TeamID: %d)"),
+					*GetName(), *Leader->GetName(), TeamID);
+
+				// Cache the team leader reference
+				TeamLeader = Leader;
+				bIsRegisteredWithLeader = true;
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': Failed to register with Leader '%s' (TeamID: %d)"),
+					*GetName(), *Leader->GetName(), TeamID);
+			}
+		}
+	}
+
+	// No matching leader found
+	UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': No leader found with matching TeamID: %d"),
+		*GetName(), TeamID);
 }
 
 
