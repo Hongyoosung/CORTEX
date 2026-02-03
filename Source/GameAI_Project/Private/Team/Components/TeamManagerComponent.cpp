@@ -7,12 +7,10 @@
 #include "Core/SimulationManagerGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
-#include "TeamManagerComponent.h"
 
 
 UTeamManagerComponent::UTeamManagerComponent()
 	: Super()
-	, TeamID(0)
 	, MaxFollowers(10)
 	, FriendlyObjective(nullptr)
 	, HostileObjective(nullptr)

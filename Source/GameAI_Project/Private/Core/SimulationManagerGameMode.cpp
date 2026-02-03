@@ -5,10 +5,13 @@
 #include "Team/ObjectiveActor.h"
 #include "Combat/Components/HealthComponent.h"
 #include "StateTree/FollowerStateTreeComponent.h"
+#include "Schola/ScholaCombatEnvironment.h"
+#include "Schola/Components/EnvRegistryComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"
 
 ASimulationManagerGameMode::ASimulationManagerGameMode()
 {
@@ -21,206 +24,19 @@ void ASimulationManagerGameMode::BeginPlay()
 	Super::BeginPlay();
 
 
-	// Bind all ObjectiveActor defeat events for episode termination
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AObjectiveActor::StaticClass(), ObjectiveActors);
+	DiscoverAndRegisterEnvironments();
 
-	for (AActor* ObjActor : ObjectiveActors)
-	{
-		AObjectiveActor* Objective = Cast<AObjectiveActor>(ObjActor);
-		if (Objective)
-		{
-			Objective->OnObjectiveDefeated.AddUniqueDynamic(this, &ASimulationManagerGameMode::OnObjectiveDefeated);
-			UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound OnObjectiveDefeated for '%s' (Team %d)"),
-				*Objective->GetName(), Objective->OwnerTeamID);
-		}
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Bound %d ObjectiveActor defeat delegates"), ObjectiveActors.Num());
 
 	if (bAutoStartSimulation)
 	{
 		StartSimulation();
 	}
-
-	/*UScholaGameInstance* ScholaGI = Cast<UScholaGameInstance>(GetGameInstance());
-	if (ScholaGI)
-	{
-		ScholaGI->StartCommunicationServer(ServerPort);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[SimulationManager] Failed to get ScholaGameInstance - communication server not started"));
-	}*/
 }
 
 void ASimulationManagerGameMode::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// v8.5 VECTORIZED TRAINING: Check termination per-environment instead of globally
-	if (bSimulationRunning)
-	{
-		// Increment global step counter (legacy, kept for backward compatibility)
-		CurrentStep++;
-
-		// [DIAGNOSTIC] Log tick frequency every 100 ticks
-		static int32 TickCounter = 0;
-		TickCounter++;
-		if (TickCounter % 100 == 0)
-		{
-			UE_LOG(LogTemp, VeryVerbose, TEXT("[TICK DIAGNOSTIC] Tick #%d, DeltaTime=%.3fs, TickInterval=%.3fs"),
-				TickCounter, DeltaTime, PrimaryActorTick.TickInterval);
-		}
-
-		// v8.5 CRITICAL FIX: Accumulate game time per environment (ONCE per environment per tick)
-		// Previous bug: Loop iterated over TeamToEnvironmentMap (8 teams), causing each environment's
-		// time to be incremented 2x per tick (once per team). This caused episodes to end at 2x speed.
-		TSet<int32> ProcessedEnvironments;  // Track which environments we've updated this tick
-
-		for (auto& Pair : TeamToEnvironmentMap)
-		{
-			int32 EnvID = Pair.Value;
-
-			// Skip if we already processed this environment this tick
-			if (ProcessedEnvironments.Contains(EnvID))
-			{
-				continue;
-			}
-			ProcessedEnvironments.Add(EnvID);
-
-			// Skip environments that are already ending
-			if (IsEnvironmentEpisodeEnding(EnvID))
-			{
-				continue;
-			}
-
-			// Increment step counter for this environment
-			int32* EnvSteps = EnvironmentSteps.Find(EnvID);
-			if (EnvSteps)
-			{
-				(*EnvSteps)++;
-			}
-
-			// Accumulate game time for this environment (NOW ONLY ONCE PER TICK)
-			float* EnvGameTime = EnvironmentEpisodeGameTimes.Find(EnvID);
-			if (!EnvGameTime)
-			{
-				EnvironmentEpisodeGameTimes.Add(EnvID, 0.0f);
-				EnvGameTime = EnvironmentEpisodeGameTimes.Find(EnvID);
-			}
-			if (EnvGameTime)
-			{
-				float OldTime = *EnvGameTime;
-				*EnvGameTime += DeltaTime;
-
-				// [DIAGNOSTIC] Log time accumulation every 5 seconds
-				if (FMath::FloorToInt(*EnvGameTime / 5.0f) > FMath::FloorToInt(OldTime / 5.0f))
-				{
-					UE_LOG(LogTemp, Log, TEXT("[ENV %d TIME] Accumulated time: %.1fs (Steps: %d, MaxDuration: %.1fs, MaxSteps: %d)"),
-						EnvID, *EnvGameTime, EnvSteps ? *EnvSteps : 0, MaxEpisodeDuration, MaxStepsPerEpisode);
-				}
-			}
-
-			// Check for max duration termination (per-environment)
-			if (MaxEpisodeDuration > 0.0f && EnvGameTime && *EnvGameTime >= MaxEpisodeDuration)
-			{
-				float* EnvStartTime = EnvironmentEpisodeStartTimes.Find(EnvID);
-				float WallClockElapsed = EnvStartTime ? (GetWorld()->GetTimeSeconds() - *EnvStartTime) : 0.0f;
-
-				UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
-				UE_LOG(LogTemp, Error, TEXT("║ [ENV %d TIMEOUT] EPISODE ENDING DUE TO MAX DURATION               ║"), EnvID);
-				UE_LOG(LogTemp, Error, TEXT("║   Reason: TIME LIMIT REACHED                                      ║"));
-				UE_LOG(LogTemp, Error, TEXT("║   Accumulated GameTime: %.1fs                                     ║"), *EnvGameTime);
-				UE_LOG(LogTemp, Error, TEXT("║   MaxEpisodeDuration: %.1fs                                       ║"), MaxEpisodeDuration);
-				UE_LOG(LogTemp, Error, TEXT("║   Wall Clock Elapsed: %.1fs                                       ║"), WallClockElapsed);
-				UE_LOG(LogTemp, Error, TEXT("║   Steps Taken: %d                                                  ║"), EnvSteps ? *EnvSteps : 0);
-				UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
-
-				// End episode for this environment only
-				// Find teams in this environment
-				TArray<int32> TeamsInEnv;
-				for (auto& TeamPair : TeamToEnvironmentMap)
-				{
-					if (TeamPair.Value == EnvID)
-					{
-						TeamsInEnv.Add(TeamPair.Key);
-					}
-				}
-
-				if (TeamsInEnv.Num() >= 2)
-				{
-					// Timeout: no winner
-					UE_LOG(LogTemp, Warning, TEXT("[ENV %d TIMEOUT] Ending episode with no winner (timeout)"), EnvID);
-					EndEpisode(-1, -1, EnvID);
-				}
-			}
-
-			// Check for max steps termination (per-environment)
-			if (MaxStepsPerEpisode > 0 && EnvSteps && *EnvSteps >= MaxStepsPerEpisode)
-			{
-				UE_LOG(LogTemp, Error, TEXT("╔════════════════════════════════════════════════════════════════════╗"));
-				UE_LOG(LogTemp, Error, TEXT("║ [ENV %d MAX STEPS] EPISODE ENDING DUE TO MAX STEPS                ║"), EnvID);
-				UE_LOG(LogTemp, Error, TEXT("║   Reason: STEP LIMIT REACHED                                      ║"));
-				UE_LOG(LogTemp, Error, TEXT("║   Steps Taken: %d                                                  ║"), *EnvSteps);
-				UE_LOG(LogTemp, Error, TEXT("║   MaxStepsPerEpisode: %d                                           ║"), MaxStepsPerEpisode);
-				UE_LOG(LogTemp, Error, TEXT("║   Accumulated GameTime: %.1fs                                     ║"), EnvGameTime ? *EnvGameTime : 0.0f);
-				UE_LOG(LogTemp, Error, TEXT("╚════════════════════════════════════════════════════════════════════╝"));
-
-				EndEpisode(-1, -1, EnvID);
-			}
-		}
-
-		// CONTINUOUS TRAINING: Award objective proximity rewards
-		if (bEnableContinuousTraining && ObjectiveActor && IsValid(ObjectiveActor))
-		{
-			FVector ObjectiveLocation = ObjectiveActor->GetActorLocation();
-
-			for (auto& TeamPair : RegisteredTeams)
-			{
-				FTeamInfo& TeamInfo = TeamPair.Value;
-
-				for (AActor* Member : TeamInfo.TeamMembers)
-				{
-					if (!Member || !IsValid(Member))
-					{
-						continue;
-					}
-
-					// v9.0: DISABLED - Replaced by strategy-specific rewards in RewardCalculator
-					// Legacy proximity rewards caused identical values for all agents (no differentiation)
-					// Now using TacticalRewardProvider → RewardCalculator::CalculateUnifiedReward()
-					/*
-					// Check distance to objective
-					float Distance = FVector::Dist(Member->GetActorLocation(), ObjectiveLocation);
-
-					if (Distance <= ObjectiveProximityRadius)
-					{
-						// Award proximity reward to alive agents only
-						UFollowerAgentComponent* FollowerComp = Member->FindComponentByClass<UFollowerAgentComponent>();
-						if (FollowerComp && FollowerComp->GetIsAlive())
-						{
-							float Reward = ObjectiveProximityReward * DeltaTime;  // Scale by delta time for consistent rewards
-							FollowerComp->AccumulateReward(Reward);
-						}
-					}
-					*/
-				}
-			}
-		}
-
-		// Episode termination is now event-driven via OnAgentDied()
-		// No per-tick checking needed
-
-		if (bDrawDebugInfo)
-		{
-			float CurrentTime = GetWorld()->GetTimeSeconds();
-			if (CurrentTime - LastDebugDrawTime >= DebugDrawInterval)
-			{
-				DrawDebugInformation();
-				LastDebugDrawTime = CurrentTime;
-			}
-		}
-	}
 }
 
 //------------------------------------------------------------------------------
@@ -315,6 +131,20 @@ bool ASimulationManagerGameMode::RegisterTeam(
 
 	UE_LOG(LogTemp, Log, TEXT("SimulationManager: Registered team %d (%s)"), TeamID, *TeamName);
 	return true;
+}
+
+bool ASimulationManagerGameMode::RegisterTeam(FTeamInfo TeamInfo)
+{
+	AScholaCombatEnvironment** ScholaEnvPtr = ScholaEnvironmentsMap.Find(TeamInfo.EnvID);
+
+	if (!ScholaEnvPtr || !*ScholaEnvPtr)
+	{
+		return false;
+	}
+
+	AScholaCombatEnvironment* ScholaEnv = *ScholaEnvPtr;
+
+	return ScholaEnv->RegisterTeam(TeamInfo.TeamID);
 }
 
 void ASimulationManagerGameMode::UnregisterTeam(int32 TeamID)
@@ -707,6 +537,35 @@ bool ASimulationManagerGameMode::IsTeamRegistered(int32 TeamID) const
 	return RegisteredTeams.Contains(TeamID);
 }
 
+
+void ASimulationManagerGameMode::RegisterObjective(AObjectiveActor* Objective)
+{
+	if (!Objective)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SimulationManager] Cannot register null objective"));
+		return;
+	}
+
+	int32 EnvID = Objective->GetTeamInfo().EnvID;
+	int32 TeamID = Objective->GetTeamInfo().TeamID;
+
+	AScholaCombatEnvironment** ScholaEnvPtr = ScholaEnvironmentsMap.Find(EnvID);
+	if (!ScholaEnvPtr || !*ScholaEnvPtr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[SimulationManager] Cannot register objective '%s' - Environment %d not found"),
+			*Objective->GetName(), EnvID);
+
+		return;
+	}
+
+	AScholaCombatEnvironment* ScholaEnv = *ScholaEnvPtr;
+	ScholaEnv->RegisterObjective(Objective);
+
+
+	UE_LOG(LogTemp, Log, TEXT("[SimulationManager] Objective '%s' Registered. Env: '%s', Team: '%s'"),
+		*Objective->GetName(), EnvID, TeamID);
+}
+
 //------------------------------------------------------------------------------
 // SIMULATION CONTROL
 //------------------------------------------------------------------------------
@@ -829,6 +688,20 @@ void ASimulationManagerGameMode::DrawDebugInformation()
 
 	DrawDebugString(World, DebugOrigin + FVector(0, 0, YOffset), StatsStr, nullptr,
 		FColor::White, DebugDrawInterval, false, 1.5f);
+}
+
+void ASimulationManagerGameMode::DiscoverAndRegisterEnvironments()
+{
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AScholaCombatEnvironment::StaticClass(), ScholaEnvironmentsArray);
+
+	for (AActor* ScholaEnv : ScholaEnvironmentsArray)
+	{
+		AScholaCombatEnvironment* CombatEnv = Cast<AScholaCombatEnvironment>(ScholaEnv);
+		if (CombatEnv)
+		{
+			ScholaEnvironmentsMap.Add(CombatEnv->GetEnvId(), CombatEnv);
+		}
+	}
 }
 
 //------------------------------------------------------------------------------

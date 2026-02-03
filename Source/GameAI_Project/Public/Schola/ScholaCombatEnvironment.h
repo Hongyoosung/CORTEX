@@ -6,14 +6,21 @@
 #include "Environment/StaticEnvironment.h"
 #include "ScholaCombatEnvironment.generated.h"
 
+
 class ASimulationManagerGameMode;
 class UScholaAgentComponent;
+class UEnvRegistryComponent;
+class UEpisodeManagerComponent;
 
-/**
+
+/** //==========================================================================
  * Schola Combat Environment
  *
- * Integrates the SBDAPM combat simulation with Schola's RL training framework.
- * Manages gRPC server, agent registration, and episode lifecycle.
+ * v9.0 REFACTORED: Component-based architecture following Single Responsibility Principle
+ *
+ * Coordinates Schola environment functionality through actor components:
+ * - UEnvRegistryComponent: Team and objective registration
+ * - UEpisodeManagerComponent: Episode lifecycle management
  *
  * Architecture:
  * - Spawns at level start (place in level or spawn in GameMode)
@@ -23,10 +30,10 @@ class UScholaAgentComponent;
  *
  * Usage:
  * 1. Place this actor in your level (or spawn in GameMode::BeginPlay)
- * 2. Configure port and training settings
+ * 2. Configure team IDs in EnvRegistry component
  * 3. Ensure follower pawns have ScholaAgentComponent
  * 4. Start UE5 + run Python training script (train_rllib.py)
- */
+ */ //==========================================================================
 UCLASS()
 class GAMEAI_PROJECT_API AScholaCombatEnvironment : public AStaticScholaEnvironment
 {
@@ -38,71 +45,33 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	//--------------------------------------------------------------------------
-	// SCHOLA ENVIRONMENT INTERFACE (AAbstractScholaEnvironment)
-	//--------------------------------------------------------------------------
 
+
+	//==========================================================================
+	// SCHOLA ENVIRONMENT INTERFACE (AAbstractScholaEnvironment)
+	//==========================================================================
 	virtual void InitializeEnvironment() override;
 	virtual void ResetEnvironment() override;
 	virtual void InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAgentTrainerPairs) override;
 	virtual void SetEnvironmentOptions(const TMap<FString, FString>& Options) override;
 	virtual void SeedEnvironment(int Seed) override;
 
-	//--------------------------------------------------------------------------
-	// CONFIGURATION
-	//--------------------------------------------------------------------------
-	/** Auto-discover agents in level (finds all ScholaAgentComponents) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
-	bool bAutoDiscoverAgents = true;
 
-	/**
-	 * Team IDs managed by THIS environment actor
-	 * Example for 4-actor setup (32 agents, 8 teams):
-	 *   - Actor 0: [0, 1] → Env 0 (Teams 0,1 = 4v4)
-	 *   - Actor 1: [2, 3] → Env 1 (Teams 2,3 = 4v4)
-	 *   - Actor 2: [4, 5] → Env 2 (Teams 4,5 = 4v4)
-	 *   - Actor 3: [6, 7] → Env 3 (Teams 6,7 = 4v4)
-	 *
-	 * CRITICAL: Each actor must have UNIQUE team IDs (no overlap)
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
-	TArray<int32> TrainingTeamIDs;
+	//==========================================================================
+	// TEAM MANAGEMENT INTERFACE
+	//==========================================================================
+	bool RegisterTeam(int32 TeamID);
+
+	bool RegisterObjective(AObjectiveActor* Objective);
 
 
-	//--------------------------------------------------------------------------
-	// STATE
-	//--------------------------------------------------------------------------
-
-	/** All registered Schola agent components */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	TArray<UScholaAgentComponent*> RegisteredAgents;
-
-	/** Reference to simulation manager */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	ASimulationManagerGameMode* SimulationManager = nullptr;
-
-	/** Is gRPC server running? */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	bool bServerRunning = false;
-
-	/** Has InternalRegisterAgents been called this session? */
-	bool bAgentsRegistered = false;
-
-	/** Has environment been reset by Python? (indicates training is active) */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	bool bTrainingActive = false;
-
-	/** Episode counters per logical environment (4 environments = 4 counters) */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	TMap<int32, int32> LogicalEnvironmentEpisodes;
-
-	//--------------------------------------------------------------------------
+	//==========================================================================
 	// UTILITY
-	//--------------------------------------------------------------------------
+	//==========================================================================
 
 	/** Get the environment ID assigned by Schola */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
-	int32 GetEnvId() const { return EnvId; }
+	int32 GetEnvId() const { return ScholaEnvID; }
 
 	/** Discover all ScholaAgentComponents in level */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
@@ -112,17 +81,64 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	bool RegisterAgent(UScholaAgentComponent* Agent);
 
-	/** Bind to SimulationManager episode events */
-	UFUNCTION()
-	void OnEpisodeStarted(int32 BroadcastEnvID, int32 EpisodeNumber);
+	/** Get team IDs managed by this environment (delegates to EnvRegistry) */
+	UFUNCTION(BlueprintCallable, Category = "Schola")
+	TArray<int32> GetTrainingTeamIDs() const;
 
-	UFUNCTION()
-	void OnEpisodeEnded(int32 BroadcastEnvID, const FEpisodeResult& Result);
+
 
 private:
 	/** Validate agent for training (has required components) */
 	bool ValidateAgent(UScholaAgentComponent* Agent) const;
 
-	/** Setup episode event bindings */
-	void BindEpisodeEvents();
+
+
+public:
+	//==========================================================================
+	// COMPONENTS (v9.0 REFACTOR)
+	//==========================================================================
+
+	/** Environment Registry Component - manages team/objective registration */
+	UPROPERTY(VisibleAnywhere,	BlueprintReadOnly, Category = "Schola|Components")
+	UEnvRegistryComponent*		EnvRegistry;
+
+	/** Episode Manager Component - manages episode lifecycle */
+	UPROPERTY(VisibleAnywhere,	BlueprintReadOnly, Category = "Schola|Components")
+	UEpisodeManagerComponent*	EpisodeManager;
+
+
+	//==========================================================================
+	// CONFIGURATION
+	//==========================================================================
+
+	/** Auto-discover agents in level (finds all ScholaAgentComponents) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	bool bAutoDiscoverAgents;
+
+
+	//==========================================================================
+	// STATE
+	//==========================================================================
+
+	/** All registered Schola agent components */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	TArray<UScholaAgentComponent*> RegisteredAgents;
+
+	/** Reference to simulation manager */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	ASimulationManagerGameMode* SimulationManager;
+
+	/** Is gRPC server running? */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	bool bServerRunning;
+
+	/** Has InternalRegisterAgents been called this session? */
+	bool bAgentsRegistered;
+
+	/** Has environment been reset by Python? (indicates training is active) */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
+	bool bTrainingActive;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	int32 ScholaEnvID;
 };

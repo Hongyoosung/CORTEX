@@ -108,7 +108,7 @@ def verify_multi_actor_setup():
             print("Solution:")
             print(" → Follow MULTI_ACTOR_SETUP_GUIDE.md")
             print(" → Create 4 BP_ScholaCombatEnvironment actors")
-            print(" → Configure TrainingTeamIDs for each actor:")
+            print(" → Configure EnvRegistry->TeamIDs for each actor (v9.0):")
             print("   - Actor 0: [0, 1]")
             print("   - Actor 1: [2, 3]")
             print("   - Actor 2: [4, 5]")

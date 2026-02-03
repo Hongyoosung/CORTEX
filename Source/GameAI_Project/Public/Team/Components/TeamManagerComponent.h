@@ -6,10 +6,12 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Observation/TeamObservation.h"
+#include "Team/TeamTypes.h"
 #include "TeamManagerComponent.generated.h"
 
 // Forward declarations
 class AObjectiveActor;
+
 
 /**
  * Delegate fired when objectives are discovered and ready for use.
@@ -140,6 +142,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Team Manager")
 	FTeamObservation BuildTeamObservation(const TArray<AActor*>& Followers);
 
+
+	//=====================================================
+	// Team Information Access
+	//=====================================================
+	FTeamInfo GetTeamInfo() const { return TeamInfo; }
+
+
+public:
 	// ========== Events ==========
 
 	/**
@@ -154,14 +164,12 @@ public:
 public:
 	//========== Configuration ==========
 
-	/** Team ID for this leader */
-	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
-	int32 TeamID = 0;
-
 	/**Maximum number of followers allowed */
 	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
 	int32 MaxFollowers = 4;
 
+	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
+	FTeamInfo TeamInfo;
 
 
 private:

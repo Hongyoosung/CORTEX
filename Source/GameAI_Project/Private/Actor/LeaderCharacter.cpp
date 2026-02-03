@@ -2,6 +2,7 @@
 
 #include "Actor/LeaderCharacter.h"
 #include "Actor/FollowerCharacter.h"
+#include "Core/SimulationManagerGameMode.h"
 #include "Team/Components/TeamManagerComponent.h"
 #include "Team/Components/StrategicPlannerComponent.h"
 #include "Util/Components/VisualLoggerComponent.h"
@@ -34,6 +35,11 @@ void ALeaderCharacter::BeginPlay()
 		
 		UE_LOG(LogTemp, Log, TEXT("[LeaderCharacter] '%s': Objectives discovered"), *GetName());
 	}
+
+
+	ASimulationManagerGameMode* GameMode = Cast<ASimulationManagerGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+	GameMode->RegisterTeam(TeamManagerComponent->GetTeamInfo());
+
 
 	// Strategic Planner: Initialize MCTS with configured simulation count
 	if (StrategicPlannerComponent)

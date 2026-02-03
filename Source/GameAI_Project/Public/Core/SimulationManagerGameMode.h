@@ -5,45 +5,14 @@
 #include "Team/TeamTypes.h"
 #include "SimulationManagerGameMode.generated.h"
 
+
+
 class UTeamLeaderComponent;
+class AScholaCombatEnvironment;
+class AObjectiveActor;
 struct FDeathEventData;
 
-/**
- * Team registration info
- */
-USTRUCT(BlueprintType)
-struct FTeamInfo
-{
-	GENERATED_BODY()
 
-	/** Team ID (unique identifier) */
-	UPROPERTY(BlueprintReadWrite, Category = "Team")
-	int32 TeamID = 0;
-
-	/** Team name */
-	UPROPERTY(BlueprintReadWrite, Category = "Team")
-	FString TeamName;
-
-	/** Team leader component */
-	UPROPERTY(BlueprintReadWrite, Category = "Team")
-	UTeamLeaderComponent* TeamLeader = nullptr;
-
-	/** Team color */
-	UPROPERTY(BlueprintReadWrite, Category = "Team")
-	FLinearColor TeamColor = FLinearColor::White;
-
-	/** All actors belonging to this team */
-	UPROPERTY(BlueprintReadWrite, Category = "Team")
-	TArray<AActor*> TeamMembers;
-
-	/** IDs of enemy teams */
-	UPROPERTY(BlueprintReadWrite, Category = "Team")
-	TSet<int32> EnemyTeamIDs;
-
-	/** Is team active in simulation? */
-	UPROPERTY(BlueprintReadWrite, Category = "Team")
-	bool bIsActive = true;
-};
 
 /**
  * Simulation statistics
@@ -93,7 +62,7 @@ struct FEpisodeResult
 	int32 TotalSteps = 0;
 };
 
-/**
+/** //==========================================================================
  * Simulation Manager GameMode
  *
  * Manages team-based AI simulation with multi-team support.
@@ -111,7 +80,7 @@ struct FEpisodeResult
  * 2. Register teams using RegisterTeam() during BeginPlay
  * 3. Set enemy teams using SetEnemyTeams() or AddEnemyTeam()
  * 4. Query teams using GetTeamInfo(), GetEnemyTeams(), etc.
- */
+ */ //==========================================================================
 UCLASS()
 class GAMEAI_PROJECT_API ASimulationManagerGameMode : public AGameModeBase
 {
@@ -123,25 +92,16 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
-	//--------------------------------------------------------------------------
+	//==========================================================================
 	// TEAM REGISTRATION
-	//--------------------------------------------------------------------------
+	//==========================================================================
 
 	/**
 	 * Register a team with the simulation manager
-	 * @param TeamID - Unique team identifier
-	 * @param TeamLeader - Team leader component
-	 * @param TeamName - Display name for the team
-	 * @param TeamColor - Team color (for visualization)
-	 * @return true if registration succeeded
+	 * @param TeamInfo - Team information struct
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Teams")
-	bool RegisterTeam(
-		int32 TeamID,
-		UTeamLeaderComponent* TeamLeader,
-		const FString& TeamName = TEXT("Team"),
-		FLinearColor TeamColor = FLinearColor::White
-	);
+	bool RegisterTeam(FTeamInfo TeamInfo);
 
 	/**
 	 * Unregister a team
@@ -295,6 +255,19 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Simulation|Teams")
 	bool IsTeamRegistered(int32 TeamID) const;
+
+	//--------------------------------------------------------------------------
+	// OBJECTIVE REGISTRATION (v9.0 REFACTOR)
+	//--------------------------------------------------------------------------
+
+	/**
+	 * Register an ObjectiveActor to the simulation
+	 * This method provides a Schola-agnostic interface for ObjectiveActor
+	 * The ObjectiveActor doesn't need to know about Schola environment details
+	 * @param Objective - ObjectiveActor to register
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Objectives")
+	void RegisterObjective(AObjectiveActor* Objective);
 
 	//--------------------------------------------------------------------------
 	// SIMULATION CONTROL
@@ -509,10 +482,18 @@ private:
 	void DrawDebugInformation();
 
 
+	void DiscoverAndRegisterEnvironments();
+
+
 public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION
 	//--------------------------------------------------------------------------
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Config")
+	TArray<AActor*> ScholaEnvironmentsArray;
+
+	TMap<int32, AScholaCombatEnvironment*> ScholaEnvironmentsMap;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation|Config")
 	int32 ServerPort = 50051;
 

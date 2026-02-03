@@ -5,11 +5,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Team/TeamTypes.h"
 #include "ObjectiveActor.generated.h"
+
 
 class UStaticMeshComponent;
 class USphereComponent;
 class UMaterialInstanceDynamic;
+
 
 /**
  * v7.0 Durability-Based Objective System
@@ -41,6 +44,14 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
+
+	//========================================
+	// Registeration
+	//========================================
+	UFUNCTION(BlueprintCallable, Category = "Objective")
+	void RegisterToScholaEnv();
+
+
 	//========================================
 	// Durability System
 	//========================================
@@ -61,6 +72,8 @@ public:
 	// Team Association
 	//========================================
 
+	FTeamInfo GetTeamInfo() const { return TeamInfo; }
+
 	/** Check if this objective belongs to the given team */
 	UFUNCTION(BlueprintPure, Category = "Objective")
 	bool IsFriendlyTo(int32 AgentTeamID) const { return OwnerTeamID == AgentTeamID; }
@@ -76,6 +89,7 @@ public:
 	/** Check if specific agent is inside capture volume */
 	UFUNCTION(BlueprintPure, Category = "Objective")
 	bool IsAgentInVolume(AActor* Agent) const;
+
 
 protected:
 	//========================================
@@ -140,7 +154,7 @@ public:
 
 	/** Team ID that owns this objective (0 or 1) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Objective")
-	int32 OwnerTeamID = 0;
+	FTeamInfo TeamInfo;
 
 	/** Maximum durability value */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Objective|Durability")
@@ -165,6 +179,7 @@ public:
 	/** Show debug visualization (durability text, volume bounds) */
 	UPROPERTY(EditAnywhere, Category = "Objective|Debug")
 	bool bShowDebugVisualization = true;
+
 
 protected:
 	//========================================

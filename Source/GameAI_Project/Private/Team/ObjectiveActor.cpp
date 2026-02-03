@@ -4,11 +4,11 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
+
 
 AObjectiveActor::AObjectiveActor()
 {
@@ -101,6 +101,22 @@ void AObjectiveActor::Tick(float DeltaTime)
 		);
 	}
 }
+
+
+void AObjectiveActor::RegisterToScholaEnv()
+{
+	ASimulationManagerGameMode* GameMode = Cast<ASimulationManagerGameMode>(
+		UGameplayStatics::GetGameMode(GetWorld())
+	);
+
+	if (!GameMode)
+	{
+		return;
+	}
+
+	GameMode->RegisterObjective(this);
+}
+
 
 void AObjectiveActor::OnCaptureVolumeBeginOverlap(
 	UPrimitiveComponent* OverlappedComponent,
