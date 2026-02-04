@@ -32,11 +32,11 @@ struct FTeamObservation;
 
 
 /** //==========================================================================
- * Follower Character - State Tree Based (v9.0)
+ * Follower Character - State Tree Based
  *
  * This character integrates the hierarchical multi-agent system using State Tree.
  *
- * Architecture (v9.0 - Decomposed):
+ * Architecture (Decomposed):
  * - FollowerStateTreeComponent: Executes tactical states (Assault, Defend, Support)
  * - TeamCommsComponent: Handles communication with team leader (auto-registration)
  * - ContextBridgeComponent: Decouples StateTree dependencies (dependency inversion pattern)
@@ -64,10 +64,10 @@ protected:
 public:
 	virtual void Tick(float DeltaTime) override;
 
-	//==========================================================================
+	//============================================================
 	// COMBAT STATS (ICombatStatsInterface Implementation)
 	// Delegates to HealthComponent and WeaponComponent
-	//==========================================================================
+	//============================================================
 	virtual float		GetHealthPercentage_Implementation	() const override;
 	virtual bool		IsAlive_Implementation				() const override;
 	virtual float		GetWeaponCooldown_Implementation	() const override;
@@ -75,42 +75,42 @@ public:
 
 
 
-	//==========================================================================
+	//============================================================
 	// TACTICAL STATE (wraps TacticalStateComponent)
-	//==========================================================================
-	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
-	void SetStrategyAssignment(const FStrategyAssignment& Assignment);
+	//============================================================
 
 	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
-	EStrategyType GetAssignedStrategy() const;
+	EStrategyType		GetAssignedStrategy() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
 	FStrategyAssignment GetStrategyAssignment() const;
 
-	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
-	void SetTacticalParameters(const FTacticalParameters& Params);
-
 	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
 	FTacticalParameters GetTacticalParameters() const;
 
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FCombatParameters	GetCombatParameters() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FMacroAction		GetCurrentMacroAction() const;
+
+	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
+	FAllyContext		GetAllyContext() const;
+
 	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
-	void SetCombatParameters(const FCombatParameters& Params);
+	void				SetStrategyAssignment(const FStrategyAssignment& Assignment);
 
-	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
-	FCombatParameters GetCombatParameters() const;
+	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
+	void				SetCombatParameters(const FCombatParameters& Params);
 
-	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
-	FMacroAction GetCurrentMacroAction() const;
+	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
+	void				SetTacticalParameters(const FTacticalParameters& Params);
 
-	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
-	FAllyContext GetAllyContext() const;
 
-	//==========================================================================
+	//============================================================
 	// OBSERVATION (wraps ObservationBuilderComponent)
-	//==========================================================================
-	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
-	FObservationElement BuildLocalObservation();
-
+	//============================================================
+	
 	UFUNCTION(BlueprintPure, Category = "AI|Observation")
 	FObservationElement GetLocalObservation() const;
 
@@ -118,65 +118,80 @@ public:
 	FObservationElement GetPreviousObservation() const;
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
-	void UpdateLocalObservation(const FObservationElement& NewObservation);
+	void				UpdateLocalObservation(const FObservationElement& NewObservation);
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
-	void UpdateObjectiveContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
+	void				UpdateObjectiveContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
-	void UpdateTeamIntel(const FTeamObservation& TeamObs);
+	void				UpdateTeamIntel(const FTeamObservation& TeamObs);
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
-	bool FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies);
+	FObservationElement BuildLocalObservation();
 
-	//==========================================================================
+	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
+	bool				FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies);
+
+	void				RegisterVisibleEnemy(AActor* Enemy);
+
+
+	AObjectiveActor*	GetFriendlyObjective	() const;
+	AObjectiveActor*	GetHostileObjective	() const;
+
+
+	//============================================================
 	// REINFORCEMENT LEARNING (wraps RLAgentComponent)
-	//==========================================================================
+	//============================================================
 	UFUNCTION(BlueprintCallable, Category = "AI|RL")
-	void ProvideReward(float Reward, bool bTerminal = false);
+	void				ProvideReward(float Reward, bool bTerminal = false);
 
 	UFUNCTION(BlueprintCallable, Category = "AI|RL")
-	void AccumulateReward(float Reward);
+	void				AccumulateReward(float Reward);
 
 	UFUNCTION(BlueprintPure, Category = "AI|RL")
-	float GetAccumulatedReward() const;
+	float				GetAccumulatedReward() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|RL")
-	URewardCalculator* GetRewardCalculator() const;
+	URewardCalculator*	GetRewardCalculator() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|RL")
-	URLPolicyNetwork* GetTacticalPolicy() const;
+	UObservationBuilderComponent* GetObservationBuilder() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|RL")
-	bool IsTacticalPolicyReady() const;
+	URLPolicyNetwork*	GetTacticalPolicy() const;
 
-	bool IsUsingRLPolicy() const;
+	UFUNCTION(BlueprintPure, Category = "AI|RL")
+	bool				IsTacticalPolicyReady() const;
 
-	//==========================================================================
+	bool				IsUsingRLPolicy() const;
+
+
+	//============================================================
 	// COMBAT (wraps CombatExecutorComponent)
-	//==========================================================================
+	//============================================================
 	UFUNCTION(BlueprintCallable, Category = "AI|Combat")
-	void ExecuteCombat(const FCombatParameters& Params);
+	void				ExecuteCombat(const FCombatParameters& Params);
 
 	UFUNCTION(BlueprintPure, Category = "AI|Combat")
-	AActor* GetClosestEnemy(const TArray<AActor*>& Enemies) const;
+	AActor*				GetClosestEnemy(const TArray<AActor*>& Enemies) const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|Combat")
-	AActor* GetLowestHPEnemy(const TArray<AActor*>& Enemies) const;
+	AActor*				GetLowestHPEnemy(const TArray<AActor*>& Enemies) const;
 
-	//==========================================================================
+
+	//============================================================
 	// TEAM COMMUNICATION (wraps TeamCommsComponent)
-	//==========================================================================
+	//============================================================
 	UFUNCTION(BlueprintPure, Category = "AI|Team")
-	ALeaderCharacter* GetTeamLeader() const;
+	ALeaderCharacter*	GetTeamLeader() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|Team")
-	int32 GetTeamID() const;
+	int32				GetTeamID() const;
 
 
-	//==========================================================================
+	//============================================================
 	// LIFECYCLE (Character coordinates all components)
-	//==========================================================================
+	//============================================================
 	UFUNCTION(BlueprintCallable, Category = "AI|Lifecycle")
 	void ResetEpisode();
 
@@ -192,49 +207,42 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|State")
 	bool IsAliveState() const;
 
-	//==========================================================================
+
+	//============================================================
 	// COMPONENT ACCESS (for external systems that need direct component access)
-	//==========================================================================
+	//============================================================
 	UFUNCTION(BlueprintPure, Category = "AI|Components")
-	UFollowerStateTreeComponent* GetStateTreeComponent() const { return StateTreeComponent; }
+	UFollowerStateTreeComponent*	GetStateTreeComponent()		const { return StateTreeComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "AI|Components")
-	UVisualLoggerComponent* GetVisualLoggerComponent() const { return VisualLoggerComponent; }
+	UVisualLoggerComponent*			GetVisualLoggerComponent()	const { return VisualLoggerComponent; }
 
 
 
 private:
-	//==========================================================================
+	//============================================================
 	// TEAM COMMUNICATION HELPERS
-	//==========================================================================
-	/** Find team leader actor by matching TeamID */
+	//============================================================
 	void FindTeamByTeamID();
 
 
-	//==========================================================================
+	//============================================================
 	// DECISION LOOP HELPERS
-	//==========================================================================
-	/** Should we update strategy/tactical params this tick? (rate-limiting) */
+	//============================================================
 	bool ShouldUpdateStrategy() const;
-
-	/** Execute combat using current tactical parameters */
 	void ExecuteCombatInternal();
 
 
-	//--------------------------------------------------------------------------
-	// v9.0 PHASE 4: INITIALIZATION (Dependency Injection Pattern)
-	//--------------------------------------------------------------------------
-	/** Initialize all component references (called once in BeginPlay) */
+	//============================================================
+	//  INITIALIZATION (Dependency Injection Pattern)
+	//============================================================
 	void InitializeComponents();
-
-	/** Inject dependencies between components (called after InitializeComponents) */
 	void InjectDependencies();
 	
 
-	//==========================================================================
+	//============================================================
 	// EVENT HANDLERS
-	//==========================================================================
-	/** Handle death event from HealthComponent and coordinate with FollowerAgentComponent */
+	//============================================================
 	UFUNCTION()
 	void OnHealthComponentDeath(const struct FDeathEventData& DeathEvent);
 
@@ -260,53 +268,52 @@ public:
 private:
 	//============= sub-component references  =================
 	UPROPERTY()
-	UTacticalStateComponent* CachedTacticalState = nullptr;
+	UTacticalStateComponent* TacticalState;
 
 	UPROPERTY()
-	UObservationBuilderComponent* CachedObservationBuilder = nullptr;
+	UObservationBuilderComponent* ObservationBuilder;
 
 	UPROPERTY()
-	URLAgentComponent* CachedRLAgent = nullptr;
+	URLAgentComponent* RLAgent;
 
 	UPROPERTY()
-	UCombatExecutorComponent* CachedCombatExecutor = nullptr;
+	UCombatExecutorComponent* CombatExecutor;
 
 	UPROPERTY()
-	UHealthComponent* CachedHealthComponent = nullptr;
+	UHealthComponent* HealthComponent;
 
 	UPROPERTY()
-	UWeaponComponent* CachedWeaponComponent = nullptr;
+	UWeaponComponent* WeaponComponent;
 
 	UPROPERTY()
-	UAgentPerceptionComponent* CachedPerceptionComponent = nullptr;
+	UAgentPerceptionComponent* PerceptionComponent;
 
 
 	//============= TEAM COMMUNICATION DATA   =================
 
-
 	/** Is currently registered with team leader? */
-	bool bIsRegisteredWithLeader = false;
+	bool bIsRegisteredWithLeader;
 
 	/** Team ID for this follower (used to find matching leader) */
 	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
-	int32 TeamID = 0;
+	int32 TeamID;
 
 	/** Automatically register with team leader on BeginPlay */
 	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
-	bool bAutoRegisterWithLeader = true;
+	bool bAutoRegisterWithLeader;
 
 	/** Enable verbose logging for team communication debugging */
 	UPROPERTY(EditAnywhere, Category = "AI|Team", meta = (AllowPrivateAccess = "true"))
-	bool bEnableTeamCommsLogging = false;
+	bool bEnableTeamCommsLogging;
 
 
 	//============= DECISION LOOP   =================
 	/** Last time strategy was updated (for rate-limiting RL inference) */
-	double LastStrategyUpdateTime = 0.0;
+	double LastStrategyUpdateTime;
 
 	/** Ticks since last RL update (for timeout fallback) */
-	int32 TicksSinceLastUpdate = 0;
+	int32 TicksSinceLastUpdate;
 
 	/** Minimum interval between RL policy updates (seconds) */
-	float MinStrategyUpdateInterval = 0.05f;  // 50ms = 20 Hz max
+	float MinStrategyUpdateInterval;  // 50ms = 20 Hz max
 };

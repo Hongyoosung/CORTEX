@@ -8,17 +8,19 @@
 #include "RL/RLTypes.h"
 #include "CombatChoiceActuator.generated.h"
 
-class UFollowerAgentComponent;
+
+class AFollowerCharacter;
+
 
 /**
- * v8.0 Schola actuator that receives combat decisions from Python.
+ * Schola actuator that receives combat decisions from Python.
  *
  * Action space: Discrete(2)
  * - [0]: Target Priority
  *   - 0 = Closest enemy
  *   - 1 = Lowest HP enemy
  *
- * v8.0 uses auto-aim (no learned aiming), only target priority is learned.
+ * uses auto-aim (no learned aiming), only target priority is learned.
  * This allows the RL agent to develop combat tactics while keeping complexity low.
  */
 UCLASS(BlueprintType, meta = (DisplayName = "v8.0 Combat Choice Actuator"))
@@ -37,7 +39,7 @@ public:
 
 	/** The follower agent component to control */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
-	UFollowerAgentComponent* FollowerAgent = nullptr;
+	AFollowerCharacter* FollowerAgent = nullptr;
 
 	/** Auto-find follower agent on owner actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
@@ -53,7 +55,7 @@ public:
 
 protected:
 	/** Find follower agent component on owner */
-	UFollowerAgentComponent* FindFollowerAgent() const;
+	AFollowerCharacter* FindFollowerAgent() const;
 
 	/** Last received combat parameters (cached for debugging) */
 	FCombatParameters LastCombatParams;

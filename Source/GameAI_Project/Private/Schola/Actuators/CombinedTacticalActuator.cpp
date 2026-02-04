@@ -1,20 +1,25 @@
 // CombinedTacticalActuator.cpp - v8.0 combined tactical + combat actuator implementation
 
 #include "Schola/Actuators/CombinedTacticalActuator.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/FollowerCharacter.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
 #include "GameFramework/Pawn.h"
 
+
 UCombinedTacticalActuator::UCombinedTacticalActuator()
+	: Super()
+	, bDebugLogging(false)
+	, CombatPriorityThreshold(0.5f)
+	, FollowerAgent(nullptr)
 {
-	LastTacticalParams = FTacticalParameters();
-	LastCombatParams = FCombatParameters();
+	LastTacticalParams	= FTacticalParameters();
+	LastCombatParams	= FCombatParameters();
 }
 
 FBoxSpace UCombinedTacticalActuator::GetActionSpace()
 {
-	// v8.0 Combined Action space: Box([0,1]^5)
+	// Combined Action space: Box([0,1]^5)
 	// - [0]: Aggression
 	// - [1]: CoverPreference
 	// - [2]: SpreadDistance
@@ -85,24 +90,7 @@ void UCombinedTacticalActuator::TakeAction(const FBoxPoint& Action)
 	}
 }
 
-void UCombinedTacticalActuator::InitializeActuator()
-{
-	// Auto-find follower agent if enabled
-	if (bAutoFindFollower && !FollowerAgent)
-	{
-		FollowerAgent = FindFollowerAgent();
-	}
 
-	if (!FollowerAgent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[CombinedTacticalActuator] %s: Failed to find FollowerAgentComponent!"),
-			*GetNameSafe(GetOuter()));
-		return;
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[CombinedTacticalActuator] %s: Initialized (Follower=%s, ActionSpace=Box([0,1]^5))"),
-		*GetNameSafe(GetOuter()), *GetNameSafe(FollowerAgent));
-}
 
 void UCombinedTacticalActuator::ResetActuator()
 {
@@ -117,13 +105,13 @@ void UCombinedTacticalActuator::ResetActuator()
 	}
 }
 
-UFollowerAgentComponent* UCombinedTacticalActuator::FindFollowerAgent() const
+void UCombinedTacticalActuator::SetFollowerAgent(AFollowerCharacter* Follower)
 {
-	AActor* Owner = GetTypedOuter<AActor>();
-	if (!Owner)
+	if (!Follower)
 	{
-		return nullptr;
+		return;
 	}
 
-	return Owner->FindComponentByClass<UFollowerAgentComponent>();
+	FollowerAgent = Follower;
 }
+

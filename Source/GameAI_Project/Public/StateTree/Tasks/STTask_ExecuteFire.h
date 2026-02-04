@@ -14,13 +14,12 @@ class APawn;
 class AAIController;
 
 /**
- * State Tree Task: Execute Fire (v6.0 Strategy-Based)
+ * State Tree Task: Execute Fire
  *
  * Handles weapon firing based on RL-selected strategy.
  * Strategy determines targeting priority and firing behavior.
  *
- * v6.0 Execution:
- * - Gets current strategy from FollowerAgentComponent (Assault/Defend/Support/Retreat)
+ * - Gets current strategy from FollowerCharacter (Assault/Defend/Support/Retreat)
  * - Retreat strategy = hold fire
  * - Assault/Defend = target closest enemy
  * - Support = target enemy threatening ally
@@ -79,7 +78,7 @@ protected:
 	AActor* GetClosestEnemy(const TArray<AActor*>& Enemies, APawn* Pawn) const;
 
 	/** Get enemy threatening ally (for Support strategy) */
-	AActor* GetEnemyThreateningAlly(const TArray<AActor*>& Enemies, UFollowerAgentComponent* FollowerComp) const;
+	AActor* GetEnemyThreateningAlly(const TArray<AActor*>& Enemies, AFollowerCharacter* FollowerComp) const;
 
 	/** Stop firing and clear focus */
 	void StopFiring(FStateTreeExecutionContext& Context) const;

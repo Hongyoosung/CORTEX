@@ -7,7 +7,6 @@
 #include "Schola/Components/EpisodeManagerComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Core/ScholaGameInstance.h"
-#include "Team/Components/TeamLeaderComponent.h"
 #include "Communicator/CommunicationManager.h"
 #include "Subsystem/ScholaManagerSubsystem.h"
 #include "EngineUtils.h"
@@ -46,13 +45,6 @@ void AScholaCombatEnvironment::BeginPlay()
 	{
 		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] SimulationManagerGameMode not found!"));
 		return;
-	}
-
-
-
-	if (EpisodeManager)
-	{
-		EpisodeManager->BindToSimulationManager(SimulationManager);
 	}
 
 	// NOTE: Do NOT call Super::BeginPlay() here!

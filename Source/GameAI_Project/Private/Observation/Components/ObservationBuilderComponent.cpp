@@ -1,18 +1,18 @@
 #include "Observation/Components/ObservationBuilderComponent.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/HealthComponent.h"
-#include "Team/ObjectiveActor.h"  // v9.0: For objective context
+#include "Team/ObjectiveActor.h"  
 
 UObservationBuilderComponent::UObservationBuilderComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false; // No tick needed - called explicitly
+	PrimaryComponentTick.bCanEverTick = false; 
 }
 
 void UObservationBuilderComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// v9.0 Phase 3: Components are now injected by character (no FindComponentByClass)
+
 	UE_LOG(LogTemp, Log, TEXT("[ObservationBuilder v9.0] '%s': Waiting for dependency injection"), *GetOwner()->GetName());
 }
 
@@ -162,7 +162,7 @@ FObservationElement UObservationBuilderComponent::BuildLocalObservation()
 	}
 
 	// ========================================
-	// v9.0 REFACTORED: SUPPORT CONTEXT (4 features)
+	// SUPPORT CONTEXT (4 features)
 	// Find ally most in need of help for Support strategy
 	// Uses CachedTeamObservation (injected via UpdateTeamIntel) instead of direct TeamLeader access
 	// ========================================
@@ -170,7 +170,7 @@ FObservationElement UObservationBuilderComponent::BuildLocalObservation()
 		const float MaxAllyDistance = 5000.0f;  // Normalization constant
 		const float AllyNeedsHelpThreshold = 0.5f;  // Health below 50% triggers help
 
-		// v9.0: Use cached team observation data (injected from TeamLeader via UpdateTeamIntel)
+		// Use cached team observation data (injected from TeamLeader via UpdateTeamIntel)
 		// This eliminates direct dependency on TeamLeader and follows SRP
 		if (CachedTeamObservation.FollowerObservations.Num() > 0)
 		{
@@ -374,8 +374,6 @@ void UObservationBuilderComponent::PopulateObjectiveContext(FObservationElement&
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
 
-	// [변경] TeamLeader 체크 로직 제거 -> CachedFriendlyObjective 유무로 판단
-	// 리더가 없더라도(NULL), 목표물이 주입되지 않았다면 기본값 처리
 
 	const float MaxNormDistance = 10000.0f;
 	const FVector AgentLocation = Owner->GetActorLocation();

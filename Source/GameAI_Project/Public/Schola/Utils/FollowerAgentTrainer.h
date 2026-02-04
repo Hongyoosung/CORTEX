@@ -6,12 +6,14 @@
 #include "Training/AbstractTrainer.h"
 #include "FollowerAgentTrainer.generated.h"
 
+
 class UScholaAgentComponent;
-class UFollowerAgentComponent;
+class AFollowerCharacter;
 class UHealthComponent;
 class UTacticalRewardProvider;
 
-/**
+
+/** //============================================================
  * Follower Agent Trainer
  *
  * Wraps a follower agent (with ScholaAgentComponent) for Schola RL training.
@@ -26,7 +28,7 @@ class UTacticalRewardProvider;
  * Usage:
  * - Created automatically by ScholaCombatEnvironment
  * - No manual setup required
- */
+ */ //============================================================
 UCLASS()
 class GAMEAI_PROJECT_API AFollowerAgentTrainer : public AAbstractTrainer
 {
@@ -35,16 +37,17 @@ class GAMEAI_PROJECT_API AFollowerAgentTrainer : public AAbstractTrainer
 public:
 	AFollowerAgentTrainer();
 
-	//--------------------------------------------------------------------------
+	//============================================================
 	// INITIALIZATION
-	//--------------------------------------------------------------------------
+	//============================================================
 
 	/** Initialize trainer with ScholaAgentComponent (possesses pawn automatically) */
 	void Initialize(UScholaAgentComponent* InAgent);
 
-	//--------------------------------------------------------------------------
+
+	//============================================================
 	// ABSTRACT TRAINER INTERFACE (REQUIRED)
-	//--------------------------------------------------------------------------
+	//============================================================
 
 	virtual float ComputeReward() override;
 	virtual EAgentTrainingStatus ComputeStatus() override;
@@ -52,9 +55,10 @@ public:
 	virtual void ResetTrainer() override;
 	virtual void OnCompletion() override;
 
-	//--------------------------------------------------------------------------
+
+	//============================================================
 	// AI CONTROLLER OVERRIDES (DIAGNOSTIC)
-	//--------------------------------------------------------------------------
+	//============================================================
 
 	/** Track when possession happens */
 	virtual void OnPossess(APawn* InPawn) override;
@@ -62,24 +66,21 @@ public:
 	/** Track when unpossession happens (THIS IS THE BUG!) */
 	virtual void OnUnPossess() override;
 
-	//--------------------------------------------------------------------------
-	// STATE
-	//--------------------------------------------------------------------------
+
+private
+	//============= COMPONENTS =================
 
 	/** Reference to ScholaAgentComponent */
-	UPROPERTY()
-	TObjectPtr<UScholaAgentComponent> ScholaAgent = nullptr;
+	TObjectPtr<UScholaAgentComponent>	ScholaAgent;
 
 	/** Reference to FollowerAgentComponent */
-	UPROPERTY()
-	TObjectPtr<UFollowerAgentComponent> FollowerAgent = nullptr;
+	TObjectPtr<AFollowerCharacter>		FollowerAgent;
 
-	UPROPERTY()
-	TObjectPtr<UHealthComponent> AgentHealthComponent = nullptr;
+	TObjectPtr<UHealthComponent>		AgentHealthComponent;
 
 	/** Reference to TacticalRewardProvider */
-	UPROPERTY()
-	UTacticalRewardProvider* RewardProvider = nullptr;
+	TObjectPtr<UTacticalRewardProvider> RewardProvider;
+
 
 	/** Cumulative reward for current episode */
 	UPROPERTY()

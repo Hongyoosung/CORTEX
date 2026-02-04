@@ -3,8 +3,6 @@
 #include "StateTree/Evaluators/STEvaluator_UpdateObservation.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/TeamLeaderComponent.h"
-// v9.0 PHASE 5: Use FollowerCharacter API (Character-as-Central-Hub)
 #include "Actor/FollowerCharacter.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/WeaponComponent.h"
@@ -195,20 +193,17 @@ void FSTEvaluator_UpdateObservation::ScanForEnemies(FFollowerStateTreeContext& S
 		}
 	}
 
-	// v9.0 PHASE 4: TeamComms merged into character
+	// PHASE 4: TeamComms merged into character
 	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(ControlledPawn);
 	if (FollowerChar)
 	{
 		// 2. Get Leader via FollowerCharacter
-		UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
-		if (TeamLeader)
+
+		for (AActor* Enemy : IndividuallyDetected)
 		{
-			for (AActor* Enemy : IndividuallyDetected)
+			if (Enemy)
 			{
-				if (Enemy)
-				{
-					TeamLeader->RegisterEnemy(Enemy);
-				}
+				FollowerChar->RegisterVisibleEnemy(Enemy);
 			}
 		}
 	}
@@ -323,12 +318,6 @@ void FSTEvaluator_UpdateObservation::UpdateCombatState(FFollowerStateTreeContext
 		// Calculate distance
 		float Distance = FVector::Dist(StartLocation, TargetLocation);
 		SharedContext.CurrentObservation.DistanceToNearestEnemy = Distance;
-
-		/*UE_LOG(LogTemp, Display, TEXT("[UPDATE COMBAT] '%s': Checking LOS to target '%s' at distance %.1f cm"),
-			*ControlledPawn->GetName(), *SharedContext.PrimaryTarget->GetName(), Distance);
-		UE_LOG(LogTemp, Display, TEXT("  → Start: (%.1f, %.1f, %.1f), Target: (%.1f, %.1f, %.1f)"),
-			StartLocation.X, StartLocation.Y, StartLocation.Z,
-			TargetLocation.X, TargetLocation.Y, TargetLocation.Z);*/
 
 		// Check line of sight
 		FHitResult HitResult;

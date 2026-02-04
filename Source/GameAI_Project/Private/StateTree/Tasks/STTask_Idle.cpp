@@ -3,7 +3,7 @@
 #include "StateTree/Tasks/STTask_Idle.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/FollowerAgentComponent.h"
+
 #include "GameFramework/Pawn.h"
 
 EStateTreeRunStatus FSTTask_Idle::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
@@ -21,7 +21,7 @@ EStateTreeRunStatus FSTTask_Idle::EnterState(FStateTreeExecutionContext& Context
 	APawn* Pawn = Cast<APawn>(InstanceData.StateTreeComp->GetOwner());
 	FString PawnName = Pawn ? Pawn->GetName() : TEXT("Unknown");
 
-	UE_LOG(LogTemp, Warning, TEXT("⏸️ [IDLE] '%s': ENTER - Waiting for Mission (StateTree will keep running)"), *PawnName);
+	UE_LOG(LogTemp, Warning, TEXT("⏸️ [IDLE] '%s': ENTER - Waiting for TacticalMmovement (StateTree will keep running)"), *PawnName);
 
 	// CRITICAL: Return Running to keep StateTree alive
 	return EStateTreeRunStatus::Running;

@@ -1,10 +1,11 @@
 // TacticalObserver.cpp - Schola observer for 68-feature tactical observation (v6.0)
 
 #include "Schola/Observers/TacticalObserver.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/FollowerCharacter.h"
 #include "Observation/ObservationElement.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
+
 
 UTacticalObserver::UTacticalObserver()
 {
@@ -33,33 +34,17 @@ UTacticalObserver::UTacticalObserver()
 	CachedObservationSpace = FBoxSpace(Dimensions);
 }
 
-void UTacticalObserver::InitializeObserver()
+
+void UTacticalObserver::SetFollowerAgent(AFollowerCharacter* Follower)
 {
-	if (bAutoFindFollower && FollowerAgent == nullptr)
+	if (!Follower)
 	{
-		FollowerAgent = FindFollowerAgent();
+		return;
 	}
 
-	if (FollowerAgent)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[TacticalObserver] Initialized with FollowerAgent on %s"),
-			*GetOuter()->GetName());
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalObserver] No FollowerAgent found on %s"),
-			*GetOuter()->GetName());
-	}
+	FollowerAgent = Follower;
 }
 
-void UTacticalObserver::ResetObserver()
-{
-	// Re-find follower if needed
-	if (bAutoFindFollower && FollowerAgent == nullptr)
-	{
-		FollowerAgent = FindFollowerAgent();
-	}
-}
 
 FBoxSpace UTacticalObserver::GetObservationSpace() const
 {
@@ -105,26 +90,4 @@ void UTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 	{
 		OutObservations.Values[i] = Features[i];
 	}
-
-}
-
-UFollowerAgentComponent* UTacticalObserver::FindFollowerAgent() const
-{
-	AActor* Owner = Cast<AActor>(GetOuter());
-	if (!Owner)
-	{
-		// Try to find through actor component hierarchy
-		UActorComponent* OuterComponent = Cast<UActorComponent>(GetOuter());
-		if (OuterComponent)
-		{
-			Owner = OuterComponent->GetOwner();
-		}
-	}
-
-	if (Owner)
-	{
-		return Owner->FindComponentByClass<UFollowerAgentComponent>();
-	}
-
-	return nullptr;
 }

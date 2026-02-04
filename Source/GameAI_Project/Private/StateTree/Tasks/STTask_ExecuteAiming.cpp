@@ -3,7 +3,6 @@
 #include "StateTree/Tasks/STTask_ExecuteAiming.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -32,19 +31,18 @@ EStateTreeRunStatus FSTTask_ExecuteAiming::Tick(FStateTreeExecutionContext& Cont
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// v8.0: FMacroAction contains TacticalParams and CombatParams (no Strategy field)
-	// Strategy is assigned by MCTS via Mission type, not RL
-	// Detect significant parameter changes instead of strategy changes
+
+	// Strategy is assigned by MCTS
 	const FMacroAction& CurrentAction = SharedContext.CurrentAction;
 	const FMacroAction& PreviousAction = InstanceData.PreviousMacroAction;
 
-	// v8.0: Detect tactical parameter changes (instead of strategy changes)
+	// Detect tactical parameter changes (instead of strategy changes)
 	bool bParamsChanged =
 		FMath::Abs(CurrentAction.TacticalParams.Aggression - PreviousAction.TacticalParams.Aggression) > 0.1f ||
 		FMath::Abs(CurrentAction.TacticalParams.CoverPreference - PreviousAction.TacticalParams.CoverPreference) > 0.1f ||
 		CurrentAction.CombatParams.Priority != PreviousAction.CombatParams.Priority;
 
-	// v8.0: Always execute aiming (target selection is handled by STTask_ExecuteFire)
+	// Always execute aiming (target selection is handled by STTask_ExecuteFire)
 	ExecuteAiming(Context, DeltaTime);
 
 	if (bParamsChanged)
@@ -71,9 +69,6 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, f
 		return;
 	}
 
-	// v6.0: Simplified aiming - aim at PrimaryTarget if set (by STTask_ExecuteFire)
-	// or face Mission direction if no target
-
 	// Configure character movement based on whether we have a target
 	UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>();
 	if (MoveComp)
@@ -96,7 +91,7 @@ void FSTTask_ExecuteAiming::ExecuteAiming(FStateTreeExecutionContext& Context, f
 		}
 	}
 
-	// Aim at primary target if set (by ExecuteFire task)
+
 	if (SharedContext.PrimaryTarget && InstanceData.AIController)
 	{
 		FVector EnemyLocation = SharedContext.PrimaryTarget->GetActorLocation();

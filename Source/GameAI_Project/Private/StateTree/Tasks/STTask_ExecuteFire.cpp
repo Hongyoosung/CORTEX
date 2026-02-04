@@ -3,7 +3,7 @@
 #include "StateTree/Tasks/STTask_ExecuteFire.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/FollowerCharacter.h"
 #include "Combat/Components/WeaponComponent.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
@@ -57,7 +57,7 @@ void FSTTask_ExecuteFire::ExecuteFire(FStateTreeExecutionContext& Context) const
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 
 	APawn* Pawn = InstanceData.ControlledPawn;
-	if (!Pawn || !SharedContext.FollowerComponent)
+	if (!Pawn || !SharedContext.Follower)
 	{
 		return;
 	}
@@ -72,10 +72,10 @@ void FSTTask_ExecuteFire::ExecuteFire(FStateTreeExecutionContext& Context) const
 	// Strategy is NO LONGER in FMacroAction - MCTS assigns strategies, RL controls tactical params
 	EStrategyType CurrentStrategy = EStrategyType::Assault; // Default fallback
 
-	if (SharedContext.FollowerComponent)
+	if (SharedContext.Follower)
 	{
 		// v8.0: Strategy comes from MCTS mission assignment, NOT from RL
-		CurrentStrategy = SharedContext.FollowerComponent->GetAssignedStrategy();
+		CurrentStrategy = SharedContext.Follower->GetAssignedStrategy();
 	}
 	else
 	{
@@ -203,9 +203,9 @@ AActor* FSTTask_ExecuteFire::SelectTarget(
 
 		case EStrategyType::Support:
 			// Priority: Enemy threatening ally
-			if (Context.FollowerComponent)
+			if (Context.Follower)
 			{
-				return GetEnemyThreateningAlly(Enemies, Context.FollowerComponent);
+				return GetEnemyThreateningAlly(Enemies, Context.Follower);
 			}
 			return GetClosestEnemy(Enemies, ControlledPawn);
 
@@ -243,19 +243,19 @@ AActor* FSTTask_ExecuteFire::GetClosestEnemy(const TArray<AActor*>& Enemies, APa
 	return ClosestEnemy;
 }
 
-AActor* FSTTask_ExecuteFire::GetEnemyThreateningAlly(const TArray<AActor*>& Enemies, UFollowerAgentComponent* FollowerComp) const
+AActor* FSTTask_ExecuteFire::GetEnemyThreateningAlly(const TArray<AActor*>& Enemies, AFollowerCharacter* Follower) const
 {
-	if (!FollowerComp || Enemies.Num() == 0)
+	if (!Follower || Enemies.Num() == 0)
 	{
 		return nullptr;
 	}
 
 	// Get ally context to see if any ally needs help
-	FAllyContext AllyCtx = FollowerComp->GetAllyContext();
+	FAllyContext AllyCtx = Follower->GetAllyContext();
 	if (!AllyCtx.bAllyNeedsHelp || !AllyCtx.ClosestAlly)
 	{
 		// No ally in danger, default to closest enemy
-		return GetClosestEnemy(Enemies, Cast<APawn>(FollowerComp->GetOwner()));
+		return GetClosestEnemy(Enemies, Cast<APawn>(Follower->GetOwner()));
 	}
 
 	// Find enemy closest to the threatened ally

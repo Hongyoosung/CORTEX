@@ -3,7 +3,6 @@
 #include "StateTree/Tasks/STTask_ExecuteTacticalMovement.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/TeamLeaderComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "AIController.h"
 #include "GameFramework/Pawn.h"
@@ -15,7 +14,6 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/ScholaCombatEnvironment.h"
-// v9.0 PHASE 5: Use FollowerCharacter API (Character-as-Central-Hub)
 #include "Actor/FollowerCharacter.h"
 
 EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
@@ -33,7 +31,7 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::EnterState(FStateTreeExecut
 
 	FFollowerStateTreeContext& SharedContext = InstanceData.StateTreeComp->GetSharedContext();
 
-	if (!SharedContext.FollowerComponent)
+	if (!SharedContext.Follower)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[TACTICAL v8.0] Missing FollowerComponent"));
 		return EStateTreeRunStatus::Failed;
@@ -53,7 +51,7 @@ EStateTreeRunStatus FSTTask_ExecuteTacticalMovement::EnterState(FStateTreeExecut
 	}
 
 	// Set agent component reference
-	InstanceData.AgentComponent = SharedContext.FollowerComponent;
+	InstanceData.Follower = SharedContext.Follower;
 
 	// Reset previous params
 	InstanceData.PreviousTacticalParams = FTacticalParameters();
@@ -292,17 +290,6 @@ void FSTTask_ExecuteTacticalMovement::ApplyTacticalParameters(
 	FVector TargetPosition = CandidatePositions[0];
 
 	ExecuteMovementToTacticalPosition(Context, TargetPosition);
-
-	// Store risk tolerance for retreat logic (used outside EQS)
-	// Risk tolerance determines when to retreat (health threshold)
-	// High risk (0.9) = fight to near death (10% HP)
-	// Low risk (0.1) = retreat early (70% HP)
-	float RetreatThreshold = FMath::Lerp(0.7f, 0.1f, Params.RiskTolerance);
-
-	// This can be used by combat logic to trigger retreat strategy
-	// For now, just log it (full retreat integration happens in v8.5)
-	UE_LOG(LogTemp, Verbose, TEXT("[TACTICAL v8.0] '%s': Retreat threshold set to %.0f%% HP (Risk=%.2f)"),
-		*Pawn->GetName(), RetreatThreshold * 100.0f, Params.RiskTolerance);
 }
 
 TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
@@ -331,7 +318,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 	}
 
 	// ========================================
-	// v8.0: Parameter-to-EQS Weight Mapping
+	// Parameter-to-EQS Weight Mapping
 	// ========================================
 
 	// 1. Aggression → Distance to enemy scoring
@@ -350,7 +337,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 	//    Low spread (0.1) → IdealSpread = 200cm (2m, tight formation)
 	float IdealSpreadDistance = FMath::Lerp(200.0f, 1000.0f, Params.SpreadDistance);
 
-	// v9.0 FIX: Strategy-dependent formation weight
+	// Strategy-dependent formation weight
 	// Base weight from RL parameter, then modulate by strategy needs
 	float BaseFormationWeight = FMath::Lerp(5.0f, 1.0f, Params.SpreadDistance);
 
@@ -376,7 +363,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 
 	float FormationWeight = BaseFormationWeight * StrategyFormationMultiplier;
 
-	// 4. v9.0: ObjectiveWeight → Strategy-dependent objective focus
+	// 4. ObjectiveWeight → Strategy-dependent objective focus
 	//    Assault: High weight (approach hostile objective)
 	//    Defend: Very high weight (stay near friendly objective)
 	//    Support: Low weight (ally proximity dominates)
@@ -401,36 +388,29 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 			break;
 	}
 
-	// v9.0 FIX: Get objective location based on strategy
-	// v9.0 Phase 4: Use character API instead of FindComponentByClass
+
 	AObjectiveActor* TargetObjective = nullptr;
 	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(Pawn);
 	if (FollowerChar)
 	{
-		// Get Leader via character API (no FindComponentByClass)
-		UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
-		if (TeamLeader)
-		{
 
-			// 4. Determine which objective to use based on strategy
-			switch (AssignedStrategy)
-			{
-			case EStrategyType::Assault:
-				TargetObjective = TeamLeader->GetHostileObjective();
-				break;
-			case EStrategyType::Defend:
-				TargetObjective = TeamLeader->GetFriendlyObjective();
-				break;
-			case EStrategyType::Support:
-				TargetObjective = TeamLeader->GetFriendlyObjective();
-				break;
-			case EStrategyType::Retreat:
-				TargetObjective = TeamLeader->GetFriendlyObjective();
-				break;
-			default:
-				break;
-			}
-			
+		// 4. Determine which objective to use based on strategy
+		switch (AssignedStrategy)
+		{
+		case EStrategyType::Assault:
+			TargetObjective = FollowerChar->GetHostileObjective();
+			break;
+		case EStrategyType::Defend:
+			TargetObjective = FollowerChar->GetFriendlyObjective();
+			break;
+		case EStrategyType::Support:
+			TargetObjective = FollowerChar->GetFriendlyObjective();
+			break;
+		case EStrategyType::Retreat:
+			TargetObjective = FollowerChar->GetFriendlyObjective();
+			break;
+		default:
+			break;
 		}
 	}
 
@@ -444,7 +424,7 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 	QueryRequest.SetFloatParam(TEXT("CoverWeight"), CoverWeight);
 	QueryRequest.SetFloatParam(TEXT("FormationSpread"), IdealSpreadDistance);
 	QueryRequest.SetFloatParam(TEXT("FormationWeight"), FormationWeight);
-	QueryRequest.SetFloatParam(TEXT("ObjectiveWeight"), ObjectiveWeight); // v9.0: Objective-aware scoring
+	QueryRequest.SetFloatParam(TEXT("ObjectiveWeight"), ObjectiveWeight); 
 
 	// Execute query (instant, not async)
 	TSharedPtr<FEnvQueryResult> QueryResult = QueryManager->RunInstantQuery(
@@ -477,7 +457,6 @@ TArray<FVector> FSTTask_ExecuteTacticalMovement::RunTacticalEQSQuery(
 		}
 	}
 
-	// v9.0 FIX: Enhanced debug log with objective location validation
 	const TCHAR* StrategyName = nullptr;
 	switch (AssignedStrategy)
 	{
@@ -594,10 +573,5 @@ void FSTTask_ExecuteTacticalMovement::ExecuteMovementToTacticalPosition(
 				FailureReason = FString::Printf(TEXT("Unknown failure code %d"), static_cast<int32>(MoveResult.Code));
 				break;
 		}
-
-		/*UE_LOG(LogTemp, Warning, TEXT("[TACTICAL v8.0] '%s': MoveTo FAILED - %s (Target: %s)"),
-			*Pawn->GetName(),
-			*FailureReason,
-			*NavTargetPos.ToCompactString());*/
 	}
 }

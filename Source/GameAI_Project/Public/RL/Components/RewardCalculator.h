@@ -6,8 +6,9 @@
 #include "Observation/ObservationElement.h"
 #include "RewardCalculator.generated.h"
 
-class UFollowerAgentComponent;
-class UHealthComponent;
+
+class AFollowerCharacter;
+
 
 /**
  * v8.10 Unified Reward Configuration (VF Collapse Fix)
@@ -419,10 +420,8 @@ private:
 	//--------------------------------------------------------------------------
 
 	UPROPERTY()
-	UFollowerAgentComponent* FollowerComponent = nullptr;
+	AFollowerCharacter* FollowerAgent = nullptr;
 
-	UPROPERTY()
-	UHealthComponent* HealthComponent = nullptr;
 
 	/** Current strategy (from MCTS) - determines reward weight profile */
 	EStrategyType CurrentStrategy = EStrategyType::Assault;

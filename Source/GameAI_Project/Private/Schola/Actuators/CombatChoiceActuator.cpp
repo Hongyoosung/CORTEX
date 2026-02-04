@@ -1,7 +1,7 @@
 // CombatChoiceActuator.cpp - v8.0 combat choice actuator implementation
 
 #include "Schola/Actuators/CombatChoiceActuator.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/FollowerCharacter.h"
 #include "Common/Spaces/DiscreteSpace.h"
 #include "Common/Points/DiscretePoint.h"
 #include "GameFramework/Pawn.h"
@@ -95,7 +95,7 @@ void UCombatChoiceActuator::ResetActuator()
 	}
 }
 
-UFollowerAgentComponent* UCombatChoiceActuator::FindFollowerAgent() const
+AFollowerCharacter* UCombatChoiceActuator::FindFollowerAgent() const
 {
 	AActor* Owner = GetTypedOuter<AActor>();
 	if (!Owner)
@@ -103,5 +103,7 @@ UFollowerAgentComponent* UCombatChoiceActuator::FindFollowerAgent() const
 		return nullptr;
 	}
 
-	return Owner->FindComponentByClass<UFollowerAgentComponent>();
+	AFollowerCharacter* Follower = Cast<AFollowerCharacter>(Owner);
+
+	return Follower;
 }

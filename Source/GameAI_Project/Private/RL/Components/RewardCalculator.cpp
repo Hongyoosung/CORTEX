@@ -1,10 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RL/Components/RewardCalculator.h"
-#include "Team/Components/FollowerAgentComponent.h"
-// v9.0 PHASE 4: SquadManagerComponent and TeamCommsComponent merged into character (includes removed)
-#include "Team/Components/TeamLeaderComponent.h"
-#include "Combat/Components/HealthComponent.h"
+#include "Actor/FollowerCharacter.h"
+#include "Actor/LeaderCharacter.h"
 #include "Team/ObjectiveActor.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
@@ -32,12 +30,11 @@ void URewardCalculator::BeginPlay()
 	}
 
 	// Get components through character wrapper API (no FindComponentByClass)
-	FollowerComponent = FollowerChar->GetFollowerAgentComponent();
-	HealthComponent = Cast<UHealthComponent>(FollowerChar->FindComponentByClass<UHealthComponent>()); // Temp: will be injected in Phase 3
+	FollowerAgent = FollowerChar;
 
-	if (!FollowerComponent)
+	if (!FollowerAgent)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[RewardCalculator v9.0] No FollowerAgentComponent found on %s"), *FollowerChar->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[RewardCalculator v9.0] No FollowerAgent found on %s"), *FollowerChar->GetName());
 	}
 	else
 	{
@@ -61,16 +58,16 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	// Hybrid reward calculation: continuous (positioning) + event-driven (kills, damage)
-	// All rewards forwarded to FollowerComponent for Schola integration
+	// All rewards forwarded to FollowerAgent for Schola integration
 
-	if (!FollowerComponent)
+	if (!FollowerAgent)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD TICK] No FollowerComponent - cannot forward rewards!"));
+		UE_LOG(LogTemp, Warning, TEXT("[REWARD TICK] No FollowerAgent - cannot forward rewards!"));
 		return;
 	}
 
 	// Skip reward calculation for dead agents to prevent negative impact on RL training
-	if (!FollowerComponent->GetIsAlive())
+	if (!FollowerAgent->IsAlive())
 	{
 		return;
 	}
@@ -102,10 +99,10 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	float eventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward;
 	StepReward += eventRewards;
 
-	// Forward total reward to FollowerComponent
+	// Forward total reward to FollowerAgent
 	if (FMath::Abs(StepReward) > 0.01f) // Avoid spam for tiny rewards
 	{
-		FollowerComponent->ProvideReward(StepReward);
+		FollowerAgent->ProvideReward(StepReward);
 
 		// v8.0: Log with component breakdown
 		/*UE_LOG(LogTemp, Display,
@@ -135,7 +132,7 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 } 
 
 //--------------------------------------------------------------------------
-// v8.0: UNIFIED REWARD CALCULATION
+// UNIFIED REWARD CALCULATION
 //--------------------------------------------------------------------------
 
 float URewardCalculator::CalculateReward(
@@ -153,7 +150,7 @@ float URewardCalculator::CalculateReward(
 		CurrentObs
 	);
 
-	// v8.0: Total reward from component breakdown
+	// Total reward from component breakdown
 	float TotalReward = Breakdown.Total;
 
 	// Reset accumulators
@@ -166,7 +163,7 @@ float URewardCalculator::CalculateReward(
 }
 
 //--------------------------------------------------------------------------
-// v8.0: UNIFIED REWARD SYSTEM - Component-Based Calculation
+// UNIFIED REWARD SYSTEM - Component-Based Calculation
 //--------------------------------------------------------------------------
 
 FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
@@ -179,7 +176,7 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	// Get strategy-specific weights
 	const RewardConfig::FStrategyWeights& Weights = RewardConfig::GetWeightsForStrategy(Strategy);
 
-	// v9.0: Normalize EACH component BEFORE strategy weighting
+	// Normalize EACH component BEFORE strategy weighting
 	// This prevents any single component from dominating the value function
 
 	// Component 1: Objective Progress
@@ -207,7 +204,7 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	float coordNormalized = RewardConfig::COORD_NORM.Normalize(coordRaw);
 	Breakdown.TeamCoordination = coordNormalized * Weights.TeamCoordination;
 
-	// Component 6: v8.0 Tactical Parameter Effectiveness
+	// Component 6: Tactical Parameter Effectiveness
 	// Creates tight feedback loop: RL parameters → EQS positioning → outcome → reward
 	float tacticalRaw = CalculateTacticalParameterEffectivenessComponent(CurrentObs, CurrentTacticalParams);
 	float tacticalNormalized = RewardConfig::TACTICAL_NORM.Normalize(tacticalRaw);
@@ -221,7 +218,7 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	                 Breakdown.TeamCoordination +
 	                 Breakdown.TacticalEffectiveness;
 
-	// v9.0: Soft tanh scaling instead of hard clamp
+	// Soft tanh scaling instead of hard clamp
 	// tanh provides smooth gradients at boundaries, better for learning
 	// Dividing by 4.0 before tanh keeps typical rewards in linear region
 	// Multiplying by 5.0 after tanh gives output range [-5, 5] (softer than v8.10's [-10, 10])
@@ -275,16 +272,16 @@ float URewardCalculator::CalculateObjectiveProgressComponent(
 {
 	// v9.0: Strategy-specific objective reward functions
 	// No explicit objective assignment - rewards based on observation fields
-	if (!FollowerComponent) return 0.0f;
+	if (!FollowerAgent) return 0.0f;
 
 	// v9.0 FIX CRITICAL: DO NOT lazy sync - trust SetCurrentStrategy() value!
 	// Lazy sync was OVERWRITING correct strategies with stale data from TacticalState.
 	// Now that SetCurrentStrategy() is called explicitly, we TRUST that value.
 
-	// Diagnostic only: Check if FollowerComponent has different strategy (should NOT happen)
-	if (FollowerComponent)
+	// Diagnostic only: Check if FollowerAgent has different strategy (should NOT happen)
+	if (FollowerAgent)
 	{
-		EStrategyType FollowerReportedStrategy = FollowerComponent->GetAssignedStrategy();
+		EStrategyType FollowerReportedStrategy = FollowerAgent->GetAssignedStrategy();
 
 		if (FollowerReportedStrategy != CurrentStrategy)
 		{
@@ -293,12 +290,12 @@ float URewardCalculator::CalculateObjectiveProgressComponent(
 
 			if (++Count <= 3)  // Log first 3 mismatches only
 			{
-				UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY MISMATCH v9.0] '%s': FollowerComponent reports '%s', but CurrentStrategy is '%s' (occurrence %d)"),
+				UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY MISMATCH v9.0] '%s': FollowerAgent reports '%s', but CurrentStrategy is '%s' (occurrence %d)"),
 					*GetOwner()->GetName(),
 					*UEnum::GetValueAsString(FollowerReportedStrategy),
 					*UEnum::GetValueAsString(CurrentStrategy),
 					Count);
-				UE_LOG(LogTemp, Error, TEXT("   └─ USING CurrentStrategy '%s' (from SetCurrentStrategy). FollowerComponent data is STALE."),
+				UE_LOG(LogTemp, Error, TEXT("   └─ USING CurrentStrategy '%s' (from SetCurrentStrategy). FollowerAgent data is STALE."),
 					*UEnum::GetValueAsString(CurrentStrategy));
 
 				if (Count == 3)
@@ -625,7 +622,7 @@ float URewardCalculator::CalculateTeamCoordinationComponent(
 	float Reward = 0.0f;
 
 	// ✅ v8.20 ENHANCEMENT: Strategy-aware coordination rewards
-	EStrategyType AssignedStrategy = FollowerComponent ? FollowerComponent->GetAssignedStrategy() : EStrategyType::Assault;
+	EStrategyType AssignedStrategy = FollowerAgent ? FollowerAgent->GetAssignedStrategy() : EStrategyType::Assault;
 
 	// [1] Support Strategy: Reward approaching low-health allies
 	if (AssignedStrategy == EStrategyType::Support)
@@ -807,7 +804,7 @@ void URewardCalculator::SetCurrentTacticalParameters(const FTacticalParameters& 
 
 void URewardCalculator::OnKillEnemy(AActor* Enemy)
 {
-	// v8.0: Delegate to priority-aware version (assume not lowest HP if not specified)
+	// Delegate to priority-aware version (assume not lowest HP if not specified)
 	OnKillEnemyWithPriority(Enemy, false);
 }
 
@@ -816,7 +813,7 @@ void URewardCalculator::OnKillEnemyWithPriority(AActor* Enemy, bool bWasLowestHP
 	KillsSinceLastUpdate++;
 	bLastKillWasLowestHP = bWasLowestHP;
 
-	// v8.0: Kill reward calculated in CalculateCombatEffectivenessComponent
+	// Kill reward calculated in CalculateCombatEffectivenessComponent
 	// Base: +10.0, Efficient (lowest HP): +12.0
 
 	UE_LOG(LogTemp, Warning, TEXT("[REWARD EVENT v8.0] '%s': Kill (LowestHP=%s) → +%.1f in next tick"),

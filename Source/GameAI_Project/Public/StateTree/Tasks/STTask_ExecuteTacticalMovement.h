@@ -11,7 +11,7 @@
 #include "STTask_ExecuteTacticalMovement.generated.h"
 
 class UFollowerStateTreeComponent;
-class UFollowerAgentComponent;
+class AFollowerCharacter;
 class APawn;
 class AAIController;
 
@@ -48,7 +48,7 @@ struct GAMEAI_PROJECT_API FSTTask_ExecuteTacticalMovement_InstanceData
 
 	/** Follower agent component reference (for tactical parameters) */
 	UPROPERTY(EditAnywhere, Category = "Input")
-	TObjectPtr<UFollowerAgentComponent> AgentComponent;
+	TObjectPtr<AFollowerCharacter> Follower;
 
 	/** Controlled Pawn reference */
 	UPROPERTY(EditAnywhere, Category = "Input")

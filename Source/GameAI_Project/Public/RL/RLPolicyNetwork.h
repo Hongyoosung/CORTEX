@@ -15,7 +15,7 @@ class UNNEModelData;
 class INNERuntime;
 class INNERuntimeGPU;
 
-/**
+/** //============================================================
  * Neural Network-based RL Policy for Tactical Parameter Control (v8.0 Multi-Head)
  *
  * v8.0 Architecture (Multi-Head):
@@ -27,12 +27,6 @@ class INNERuntimeGPU;
  *   ├─ Retreat Head:  [4] tactical parameters
  *   ├─ Combat Head:   [2] target priority logits (Closest, LowestHP)
  *   └─ Critic Head:   [1] state value estimate
- *
- * v8.0 Changes:
- *   - MCTS assigns strategies, RL outputs tactical parameters (not strategy selection)
- *   - Strategy-specific policy heads for guaranteed differentiation
- *   - Tactical parameters modulate EQS weights for spatial reasoning
- *   - Combat head learns target priority selection
  *
  * Observation Space (52 base features - v9.0):
  *   - Agent State (4): pos(3), health(1)
@@ -47,7 +41,7 @@ class INNERuntimeGPU;
  *   1. Get macro action: GetMacroAction(Observation, AssignedStrategy)
  *   2. Batched inference: GetMacroActionsBatched(Observations, Strategies)
  *   3. MCTS value query: GetStateValueV8(Observation, Strategy)
- */
+ */ //============================================================
 UCLASS(BlueprintType, Blueprintable)
 class GAMEAI_PROJECT_API URLPolicyNetwork : public UObject
 {
@@ -58,7 +52,7 @@ public:
 
 
 	// ========================================
-	// v8.0 API: Tactical Parameters + Combat Control (Multi-Head)
+	// Tactical Parameters + Combat Control (Multi-Head)
 	// ========================================
 
 	/**
@@ -80,7 +74,7 @@ public:
 	float GetStateValueV8(const FObservationElement& Observation, EStrategyType AssignedStrategy);
 
 	// ========================================
-	// v8.0 API: Batched Inference (Performance Critical)
+	// API: Batched Inference (Performance Critical)
 	// ========================================
 
 	/**
@@ -99,7 +93,7 @@ public:
 
 private:
 	// ========================================
-	// v8.0: Network Input/Output Helpers
+	// Network Input/Output Helpers
 	// ========================================
 
 	/**

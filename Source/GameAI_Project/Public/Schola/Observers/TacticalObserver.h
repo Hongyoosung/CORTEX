@@ -6,7 +6,7 @@
 #include "Observers/AbstractObservers.h"
 #include "TacticalObserver.generated.h"
 
-class UFollowerAgentComponent;
+class AFollowerCharacter;
 
 /**
  * Schola observer for v6.0 Single-Head Architecture (68 features)
@@ -39,21 +39,14 @@ public:
 	// UBoxObserver interface
 	virtual FBoxSpace GetObservationSpace() const override;
 	virtual void CollectObservations(FBoxPoint& OutObservations) override;
-	virtual void InitializeObserver() override;
-	virtual void ResetObserver() override;
 
-	/** The follower agent component to observe */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observer")
-	UFollowerAgentComponent* FollowerAgent = nullptr;
+	void SetFollowerAgent(AFollowerCharacter* Follower);
 
-	/** Auto-find follower agent on owner actor */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observer")
-	bool bAutoFindFollower = true;
 
-protected:
+
+private:
+	TObjectPtr<AFollowerCharacter> FollowerAgent = nullptr;
+
 	/** Cached observation space */
 	FBoxSpace CachedObservationSpace;
-
-	/** Find follower agent component */
-	UFollowerAgentComponent* FindFollowerAgent() const;
 };

@@ -12,7 +12,7 @@
 class AFollowerCharacter;
 
 
-/**
+/** //============================================================
  * v8.0 Schola actuator that receives tactical parameters from Python.
  *
  * Action space: Box([0,1]^4)
@@ -23,7 +23,7 @@ class AFollowerCharacter;
  *
  * These parameters modulate EQS query weights for tactical positioning.
  * MCTS assigns the strategy, RL provides tactical parameter tuning.
- */
+ */ //============================================================
 UCLASS(BlueprintType, meta = (DisplayName = "v8.0 Tactical Parameter Actuator"))
 class GAMEAI_PROJECT_API UTacticalParameterActuator : public UBoxActuator
 {
@@ -32,11 +32,14 @@ class GAMEAI_PROJECT_API UTacticalParameterActuator : public UBoxActuator
 public:
 	UTacticalParameterActuator();
 
+	//============================================================
 	// UBoxActuator interface
+	//============================================================
 	virtual FBoxSpace GetActionSpace() override;
 	virtual void TakeAction(const FBoxPoint& Action) override;
 	virtual void InitializeActuator() override;
 	virtual void ResetActuator() override;
+
 
 	/** Auto-find follower agent on owner actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")

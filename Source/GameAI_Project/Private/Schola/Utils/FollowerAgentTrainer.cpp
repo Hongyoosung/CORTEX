@@ -4,14 +4,18 @@
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/ScholaCombatEnvironment.h"
 #include "Schola/Rewards/TacticalRewardProvider.h"
-#include "Team/Components/FollowerAgentComponent.h"
-// v9.0 PHASE 4: TeamCommsComponent merged into character
 #include "Actor/FollowerCharacter.h"
-#include "Team/Components/TeamLeaderComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Core/SimulationManagerGameMode.h"
 
 AFollowerAgentTrainer::AFollowerAgentTrainer()
+	: Super()
+	, ScholaAgent(nullptr)
+	, FollowerAgent(nullptr)
+	, AgentHealthComponent(nullptr)
+	, RewardProvider(nullptr)
+	, EpisodeReward(0.0f)
+	, EpisodeSteps(0)
 {
 	PrimaryActorTick.bCanEverTick = false;
 }

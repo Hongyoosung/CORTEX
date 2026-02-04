@@ -83,12 +83,11 @@ public:
 	/** Populate objective context fields in observation (friendly and hostile objectives) */
 	void PopulateObjectiveContext(FObservationElement& Observation);
 
-
-	/** v10.0: ����/�ȷο��κ��� ��ǥ�� ������ ���Թ޽��ϴ� (Dependency Injection) */
 	void SetObjectives(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
 
-	/** v10.0: �� ���� ������ ������Ʈ�մϴ� */
 	void UpdateTeamIntel(const FTeamObservation& TeamObs);
+
+	FORCEINLINE void EnemySpotted(int32 EnemyCount = 1) { LocalObservation.VisibleEnemyCount += EnemyCount; }
 
 	//--------------------------------------------------------------------------
 	// v9.0 PHASE 3: DEPENDENCY INJECTION
@@ -98,6 +97,16 @@ public:
 
 	/** Set perception component (injected by character) */
 	void SetPerceptionComponent(UAgentPerceptionComponent* Perception);
+
+
+
+	//=========================================================================
+	// OBSERVATION GETTER
+	//=========================================================================
+	FORCEINLINE AObjectiveActor* GetFriendlyObjective	()	const {		return CachedFriendlyObjective;		}
+	FORCEINLINE AObjectiveActor* GetHostileObjective	()	const {		return CachedHostileObjective;		}
+
+
 
 public:
 	//--------------------------------------------------------------------------
@@ -161,7 +170,6 @@ private:
 	UPROPERTY()
 	UAgentPerceptionComponent* CachedPerceptionComponent = nullptr;
 
-	// ĳ�̵� ��ǥ�� (������ �������� �ʰ� ���� �����͸� ����)
 	UPROPERTY()
 	AObjectiveActor* CachedFriendlyObjective = nullptr;
 

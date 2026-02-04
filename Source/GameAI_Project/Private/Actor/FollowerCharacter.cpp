@@ -25,6 +25,25 @@
 #include "Kismet/GameplayStatics.h"
 
 AFollowerCharacter::AFollowerCharacter()
+	: Super()
+	, TeamLeader(nullptr)
+	, StateTreeComponent(nullptr)
+	, ContextBridgeComponent(nullptr)
+	, VisualLoggerComponent(nullptr)
+	, TacticalState(nullptr)
+	, ObservationBuilder(nullptr)
+	, RLAgent(nullptr)
+	, CombatExecutor(nullptr)
+	, HealthComponent(nullptr)
+	, WeaponComponent(nullptr)
+	, PerceptionComponent(nullptr)
+	, bIsRegisteredWithLeader(false)
+	, TeamID(0)
+	, bAutoRegisterWithLeader(true)
+	, bEnableTeamCommsLogging(false)
+	, LastStrategyUpdateTime(0.0f)
+	, TicksSinceLastUpdate(0)
+	, MinStrategyUpdateInterval(0.05f)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -32,6 +51,13 @@ AFollowerCharacter::AFollowerCharacter()
 	StateTreeComponent		= CreateDefaultSubobject<UFollowerStateTreeComponent>(TEXT("StateTreeComponent"));
 	ContextBridgeComponent	= CreateDefaultSubobject<UContextBridgeComponent>(TEXT("ContextBridgeComponent"));
 	VisualLoggerComponent	= CreateDefaultSubobject<UVisualLoggerComponent>(TEXT("VisualLoggerComponent"));
+	TacticalState			= CreateDefaultSubobject<UTacticalStateComponent>(TEXT("TacticalStateComponent"));
+	ObservationBuilder		= CreateDefaultSubobject<UObservationBuilderComponent>(TEXT("ObservationBuilderComponent"));
+	RLAgent					= CreateDefaultSubobject<URLAgentComponent>(TEXT("RLAgentComponent"));
+	CombatExecutor			= CreateDefaultSubobject<UCombatExecutorComponent>(TEXT("CombatExecutorComponent"));
+	HealthComponent			= CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
+	WeaponComponent			= CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
+	PerceptionComponent		= CreateDefaultSubobject<UAgentPerceptionComponent>(TEXT("PerceptionComponent"));
 
 
 	// Context Bridge: Initialize with default tactical parameters [0.5, 0.5, 0.5, 0.5]
@@ -79,13 +105,13 @@ void AFollowerCharacter::BeginPlay()
 	InjectDependencies();
 
 
-	if (!CachedHealthComponent)
+	if (!HealthComponent)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter v9.0] '%s': Missing HealthComponent! Death handling disabled."),
 			*GetName());
 	}
 	
-	CachedHealthComponent->OnDeath.AddDynamic(this, &AFollowerCharacter::OnHealthComponentDeath);
+	HealthComponent->OnDeath.AddDynamic(this, &AFollowerCharacter::OnHealthComponentDeath);
 	UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0] '%s': Connected HealthComponent::OnDeath to FollowerAgentComponent coordination"),
 		*GetName());
 
@@ -150,7 +176,7 @@ void AFollowerCharacter::Tick(float DeltaTime)
 		EStrategyType AssignedStrategy = GetAssignedStrategy();
 
 		// Query RL policy for tactical parameters + combat choices
-		if (CachedRLAgent && IsTacticalPolicyReady())
+		if (RLAgent && IsTacticalPolicyReady())
 		{
 			URLPolicyNetwork* Policy = GetTacticalPolicy();
 			if (Policy)
@@ -197,22 +223,22 @@ void AFollowerCharacter::Tick(float DeltaTime)
 
 float AFollowerCharacter::GetHealthPercentage_Implementation() const
 {
-	return CachedHealthComponent ? CachedHealthComponent->GetHealthPercentage() * 100.0f : 0.0f;
+	return HealthComponent ? HealthComponent->GetHealthPercentage() * 100.0f : 0.0f;
 }
 
 bool AFollowerCharacter::IsAlive_Implementation() const
 {
-	return CachedHealthComponent ? CachedHealthComponent->IsAlive() : false;
+	return HealthComponent ? HealthComponent->IsAlive() : false;
 }
 
 float AFollowerCharacter::GetWeaponCooldown_Implementation() const
 {
-	return CachedWeaponComponent ? CachedWeaponComponent->GetRemainingCooldown() : 0.0f;
+	return WeaponComponent ? WeaponComponent->GetRemainingCooldown() : 0.0f;
 }
 
 bool AFollowerCharacter::CanFireWeapon_Implementation() const
 {
-	return CachedWeaponComponent ? CachedWeaponComponent->CanFire() : false;
+	return WeaponComponent ? WeaponComponent->CanFire() : false;
 }
 
 
@@ -224,15 +250,15 @@ void AFollowerCharacter::OnHealthComponentDeath(const FDeathEventData& DeathEven
 
 void AFollowerCharacter::SetStrategyAssignment(const FStrategyAssignment& Assignment)
 {
-	if (CachedTacticalState)
+	if (TacticalState)
 	{
-		CachedTacticalState->SetStrategyAssignment(Assignment);
+		TacticalState->SetStrategyAssignment(Assignment);
 	}
 
 	// Synchronize strategy to RewardCalculator (required for strategy-specific rewards)
-	if (CachedRLAgent)
+	if (RLAgent)
 	{
-		if (URewardCalculator* RewardCalc = CachedRLAgent->GetRewardCalculator())
+		if (URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator())
 		{
 			RewardCalc->SetCurrentStrategy(Assignment.Strategy);
 		}
@@ -246,56 +272,56 @@ void AFollowerCharacter::SetStrategyAssignment(const FStrategyAssignment& Assign
 
 EStrategyType AFollowerCharacter::GetAssignedStrategy() const
 {
-	return CachedTacticalState ? CachedTacticalState->GetAssignedStrategy() : EStrategyType::Assault;
+	return TacticalState ? TacticalState->GetAssignedStrategy() : EStrategyType::Assault;
 }
 
 FStrategyAssignment AFollowerCharacter::GetStrategyAssignment() const
 {
-	return CachedTacticalState ? CachedTacticalState->GetStrategyAssignment() : FStrategyAssignment();
+	return TacticalState ? TacticalState->GetStrategyAssignment() : FStrategyAssignment();
 }
 
 void AFollowerCharacter::SetTacticalParameters(const FTacticalParameters& Params)
 {
-	if (CachedTacticalState)
+	if (TacticalState)
 	{
-		CachedTacticalState->SetTacticalParameters(Params);
+		TacticalState->SetTacticalParameters(Params);
 	}
 }
 
 FTacticalParameters AFollowerCharacter::GetTacticalParameters() const
 {
-	return CachedTacticalState ? CachedTacticalState->GetTacticalParameters() : FTacticalParameters();
+	return TacticalState ? TacticalState->GetTacticalParameters() : FTacticalParameters();
 }
 
 void AFollowerCharacter::SetCombatParameters(const FCombatParameters& Params)
 {
-	if (CachedTacticalState)
+	if (TacticalState)
 	{
-		CachedTacticalState->SetCombatParameters(Params);
+		TacticalState->SetCombatParameters(Params);
 	}
 }
 
 FCombatParameters AFollowerCharacter::GetCombatParameters() const
 {
-	return CachedTacticalState ? CachedTacticalState->GetCombatParameters() : FCombatParameters();
+	return TacticalState ? TacticalState->GetCombatParameters() : FCombatParameters();
 }
 
 FMacroAction AFollowerCharacter::GetCurrentMacroAction() const
 {
-	return CachedTacticalState ? CachedTacticalState->GetCurrentMacroAction() : FMacroAction();
+	return TacticalState ? TacticalState->GetCurrentMacroAction() : FMacroAction();
 }
 
 FAllyContext AFollowerCharacter::GetAllyContext() const
 {
 	FAllyContext Context;
 
-	if (!CachedObservationBuilder)
+	if (!ObservationBuilder)
 	{
 		return Context; // Return empty context if ObservationBuilder is missing
 	}
 
 	// Extract ally context from current observation
-	const FObservationElement& Obs = CachedObservationBuilder->GetLocalObservation();
+	const FObservationElement& Obs = ObservationBuilder->GetLocalObservation();
 	Context.bAllyNeedsHelp = Obs.bAllyNeedsHelp;
 	Context.AllyHealth = Obs.AllyHealth;
 	Context.AllyDistance = Obs.AllyDistance;
@@ -310,50 +336,74 @@ FAllyContext AFollowerCharacter::GetAllyContext() const
 
 FObservationElement AFollowerCharacter::BuildLocalObservation()
 {
-	return CachedObservationBuilder ? CachedObservationBuilder->BuildLocalObservation() : FObservationElement();
+	return ObservationBuilder ? ObservationBuilder->BuildLocalObservation() : FObservationElement();
 }
 
 FObservationElement AFollowerCharacter::GetLocalObservation() const
 {
-	return CachedObservationBuilder ? CachedObservationBuilder->GetLocalObservation() : FObservationElement();
+	return ObservationBuilder ? ObservationBuilder->GetLocalObservation() : FObservationElement();
 }
 
 FObservationElement AFollowerCharacter::GetPreviousObservation() const
 {
-	return CachedObservationBuilder ? CachedObservationBuilder->GetPreviousObservation() : FObservationElement();
+	return ObservationBuilder ? ObservationBuilder->GetPreviousObservation() : FObservationElement();
 }
 
 void AFollowerCharacter::UpdateLocalObservation(const FObservationElement& NewObservation)
 {
-	if (CachedObservationBuilder)
+	if (ObservationBuilder)
 	{
-		CachedObservationBuilder->UpdateLocalObservation(NewObservation);
+		ObservationBuilder->UpdateLocalObservation(NewObservation);
 	}
 }
 
 void AFollowerCharacter::UpdateObjectiveContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile)
 {
-	if (CachedObservationBuilder)
+	if (ObservationBuilder)
 	{
-		CachedObservationBuilder->SetObjectives(Friendly, Hostile);
+		ObservationBuilder->SetObjectives(Friendly, Hostile);
 	}
 }
 
 void AFollowerCharacter::UpdateTeamIntel(const FTeamObservation& TeamObs)
 {
-	if (CachedObservationBuilder)
+	if (ObservationBuilder)
 	{
-		CachedObservationBuilder->UpdateTeamIntel(TeamObs);
+		ObservationBuilder->UpdateTeamIntel(TeamObs);
 	}
 }
 
 bool AFollowerCharacter::FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies)
 {
-	if (CachedObservationBuilder)
+	if (ObservationBuilder)
 	{
-		return CachedObservationBuilder->FindNearestCover(OutCoverLocation, OutDistance, Enemies);
+		return ObservationBuilder->FindNearestCover(OutCoverLocation, OutDistance, Enemies);
 	}
 	return false;
+}
+
+void AFollowerCharacter::RegisterVisibleEnemy(AActor* Enemy)
+{
+	if (!TeamLeader || !ObservationBuilder)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter v9.0] '%s': Cannot register visible enemy - missing TeamLeader or ObservationBuilder"),
+			*GetName());
+
+		return;
+	}
+
+	TeamLeader->RegisterEnemy(Enemy);
+	ObservationBuilder->EnemySpotted();
+}
+
+AObjectiveActor* AFollowerCharacter::GetFriendlyObjective() const
+{
+	return ObservationBuilder ? ObservationBuilder->GetFriendlyObjective() : nullptr;
+}
+
+AObjectiveActor* AFollowerCharacter::GetHostileObjective() const
+{
+	return ObservationBuilder ? ObservationBuilder->GetHostileObjective() : nullptr;
 }
 
 //------------------------------------------------------------------------------
@@ -362,43 +412,48 @@ bool AFollowerCharacter::FindNearestCover(FVector& OutCoverLocation, float& OutD
 
 void AFollowerCharacter::ProvideReward(float Reward, bool bTerminal)
 {
-	if (CachedRLAgent)
+	if (RLAgent)
 	{
-		CachedRLAgent->ProvideReward(Reward, bTerminal);
+		RLAgent->ProvideReward(Reward, bTerminal);
 	}
 }
 
 void AFollowerCharacter::AccumulateReward(float Reward)
 {
-	if (CachedRLAgent)
+	if (RLAgent)
 	{
-		CachedRLAgent->AccumulateReward(Reward);
+		RLAgent->AccumulateReward(Reward);
 	}
 }
 
 float AFollowerCharacter::GetAccumulatedReward() const
 {
-	return CachedRLAgent ? CachedRLAgent->GetAccumulatedReward() : 0.0f;
+	return RLAgent ? RLAgent->GetAccumulatedReward() : 0.0f;
 }
 
 URewardCalculator* AFollowerCharacter::GetRewardCalculator() const
 {
-	return CachedRLAgent ? CachedRLAgent->GetRewardCalculator() : nullptr;
+	return RLAgent ? RLAgent->GetRewardCalculator() : nullptr;
+}
+
+UObservationBuilderComponent* AFollowerCharacter::GetObservationBuilder() const
+{
+	return ObservationBuilder;
 }
 
 bool AFollowerCharacter::IsUsingRLPolicy() const
 {
-	return CachedRLAgent ? CachedRLAgent->bUseRLPolicy : false;
+	return RLAgent ? RLAgent->bUseRLPolicy : false;
 }
 
 URLPolicyNetwork* AFollowerCharacter::GetTacticalPolicy() const
 {
-	return CachedRLAgent ? CachedRLAgent->GetTacticalPolicy() : nullptr;
+	return RLAgent ? RLAgent->GetTacticalPolicy() : nullptr;
 }
 
 bool AFollowerCharacter::IsTacticalPolicyReady() const
 {
-	return CachedRLAgent ? CachedRLAgent->IsTacticalPolicyReady() : false;
+	return RLAgent ? RLAgent->IsTacticalPolicyReady() : false;
 }
 
 //------------------------------------------------------------------------------
@@ -407,20 +462,20 @@ bool AFollowerCharacter::IsTacticalPolicyReady() const
 
 void AFollowerCharacter::ExecuteCombat(const FCombatParameters& Params)
 {
-	if (CachedCombatExecutor)
+	if (CombatExecutor)
 	{
-		CachedCombatExecutor->ExecuteCombat(Params);
+		CombatExecutor->ExecuteCombat(Params);
 	}
 }
 
 AActor* AFollowerCharacter::GetClosestEnemy(const TArray<AActor*>& Enemies) const
 {
-	return CachedCombatExecutor ? CachedCombatExecutor->GetClosestEnemy(Enemies) : nullptr;
+	return CombatExecutor ? CombatExecutor->GetClosestEnemy(Enemies) : nullptr;
 }
 
 AActor* AFollowerCharacter::GetLowestHPEnemy(const TArray<AActor*>& Enemies) const
 {
-	return CachedCombatExecutor ? CachedCombatExecutor->GetLowestHPEnemy(Enemies) : nullptr;
+	return CombatExecutor ? CombatExecutor->GetLowestHPEnemy(Enemies) : nullptr;
 }
 
 
@@ -445,19 +500,19 @@ int32 AFollowerCharacter::GetTeamID() const
 void AFollowerCharacter::ResetEpisode()
 {
 	// Reset all components that maintain episode state
-	if (CachedTacticalState)
+	if (TacticalState)
 	{
-		CachedTacticalState->ResetState();
+		TacticalState->ResetState();
 	}
 
-	if (CachedObservationBuilder)
+	if (ObservationBuilder)
 	{
-		CachedObservationBuilder->ResetEpisode();
+		ObservationBuilder->ResetEpisode();
 	}
 
-	if (CachedRLAgent)
+	if (RLAgent)
 	{
-		CachedRLAgent->ResetEpisode();
+		RLAgent->ResetEpisode();
 	}
 
 	if (ContextBridgeComponent)
@@ -470,21 +525,21 @@ void AFollowerCharacter::ResetEpisode()
 
 void AFollowerCharacter::OnEpisodeEnded(float EpisodeReward)
 {
-	if (CachedRLAgent)
+	if (RLAgent)
 	{
-		CachedRLAgent->OnEpisodeEnded(EpisodeReward);
+		RLAgent->OnEpisodeEnded(EpisodeReward);
 	}
 }
 
 void AFollowerCharacter::MarkAsDead()
 {
-	if (CachedTacticalState)
+	if (TacticalState)
 	{
-		CachedTacticalState->MarkAsDead();
+		TacticalState->MarkAsDead();
 	}
 
 	// TODO: remove CombatExecutor -> move to state tree task
-	if (CachedCombatExecutor)
+	if (CombatExecutor)
 	{
 		ContextBridgeComponent->SetIsAlive(false);
 	}	
@@ -505,14 +560,9 @@ void AFollowerCharacter::MarkAsDead()
 
 void AFollowerCharacter::MarkAsAlive()
 {
-	if (CachedTacticalState)
+	if (TacticalState)
 	{
-		CachedTacticalState->MarkAsAlive();
-	}
-
-	if (CachedCombatExecutor)
-	{
-		ContextBridgeComponent->SetIsAlive(true);
+		TacticalState->MarkAsAlive();
 	}
 
 	if (ContextBridgeComponent)
@@ -520,9 +570,9 @@ void AFollowerCharacter::MarkAsAlive()
 		ContextBridgeComponent->SetIsAlive(true);
 	}
 
-	if (CachedHealthComponent)
+	if (HealthComponent)
 	{
-		CachedHealthComponent->ResetHealth();
+		HealthComponent->ResetHealth();
 	}
 
 	if (StateTreeComponent)
@@ -536,61 +586,50 @@ void AFollowerCharacter::MarkAsAlive()
 
 bool AFollowerCharacter::IsAliveState() const
 {
-	return CachedTacticalState ? CachedTacticalState->IsAlive() : false;
+	return TacticalState ? TacticalState->IsAlive() : false;
 }
 
 
 void AFollowerCharacter::InitializeComponents()
 {
-	// Find all sub-components (ONLY place we use FindComponentByClass, called once in BeginPlay)
-	// v9.0: Cached forever, zero searches at runtime
-
-	CachedTacticalState = FindComponentByClass<UTacticalStateComponent>();
-	CachedObservationBuilder = FindComponentByClass<UObservationBuilderComponent>();
-	CachedRLAgent = FindComponentByClass<URLAgentComponent>();
-	CachedCombatExecutor = FindComponentByClass<UCombatExecutorComponent>();
-	CachedHealthComponent = FindComponentByClass<UHealthComponent>();
-	CachedWeaponComponent = FindComponentByClass<UWeaponComponent>();
-	CachedPerceptionComponent = FindComponentByClass<UAgentPerceptionComponent>();
-
 	// Validate critical sub-components
 	bool bAllComponentsValid = true;
 
-	if (!CachedTacticalState)
+	if (!TacticalState)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing TacticalStateComponent!"), *GetName());
 		bAllComponentsValid = false;
 	}
 
-	if (!CachedObservationBuilder)
+	if (!ObservationBuilder)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing ObservationBuilderComponent!"), *GetName());
 		bAllComponentsValid = false;
 	}
 
-	if (!CachedRLAgent)
+	if (!RLAgent)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing RLAgentComponent!"), *GetName());
 		bAllComponentsValid = false;
 	}
 
-	if (!CachedCombatExecutor)
+	if (!CombatExecutor)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing CombatExecutorComponent!"), *GetName());
 		bAllComponentsValid = false;
 	}
 
-	if (!CachedHealthComponent)
+	if (!HealthComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': Missing HealthComponent!"), *GetName());
 	}
 
-	if (!CachedWeaponComponent)
+	if (!WeaponComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': Missing WeaponComponent!"), *GetName());
 	}
 
-	if (!CachedPerceptionComponent)
+	if (!PerceptionComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': Missing AgentPerceptionComponent!"), *GetName());
 	}
@@ -610,41 +649,41 @@ void AFollowerCharacter::InitializeComponents()
 void AFollowerCharacter::InjectDependencies()
 {
 	// CombatExecutor needs: RewardCalculator, HealthComponent, PerceptionComponent
-	if (CachedCombatExecutor)
+	if (CombatExecutor)
 	{
-		if (CachedRLAgent)
+		if (RLAgent)
 		{
-			URewardCalculator* RewardCalc = CachedRLAgent->GetRewardCalculator();
+			URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator();
 			if (RewardCalc)
 			{
-				CachedCombatExecutor->RewardCalculator = RewardCalc;
+				CombatExecutor->RewardCalculator = RewardCalc;
 				UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0 Phase3] '%s': Injected RewardCalculator into CombatExecutor"),
 					*GetName());
 			}
 		}
 
-		if (CachedHealthComponent)
+		if (HealthComponent)
 		{
-			CachedCombatExecutor->SetHealthComponent(CachedHealthComponent);
+			CombatExecutor->SetHealthComponent(HealthComponent);
 		}
 
-		if (CachedPerceptionComponent)
+		if (PerceptionComponent)
 		{
-			CachedCombatExecutor->SetPerceptionComponent(CachedPerceptionComponent);
+			CombatExecutor->SetPerceptionComponent(PerceptionComponent);
 		}
 	}
 
 	// ObservationBuilder needs: HealthComponent, PerceptionComponent
-	if (CachedObservationBuilder)
+	if (ObservationBuilder)
 	{
-		if (CachedHealthComponent)
+		if (HealthComponent)
 		{
-			CachedObservationBuilder->SetHealthComponent(CachedHealthComponent);
+			ObservationBuilder->SetHealthComponent(HealthComponent);
 		}
 
-		if (CachedPerceptionComponent)
+		if (PerceptionComponent)
 		{
-			CachedObservationBuilder->SetPerceptionComponent(CachedPerceptionComponent);
+			ObservationBuilder->SetPerceptionComponent(PerceptionComponent);
 		}
 
 		UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0 Phase3] '%s': Injected dependencies into ObservationBuilder"),
@@ -714,11 +753,11 @@ bool AFollowerCharacter::ShouldUpdateStrategy() const
 
 	// Check if strategy assignment changed
 	bool bAssignmentChanged = false;
-	if (CachedTacticalState)
+	if (TacticalState)
 	{
-		FStrategyAssignment Current = CachedTacticalState->GetStrategyAssignment();
-		FStrategyAssignment Last = CachedTacticalState->GetLastAssignment();
-		// v9.0: Only check strategy change (objectives are implicit in rewards)
+		FStrategyAssignment Current = TacticalState->GetStrategyAssignment();
+		FStrategyAssignment Last = TacticalState->GetLastAssignment();
+		// Only check strategy change (objectives are implicit in rewards)
 		bAssignmentChanged = (Current.Strategy != Last.Strategy);
 	}
 
@@ -730,11 +769,11 @@ bool AFollowerCharacter::ShouldUpdateStrategy() const
 
 void AFollowerCharacter::ExecuteCombatInternal()
 {
-	if (!CachedCombatExecutor || !CachedTacticalState)
+	if (!CombatExecutor || !TacticalState)
 	{
 		return;
 	}
 
-	FCombatParameters CombatParams = CachedTacticalState->GetCombatParameters();
-	CachedCombatExecutor->ExecuteCombat(CombatParams);
+	FCombatParameters CombatParams = TacticalState->GetCombatParameters();
+	CombatExecutor->ExecuteCombat(CombatParams);
 }
