@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Observation/ObservationElement.h"
-#include "Observation/TeamObservation.h"
 #include "ObservationBuilderComponent.generated.h"
 
 // Forward declarations
@@ -84,8 +83,6 @@ public:
 	void PopulateObjectiveContext(FObservationElement& Observation);
 
 	void SetObjectives(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
-
-	void UpdateTeamIntel(const FTeamObservation& TeamObs);
 
 	FORCEINLINE void EnemySpotted(int32 EnemyCount = 1) { LocalObservation.VisibleEnemyCount += EnemyCount; }
 
@@ -175,7 +172,4 @@ private:
 
 	UPROPERTY()
 	AObjectiveActor* CachedHostileObjective = nullptr;
-
-	// �� ���� ����
-	FTeamObservation CachedTeamObservation;
 };

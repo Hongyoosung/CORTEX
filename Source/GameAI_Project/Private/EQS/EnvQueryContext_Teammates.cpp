@@ -1,7 +1,7 @@
 #include "EQS/EnvQueryContext_Teammates.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_Actor.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/FollowerCharacter.h"
 #include "GameFramework/Pawn.h"
 #include "EngineUtils.h"
 
@@ -20,12 +20,12 @@ void UEnvQueryContext_Teammates::ProvideContext(FEnvQueryInstance& QueryInstance
 		return;
 	}
 
-	// Get FollowerAgentComponent to determine team
-	UFollowerAgentComponent* AgentComp = QuerierActor->FindComponentByClass<UFollowerAgentComponent>();
-	if (!AgentComp)
+	// Get FollowerAgentto determine team
+	AFollowerCharacter* FollowerAgent = Cast<AFollowerCharacter>(QuerierActor);
+	if (!FollowerAgent)
 	{
 		// Fallback: EQS Testing Pawn mode (search by tag)
-		UE_LOG(LogTemp, Warning, TEXT("[EQS Context] No FollowerAgentComponent found on %s, using tag-based fallback"), *QuerierActor->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[EQS Context] No FollowerAgent found on %s, using tag-based fallback"), *QuerierActor->GetName());
 
 		TArray<AActor*> FoundActors;
 		for (TActorIterator<AActor> It(QuerierActor->GetWorld()); It; ++It)
@@ -42,7 +42,7 @@ void UEnvQueryContext_Teammates::ProvideContext(FEnvQueryInstance& QueryInstance
 	}
 
 	// Production mode: Get teammates from team leader's registered agents
-	int32 MyTeamID = AgentComp->GetTeamID();
+	int32 MyTeamID = FollowerAgent->GetTeamID();
 	TArray<AActor*> Teammates;
 
 	// Find all agents on the same team
@@ -54,8 +54,7 @@ void UEnvQueryContext_Teammates::ProvideContext(FEnvQueryInstance& QueryInstance
 			continue;
 		}
 
-		UFollowerAgentComponent* OtherAgentComp = OtherPawn->FindComponentByClass<UFollowerAgentComponent>();
-		if (OtherAgentComp && OtherAgentComp->GetTeamID() == MyTeamID)
+		if (FollowerAgent && FollowerAgent->GetTeamID() == MyTeamID)
 		{
 			Teammates.Add(OtherPawn);
 		}

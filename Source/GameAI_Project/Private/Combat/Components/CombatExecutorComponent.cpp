@@ -1,10 +1,8 @@
 #include "Combat/Components/CombatExecutorComponent.h"
-#include "Team/Components/TeamLeaderComponent.h"
 #include "RL/Components/RewardCalculator.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Combat/Components/WeaponComponent.h"
-#include "RL/Components/RewardCalculator.h"
 #include "AIController.h"
 #include "Team/TeamTypes.h"
 
@@ -333,13 +331,6 @@ void UCombatExecutorComponent::OnDamageTakenEvent(const FDamageEventData& Damage
 		*GetOwner()->GetName(),
 		DamageEvent.DamageAmount,
 		DamageEvent.Instigator ? *DamageEvent.Instigator->GetName() : TEXT("Unknown"));
-
-	// Signal event to team leader if damage is significant
-	if (TeamLeader && DamageEvent.DamageAmount >= 10.0f)
-	{
-		TeamLeader->ProcessStrategicEvent(EStrategicEvent::UnderFire, DamageEvent.Instigator,
-			GetOwner()->GetActorLocation(), 6);
-	}
 }
 
 void UCombatExecutorComponent::OnDamageDealtEvent(AActor* Victim, float DamageAmount)
@@ -377,13 +368,6 @@ void UCombatExecutorComponent::OnKillEvent(AActor* Victim, float TotalDamage)
 	UE_LOG(LogTemp, Log, TEXT("[CombatExecutor] '%s': KILL confirmed on %s"),
 		*GetOwner()->GetName(),
 		Victim ? *Victim->GetName() : TEXT("Unknown"));
-
-	// Signal kill to team leader
-	if (TeamLeader)
-	{
-		TeamLeader->ProcessStrategicEvent(EStrategicEvent::EnemyKilled, Victim,
-			GetOwner()->GetActorLocation(), 7);
-	}
 }
 
 void UCombatExecutorComponent::OnDeathEvent(const FDeathEventData& DeathEvent)
@@ -405,11 +389,4 @@ void UCombatExecutorComponent::OnDeathEvent(const FDeathEventData& DeathEvent)
 
 	// Mark as dead
 	bIsAlive = false;
-
-	// Signal death to team leader
-	if (TeamLeader)
-	{
-		TeamLeader->ProcessStrategicEvent(EStrategicEvent::AllyKilled, DeathEvent.Killer,
-			GetOwner()->GetActorLocation(), 10);
-	}
 }

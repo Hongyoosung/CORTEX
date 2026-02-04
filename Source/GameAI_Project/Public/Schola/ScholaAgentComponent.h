@@ -10,7 +10,7 @@
 
 class AFollowerCharacter;
 class UTacticalObserver;
-class UTacticalRewardProvider;
+class UAgentRewardManager;
 class UCombinedTacticalActuator;
 struct FDamageEventData;
 
@@ -20,7 +20,7 @@ struct FDamageEventData;
  *
  * This component attaches to follower pawns and:
  * - Exposes 56-feature tactical observations (TacticalObserver)
- * - Provides combat rewards (TacticalRewardProvider)
+ * - Provides combat rewards (AgentRewardManager)
  * - Inherits from Schola's InferenceComponent (concrete implementation)
  *
  * Architecture:
@@ -57,14 +57,15 @@ public:
 	float GetCurrentReward() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Schola")
+	void ProviderReward(float Reward);
+
+	UFUNCTION(BlueprintCallable, Category = "Schola")
 	void ResetEpisode();
 
 
 
 private:
-	void FindFollowerAgent();
 	void ConfigureObservers();
-	void ConfigureRewardProvider();
 	void ConfigureActuators();
 
 
@@ -73,11 +74,11 @@ private:
 	//============= COMPONENTS =================
 	TObjectPtr<UTacticalObserver>			TacticalObserver;
 
-	TObjectPtr<UTacticalRewardProvider>		RewardProvider;
+	TObjectPtr<UAgentRewardManager>			AgentRewardManager;
 
 	TObjectPtr<UCombinedTacticalActuator>	CombinedTacticalActuator;
 
-	TObjectPtr<AFollowerCharacter>			FollowerAgent;
+	TObjectPtr<AActor>						OwnerAgent;
 
 	TObjectPtr<AScholaCombatEnvironment>	ScholaEnvironment;
 };

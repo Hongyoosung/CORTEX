@@ -7,9 +7,8 @@
 #include "Util/Components/VisualLoggerComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Combat/Components/WeaponComponent.h"
-#include "RL/Components/TacticalStateComponent.h"
 #include "Observation/Components/ObservationBuilderComponent.h"
-#include "RL/Components/RLAgentComponent.h"
+#include "Schola/ScholaAgentComponent.h"
 #include "Combat/Components/CombatExecutorComponent.h"
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "RL/Components/RewardCalculator.h"
@@ -17,7 +16,6 @@
 #include "Team/TeamTypes.h"
 #include "RL/RLTypes.h"
 #include "Observation/ObservationElement.h"
-#include "Observation/TeamObservation.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "AIController.h"
 #include "EngineUtils.h"
@@ -30,9 +28,8 @@ AFollowerCharacter::AFollowerCharacter()
 	, StateTreeComponent(nullptr)
 	, ContextBridgeComponent(nullptr)
 	, VisualLoggerComponent(nullptr)
-	, TacticalState(nullptr)
+	, ScholaAgentComponent(nullptr)
 	, ObservationBuilder(nullptr)
-	, RLAgent(nullptr)
 	, CombatExecutor(nullptr)
 	, HealthComponent(nullptr)
 	, WeaponComponent(nullptr)
@@ -48,16 +45,16 @@ AFollowerCharacter::AFollowerCharacter()
 	PrimaryActorTick.bCanEverTick = true;
 
 
-	StateTreeComponent		= CreateDefaultSubobject<UFollowerStateTreeComponent>(TEXT("StateTreeComponent"));
-	ContextBridgeComponent	= CreateDefaultSubobject<UContextBridgeComponent>(TEXT("ContextBridgeComponent"));
-	VisualLoggerComponent	= CreateDefaultSubobject<UVisualLoggerComponent>(TEXT("VisualLoggerComponent"));
-	TacticalState			= CreateDefaultSubobject<UTacticalStateComponent>(TEXT("TacticalStateComponent"));
-	ObservationBuilder		= CreateDefaultSubobject<UObservationBuilderComponent>(TEXT("ObservationBuilderComponent"));
-	RLAgent					= CreateDefaultSubobject<URLAgentComponent>(TEXT("RLAgentComponent"));
-	CombatExecutor			= CreateDefaultSubobject<UCombatExecutorComponent>(TEXT("CombatExecutorComponent"));
-	HealthComponent			= CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
-	WeaponComponent			= CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
-	PerceptionComponent		= CreateDefaultSubobject<UAgentPerceptionComponent>(TEXT("PerceptionComponent"));
+	StateTreeComponent			= CreateDefaultSubobject<UFollowerStateTreeComponent>(TEXT("StateTreeComponent"));
+	ContextBridgeComponent		= CreateDefaultSubobject<UContextBridgeComponent>(TEXT("ContextBridgeComponent"));
+	VisualLoggerComponent		= CreateDefaultSubobject<UVisualLoggerComponent>(TEXT("VisualLoggerComponent"));
+	ObservationBuilder			= CreateDefaultSubobject<UObservationBuilderComponent>(TEXT("ObservationBuilderComponent"));
+	ScholaAgentComponent		= CreateDefaultSubobject<UScholaAgentComponent>(TEXT("ScholaAgentComponent"));
+	CombatExecutor				= CreateDefaultSubobject<UCombatExecutorComponent>(TEXT("CombatExecutorComponent"));
+	HealthComponent				= CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
+	WeaponComponent				= CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
+	PerceptionComponent			= CreateDefaultSubobject<UAgentPerceptionComponent>(TEXT("PerceptionComponent"));
+	RewardCalculatorComponent	= CreateDefaultSubobject<URewardCalculator>(TEXT("RewardCalculatorComponent"));
 
 
 	// Context Bridge: Initialize with default tactical parameters [0.5, 0.5, 0.5, 0.5]
@@ -167,51 +164,43 @@ void AFollowerCharacter::Tick(float DeltaTime)
 	// Layer 3 (Execution - EQS): EQS uses tactical parameters as query weights
 	// Layer 4 (Execution - Rules): Combat execution with learned target priority
 	// ========================================
-	if (ShouldUpdateStrategy())
+
+	// Build observation
+	FObservationElement Obs = BuildLocalObservation();
+
+	// Get assigned strategy from MCTS
+	EStrategyType AssignedStrategy = CurrentAssigned.Strategy;
+
+	// Query RL policy for tactical parameters + combat choices
+	if (ScholaAgentComponent && IsTacticalPolicyReady())
 	{
-		// Build observation
-		FObservationElement Obs = BuildLocalObservation();
-
-		// Get assigned strategy from MCTS
-		EStrategyType AssignedStrategy = GetAssignedStrategy();
-
-		// Query RL policy for tactical parameters + combat choices
-		if (RLAgent && IsTacticalPolicyReady())
+		URLPolicyNetwork* Policy = GetTacticalPolicy();
+		if (Policy)
 		{
-			URLPolicyNetwork* Policy = GetTacticalPolicy();
-			if (Policy)
+			// Run RL inference (2-4ms if batched)
+			FMacroAction NewAction = Policy->GetMacroAction(Obs, AssignedStrategy);
+
+			SetMacroAction(NewAction);
+
+			// Update ContextBridge for StateTree
+			if (ContextBridgeComponent)
 			{
-				// Run RL inference (2-4ms if batched)
-				FMacroAction NewAction = Policy->GetMacroAction(Obs, AssignedStrategy);
-
-				// Update tactical state
-				SetTacticalParameters(NewAction.TacticalParams);
-				SetCombatParameters(NewAction.CombatParams);
-
-				// Update ContextBridge for StateTree
-				if (ContextBridgeComponent)
-				{
-					ContextBridgeComponent->SetStrategy(AssignedStrategy);
-					ContextBridgeComponent->SetTacticalParameters(NewAction.TacticalParams);
-					ContextBridgeComponent->SetCombatParameters(NewAction.CombatParams);
-					ContextBridgeComponent->SetIsAlive(IsAliveState());
-				}
-
-				// Update timestamp
-				LastStrategyUpdateTime = FPlatformTime::Seconds();
+				ContextBridgeComponent->SetStrategy(AssignedStrategy);
+				ContextBridgeComponent->SetTacticalParameters(NewAction.TacticalParams);
+				ContextBridgeComponent->SetCombatParameters(NewAction.CombatParams);
+				ContextBridgeComponent->SetIsAlive(IsAliveState());
 			}
-		}
 
-		TicksSinceLastUpdate = 0;
+			// Update timestamp
+			LastStrategyUpdateTime = FPlatformTime::Seconds();
+		}
 	}
+
+	TicksSinceLastUpdate = 0;
+	
 
 	// Always increment tick counter (for timeout fallback)
 	TicksSinceLastUpdate++;
-
-	// ========================================
-	// Combat execution (every tick, 60 Hz)
-	// ========================================
-	ExecuteCombatInternal();
 
 	// Draw debug info if enabled
 	if (VisualLoggerComponent && VisualLoggerComponent->bEnableDebugDrawing)
@@ -250,19 +239,7 @@ void AFollowerCharacter::OnHealthComponentDeath(const FDeathEventData& DeathEven
 
 void AFollowerCharacter::SetStrategyAssignment(const FStrategyAssignment& Assignment)
 {
-	if (TacticalState)
-	{
-		TacticalState->SetStrategyAssignment(Assignment);
-	}
-
-	// Synchronize strategy to RewardCalculator (required for strategy-specific rewards)
-	if (RLAgent)
-	{
-		if (URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator())
-		{
-			RewardCalc->SetCurrentStrategy(Assignment.Strategy);
-		}
-	}
+	CurrentAssigned = Assignment;
 
 	if (ContextBridgeComponent)
 	{
@@ -270,45 +247,21 @@ void AFollowerCharacter::SetStrategyAssignment(const FStrategyAssignment& Assign
 	}
 }
 
-EStrategyType AFollowerCharacter::GetAssignedStrategy() const
+void AFollowerCharacter::SetMacroAction(const FMacroAction& MacroAction)
 {
-	return TacticalState ? TacticalState->GetAssignedStrategy() : EStrategyType::Assault;
+	CurrentMacroAction = MacroAction;
 }
+
 
 FStrategyAssignment AFollowerCharacter::GetStrategyAssignment() const
 {
-	return TacticalState ? TacticalState->GetStrategyAssignment() : FStrategyAssignment();
+	return CurrentAssigned;
 }
 
-void AFollowerCharacter::SetTacticalParameters(const FTacticalParameters& Params)
-{
-	if (TacticalState)
-	{
-		TacticalState->SetTacticalParameters(Params);
-	}
-}
-
-FTacticalParameters AFollowerCharacter::GetTacticalParameters() const
-{
-	return TacticalState ? TacticalState->GetTacticalParameters() : FTacticalParameters();
-}
-
-void AFollowerCharacter::SetCombatParameters(const FCombatParameters& Params)
-{
-	if (TacticalState)
-	{
-		TacticalState->SetCombatParameters(Params);
-	}
-}
-
-FCombatParameters AFollowerCharacter::GetCombatParameters() const
-{
-	return TacticalState ? TacticalState->GetCombatParameters() : FCombatParameters();
-}
 
 FMacroAction AFollowerCharacter::GetCurrentMacroAction() const
 {
-	return TacticalState ? TacticalState->GetCurrentMacroAction() : FMacroAction();
+	return CurrentMacroAction;
 }
 
 FAllyContext AFollowerCharacter::GetAllyContext() const
@@ -365,13 +318,6 @@ void AFollowerCharacter::UpdateObjectiveContext(AObjectiveActor* Friendly, AObje
 	}
 }
 
-void AFollowerCharacter::UpdateTeamIntel(const FTeamObservation& TeamObs)
-{
-	if (ObservationBuilder)
-	{
-		ObservationBuilder->UpdateTeamIntel(TeamObs);
-	}
-}
 
 bool AFollowerCharacter::FindNearestCover(FVector& OutCoverLocation, float& OutDistance, const TArray<AActor*>& Enemies)
 {
@@ -406,34 +352,31 @@ AObjectiveActor* AFollowerCharacter::GetHostileObjective() const
 	return ObservationBuilder ? ObservationBuilder->GetHostileObjective() : nullptr;
 }
 
-//------------------------------------------------------------------------------
-// REINFORCEMENT LEARNING WRAPPERS (delegate to RLAgentComponent)
-//------------------------------------------------------------------------------
 
-void AFollowerCharacter::ProvideReward(float Reward, bool bTerminal)
+
+void AFollowerCharacter::ProvideReward(float Reward)
 {
-	if (RLAgent)
+	if (ScholaAgentComponent)
 	{
-		RLAgent->ProvideReward(Reward, bTerminal);
+		ScholaAgentComponent->ProviderReward(Reward);
 	}
 }
 
-void AFollowerCharacter::AccumulateReward(float Reward)
-{
-	if (RLAgent)
-	{
-		RLAgent->AccumulateReward(Reward);
-	}
-}
 
-float AFollowerCharacter::GetAccumulatedReward() const
+float AFollowerCharacter::GetCurrentReward() const
 {
-	return RLAgent ? RLAgent->GetAccumulatedReward() : 0.0f;
+	if (!ScholaAgentComponent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] ScholaAgentComponent is null, cannot get current reward"));
+		return 0.0f;
+	}
+
+	return ScholaAgentComponent->GetCurrentReward();
 }
 
 URewardCalculator* AFollowerCharacter::GetRewardCalculator() const
 {
-	return RLAgent ? RLAgent->GetRewardCalculator() : nullptr;
+	return RewardCalculatorComponent ? RewardCalculatorComponent : nullptr;
 }
 
 UObservationBuilderComponent* AFollowerCharacter::GetObservationBuilder() const
@@ -441,20 +384,7 @@ UObservationBuilderComponent* AFollowerCharacter::GetObservationBuilder() const
 	return ObservationBuilder;
 }
 
-bool AFollowerCharacter::IsUsingRLPolicy() const
-{
-	return RLAgent ? RLAgent->bUseRLPolicy : false;
-}
 
-URLPolicyNetwork* AFollowerCharacter::GetTacticalPolicy() const
-{
-	return RLAgent ? RLAgent->GetTacticalPolicy() : nullptr;
-}
-
-bool AFollowerCharacter::IsTacticalPolicyReady() const
-{
-	return RLAgent ? RLAgent->IsTacticalPolicyReady() : false;
-}
 
 //------------------------------------------------------------------------------
 // COMBAT WRAPPERS (delegate to CombatExecutorComponent)
@@ -500,9 +430,9 @@ int32 AFollowerCharacter::GetTeamID() const
 void AFollowerCharacter::ResetEpisode()
 {
 	// Reset all components that maintain episode state
-	if (TacticalState)
+	if (ScholaAgentComponent)
 	{
-		TacticalState->ResetState();
+		ScholaAgentComponent->ResetEpisode();
 	}
 
 	if (ObservationBuilder)
@@ -510,10 +440,6 @@ void AFollowerCharacter::ResetEpisode()
 		ObservationBuilder->ResetEpisode();
 	}
 
-	if (RLAgent)
-	{
-		RLAgent->ResetEpisode();
-	}
 
 	if (ContextBridgeComponent)
 	{
@@ -525,19 +451,11 @@ void AFollowerCharacter::ResetEpisode()
 
 void AFollowerCharacter::OnEpisodeEnded(float EpisodeReward)
 {
-	if (RLAgent)
-	{
-		RLAgent->OnEpisodeEnded(EpisodeReward);
-	}
+
 }
 
 void AFollowerCharacter::MarkAsDead()
 {
-	if (TacticalState)
-	{
-		TacticalState->MarkAsDead();
-	}
-
 	// TODO: remove CombatExecutor -> move to state tree task
 	if (CombatExecutor)
 	{
@@ -560,11 +478,6 @@ void AFollowerCharacter::MarkAsDead()
 
 void AFollowerCharacter::MarkAsAlive()
 {
-	if (TacticalState)
-	{
-		TacticalState->MarkAsAlive();
-	}
-
 	if (ContextBridgeComponent)
 	{
 		ContextBridgeComponent->SetIsAlive(true);
@@ -586,7 +499,12 @@ void AFollowerCharacter::MarkAsAlive()
 
 bool AFollowerCharacter::IsAliveState() const
 {
-	return TacticalState ? TacticalState->IsAlive() : false;
+	if (!HealthComponent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] HealthComponent has null. can not check is Alive"))
+	}
+
+	return HealthComponent->IsAlive();
 }
 
 
@@ -595,55 +513,11 @@ void AFollowerCharacter::InitializeComponents()
 	// Validate critical sub-components
 	bool bAllComponentsValid = true;
 
-	if (!TacticalState)
+	if (ScholaAgentComponent)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing TacticalStateComponent!"), *GetName());
-		bAllComponentsValid = false;
+		ScholaAgentComponent->InitializeScholaComponents();
 	}
 
-	if (!ObservationBuilder)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing ObservationBuilderComponent!"), *GetName());
-		bAllComponentsValid = false;
-	}
-
-	if (!RLAgent)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing RLAgentComponent!"), *GetName());
-		bAllComponentsValid = false;
-	}
-
-	if (!CombatExecutor)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter] '%s': Missing CombatExecutorComponent!"), *GetName());
-		bAllComponentsValid = false;
-	}
-
-	if (!HealthComponent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': Missing HealthComponent!"), *GetName());
-	}
-
-	if (!WeaponComponent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': Missing WeaponComponent!"), *GetName());
-	}
-
-	if (!PerceptionComponent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': Missing AgentPerceptionComponent!"), *GetName());
-	}
-
-	if (bAllComponentsValid)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0 Phase4] '%s': All sub-components cached successfully"),
-			*GetName());
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerCharacter v9.0 Phase4] '%s': Missing critical sub-components! System may malfunction."),
-			*GetName());
-	}
 }
 
 void AFollowerCharacter::InjectDependencies()
@@ -651,17 +525,6 @@ void AFollowerCharacter::InjectDependencies()
 	// CombatExecutor needs: RewardCalculator, HealthComponent, PerceptionComponent
 	if (CombatExecutor)
 	{
-		if (RLAgent)
-		{
-			URewardCalculator* RewardCalc = RLAgent->GetRewardCalculator();
-			if (RewardCalc)
-			{
-				CombatExecutor->RewardCalculator = RewardCalc;
-				UE_LOG(LogTemp, Log, TEXT("[FollowerCharacter v9.0 Phase3] '%s': Injected RewardCalculator into CombatExecutor"),
-					*GetName());
-			}
-		}
-
 		if (HealthComponent)
 		{
 			CombatExecutor->SetHealthComponent(HealthComponent);
@@ -739,41 +602,4 @@ void AFollowerCharacter::FindTeamByTeamID()
 	// No matching leader found
 	UE_LOG(LogTemp, Warning, TEXT("[FollowerCharacter] '%s': No leader found with matching TeamID: %d"),
 		*GetName(), TeamID);
-}
-
-
-bool AFollowerCharacter::ShouldUpdateStrategy() const
-{
-	// RATE LIMIT: Prevent oscillation - minimum 50ms between updates
-	double CurrentTime = FPlatformTime::Seconds();
-	if (CurrentTime - LastStrategyUpdateTime < MinStrategyUpdateInterval)
-	{
-		return false;
-	}
-
-	// Check if strategy assignment changed
-	bool bAssignmentChanged = false;
-	if (TacticalState)
-	{
-		FStrategyAssignment Current = TacticalState->GetStrategyAssignment();
-		FStrategyAssignment Last = TacticalState->GetLastAssignment();
-		// Only check strategy change (objectives are implicit in rewards)
-		bAssignmentChanged = (Current.Strategy != Last.Strategy);
-	}
-
-	// Fallback: Force update every 30 ticks (~0.5s at 60 FPS)
-	bool bTimeout = TicksSinceLastUpdate > 30;
-
-	return bAssignmentChanged || bTimeout;
-}
-
-void AFollowerCharacter::ExecuteCombatInternal()
-{
-	if (!CombatExecutor || !TacticalState)
-	{
-		return;
-	}
-
-	FCombatParameters CombatParams = TacticalState->GetCombatParameters();
-	CombatExecutor->ExecuteCombat(CombatParams);
 }

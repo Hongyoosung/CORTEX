@@ -2,9 +2,8 @@
 
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/Observers/TacticalObserver.h"
-#include "Schola/Rewards/TacticalRewardProvider.h"
+#include "Schola/Rewards/AgentRewardManager.h"
 #include "Schola/Actuators/CombinedTacticalActuator.h"
-#include "Actor/FollowerCharacter.h"
 #include "Inference/InferenceComponent.h"
 #include "Combat/Components/HealthComponent.h"
 #include "GameFramework/Pawn.h"
@@ -14,9 +13,8 @@
 UScholaAgentComponent::UScholaAgentComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, TacticalObserver(nullptr)
-	, RewardProvider(nullptr)
+	, AgentRewardManager(nullptr)
 	, CombinedTacticalActuator(nullptr)
-	, FollowerAgent(nullptr)
 	, ScholaEnvironment(nullptr)
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -28,6 +26,7 @@ void UScholaAgentComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	AgentRewardManager = NewObject<UAgentRewardManager>();
 
 	// Note: gRPC server is now managed by ScholaCombatEnvironment
 	// This component will be auto-registered by the environment during initialization
@@ -39,7 +38,7 @@ void UScholaAgentComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
 
-	FollowerAgent = nullptr;
+	OwnerAgent = nullptr;
 }
 
 
@@ -51,18 +50,8 @@ void UScholaAgentComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 void UScholaAgentComponent::InitializeScholaComponents()
 {
-	// Find follower agent component
-	FindFollowerAgent();
-	if (!FollowerAgent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent] %s: FollowerAgentComponent not found!"),
-			*GetOwner()->GetName());
-		return;
-	}
-
 	// Configure components
 	ConfigureObservers();
-	ConfigureRewardProvider();
 	ConfigureActuators();
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: Schola components configured successfully"),
@@ -71,13 +60,13 @@ void UScholaAgentComponent::InitializeScholaComponents()
 
 void UScholaAgentComponent::ConfigureObservers()
 {
-	if (!TacticalObserver || !FollowerAgent)
+	if (!TacticalObserver)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent]: TacticalObserver or FollowerAgent is null!"));
 		return;
 	}
 
-	TacticalObserver->SetFollowerAgent(FollowerAgent);
+	TacticalObserver->SetFollowerAgent(GetOwner());
 	TacticalObserver->InitializeObserver();
 
 	// Add to InferenceComponent's observers array if not already present (this class IS the InferenceComponent)
@@ -90,62 +79,34 @@ void UScholaAgentComponent::ConfigureObservers()
 		*GetOwner()->GetName());
 }
 
-void UScholaAgentComponent::ConfigureRewardProvider()
-{
-	if (!RewardProvider || !FollowerAgent)
-	{
-		return;
-	}
-
-	RewardProvider->Initialize(FollowerAgent);
-
-	UE_LOG(LogTemp, Log, TEXT("[ScholaAgent] %s: RewardProvider configured"),
-		*GetOwner()->GetName());
-}
-
-void UScholaAgentComponent::FindFollowerAgent()
-{
-	AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		return;
-	}
-
-	AFollowerCharacter* Follower = Cast<AFollowerCharacter>(Owner);
-
-	if (!Follower)
-	{
-		return;
-	}
-
-
-	FollowerAgent = Follower;
-}
 
 float UScholaAgentComponent::GetCurrentReward() const
 {
-	if (!RewardProvider)
+	if (!AgentRewardManager)
 	{
 		return 0.0f;
 	}
 
-	return RewardProvider->GetReward();
+	return AgentRewardManager->GetReward();
+}
+
+void UScholaAgentComponent::ProviderReward(float Reward)
+{
+	if (!AgentRewardManager)
+	{
+		return;
+	}
+
+	AgentRewardManager->AccumulateReward(Reward);
 }
 
 // REMOVED: IsEpisodeTerminated() - Episode termination now handled by FollowerAgentTrainer.ComputeStatus()
 
 void UScholaAgentComponent::ConfigureActuators()
 {
-	if (!FollowerAgent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaAgent]: FollowerAgent is null, cannot configure actuators!"));
-		return;
-	}
-
-	// v8.0: Configure CombinedTacticalActuator (5 continuous values: 4 tactical + 1 combat priority)
 	if (CombinedTacticalActuator)
 	{
-		CombinedTacticalActuator->SetFollowerAgent(FollowerAgent);
+		CombinedTacticalActuator->SetFollowerAgent(GetOwner());
 		CombinedTacticalActuator->InitializeActuator();
 
 		if (!this->Actuators.Contains(CombinedTacticalActuator))
@@ -169,20 +130,14 @@ void UScholaAgentComponent::ConfigureActuators()
 void UScholaAgentComponent::ResetEpisode()
 {
 	// Reset reward provider
-	if (RewardProvider)
+	if (AgentRewardManager)
 	{
-		RewardProvider->Reset();
+		AgentRewardManager->Reset();
 	}
 
 	// Reset observer
 	if (TacticalObserver)
 	{
 		TacticalObserver->ResetObserver();
-	}
-
-	// Reset follower agent episode
-	if (FollowerAgent)
-	{
-		FollowerAgent->ResetEpisode();
 	}
 }

@@ -1,13 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RL/Components/RewardCalculator.h"
-#include "Actor/FollowerCharacter.h"
-#include "Actor/LeaderCharacter.h"
 #include "Team/ObjectiveActor.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
-// v9.0 PHASE 5: Use FollowerCharacter API (Character-as-Central-Hub)
-#include "Actor/FollowerCharacter.h"
+
 
 URewardCalculator::URewardCalculator()
 {
@@ -18,30 +15,6 @@ URewardCalculator::URewardCalculator()
 void URewardCalculator::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// v9.0 Phase 4: Use character API instead of FindComponentByClass
-	// Character injects component references via InitializeComponents()
-	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(GetOwner());
-	if (!FollowerChar)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[RewardCalculator v9.0] RewardCalculator must be attached to FollowerCharacter! Owner: %s"),
-			*GetOwner()->GetName());
-		return;
-	}
-
-	// Get components through character wrapper API (no FindComponentByClass)
-	FollowerAgent = FollowerChar;
-
-	if (!FollowerAgent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[RewardCalculator v9.0] No FollowerAgent found on %s"), *FollowerChar->GetName());
-	}
-	else
-	{
-		// Initialize previous observation for delta calculations using character API
-		PreviousObservation = FollowerChar->BuildLocalObservation();
-		UE_LOG(LogTemp, Log, TEXT("[REWARD INIT v9.0] '%s': PreviousObservation initialized via character API"), *FollowerChar->GetName());
-	}
 
 	// Reset state
 	AccumulatedIndividualReward = 0.0f;
@@ -60,24 +33,7 @@ void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	// Hybrid reward calculation: continuous (positioning) + event-driven (kills, damage)
 	// All rewards forwarded to FollowerAgent for Schola integration
 
-	if (!FollowerAgent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[REWARD TICK] No FollowerAgent - cannot forward rewards!"));
-		return;
-	}
 
-	// Skip reward calculation for dead agents to prevent negative impact on RL training
-	if (!FollowerAgent->IsAlive())
-	{
-		return;
-	}
-
-	// v9.0 Phase 4: Build current observation using character API
-	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(GetOwner());
-	if (!FollowerChar)
-	{
-		return;
-	}
 	FObservationElement CurrentObs = FollowerChar->BuildLocalObservation();
 
 	float StepReward = 0.0f;

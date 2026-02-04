@@ -4,8 +4,7 @@
 #include "StateTree/FollowerStateTreeComponent.h"
 #include "StateTree/FollowerStateTreeContext.h"
 #include "Team/ObjectiveActor.h"
-#include "Team/Components/TeamLeaderComponent.h"
-#include "Actor/FollowerCharacter.h"  // v9.0 PHASE 5: Use character API
+#include "Actor/FollowerCharacter.h"  
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -32,55 +31,52 @@ void UEnvQueryContext_ObjectiveLocation::ProvideContext(FEnvQueryInstance& Query
 
 		if (FollowerChar)
 		{
-			UTeamLeaderComponent* TeamLeader = FollowerChar->GetTeamLeader();
-			if (TeamLeader)
+	
+			AObjectiveActor* TargetObjective = nullptr;
+
+			// Strategy-based objective selection (v9.0)
+			switch (Strategy)
 			{
-				AObjectiveActor* TargetObjective = nullptr;
+				case EStrategyType::Assault:
+					// Assault focuses on approaching hostile objective
+					TargetObjective = FollowerChar->GetHostileObjective();
+					break;
 
-				// Strategy-based objective selection (v9.0)
-				switch (Strategy)
+				case EStrategyType::Defend:
+					// Defend focuses on staying near friendly objective
+					TargetObjective = FollowerChar->GetFriendlyObjective();
+					break;
+
+				case EStrategyType::Support:
+					// Support doesn't use objective context (ally proximity dominates)
+					UE_LOG(LogTemp, Verbose, TEXT("[EQS CONTEXT v9.0] %s: Support strategy - no objective context"), *QueryOwner->GetName());
+					break;
+
+				case EStrategyType::Retreat:
+					// Retreat doesn't use objective context (enemy avoidance dominates)
+					UE_LOG(LogTemp, Verbose, TEXT("[EQS CONTEXT v9.0] %s: Retreat strategy - no objective context"), *QueryOwner->GetName());
+					break;
+
+				default:
+					UE_LOG(LogTemp, Warning, TEXT("[EQS CONTEXT v9.0] %s: Unknown strategy %s"),
+						*QueryOwner->GetName(), *UEnum::GetValueAsString(Strategy));
+					break;
+			}
+
+			if (TargetObjective)
+			{
+				ObjectiveLocation = TargetObjective->GetActorLocation();
+
+				// v9.0: Periodic logging for verification
+				static TMap<const UEnvQueryContext_ObjectiveLocation*, int32> LogCounts;
+				int32& LogCount = LogCounts.FindOrAdd(this, 0);
+				if (++LogCount % 200 == 0)
 				{
-					case EStrategyType::Assault:
-						// Assault focuses on approaching hostile objective
-						TargetObjective = TeamLeader->GetHostileObjective();
-						break;
-
-					case EStrategyType::Defend:
-						// Defend focuses on staying near friendly objective
-						TargetObjective = TeamLeader->GetFriendlyObjective();
-						break;
-
-					case EStrategyType::Support:
-						// Support doesn't use objective context (ally proximity dominates)
-						UE_LOG(LogTemp, Verbose, TEXT("[EQS CONTEXT v9.0] %s: Support strategy - no objective context"), *QueryOwner->GetName());
-						break;
-
-					case EStrategyType::Retreat:
-						// Retreat doesn't use objective context (enemy avoidance dominates)
-						UE_LOG(LogTemp, Verbose, TEXT("[EQS CONTEXT v9.0] %s: Retreat strategy - no objective context"), *QueryOwner->GetName());
-						break;
-
-					default:
-						UE_LOG(LogTemp, Warning, TEXT("[EQS CONTEXT v9.0] %s: Unknown strategy %s"),
-							*QueryOwner->GetName(), *UEnum::GetValueAsString(Strategy));
-						break;
-				}
-
-				if (TargetObjective)
-				{
-					ObjectiveLocation = TargetObjective->GetActorLocation();
-
-					// v9.0: Periodic logging for verification
-					static TMap<const UEnvQueryContext_ObjectiveLocation*, int32> LogCounts;
-					int32& LogCount = LogCounts.FindOrAdd(this, 0);
-					if (++LogCount % 200 == 0)
-					{
-						UE_LOG(LogTemp, Display, TEXT("✅ [EQS CONTEXT v9.0] %s (%s) → Objective=%s at %s"),
-							*QueryOwner->GetName(),
-							*UEnum::GetValueAsString(Strategy),
-							*TargetObjective->GetName(),
-							*ObjectiveLocation.ToCompactString());
-					}
+					UE_LOG(LogTemp, Display, TEXT("✅ [EQS CONTEXT v9.0] %s (%s) → Objective=%s at %s"),
+						*QueryOwner->GetName(),
+						*UEnum::GetValueAsString(Strategy),
+						*TargetObjective->GetName(),
+						*ObjectiveLocation.ToCompactString());
 				}
 			}
 			else

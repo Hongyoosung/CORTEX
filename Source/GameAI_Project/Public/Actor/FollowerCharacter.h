@@ -13,10 +13,9 @@ class UTeamCommsComponent;
 class UContextBridgeComponent;
 class UVisualLoggerComponent;
 class URLPolicyNetwork;
-class UTacticalStateComponent;
 class UObservationBuilderComponent;
-class URLAgentComponent;
 class UCombatExecutorComponent;
+class UScholaAgentComponent;
 class URewardCalculator;
 class UHealthComponent;
 class UWeaponComponent;
@@ -24,11 +23,8 @@ class UAgentPerceptionComponent;
 class ALeaderCharacter;
 class AObjectiveActor;
 struct FStrategyAssignment;
-struct FTacticalParameters;
-struct FCombatParameters;
 struct FMacroAction;
 struct FObservationElement;
-struct FTeamObservation;
 
 
 /** //==========================================================================
@@ -78,18 +74,8 @@ public:
 	//============================================================
 	// TACTICAL STATE (wraps TacticalStateComponent)
 	//============================================================
-
-	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
-	EStrategyType		GetAssignedStrategy() const;
-
 	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
 	FStrategyAssignment GetStrategyAssignment() const;
-
-	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
-	FTacticalParameters GetTacticalParameters() const;
-
-	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
-	FCombatParameters	GetCombatParameters() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
 	FMacroAction		GetCurrentMacroAction() const;
@@ -97,14 +83,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "AI|Tactical")
 	FAllyContext		GetAllyContext() const;
 
-	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
 	void				SetStrategyAssignment(const FStrategyAssignment& Assignment);
 
-	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
-	void				SetCombatParameters(const FCombatParameters& Params);
-
-	UFUNCTION(BlueprintCallable, Category = "AI|Tactical")
-	void				SetTacticalParameters(const FTacticalParameters& Params);
+	void				SetMacroAction(const FMacroAction& MacroAction);
 
 
 	//============================================================
@@ -124,9 +105,6 @@ public:
 	void				UpdateObjectiveContext(AObjectiveActor* Friendly, AObjectiveActor* Hostile);
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
-	void				UpdateTeamIntel(const FTeamObservation& TeamObs);
-
-	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
 	FObservationElement BuildLocalObservation();
 
 	UFUNCTION(BlueprintCallable, Category = "AI|Observation")
@@ -136,23 +114,20 @@ public:
 
 
 	AObjectiveActor*	GetFriendlyObjective	() const;
-	AObjectiveActor*	GetHostileObjective	() const;
+	AObjectiveActor*	GetHostileObjective		() const;
 
 
 	//============================================================
 	// REINFORCEMENT LEARNING (wraps RLAgentComponent)
 	//============================================================
 	UFUNCTION(BlueprintCallable, Category = "AI|RL")
-	void				ProvideReward(float Reward, bool bTerminal = false);
+	void				ProvideReward(float Reward);
 
 	UFUNCTION(BlueprintCallable, Category = "AI|RL")
-	void				AccumulateReward(float Reward);
-
-	UFUNCTION(BlueprintPure, Category = "AI|RL")
-	float				GetAccumulatedReward() const;
-
-	UFUNCTION(BlueprintPure, Category = "AI|RL")
 	URewardCalculator*	GetRewardCalculator() const;
+
+	UFUNCTION(BlueprintCallable, Category = "AI|RL")
+	float				GetCurrentReward() const;
 
 	UFUNCTION(BlueprintPure, Category = "AI|RL")
 	UObservationBuilderComponent* GetObservationBuilder() const;
@@ -162,8 +137,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "AI|RL")
 	bool				IsTacticalPolicyReady() const;
-
-	bool				IsUsingRLPolicy() const;
 
 
 	//============================================================
@@ -227,13 +200,6 @@ private:
 
 
 	//============================================================
-	// DECISION LOOP HELPERS
-	//============================================================
-	bool ShouldUpdateStrategy() const;
-	void ExecuteCombatInternal();
-
-
-	//============================================================
 	//  INITIALIZATION (Dependency Injection Pattern)
 	//============================================================
 	void InitializeComponents();
@@ -249,8 +215,6 @@ private:
 
 public:
 	//============= COMPONENTS =================
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Core")
-	ALeaderCharacter*				TeamLeader;
 
 	/** State Tree component (tactical state management) */
 	UPROPERTY(VisibleAnywhere,		BlueprintReadOnly, Category = "AI|Components|Core")
@@ -264,32 +228,42 @@ public:
 	UPROPERTY(VisibleAnywhere,		BlueprintReadOnly, Category = "AI|Components|Debug")
 	UVisualLoggerComponent*			VisualLoggerComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Components|Debug")
+	UScholaAgentComponent*			ScholaAgentComponent;
+
 
 private:
 	//============= sub-component references  =================
 	UPROPERTY()
-	UTacticalStateComponent* TacticalState;
+	UObservationBuilderComponent*	ObservationBuilder;
 
 	UPROPERTY()
-	UObservationBuilderComponent* ObservationBuilder;
+	UCombatExecutorComponent*		CombatExecutor;
 
 	UPROPERTY()
-	URLAgentComponent* RLAgent;
+	UHealthComponent*				HealthComponent;
 
 	UPROPERTY()
-	UCombatExecutorComponent* CombatExecutor;
+	UWeaponComponent*				WeaponComponent;
 
 	UPROPERTY()
-	UHealthComponent* HealthComponent;
+	UAgentPerceptionComponent*		PerceptionComponent;
 
 	UPROPERTY()
-	UWeaponComponent* WeaponComponent;
-
-	UPROPERTY()
-	UAgentPerceptionComponent* PerceptionComponent;
+	URewardCalculator*				RewardCalculatorComponent;
 
 
 	//============= TEAM COMMUNICATION DATA   =================
+	UPROPERTY()
+	ALeaderCharacter* TeamLeader;
+
+
+	FStrategyAssignment CurrentAssigned;
+	FMacroAction CurrentMacroAction;
+	bool bIsAlive = true;
+
+
+
 
 	/** Is currently registered with team leader? */
 	bool bIsRegisteredWithLeader;

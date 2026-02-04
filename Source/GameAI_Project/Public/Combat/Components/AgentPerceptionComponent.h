@@ -5,9 +5,10 @@
 #include "Observation/ObservationTypes.h"
 #include "AgentPerceptionComponent.generated.h"
 
-class ASimulationManagerGameMode;
-class UFollowerAgentComponent;
+
+class AFollowerCharacter;
 class UAISenseConfig_Sight;
+
 
 /**
  * Perception result for a single detected actor
@@ -73,16 +74,9 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
 		FActorComponentTickFunction* ThisTickFunction) override;
 
-	//--------------------------------------------------------------------------
+	//============================================================
 	// PERCEPTION QUERIES
-	//--------------------------------------------------------------------------
-
-	/**
-	 * Get all detected enemies (sorted by distance)
-	 * @return Array of enemy actors
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Perception|Enemies")
-	TArray<AActor*> GetDetectedEnemies() const;
+	//============================================================
 
 	/**
 	 * Get nearest N enemies
@@ -100,13 +94,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Perception|Enemies")
 	TArray<FEnemyObservation> GetEnemyObservations(int32 MaxCount = 5) const;
 
-	/**
-	 * Is specific actor an enemy?
-	 * @param Actor - Actor to check
-	 * @return true if actor is on enemy team
-	 */
-	UFUNCTION(BlueprintPure, Category = "Perception|Enemies")
-	bool IsActorEnemy(AActor* Actor) const;
 
 	/**
 	 * Get number of visible enemies
@@ -120,9 +107,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Perception|Debug")
 	TArray<FPerceptionResult> GetAllPerceptionResults() const;
 
-	//--------------------------------------------------------------------------
+	//============================================================
 	// OBSERVATION INTEGRATION
-	//--------------------------------------------------------------------------
+	//============================================================
 
 	/**
 	 * Update observation element with enemy data
@@ -140,9 +127,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Perception|Observation")
 	TArray<ERaycastHitType> BuildRaycastHitTypes(int32 NumRays = 16, float RayLength = 5000.0f);
 
-	//--------------------------------------------------------------------------
+	//============================================================
 	// TEAM LEADER INTEGRATION
-	//--------------------------------------------------------------------------
+	//============================================================
 	/**
 	 * Signal enemy spotted event to team leader
 	 * @param Enemy - Detected enemy actor
@@ -150,9 +137,32 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Perception|Team")
 	void SignalEnemySpotted(AActor* Enemy);
 
-	//--------------------------------------------------------------------------
+
+
+private:
+	/** Perception update callback */
+	UFUNCTION()
+	void OnPerceptionUpdatedCallback(const TArray<AActor*>& UpdatedActors);
+
+	/** Target perceived callback */
+	UFUNCTION()
+	void OnTargetPerceivedCallback(AActor* Actor, FAIStimulus Stimulus);
+
+	/** Initialize perception senses */
+	void InitializePerception();
+
+	/** Update tracked enemies */
+	void UpdateTrackedEnemies();
+
+	/** Calculate relative angle to target */
+	float GetRelativeAngleToTarget(AActor* Target) const;
+
+
+
+public:
+	//============================================================
 	// CONFIGURATION
-	//--------------------------------------------------------------------------
+	//============================================================
 
 	/** Sight radius (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Perception|Config")
@@ -186,9 +196,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Perception|Debug")
 	bool bDrawDebugInfo = false;
 
-	//--------------------------------------------------------------------------
-	// EVENTS (v4.0 Event-Driven Decisions)
-	//--------------------------------------------------------------------------
+
+public:
+	//=============  EVENTS  =================
 
 	/** Event fired when new enemy is detected for the first time */
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemySpottedSignature, AActor*, Enemy);
@@ -204,37 +214,10 @@ public:
 
 
 private:
-	/** Perception update callback */
-	UFUNCTION()
-	void OnPerceptionUpdatedCallback(const TArray<AActor*>& UpdatedActors);
-
-	/** Target perceived callback */
-	UFUNCTION()
-	void OnTargetPerceivedCallback(AActor* Actor, FAIStimulus Stimulus);
-
-	/** Initialize perception senses */
-	void InitializePerception();
-
-	/** Update tracked enemies */
-	void UpdateTrackedEnemies();
-
-	/** Get simulation manager */
-	ASimulationManagerGameMode* GetSimulationManager() const;
-
-	/** Get follower component */
-	UFollowerAgentComponent* GetFollowerComponent() const;
-
-	/** Calculate relative angle to target */
-	float GetRelativeAngleToTarget(AActor* Target) const;
-
-
-	/** Cached simulation manager */
-	UPROPERTY()
-	ASimulationManagerGameMode* CachedSimulationManager = nullptr;
 
 	/** Cached follower component */
 	UPROPERTY()
-	UFollowerAgentComponent* CachedFollowerComponent = nullptr;
+	AFollowerCharacter* FollowerAgent = nullptr;
 
 	/** Tracked enemies (sorted by distance) */
 	UPROPERTY()
@@ -246,7 +229,4 @@ private:
 	/** Previously reported enemies (to avoid spam) */
 	UPROPERTY()
 	TSet<AActor*> ReportedEnemies;
-
-	/*UPROPERTY()
-	UAISenseConfig_Sight* SightConfig;*/
 };

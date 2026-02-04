@@ -55,7 +55,7 @@ public:
 	FCombatParameters GetLastCombatParameters() const { return LastCombatParams; }
 
 
-	void SetFollowerAgent(AFollowerCharacter* Follower);
+	void SetFollowerAgent(AActor* OwnerAgent);
 
 
 public:
@@ -74,9 +74,5 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
 	AFollowerCharacter* FollowerAgent;
 
-	/** Last received tactical parameters (cached for debugging) */
-	FTacticalParameters LastTacticalParams;
-
-	/** Last received combat parameters (cached for debugging) */
-	FCombatParameters LastCombatParams;
+	FMacroAction LastMacroAction;
 };

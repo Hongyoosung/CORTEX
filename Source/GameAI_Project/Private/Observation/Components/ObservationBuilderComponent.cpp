@@ -161,78 +161,6 @@ FObservationElement UObservationBuilderComponent::BuildLocalObservation()
 		}
 	}
 
-	// ========================================
-	// SUPPORT CONTEXT (4 features)
-	// Find ally most in need of help for Support strategy
-	// Uses CachedTeamObservation (injected via UpdateTeamIntel) instead of direct TeamLeader access
-	// ========================================
-	{
-		const float MaxAllyDistance = 5000.0f;  // Normalization constant
-		const float AllyNeedsHelpThreshold = 0.5f;  // Health below 50% triggers help
-
-		// Use cached team observation data (injected from TeamLeader via UpdateTeamIntel)
-		// This eliminates direct dependency on TeamLeader and follows SRP
-		if (CachedTeamObservation.FollowerObservations.Num() > 0)
-		{
-			float WorstAllyHealth = 1.0f;
-			FVector AllyLocation = FVector::ZeroVector;
-			bool bFoundAllyInNeed = false;
-
-			// Find ally with lowest health from cached team observation
-			for (const FObservationElement& AllyObs : CachedTeamObservation.FollowerObservations)
-			{
-				// Skip self (compare positions)
-				if (FVector::Distance(AllyObs.Position, Owner->GetActorLocation()) < 10.0f)
-				{
-					continue;
-				}
-
-				// Check if this ally needs help (lowest health)
-				if (AllyObs.AgentHealth < WorstAllyHealth && AllyObs.AgentHealth < AllyNeedsHelpThreshold)
-				{
-					WorstAllyHealth = AllyObs.AgentHealth;
-					AllyLocation = AllyObs.Position;
-					bFoundAllyInNeed = true;
-				}
-			}
-
-			if (bFoundAllyInNeed)
-			{
-				// Indicate ally needs help
-				Observation.bAllyNeedsHelp = true;
-				Observation.AllyHealth = WorstAllyHealth;
-
-				// Calculate distance and direction to ally
-				FVector ToAlly = AllyLocation - Owner->GetActorLocation();
-				float Distance = ToAlly.Size();
-				Observation.AllyDistance = FMath::Clamp(Distance / MaxAllyDistance, 0.0f, 1.0f);
-
-				// Normalized 2D direction
-				ToAlly.Z = 0; // Flatten to 2D
-				ToAlly.Normalize();
-				Observation.AllyDirection = FVector2D(ToAlly.X, ToAlly.Y);
-
-				UE_LOG(LogTemp, VeryVerbose, TEXT("[OBS v9.0] %s: Ally needs help (Health=%.2f, Dist=%.2f)"),
-					*Owner->GetName(), WorstAllyHealth, Distance);
-			}
-			else
-			{
-				// No ally needs help
-				Observation.bAllyNeedsHelp = false;
-				Observation.AllyDistance = 0.0f;
-				Observation.AllyHealth = 1.0f;
-				Observation.AllyDirection = FVector2D::ZeroVector;
-			}
-		}
-		else
-		{
-			// No team observation available yet - use defaults
-			Observation.bAllyNeedsHelp = false;
-			Observation.AllyDistance = 0.0f;
-			Observation.AllyHealth = 1.0f;
-			Observation.AllyDirection = FVector2D::ZeroVector;
-		}
-	}
 
 	// v9.0: Populate objective context
 	PopulateObjectiveContext(Observation);
@@ -457,9 +385,4 @@ void UObservationBuilderComponent::SetObjectives(AObjectiveActor* Friendly, AObj
 {
 	CachedFriendlyObjective = Friendly;
 	CachedHostileObjective = Hostile;
-}
-
-void UObservationBuilderComponent::UpdateTeamIntel(const FTeamObservation& TeamObs)
-{
-	CachedTeamObservation = TeamObs;
 }

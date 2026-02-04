@@ -35,12 +35,14 @@ UTacticalObserver::UTacticalObserver()
 }
 
 
-void UTacticalObserver::SetFollowerAgent(AFollowerCharacter* Follower)
+void UTacticalObserver::SetFollowerAgent(AActor* OwnerAgent)
 {
-	if (!Follower)
+	if (!OwnerAgent)
 	{
 		return;
 	}
+
+	AFollowerCharacter* Follower = Cast<AFollowerCharacter>(OwnerAgent);
 
 	FollowerAgent = Follower;
 }

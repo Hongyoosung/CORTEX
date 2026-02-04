@@ -4,7 +4,7 @@
 #include "Debug/MultiEnvDiagnostic.h"
 #include "Core/SimulationManagerGameMode.h"
 #include "Team/ObjectiveActor.h"
-#include "Team/Components/FollowerAgentComponent.h"
+#include "Actor/FollowerCharacter.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 

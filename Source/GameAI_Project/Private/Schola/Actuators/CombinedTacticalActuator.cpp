@@ -13,8 +13,7 @@ UCombinedTacticalActuator::UCombinedTacticalActuator()
 	, CombatPriorityThreshold(0.5f)
 	, FollowerAgent(nullptr)
 {
-	LastTacticalParams	= FTacticalParameters();
-	LastCombatParams	= FCombatParameters();
+	LastMacroAction = FMacroAction();
 }
 
 FBoxSpace UCombinedTacticalActuator::GetActionSpace()
@@ -71,13 +70,15 @@ void UCombinedTacticalActuator::TakeAction(const FBoxPoint& Action)
 		? ETargetPriority::LowestHP
 		: ETargetPriority::Closest;
 
-	// Cache for debugging
-	LastTacticalParams = TacticalParams;
-	LastCombatParams = CombatParams;
+	FMacroAction NewMacroAction;
+
+	NewMacroAction.TacticalParams = TacticalParams;
+	NewMacroAction.CombatParams = CombatParams;
 
 	// Apply to follower agent
-	FollowerAgent->SetTacticalParameters(TacticalParams);
-	FollowerAgent->SetCombatParameters(CombatParams);
+	FollowerAgent->SetMacroAction(NewMacroAction);
+
+	LastMacroAction = NewMacroAction;
 
 	if (bDebugLogging)
 	{
@@ -94,23 +95,23 @@ void UCombinedTacticalActuator::TakeAction(const FBoxPoint& Action)
 
 void UCombinedTacticalActuator::ResetActuator()
 {
-	// Reset to neutral parameters
-	LastTacticalParams = FTacticalParameters(0.5f, 0.5f, 0.5f, 0.5f);
-	LastCombatParams = FCombatParameters(ETargetPriority::Closest);
+	LastMacroAction.TacticalParams = FTacticalParameters(0.5f, 0.5f, 0.5f, 0.5f);
+	LastMacroAction.CombatParams = FCombatParameters(ETargetPriority::Closest);
 
 	if (FollowerAgent && FollowerAgent->IsValidLowLevel())
 	{
-		FollowerAgent->SetTacticalParameters(LastTacticalParams);
-		FollowerAgent->SetCombatParameters(LastCombatParams);
+		FollowerAgent->SetMacroAction(LastMacroAction);
 	}
 }
 
-void UCombinedTacticalActuator::SetFollowerAgent(AFollowerCharacter* Follower)
+void UCombinedTacticalActuator::SetFollowerAgent(AActor* OwnerAgent)
 {
-	if (!Follower)
+	if (!OwnerAgent)
 	{
 		return;
 	}
+
+	AFollowerCharacter* Follower = Cast<AFollowerCharacter>(OwnerAgent);
 
 	FollowerAgent = Follower;
 }

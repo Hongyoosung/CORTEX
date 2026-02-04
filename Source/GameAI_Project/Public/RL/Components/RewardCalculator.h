@@ -7,11 +7,8 @@
 #include "RewardCalculator.generated.h"
 
 
-class AFollowerCharacter;
-
-
 /**
- * v8.10 Unified Reward Configuration (VF Collapse Fix)
+ * Unified Reward Configuration (VF Collapse Fix)
  * Strategy-specific behavior emerges from weight profiles, not separate reward functions.
  * All strategies use same reward components with different weights.
  *
@@ -21,11 +18,6 @@ class AFollowerCharacter;
  * - TensorBoard-compatible component breakdown
  * - No code duplication
  *
- * v8.10 Critical Fix:
- * - Reward normalization: Clamps total reward to [-10, 10] range
- * - Prevents value function collapse from multi-modal return distributions
- * - Required because strategy-specific weights create 100x variance in raw rewards
- *   (e.g., Assault combat spikes vs Support formation rewards)
  */
 namespace RewardConfig {
 	// === BASE REWARD COMPONENT VALUES ===
@@ -34,10 +26,10 @@ namespace RewardConfig {
 	// Objective progress (v8.0: REBALANCED - prioritize objectives over combat)
 	constexpr float OBJECTIVE_ADVANCE_REWARD = 0.5f;       // Moving closer per step (was 0.1f)
 	constexpr float OBJECTIVE_VOLUME_REWARD = 1.0f;        // Inside volume per step (was 0.1f) - 10× increase
-	constexpr float OBJECTIVE_CAPTURE_REWARD = 100.0f;     // NEW: Completing objective capture
-	constexpr float OBJECTIVE_PROGRESS_REWARD = 50.0f;     // NEW: Incremental capture progress (per 1.0 delta)
-	constexpr float MATCH_WIN_REWARD = 200.0f;             // NEW: Terminal reward for winning match
-	constexpr float MATCH_LOSS_PENALTY = -100.0f;          // NEW: Terminal penalty for losing match
+	constexpr float OBJECTIVE_CAPTURE_REWARD = 100.0f;     // Completing objective capture
+	constexpr float OBJECTIVE_PROGRESS_REWARD = 50.0f;     // Incremental capture progress (per 1.0 delta)
+	constexpr float MATCH_WIN_REWARD = 200.0f;             // Terminal reward for winning match
+	constexpr float MATCH_LOSS_PENALTY = -100.0f;          // Terminal penalty for losing match
 
 	// Combat effectiveness (REBALANCED - reduced to prevent combat spam)
 	constexpr float DAMAGE_REWARD_SCALE = 0.05f;           // Per 1 damage dealt (was 0.1f) - 50% reduction
@@ -54,11 +46,11 @@ namespace RewardConfig {
 	constexpr float FORMATION_BONUS = 0.3f;                // Per step in formation (was 0.1f) - 3× increase
 	constexpr float COMBINED_FIRE_REWARD = 20.0f;          // Combined fire on same target (was 10.0f in code) - 2× increase
 
-	// v8.20: Support strategy specific rewards
+	// Support strategy specific rewards
 	constexpr float SUPPORT_PROXIMITY_BONUS = 2.0f;        // Support approaching low-HP ally (scaled by proximity)
 	constexpr float SUPPORT_CRITICAL_BONUS = 5.0f;         // Support reaching critically wounded ally (<30% HP, <200cm)
 
-	// v8.0: Tactical parameter effectiveness (INCREASED - improve parameter learning)
+	// Tactical parameter effectiveness (INCREASED - improve parameter learning)
 	constexpr float TACTICAL_EFFECTIVENESS_BONUS = 0.5f;   // Per step when parameters match outcomes (was 0.15f) - 3.3× increase
 
 	// === STRATEGY-SPECIFIC WEIGHT PROFILES ===
@@ -127,7 +119,7 @@ namespace RewardConfig {
 		}
 	}
 
-	// === v9.0: PER-COMPONENT NORMALIZATION ===
+	// === PER-COMPONENT NORMALIZATION ===
 	// Prevents value function collapse by normalizing each component before weighting
 
 	struct FComponentNormalization
@@ -145,8 +137,7 @@ namespace RewardConfig {
 	};
 
 	// Normalization parameters per component (tuned to balance component magnitudes)
-	// v9.0 FIX: Removed negative offset from OBJECTIVE_NORM to preserve gradient rewards
-	// v9.0 gradient rewards are [0, 25] range, not [-10, 200] as originally designed
+	// gradient rewards are [0, 25] range, not [-10, 200] as originally designed
 	constexpr FComponentNormalization OBJECTIVE_NORM = { 0.1f, 0.0f, 0.0f, 2.5f };        // Objective progress (raw [0, 25] → [0, 2.5])
 	constexpr FComponentNormalization COMBAT_NORM = { 0.04f, 0.0f, -0.5f, 2.0f };         // Combat effectiveness
 	constexpr FComponentNormalization SURVIVAL_NORM = { 0.2f, 0.0f, -2.0f, 0.0f };        // Survival (death penalty)
@@ -171,7 +162,7 @@ struct FCombinedFireRecord
 };
 
 /**
- * v8.0 Reward Component Breakdown
+ * Reward Component Breakdown
  * For TensorBoard logging and debugging
  */
 USTRUCT(BlueprintType)
@@ -211,7 +202,7 @@ struct FRewardComponentBreakdown
 };
 
 /**
- * v8.0 Unified Reward System
+ * Unified Reward System
  *
  * Calculates rewards using strategy-specific weight profiles applied to common reward components.
  * MCTS assigns strategies, RL outputs tactical parameters, rewards guide parameter learning.
@@ -233,9 +224,10 @@ public:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	//--------------------------------------------------------------------------
+
+	//============================================================
 	// CORE REWARD CALCULATION
-	//--------------------------------------------------------------------------
+	//============================================================
 
 	/**
 	 * Calculate total reward (delegates to CalculateUnifiedReward)
@@ -262,10 +254,10 @@ public:
 		const FObservationElement& CurrentObs
 	);
 
-	// ========================================================================
-	// v8.0 REWARD COMPONENT CALCULATIONS (Strategy-Agnostic)
+	//============================================================
+	// REWARD COMPONENT CALCULATIONS (Strategy-Agnostic)
 	// These return base values, scaled by strategy weights in CalculateUnifiedReward
-	// ========================================================================
+	//============================================================
 
 	/**
 	 * Objective progress component (volume-based in v8.0)
@@ -309,7 +301,7 @@ public:
 	);
 
 	/**
-	 * v8.0: Tactical parameter effectiveness component
+	 * Tactical parameter effectiveness component
 	 * Rewards alignment between tactical parameters and actual positioning outcomes
 	 * Creates tight feedback loop: parameters → EQS → positioning → reward
 	 */
@@ -320,15 +312,16 @@ public:
 	);
 
 	/**
-	 * v8.0: Set current tactical parameters for reward calculation
+	 * Set current tactical parameters for reward calculation
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
 	void SetCurrentTacticalParameters(const FTacticalParameters& Params);
 
-	// ========================================================================
-	// v9.0: STRATEGY-SPECIFIC REWARD FUNCTIONS
+
+	//============================================================
+	// STRATEGY-SPECIFIC REWARD FUNCTIONS
 	// Use observation fields (HostileObjectiveDistance, FriendlyObjectiveDistance, etc.)
-	// ========================================================================
+	//============================================================
 
 	/**
 	 * Assault reward: Incentivize approaching and capturing hostile objective
@@ -363,9 +356,10 @@ public:
 	);
 
 
-	//--------------------------------------------------------------------------
+
+	//============================================================
 	// EVENT TRACKING
-	//--------------------------------------------------------------------------
+	//============================================================
 
 	/** Track kill event */
 	UFUNCTION(BlueprintCallable, Category = "Reward")
@@ -395,17 +389,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Reward")
 	EStrategyType GetCurrentStrategy() const { return CurrentStrategy; }
 
-	//--------------------------------------------------------------------------
+
+	//============================================================
 	// COORDINATION TRACKING
-	//--------------------------------------------------------------------------
+	//============================================================
 	/** Register combined fire event (multiple agents targeting same enemy) */
 	void RegisterCombinedFire(AActor* Target);
 
 
-	//--------------------------------------------------------------------------
-	// CONFIGURATION
-	//--------------------------------------------------------------------------
+	/** Get last reward breakdown for TensorBoard logging */
+	UFUNCTION(BlueprintPure, Category = "Reward")
+	FRewardComponentBreakdown GetLastRewardBreakdown() const { return LastRewardBreakdown; }
 
+
+
+public:
+	//============= CONFIGURATION =================
 	/** Time window for combined fire detection (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
 	float CombinedFireWindow = 2.0f;
@@ -414,28 +413,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Reward|Config")
 	float FormationDistanceThreshold = 1500.0f;
 
+
+
 private:
-	//--------------------------------------------------------------------------
-	// COMPONENT REFERENCES
-	//--------------------------------------------------------------------------
 
-	UPROPERTY()
-	AFollowerCharacter* FollowerAgent = nullptr;
-
-
+	//============= COMPONENT REFERENCES =================
 	/** Current strategy (from MCTS) - determines reward weight profile */
 	EStrategyType CurrentStrategy = EStrategyType::Assault;
 
-	//--------------------------------------------------------------------------
-	// REWARD ACCUMULATORS
-	//--------------------------------------------------------------------------
+
+	//============= REWARD ACCUMULATORS =================
 
 	float AccumulatedIndividualReward = 0.0f;
 	float AccumulatedCoordinationReward = 0.0f;
 
-	//--------------------------------------------------------------------------
-	// EVENT TRACKERS
-	//--------------------------------------------------------------------------
+
+	//============= EVENT TRACKERS =================
 
 	int32 KillsSinceLastUpdate = 0;
 	float DamageSinceLastUpdate = 0.0f;
@@ -444,45 +437,31 @@ private:
 	/** Recent combined fire records */
 	TArray<FCombinedFireRecord> RecentCombinedFires;
 
-	//--------------------------------------------------------------------------
-	// SUPPORT STRATEGY TRACKING
-	//--------------------------------------------------------------------------
+
+	//============= SUPPORT STRATEGY TRACKING =================
 
 	/** Protected ally (for Support strategy coordination reward) */
 	UPROPERTY()
 	AActor* ProtectedAlly = nullptr;
 
-	//--------------------------------------------------------------------------
-	// OBSERVATION TRACKING
-	//--------------------------------------------------------------------------
+
+	//============= OBSERVATION TRACKING =================
 
 	/** Previous observation for calculating reward deltas */
 	FObservationElement PreviousObservation;
 
-	//--------------------------------------------------------------------------
-	// v8.0 UNIFIED REWARD TRACKING
-	//--------------------------------------------------------------------------
 
-	/** Last reward component breakdown (for TensorBoard logging) */
+	//============= UNIFIED REWARD TRACKING =================
+
 	FRewardComponentBreakdown LastRewardBreakdown;
 
-	/** Track if target was lowest HP for efficient kill bonus */
 	bool bLastKillWasLowestHP = false;
 
-	/** Current tactical parameters from RL (for effectiveness reward calculation) */
 	FTacticalParameters CurrentTacticalParams;
 
-	/** v9.0: Previous tactical parameters (for temporal consistency reward) */
 	FTacticalParameters PreviousTacticalParams;
 
-	/** v8.0 REBALANCED: Track objective capture progress for incremental rewards */
 	float PreviousCaptureProgress = 0.0f;
 
-	/** Track if capture completion reward was already given (prevent duplicate rewards) */
 	bool bCaptureCompletionRewarded = false;
-
-public:
-	/** Get last reward breakdown for TensorBoard logging */
-	UFUNCTION(BlueprintPure, Category = "Reward")
-	FRewardComponentBreakdown GetLastRewardBreakdown() const { return LastRewardBreakdown; }
 };

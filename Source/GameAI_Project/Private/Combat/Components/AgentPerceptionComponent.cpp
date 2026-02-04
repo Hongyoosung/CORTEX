@@ -1,11 +1,8 @@
 #include "Combat/Components/AgentPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AIPerceptionSystem.h"
-#include "Team/Components/FollowerAgentComponent.h"
-#include "Team/Components/TeamLeaderComponent.h"
-// v9.0 PHASE 4: TeamCommsComponent merged into character
 #include "Actor/FollowerCharacter.h"
-#include "Core/SimulationManagerGameMode.h"
+#include "Observation/ObservationElement.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Actor/LeaderCharacter.h"
 #include "GameFramework/Actor.h"
@@ -24,15 +21,15 @@ void UAgentPerceptionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	
 
 	// Bind perception callbacks
 	OnPerceptionUpdated.AddDynamic(this, &UAgentPerceptionComponent::OnPerceptionUpdatedCallback);
 	OnTargetPerceptionUpdated.AddDynamic(this, &UAgentPerceptionComponent::OnTargetPerceivedCallback);
 
-	// Cache references
-	CachedSimulationManager = GetSimulationManager();
-	CachedFollowerComponent = GetFollowerComponent();
+	AActor* OwnerActor = GetOwner();
+	AFollowerCharacter* Follower = Cast<AFollowerCharacter>(OwnerActor);
+
+	FollowerAgent = Follower;
 }
 
 void UAgentPerceptionComponent::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -43,13 +40,13 @@ void UAgentPerceptionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	UpdateTrackedEnemies();
 
 	// Auto-update observation if enabled
-	if (bAutoUpdateObservation && CachedFollowerComponent)
+	if (bAutoUpdateObservation && FollowerAgent)
 	{
 		const float CurrentTime = GetWorld()->GetTimeSeconds();
 		if (ObservationUpdateInterval <= 0.0f ||
 			(CurrentTime - LastObservationUpdateTime) >= ObservationUpdateInterval)
 		{
-			FObservationElement Observation = CachedFollowerComponent->GetLocalObservation();
+			FObservationElement Observation = FollowerAgent->GetLocalObservation();
 			UpdateObservationWithEnemies(Observation);
 			LastObservationUpdateTime = CurrentTime;
 		}
@@ -117,7 +114,7 @@ void UAgentPerceptionComponent::OnPerceptionUpdatedCallback(const TArray<AActor*
 
 void UAgentPerceptionComponent::OnTargetPerceivedCallback(AActor* Actor, FAIStimulus Stimulus)
 {
-	if (!Actor || !CachedSimulationManager) return;
+	if (!Actor) return;
 
 	// Check if this is an enemy
 	if (IsActorEnemy(Actor))
@@ -154,23 +151,10 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 	static int32 LogCounter = 0;
 	bool bShouldLog = (++LogCounter % 60 == 0); // Log every 60 calls (~6 seconds at 10Hz)
 
-	// Get owner's team ID for diagnostic logging
-	int32 OwnerTeamID = -1;
-	if (CachedSimulationManager && GetOwner())
-	{
-		OwnerTeamID = CachedSimulationManager->GetTeamIDForActor(GetOwner());
-	}
 
 	// Filter for enemies only (must be alive)
 	for (AActor* Actor : PerceivedActors)
 	{
-		// Get actor's team ID for diagnostic
-		int32 ActorTeamID = -1;
-		if (CachedSimulationManager && Actor)
-		{
-			ActorTeamID = CachedSimulationManager->GetTeamIDForActor(Actor);
-		}
-
 		bool bIsEnemy = IsActorEnemy(Actor);
 
 		if (bIsEnemy)
@@ -224,11 +208,7 @@ void UAgentPerceptionComponent::UpdateTrackedEnemies()
 	}
 }
 
-TArray<AActor*> UAgentPerceptionComponent::GetDetectedEnemies() const
-{
-	// THREAD SAFETY: Return a copy to avoid race conditions with async MCTS
-	return TArray<AActor*>(TrackedEnemies);
-}
+
 
 TArray<AActor*> UAgentPerceptionComponent::GetNearestEnemies(int32 MaxCount) const
 {
@@ -296,21 +276,6 @@ TArray<FEnemyObservation> UAgentPerceptionComponent::GetEnemyObservations(int32 
 	return Observations;
 }
 
-bool UAgentPerceptionComponent::IsActorEnemy(AActor* Actor) const
-{
-	if (!Actor || !CachedSimulationManager) return false;
-
-	AActor* Owner = GetOwner();
-	if (!Owner) return false;
-
-	// Filter out Leader characters - they should not be recognized as enemies
-	if (Actor->IsA<ALeaderCharacter>())
-	{
-		return false;
-	}
-
-	return CachedSimulationManager->AreActorsEnemies(Owner, Actor);
-}
 
 int32 UAgentPerceptionComponent::GetVisibleEnemyCount() const
 {
@@ -440,68 +405,12 @@ TArray<ERaycastHitType> UAgentPerceptionComponent::BuildRaycastHitTypes(int32 Nu
 
 void UAgentPerceptionComponent::SignalEnemySpotted(AActor* Enemy)
 {
-	if (!Enemy || !CachedFollowerComponent) return;
+	if (!Enemy || !FollowerAgent) return;
 
-	// v9.0 PHASE 4: TeamComms merged into character
-	AFollowerCharacter* OwnerCharacter = Cast<AFollowerCharacter>(GetOwner());
-	if (!OwnerCharacter)
-	{
-		UE_LOG(LogTemp, Error, TEXT("🔵 [PERCEPTION] %s: Owner is not a FollowerCharacter, cannot report enemy %s"),
-			*GetOwner()->GetName(),
-			*Enemy->GetName());
-		return;
-	}
 
-	// 2. Get Leader via Character
-	UTeamLeaderComponent* TeamLeader = OwnerCharacter->GetTeamLeader();
-
-	if (!TeamLeader)
-	{
-		UE_LOG(LogTemp, Error, TEXT("🔵 [PERCEPTION] %s: No Team Leader found, cannot report enemy %s"),
-			*GetOwner()->GetName(),
-			*Enemy->GetName());
-		return;
-	}
-
-	// Register enemy with leader
-	TeamLeader->RegisterEnemy(Enemy);
-
-	// Signal event to leader (high priority)
-	CachedFollowerComponent->SignalEventToLeader(
-		EStrategicEvent::EnemySpotted,
-		Enemy,
-		Enemy->GetActorLocation(),
-		7 // High priority to trigger MCTS
-	);
-
+	FollowerAgent->RegisterVisibleEnemy(Enemy);
 }
 
-ASimulationManagerGameMode* UAgentPerceptionComponent::GetSimulationManager() const
-{
-	if (CachedSimulationManager)
-	{
-		return CachedSimulationManager;
-	}
-
-	UWorld* World = GetWorld();
-	if (!World) return nullptr;
-
-	AGameModeBase* GameMode = UGameplayStatics::GetGameMode(World);
-	return Cast<ASimulationManagerGameMode>(GameMode);
-}
-
-UFollowerAgentComponent* UAgentPerceptionComponent::GetFollowerComponent() const
-{
-	if (CachedFollowerComponent)
-	{
-		return CachedFollowerComponent;
-	}
-
-	AActor* Owner = GetOwner();
-	if (!Owner) return nullptr;
-
-	return Owner->FindComponentByClass<UFollowerAgentComponent>();
-}
 
 float UAgentPerceptionComponent::GetRelativeAngleToTarget(AActor* Target) const
 {
