@@ -4,7 +4,7 @@
 #include "ObservationTypes.generated.h"
 
 /**
- * Types of objects detected by raycasts
+ * CORTEX v10.1: Raycast Hit Types
  */
 UENUM(BlueprintType)
 enum class ERaycastHitType : uint8
@@ -14,13 +14,12 @@ enum class ERaycastHitType : uint8
     Enemy       UMETA(DisplayName = "Enemy"),
     Ally        UMETA(DisplayName = "Ally"),
     Cover       UMETA(DisplayName = "Cover"),
-    HealthPack  UMETA(DisplayName = "Health Pack"),
-    Weapon      UMETA(DisplayName = "Weapon"),
     Other       UMETA(DisplayName = "Other Object")
 };
 
 /**
- * Information about a single nearby enemy
+ * CORTEX v10.1: Enemy Perception Unit
+ * Used as a sub-component of the World Model Input
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FEnemyObservation
@@ -39,23 +38,23 @@ struct GAMEAI_PROJECT_API FEnemyObservation
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     float RelativeAngle = 0.0f;
 
-    /** Enemy actor reference (optional) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    /** Cached Actor Reference (Not used in NN Input, Logic only) */
+    UPROPERTY(Transient)
     AActor* EnemyActor = nullptr;
 
-    /** Convert to normalized feature array (3 elements) */
+    /** * Serializes to 3 floats for the Neural Network 
+     * [0]: Normalized Distance (0-1)
+     * [1]: Normalized Health (0-1)
+     * [2]: Normalized Angle (0-1)
+     */
     TArray<float> ToFeatureArray() const
     {
         TArray<float> Features;
         Features.Reserve(3);
 
-        // Distance (normalized by max expected range of 5000 units = 50 meters)
+        // Normalize Distance (Max perception range assumed 50m/5000u)
         Features.Add(FMath::Clamp(Distance / 5000.0f, 0.0f, 1.0f));
-
-        // Health (normalized to 0-1)
-        Features.Add(Health / 100.0f);
-
-        // Relative angle (normalized from -180/180 to 0/1)
+        Features.Add(FMath::Clamp(Health / 100.0f, 0.0f, 1.0f));
         Features.Add((RelativeAngle + 180.0f) / 360.0f);
 
         return Features;

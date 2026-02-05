@@ -2,12 +2,20 @@
 
 #include "CoreMinimal.h"
 #include "ObservationTypes.h"
-#include "RL/RLTypes.h"  
 #include "ObservationElement.generated.h"
 
 /**
- * Enhanced observation structure for individual agents (v6.0)
- * 42 total features, fully normalized for neural network input
+ * CORTEX v10.1 Observation State
+ * * The primary input for the Learned World Model and Value Network.
+ * Total Feature Count: 56 Floats
+ * * Structure:
+ * - Agent Physics & State (9)
+ * - Combat Awareness (1)
+ * - Raycast Perception (16)
+ * - Ally Support Context (5)
+ * - Enemy Info (15)
+ * - Tactical/Cover (4)
+ * - Objectives (6)
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FObservationElement
@@ -15,137 +23,151 @@ struct GAMEAI_PROJECT_API FObservationElement
     GENERATED_BODY()
 
     //--------------------------------------------------------------------------
-    // AGENT STATE (4 features)
+    // 1. AGENT PHYSICS & STATE (7 features)
+    // Essential for World Model prediction (State t -> State t+1)
     //--------------------------------------------------------------------------
 
-    /** Agent position in world space */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
-    FVector Position = FVector::ZeroVector;  // 3 features (X, Y, Z)
+    /** World Position (Normalized relative to map bounds usually, or local) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Agent")
+    FVector Position = FVector::ZeroVector; // 3 floats
 
-    /** Health percentage (0-1 normalized) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Agent")
-    float AgentHealth = 1.0f;  // 1 feature
+    /** Agent Velocity (Normalized by MaxSpeed) - NEW for v10.1 */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Agent")
+    FVector Velocity = FVector::ZeroVector; // 3 floats
 
-    //--------------------------------------------------------------------------
-    // COMBAT STATE (1 feature)
-    //--------------------------------------------------------------------------
-
-    /** Distance to nearest enemy (normalized) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Combat")
-    float DistanceToNearestEnemy = 1.0f;  // 1 feature (normalized by max range)
-
-    //--------------------------------------------------------------------------
-    // ENVIRONMENT PERCEPTION (16 features)
-    //--------------------------------------------------------------------------
-
-    /** Raycast distances (16 rays, 360° coverage), normalized by max range */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Perception")
-    TArray<float> RaycastDistances;  // 16 features
+    /** Health percentage (0-1) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Agent")
+    float AgentHealth = 1.0f; // 1 float
 
 
     //--------------------------------------------------------------------------
-    // SUPPORT CONTEXT (4 features) - v8.0: Full ally context for Support strategy
+    // 2. COMBAT AWARENESS (1 feature)
     //--------------------------------------------------------------------------
 
-    /** Whether any ally needs immediate help (health < 50% or surrounded) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    bool bAllyNeedsHelp = false;  // 1 feature
-
-    /** Normalized health of the ally most in need [0, 1] */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    float AllyHealth = 1.0f;  // 1 feature
-
-    /** Distance to ally in need (normalized by max range) [0, 1] */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    float AllyDistance = 0.0f;  // 1 feature
-
-    /** Direction to ally (normalized 2D vector) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Support")
-    FVector2D AllyDirection = FVector2D::ZeroVector;  // 2 features (X, Y)
-
+    /** Distance to nearest enemy (Normalized) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Combat")
+    float DistanceToNearestEnemy = 1.0f;
 
     //--------------------------------------------------------------------------
-    // ENEMY INFORMATION (16 features)
+    // 3. PERCEPTION (16 features)
     //--------------------------------------------------------------------------
 
-    /** Number of visible enemies */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Enemies")
-    int32 VisibleEnemyCount = 0;  // 1 feature
-
-    /** Nearby enemies (up to 5, sorted by distance) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Enemies")
-    TArray<FEnemyObservation> NearbyEnemies;  // 5×3 = 15 features
+    /** Lidar-like raycasts (Normalized Distance) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Perception")
+    TArray<float> RaycastDistances; 
 
     //--------------------------------------------------------------------------
-    // TACTICAL CONTEXT (4 features)
+    // 4. SUPPORT CONTEXT (5 features)
     //--------------------------------------------------------------------------
 
-    /** Is cover available nearby? */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Tactical")
-    bool bHasCover = false;  // 1 feature (0 or 1)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    bool bAllyNeedsHelp = false; // 1 float
 
-    /** Distance to nearest cover (normalized by max range) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Tactical")
-    float NearestCoverDistance = 1.0f;  // 1 feature
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    float AllyHealth = 1.0f; // 1 float
 
-    /** Direction to nearest cover (normalized 2D) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Tactical")
-    FVector2D CoverDirection = FVector2D::ZeroVector;  // 2 features
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    float AllyDistance = 1.0f; // 1 float
 
-    //--------------------------------------------------------------------------
-    // OBJECTIVE CONTEXT (6 features) - v9.0
-    //--------------------------------------------------------------------------
-
-    /** Normalized distance to friendly objective [0, 1] */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
-    float FriendlyObjectiveDistance = 1.0f;  // 1 feature
-
-    /** Normalized 2D direction to friendly objective */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
-    FVector2D FriendlyObjectiveDirection = FVector2D::ZeroVector;  // 2 features
-
-    /** Normalized distance to hostile objective [0, 1] */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
-    float HostileObjectiveDistance = 1.0f;  // 1 feature
-
-    /** Normalized 2D direction to hostile objective */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Observation|Objective")
-    FVector2D HostileObjectiveDirection = FVector2D::ZeroVector;  // 2 features
-
-    UPROPERTY(Transient)
-    int32 AssignedStrategyIndex = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    FVector2D AllyDirection = FVector2D::ZeroVector; // 2 floats
 
     //--------------------------------------------------------------------------
-    // CONSTRUCTOR & UTILITY FUNCTIONS
+    // 5. ENEMY INFO (15 features)
+    // Top 5 enemies sorted by threat/distance
     //--------------------------------------------------------------------------
 
-    /**
-     * Constructor with default initialization
-     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Enemies")
+    TArray<FEnemyObservation> NearbyEnemies; // 5 * 3 = 15 floats
+
+    //--------------------------------------------------------------------------
+    // 6. TACTICAL / COVER (4 features)
+    //--------------------------------------------------------------------------
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Tactical")
+    bool bHasCover = false; // 1 float
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Tactical")
+    float NearestCoverDistance = 1.0f; // 1 float
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Tactical")
+    FVector2D CoverDirection = FVector2D::ZeroVector; // 2 floats
+
+    //--------------------------------------------------------------------------
+    // 7. OBJECTIVES (6 features)
+    //--------------------------------------------------------------------------
+
+    /** Friendly Objective (Capture point/Flag) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    float FriendlyObjDistance = 1.0f; // 1 float
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    FVector2D FriendlyObjDirection = FVector2D::ZeroVector; // 2 floats
+
+    /** Hostile Objective */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    float HostileObjDistance = 1.0f; // 1 float
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    FVector2D HostileObjDirection = FVector2D::ZeroVector; // 2 floats
+
+    //--------------------------------------------------------------------------
+    // UTILITIES
+    //--------------------------------------------------------------------------
+
     FObservationElement()
     {
-        // Initialize raycast arrays with default values
-        RaycastDistances.Init(1.0f, 16);  // 16 rays, max distance = 1.0 (normalized)
-
-        // Initialize enemy array with empty observations
-        NearbyEnemies.Init(FEnemyObservation(), 5);  // Track top 5 closest enemies
+        RaycastDistances.Init(1.0f, 16);
+        NearbyEnemies.Init(FEnemyObservation(), 5);
     }
 
-    /** Convert observation to normalized feature vector (52 elements) - v9.0 */
-    TArray<float> ToFeatureVector(bool bIncludeStrategy = true) const;
-
-    /** Get feature count (v9.0: 52 base features = 46 + 6 objective context, strategy context added by network) and + 4 strategy index*/
-    static int32 GetFeatureCount() { return 56; }
-
-    /** Reset to default values */
-    void Reset();
-
-    /** Initialize raycasts arrays with proper size */
-    void InitializeRaycasts(int32 NumRays = 16)
+    /**
+     * Serializes the entire struct into a flat array for the Neural Network (ONNX).
+     * Guaranteed size: 54
+     */
+    TArray<float> ToFeatureVector() const
     {
-        RaycastDistances.Init(1.0f, NumRays);
+        TArray<float> Features;
+        Features.Reserve(56);
+
+        // 1. Agent (7)
+        Features.Add(Position.X); Features.Add(Position.Y); Features.Add(Position.Z);
+        Features.Add(Velocity.X); Features.Add(Velocity.Y); Features.Add(Velocity.Z);
+        Features.Add(AgentHealth);
+
+
+        // 2. Combat (1)
+        Features.Add(DistanceToNearestEnemy);
+
+        // 3. Perception (16)
+        for (float Ray : RaycastDistances) Features.Add(Ray);
+
+        // 4. Support (5)
+        Features.Add(bAllyNeedsHelp ? 1.0f : 0.0f);
+        Features.Add(AllyHealth);
+        Features.Add(AllyDistance);
+        Features.Add(AllyDirection.X); Features.Add(AllyDirection.Y);
+
+        // 5. Enemies (15)
+        for (const FEnemyObservation& Enemy : NearbyEnemies)
+        {
+            Features.Append(Enemy.ToFeatureArray());
+        }
+
+        // 6. Tactical (4)
+        Features.Add(bHasCover ? 1.0f : 0.0f);
+        Features.Add(NearestCoverDistance);
+        Features.Add(CoverDirection.X); Features.Add(CoverDirection.Y);
+
+        // 7. Objectives (6)
+        Features.Add(FriendlyObjDistance);
+        Features.Add(FriendlyObjDirection.X); Features.Add(FriendlyObjDirection.Y);
+        Features.Add(HostileObjDistance);
+        Features.Add(HostileObjDirection.X); Features.Add(HostileObjDirection.Y);
+
+        return Features;
     }
 
-    /** Calculate observation similarity (for MCTS tree reuse) */
-    static float CalculateSimilarity(const FObservationElement& A, const FObservationElement& B);
+    /** Returns the fixed input size for CORTEX v10.1 models */
+    static int32 GetFeatureCount() { return 56; }
 };
