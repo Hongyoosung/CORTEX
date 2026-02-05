@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "Async/AsyncWork.h"
-#include "Observation/TeamObservation.h"
 #include "Observation/ObservationElement.h"
 
 // Forward declarations

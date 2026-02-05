@@ -1,7 +1,6 @@
 #include "AI/MCTS/MCTS.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Team/TeamTypes.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "Team/ObjectiveActor.h"
 #include "RL/RLPolicyNetwork.h"
 #include "RL/RLTypes.h"  
@@ -28,130 +27,6 @@ void UMCTS::InitializeTeamMCTS(int32 InMaxSimulations, float InExplorationParam)
 {
     MaxSimulations = InMaxSimulations;
     ExplorationParameter = InExplorationParam;
-
-    // v9.0: Initialize batch prototypes
-    BatchPrototypes.Empty(8);
-
-    // Prototype 1: Tight Assault (3 Assault, 1 Support)
-    FBatchPrototype TightAssault;
-    TightAssault.Name = TEXT("TightAssault");
-    TightAssault.Strategies = {
-        EStrategyType::Assault,
-        EStrategyType::Assault,
-        EStrategyType::Assault,
-        EStrategyType::Support
-    };
-    TightAssault.Description = TEXT("3 Assault + 1 Support, aggressive push");
-    TightAssault.EstimatedValue = 0.55f;
-    BatchPrototypes.Add(TightAssault);
-
-    // Prototype 2: Wide Defense (2 Defend, 2 Support)
-    FBatchPrototype WideDefense;
-    WideDefense.Name = TEXT("WideDefense");
-    WideDefense.Strategies = {
-        EStrategyType::Defend,
-        EStrategyType::Defend,
-        EStrategyType::Support,
-        EStrategyType::Support
-    };
-    WideDefense.Description = TEXT("2 Defend + 2 Support, defensive formation");
-    WideDefense.EstimatedValue = 0.52f;
-    BatchPrototypes.Add(WideDefense);
-
-    // Prototype 3: Balanced (A, D, S, R - one each)
-    FBatchPrototype Balanced;
-    Balanced.Name = TEXT("Balanced");
-    Balanced.Strategies = {
-        EStrategyType::Assault,
-        EStrategyType::Defend,
-        EStrategyType::Support,
-        EStrategyType::Retreat
-    };
-    Balanced.Description = TEXT("One of each strategy, adaptable");
-    Balanced.EstimatedValue = 0.50f;
-    BatchPrototypes.Add(Balanced);
-
-    // Prototype 4: Support Focus (2 Assault, 2 Support)
-    FBatchPrototype SupportFocus;
-    SupportFocus.Name = TEXT("SupportFocus");
-    SupportFocus.Strategies = {
-        EStrategyType::Assault,
-        EStrategyType::Assault,
-        EStrategyType::Support,
-        EStrategyType::Support
-    };
-    SupportFocus.Description = TEXT("2 Assault + 2 Support, coordinated offense");
-    SupportFocus.EstimatedValue = 0.54f;
-    BatchPrototypes.Add(SupportFocus);
-
-    // Prototype 5: Defense Focus (3 Defend, 1 Support)
-    FBatchPrototype DefenseFocus;
-    DefenseFocus.Name = TEXT("DefenseFocus");
-    DefenseFocus.Strategies = {
-        EStrategyType::Defend,
-        EStrategyType::Defend,
-        EStrategyType::Defend,
-        EStrategyType::Support
-    };
-    DefenseFocus.Description = TEXT("3 Defend + 1 Support, fortified position");
-    DefenseFocus.EstimatedValue = 0.48f;
-    BatchPrototypes.Add(DefenseFocus);
-
-    // Prototype 6: Offensive Swarm (all Assault)
-    FBatchPrototype OffensiveSwarm;
-    OffensiveSwarm.Name = TEXT("OffensiveSwarm");
-    OffensiveSwarm.Strategies = {
-        EStrategyType::Assault,
-        EStrategyType::Assault,
-        EStrategyType::Assault,
-        EStrategyType::Assault
-    };
-    OffensiveSwarm.Description = TEXT("All Assault, maximum aggression");
-    OffensiveSwarm.EstimatedValue = 0.50f;
-    BatchPrototypes.Add(OffensiveSwarm);
-
-    // Prototype 7: Defensive Wall (all Defend)
-    FBatchPrototype DefensiveWall;
-    DefensiveWall.Name = TEXT("DefensiveWall");
-    DefensiveWall.Strategies = {
-        EStrategyType::Defend,
-        EStrategyType::Defend,
-        EStrategyType::Defend,
-        EStrategyType::Defend
-    };
-    DefensiveWall.Description = TEXT("All Defend, turtle strategy");
-    DefensiveWall.EstimatedValue = 0.45f;
-    BatchPrototypes.Add(DefensiveWall);
-
-    // Prototype 8: Mixed Objectives (2→Friendly, 2→Hostile)
-    FBatchPrototype MixedObjectives;
-    MixedObjectives.Name = TEXT("MixedObjectives");
-    MixedObjectives.Strategies = {
-        EStrategyType::Assault,
-        EStrategyType::Assault,
-        EStrategyType::Defend,
-        EStrategyType::Defend
-    };
-    MixedObjectives.Description = TEXT("2 Assault + 2 Defend, split focus");
-    MixedObjectives.EstimatedValue = 0.50f;
-    BatchPrototypes.Add(MixedObjectives);
-
-    UE_LOG(LogTemp, Log, TEXT("[MCTS v9.0] Initialized %d batch prototypes"), BatchPrototypes.Num());
-
-    // v9.0: Initialize RLPolicyNetwork for value estimates
-    RLPolicyNetwork = NewObject<URLPolicyNetwork>(this);
-
-    // Try to load batch cache from previous runs (warm start)
-    FString CachePath = FPaths::ProjectSavedDir() + TEXT("MCTS/BatchCache.json");
-    if (FPaths::FileExists(*CachePath))
-    {
-        LoadBatchCache(CachePath);
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] Loaded batch cache with %d entries"), BatchCache.Num());
-    }
-    else
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] No existing batch cache, starting with fresh priors"));
-    }
 }
 
 //==============================================================================
@@ -165,122 +40,48 @@ TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment(
     const TMap<AActor*, FObservationElement>& InCachedObservations
 )
 {
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Input Agents: %d"), Agents.Num());
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Input Objectives: %d"), Objectives.Num());
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Cached Observations: %d"), InCachedObservations.Num());
+    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] START: Agents=%d, Objectives=%d, Simulations=%d"),
+        Agents.Num(), Objectives.Num(), Simulations);
+
+    float StartTime = FPlatformTime::Seconds();
 
     // Cache inputs for thread-safe async execution
     AvailableAgents = Agents;
     AvailableObjectives = Objectives;
     CachedObservations = InCachedObservations;
 
-    // Initialize root node with empty assignments
-    TMap<AActor*, FStrategyAssignment> EmptyAssignments;
-    TeamRootNode = MakeShared<FTeamMCTSNode>();
-    TeamRootNode->Initialize(nullptr, EmptyAssignments);
+    // [Phase 1] Generate all complete batches
+    TArray<TMap<AActor*, FStrategyAssignment>> AllBatches =
+        GenerateCompleteBatches(Agents, Objectives);
 
-    // Generate all possible first-level strategy assignments
-    TeamRootNode->UntriedActions = GeneratePossibleStrategyAssignments(EmptyAssignments);
-
-    UE_LOG(LogTemp, Verbose, TEXT("[MCTS v8.0] Starting strategy assignment search: %d agents, %d objectives, %d simulations"),
-        Agents.Num(), Objectives.Num(), Simulations);
-
-    // Run MCTS simulations
-    for (int32 i = 0; i < Simulations; ++i)
+    if (AllBatches.Num() == 0)
     {
-        // 1. Selection: Traverse tree to leaf node
-        TSharedPtr<FTeamMCTSNode> SelectedNode = Selection(TeamRootNode);
-
-        // 2. Expansion: Add new child node
-        TSharedPtr<FTeamMCTSNode> ExpandedNode = Expansion(SelectedNode);
-
-        // 3. Simulation: Evaluate the assignment
-        float Value = Simulation(ExpandedNode);
-
-        // 4. Backpropagation: Update ancestors
-        Backpropagation(ExpandedNode, Value);
+        UE_LOG(LogTemp, Error, TEXT("[MCTS v9.0] Failed to generate batches"));
+        return TMap<AActor*, FStrategyAssignment>();
     }
 
-    // v8.10 FIX: Traverse down to find a complete assignment (all agents assigned)
-    // The tree builds incrementally: root (0 agents) → level 1 (1 agent) → ... → level N (N agents)
-    // We need to follow the best path down to get a complete assignment
+    // [Phase 2] Select best batch using UCB1
+    TMap<AActor*, FStrategyAssignment> SelectedBatch =
+        SelectBatchByUCB1(AllBatches);
 
-    TSharedPtr<FTeamMCTSNode> CurrentNode = TeamRootNode;
-    TSharedPtr<FTeamMCTSNode> BestLeafNode = nullptr;
-    int32 TraversalDepth = 0;
+    // [Phase 3] Optional: Refine batch with MCTS (currently skipped)
+    // TMap<AActor*, FStrategyAssignment> RefinedBatch = 
+    //     RefineStrategyAssignmentWithin(SelectedBatch, Simulations);
 
-    // Follow best child path until we reach a node with all agents assigned or a terminal node
-    while (CurrentNode.IsValid())
+    // [Phase 4] Validate output
+    if (SelectedBatch.Num() != Agents.Num())
     {
-        TMap<TObjectPtr<AActor>, FStrategyAssignment> CurrentAssignments = CurrentNode->GetStrategyAssignments();
-
-        // Check if all agents are assigned
-        if (CurrentAssignments.Num() >= Agents.Num())
-        {
-            BestLeafNode = CurrentNode;
-            UE_LOG(LogTemp, Display, TEXT("[MCTS v8.10 FIX] Found complete assignment at depth %d: %d agents assigned"),
-                TraversalDepth, CurrentAssignments.Num());
-            break;
-        }
-
-        // Select best child (highest visit count for robust decision)
-        TSharedPtr<FTeamMCTSNode> BestChild = CurrentNode->SelectBestChild(0.0f);  // ExplorationParam=0 for pure exploitation
-
-        if (!BestChild.IsValid())
-        {
-            // No children - use current node if it has some assignments
-            if (CurrentAssignments.Num() > 0)
-            {
-                BestLeafNode = CurrentNode;
-                UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10 FIX] Reached leaf at depth %d with partial assignment: %d/%d agents"),
-                    TraversalDepth, CurrentAssignments.Num(), Agents.Num());
-            }
-            break;
-        }
-
-        CurrentNode = BestChild;
-        TraversalDepth++;
-
-        // Safety: Prevent infinite loop
-        if (TraversalDepth > 10)
-        {
-            UE_LOG(LogTemp, Error, TEXT("[MCTS v8.10 FIX] Traversal depth exceeded 10, breaking"));
-            break;
-        }
+        UE_LOG(LogTemp, Error,
+            TEXT("[MCTS v8.21] Output batch incomplete: Input Agents=%d, Assigned=%d"),
+            Agents.Num(), SelectedBatch.Num());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[MCTS v9.0] Output batch VALID: 4 agents assigned"));
     }
 
-    if (BestLeafNode.IsValid())
-    {
-        // Convert TObjectPtr keys to AActor* keys
-        TMap<TObjectPtr<AActor>, FStrategyAssignment> BestAssignmentsTObject = BestLeafNode->GetStrategyAssignments();
-
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS v8.10 FIX] Best assignment found: Value=%.2f, Visits=%d, Agents=%d"),
-            BestLeafNode->TotalReward / FMath::Max(1, BestLeafNode->VisitCount),
-            BestLeafNode->VisitCount,
-            BestAssignmentsTObject.Num());
-
-        // Convert to return format
-        TMap<AActor*, FStrategyAssignment> ResultAssignments;
-        ResultAssignments.Reserve(BestAssignmentsTObject.Num());
-
-        for (auto& [AgentPtr, Assignment] : BestAssignmentsTObject)
-        {
-            // Add metrics
-            Assignment.ExpectedValue = BestLeafNode->TotalReward / FMath::Max(1, BestLeafNode->VisitCount);
-            Assignment.VisitCount = BestLeafNode->VisitCount;
-            Assignment.Timestamp = FPlatformTime::Seconds();
-
-            ResultAssignments.Add(AgentPtr, Assignment);
-        }
-
-        UE_LOG(LogTemp, Warning, TEXT("[MCTS DEBUG] Output Assignments: %d"), ResultAssignments.Num());
-
-        return ResultAssignments;
-    }
-
-    // Fallback: Return empty assignments
-    UE_LOG(LogTemp, Error, TEXT("[MCTS v8.10 FIX] No valid assignment found after %d simulations"), Simulations);
-    return TMap<AActor*, FStrategyAssignment>();
+    return SelectedBatch;
 }
 
 TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GenerateCompleteBatches(
@@ -693,51 +494,6 @@ void UMCTS::LogBatchPerformance()
     UE_LOG(LogTemp, Warning, TEXT("============================================="));
 }
 
-TMap<AActor*, FStrategyAssignment> UMCTS::RunStrategyAssignment_v820(const TArray<AActor*>& Agents, const TArray<AObjectiveActor*>& Objectives, int32 Simulations, const TMap<AActor*, FObservationElement>& InCachedObservations)
-{
-    UE_LOG(LogTemp, Warning, TEXT("[MCTS v9.0] START: Agents=%d, Objectives=%d, Simulations=%d"),
-        Agents.Num(), Objectives.Num(), Simulations);
-
-    float StartTime = FPlatformTime::Seconds();
-
-    // Cache inputs for thread-safe async execution
-    AvailableAgents = Agents;
-    AvailableObjectives = Objectives;
-    CachedObservations = InCachedObservations;
-
-    // [Phase 1] Generate all complete batches
-    TArray<TMap<AActor*, FStrategyAssignment>> AllBatches =
-        GenerateCompleteBatches(Agents, Objectives);
-
-    if (AllBatches.Num() == 0)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[MCTS v9.0] Failed to generate batches"));
-        return TMap<AActor*, FStrategyAssignment>();
-    }
-
-    // [Phase 2] Select best batch using UCB1
-    TMap<AActor*, FStrategyAssignment> SelectedBatch =
-        SelectBatchByUCB1(AllBatches);
-
-    // [Phase 3] Optional: Refine batch with MCTS (currently skipped)
-    // TMap<AActor*, FStrategyAssignment> RefinedBatch = 
-    //     RefineStrategyAssignmentWithin(SelectedBatch, Simulations);
-
-    // [Phase 4] Validate output
-    if (SelectedBatch.Num() != Agents.Num())
-    {
-        UE_LOG(LogTemp, Error,
-            TEXT("[MCTS v8.21] Output batch incomplete: Input Agents=%d, Assigned=%d"),
-            Agents.Num(), SelectedBatch.Num());
-    }
-    else
-    {
-        UE_LOG(LogTemp, Warning,
-            TEXT("[MCTS v9.0] Output batch VALID: 4 agents assigned"));
-    }
-
-    return SelectedBatch;
-}
 
 
 
@@ -854,7 +610,7 @@ float UMCTS::EvaluateStrategyAssignment(const TMap<AActor*, FStrategyAssignment>
         // v8.10 FIX: Query RL value estimate directly from cached observation
         // The cached observation already contains all necessary tactical context
         // (enemy positions, cover, allies, etc.) - no need to add objective context
-        float StateValue = RLPolicyNetwork->GetStateValueV8(*CachedObs, Assignment.Strategy);
+        float StateValue = RLPolicyNetwork->GetStateValue(*CachedObs, Assignment.Strategy);
 
         TotalValue += StateValue;
         AgentCount++;
@@ -868,15 +624,8 @@ float UMCTS::EvaluateStrategyAssignment(const TMap<AActor*, FStrategyAssignment>
     // Normalize by agent count
     float AverageValue = AgentCount > 0 ? TotalValue / AgentCount : 0.0f;
 
-    // Add v8.0 coordination heuristics
-    float Composition = TeamCompositionScore(Assignments);
-    float Coverage = ObjectiveCoverageScore(Assignments);
-    float Synergy = StrategySynergyScore(Assignments);
 
-    // Weighted combination (RL = 60%, Coordination = 40%)
-    float FinalValue = AverageValue * 0.6f + Composition * 0.15f + Coverage * 0.15f + Synergy * 0.1f;
-
-    return FMath::Clamp(FinalValue, -1.0f, 1.0f);
+    return FMath::Clamp(AverageValue, -1.0f, 1.0f);
 }
 
 TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GeneratePossibleStrategyAssignments(
@@ -948,117 +697,6 @@ TArray<TMap<AActor*, FStrategyAssignment>> UMCTS::GeneratePossibleStrategyAssign
     return PossibleAssignments;
 }
 
-//==============================================================================
-// v8.0: COORDINATION HEURISTICS
-//==============================================================================
 
-float UMCTS::TeamCompositionScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const
-{
-    // v8.0: Higher score for balanced mix of strategies (not all assault, not all defend)
-    // Penalize extreme compositions (e.g., 4 assault, 0 defend)
 
-    if (Assignments.Num() == 0)
-    {
-        return 0.5f;
-    }
 
-    // Count strategy distribution
-    TMap<EStrategyType, int32> StrategyCounts;
-    for (const auto& [Agent, Assignment] : Assignments)
-    {
-        StrategyCounts.FindOrAdd(Assignment.Strategy, 0)++;
-    }
-
-    // Calculate diversity (Shannon entropy normalized)
-    float Entropy = 0.0f;
-    for (const auto& [Strategy, Count] : StrategyCounts)
-    {
-        if (Count > 0)
-        {
-            float Probability = static_cast<float>(Count) / Assignments.Num();
-            Entropy -= Probability * FMath::Loge(Probability);
-        }
-    }
-
-    // Normalize entropy: MaxEntropy = log(4) for 4 strategies
-    float MaxEntropy = FMath::Loge(4.0f);
-    float NormalizedEntropy = MaxEntropy > 0.0f ? Entropy / MaxEntropy : 0.0f;
-
-    // Higher diversity = higher score (but not required to be perfectly balanced)
-    return NormalizedEntropy;
-}
-
-float UMCTS::ObjectiveCoverageScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const
-{
-    // v9.0: Objectives no longer explicitly assigned - coverage is implicit in strategy rewards
-    // Return neutral score since this heuristic no longer applies
-    return 0.5f;
-}
-
-float UMCTS::StrategySynergyScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const
-{
-    // v9.0: Strategy synergy based on composition (no objective assignment)
-    // Examples:
-    // - Assault + Support = good (synergy)
-    // - All Retreat = bad (no cohesion)
-    // - Assault + Assault = good (focus fire)
-
-    if (Assignments.Num() == 0)
-    {
-        return 0.5f;
-    }
-
-    float SynergyScore = 0.0f;
-    int32 SynergyCount = 0;
-
-    // Check pairwise strategy synergies (v9.0: no objective checks)
-    TArray<AActor*> Agents;
-    Assignments.GetKeys(Agents);
-
-    for (int32 i = 0; i < Agents.Num() - 1; ++i)
-    {
-        for (int32 j = i + 1; j < Agents.Num(); ++j)
-        {
-            const FStrategyAssignment& A1 = Assignments[Agents[i]];
-            const FStrategyAssignment& A2 = Assignments[Agents[j]];
-
-            // v9.0: Compatible strategies = synergy (objectives implicit in rewards)
-            // Assault + Assault = good (focus fire)
-            if (A1.Strategy == EStrategyType::Assault && A2.Strategy == EStrategyType::Assault)
-            {
-                SynergyScore += 1.0f;
-            }
-            // Assault + Support = excellent (cover and push)
-            else if ((A1.Strategy == EStrategyType::Assault && A2.Strategy == EStrategyType::Support) ||
-                     (A1.Strategy == EStrategyType::Support && A2.Strategy == EStrategyType::Assault))
-            {
-                SynergyScore += 1.2f;
-            }
-            // Defend + Defend = good (hold position together)
-            else if (A1.Strategy == EStrategyType::Defend && A2.Strategy == EStrategyType::Defend)
-            {
-                SynergyScore += 1.0f;
-            }
-            // Defend + Support = good (defensive formation)
-            else if ((A1.Strategy == EStrategyType::Defend && A2.Strategy == EStrategyType::Support) ||
-                     (A1.Strategy == EStrategyType::Support && A2.Strategy == EStrategyType::Defend))
-            {
-                SynergyScore += 0.9f;
-            }
-            // Retreat + Retreat = neutral (survival)
-            else if (A1.Strategy == EStrategyType::Retreat && A2.Strategy == EStrategyType::Retreat)
-            {
-                SynergyScore += 0.5f;
-            }
-            // Mixed = neutral
-            else
-            {
-                SynergyScore += 0.6f;
-            }
-
-            SynergyCount++;
-        }
-    }
-
-    return SynergyCount > 0 ? SynergyScore / SynergyCount : 0.5f;
-}

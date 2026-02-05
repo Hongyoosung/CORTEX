@@ -10,7 +10,7 @@
 class UScholaAgentComponent;
 class AFollowerCharacter;
 class UHealthComponent;
-class UTacticalRewardProvider;
+class UAgentRewardMaanger;
 
 
 /** //============================================================
@@ -67,7 +67,7 @@ public:
 	virtual void OnUnPossess() override;
 
 
-private
+private:
 	//============= COMPONENTS =================
 
 	/** Reference to ScholaAgentComponent */
@@ -79,7 +79,7 @@ private
 	TObjectPtr<UHealthComponent>		AgentHealthComponent;
 
 	/** Reference to TacticalRewardProvider */
-	TObjectPtr<UTacticalRewardProvider> RewardProvider;
+	TObjectPtr<UAgentRewardManager>		RewardManager;
 
 
 	/** Cumulative reward for current episode */

@@ -58,8 +58,6 @@ enum class EStrategyType : uint8
 {
 	Assault   UMETA(DisplayName = "Assault - Push toward objective"),
 	Defend    UMETA(DisplayName = "Defend - Hold current position"),
-	Support   UMETA(DisplayName = "Support - Protect ally in need"),
-	Retreat   UMETA(DisplayName = "Retreat - Disengage safely"),
 	COUNT     UMETA(Hidden)
 };
 

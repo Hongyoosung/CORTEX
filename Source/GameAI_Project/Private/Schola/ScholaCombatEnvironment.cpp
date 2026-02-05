@@ -173,12 +173,6 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 	{
 		UScholaAgentComponent* Agent = RegisteredAgents[i];
 
-		if (!Agent->FollowerAgent)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Agent %s missing FollowerAgent"), *Agent->GetOwner()->GetName());
-			TrainersFailed++;
-			continue;
-		}
 
 		// Get TeamID for logging - v9.0 Phase 4: Use character API
 		int32 TeamID = -1;
@@ -198,11 +192,6 @@ void AScholaCombatEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>&
 			continue;
 		}
 
-		if (ValidateAgent(Agent))
-		{
-			Agent->ScholaEnvironment = this;
-		}
-		
 
 		// Spawn trainer (EnvID will be assigned by Schola based on actor order)
 		FActorSpawnParameters SpawnParams;
@@ -306,6 +295,16 @@ bool AScholaCombatEnvironment::UnRegisterObjective(AObjectiveActor* Objective)
 	}
 
 	return EnvRegistry->UnRegisterObjectiveActor(Objective);
+}
+
+int32 AScholaCombatEnvironment::GetRegisterTeamCount() const
+{
+	return EnvRegistry ? EnvRegistry->GetRegisteredTeams().Num() : 0;
+}
+
+int32 AScholaCombatEnvironment::GetRegisteredObjectiveCount() const
+{
+	return EnvRegistry ? EnvRegistry->GetRegisteredObjectives().Num() : 0;
 }
 
 

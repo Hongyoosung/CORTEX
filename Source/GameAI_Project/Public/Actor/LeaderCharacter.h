@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Interfaces/CombatStatsInterface.h"
-#include "Core/TeamManagementSubsystem.h"
 #include "LeaderCharacter.generated.h"
 
 
@@ -75,9 +74,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "AI|Intel")
 	AObjectiveActor*	GetHostileObjective() const;
-
-	UFUNCTION(BlueprintCallable, Category = "AI|Intel")
-	FTeamObservation	BuildTeamObservation(const TArray<AActor*>& Followers);
 
 	UFUNCTION(BlueprintPure, Category = "AI|Intel")
 	bool				AreObjectivesDiscovered() const;

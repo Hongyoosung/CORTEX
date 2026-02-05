@@ -7,7 +7,6 @@
 #include "Team/ObjectiveActor.h"
 #include "Util/Components/VisualLoggerComponent.h"
 #include "Team/TeamTypes.h"
-#include "Observation/TeamObservation.h"
 #include "Kismet/GameplayStatics.h"
 
 
@@ -129,10 +128,6 @@ AObjectiveActor* ALeaderCharacter::GetHostileObjective() const
 	return TeamManagerComponent ? TeamManagerComponent->GetHostileObjective() : nullptr;
 }
 
-FTeamObservation ALeaderCharacter::BuildTeamObservation(const TArray<AActor*>& Followers)
-{
-	return TeamManagerComponent ? TeamManagerComponent->BuildTeamObservation(Followers) : FTeamObservation();
-}
 
 bool ALeaderCharacter::AreObjectivesDiscovered() const
 {

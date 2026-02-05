@@ -26,70 +26,30 @@ void URewardCalculator::BeginPlay()
 	bCaptureCompletionRewarded = false;
 }
 
-void URewardCalculator::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+FRewardComponentBreakdown URewardCalculator::ComputeCurrentReward(const FObservationElement& PrevObs, const FObservationElement& CurrentObs, EStrategyType CurrentStrategy, const FTacticalParameters& CurrentParams)
 {
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	// Hybrid reward calculation: continuous (positioning) + event-driven (kills, damage)
-	// All rewards forwarded to FollowerAgent for Schola integration
-
-
-	FObservationElement CurrentObs = FollowerChar->BuildLocalObservation();
-
-	float StepReward = 0.0f;
-
-	// === v8.0 UNIFIED REWARD CALCULATION ===
-	// Calculate reward using unified component-based approach
+	// 1. 순수 로직 계산 (주입받은 Obs와 Strategy 사용)
 	FRewardComponentBreakdown Breakdown = CalculateUnifiedReward(
-		CurrentStrategy,
-		PreviousObservation,
+		CurrentStrategy, // 멤버 변수 대신 인자 사용 권장
+		PrevObs,
 		CurrentObs
 	);
 
-	StepReward = Breakdown.Total;
+	// 2. 누적된 이벤트 보상 합산 (OnKill, OnDamage 등으로 쌓인 값)
+	float EventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward;
+	Breakdown.Total += EventRewards;
 
-	// Cache breakdown for TensorBoard logging
-	LastRewardBreakdown = Breakdown;
-
-	// === EVENT-BASED REWARDS (kills, damage, death accumulated since last tick) ===
-	float eventRewards = AccumulatedIndividualReward + AccumulatedCoordinationReward;
-	StepReward += eventRewards;
-
-	// Forward total reward to FollowerAgent
-	if (FMath::Abs(StepReward) > 0.01f) // Avoid spam for tiny rewards
-	{
-		FollowerAgent->ProvideReward(StepReward);
-
-		// v8.0: Log with component breakdown
-		/*UE_LOG(LogTemp, Display,
-			TEXT("[REWARD TICK v8.0] '%s' (%s): Total=%.2f | %s | Events=%.2f"),
-			*GetOwner()->GetName(),
-			*UEnum::GetValueAsString(CurrentStrategy),
-			StepReward + eventRewards,
-			*Breakdown.ToString(),
-			eventRewards);*/
-	}
-
-	// Reset event accumulators (events are one-time, continuous rewards recalculate every tick)
+	// 3. 누적 변수 초기화
 	AccumulatedIndividualReward = 0.0f;
 	AccumulatedCoordinationReward = 0.0f;
-	KillsSinceLastUpdate = 0;
-	DamageSinceLastUpdate = 0.0f;
-	DamageTakenSinceLastUpdate = 0.0f;
+	// ... 기타 초기화 ...
 
-	// Update previous observation for next tick
-	PreviousObservation = CurrentObs;
+	return Breakdown;
+}
 
-	// Clean up old combined fire records
-	float CurrentTime = GetWorld()->GetTimeSeconds();
-	RecentCombinedFires.RemoveAll([CurrentTime, this](const FCombinedFireRecord& Record) {
-		return (CurrentTime - Record.Timestamp) > CombinedFireWindow;
-	});
-} 
 
-//--------------------------------------------------------------------------
-// UNIFIED REWARD CALCULATION
-//--------------------------------------------------------------------------
+
+
 
 float URewardCalculator::CalculateReward(
 	const FObservationElement& PrevObs,
@@ -136,7 +96,7 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	// This prevents any single component from dominating the value function
 
 	// Component 1: Objective Progress
-	float objRaw = CalculateObjectiveProgressComponent(PrevObs, CurrentObs);
+	float objRaw = CalculateObjectiveProgressComponent(PrevObs, CurrentObs, Strategy);
 	float objNormalized = RewardConfig::OBJECTIVE_NORM.Normalize(objRaw);
 	Breakdown.ObjectiveProgress = objNormalized * Weights.ObjectiveProgress;
 
@@ -155,10 +115,6 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 	float coverNormalized = RewardConfig::COVER_NORM.Normalize(coverRaw);
 	Breakdown.CoverUsage = coverNormalized * Weights.CoverUsage;
 
-	// Component 5: Team Coordination
-	float coordRaw = CalculateTeamCoordinationComponent(CurrentObs);
-	float coordNormalized = RewardConfig::COORD_NORM.Normalize(coordRaw);
-	Breakdown.TeamCoordination = coordNormalized * Weights.TeamCoordination;
 
 	// Component 6: Tactical Parameter Effectiveness
 	// Creates tight feedback loop: RL parameters → EQS positioning → outcome → reward
@@ -224,59 +180,18 @@ FRewardComponentBreakdown URewardCalculator::CalculateUnifiedReward(
 
 float URewardCalculator::CalculateObjectiveProgressComponent(
 	const FObservationElement& PrevObs,
-	const FObservationElement& CurrentObs)
+	const FObservationElement& CurrentObs,
+	EStrategyType CurrentStrategy)
 {
-	// v9.0: Strategy-specific objective reward functions
-	// No explicit objective assignment - rewards based on observation fields
-	if (!FollowerAgent) return 0.0f;
-
-	// v9.0 FIX CRITICAL: DO NOT lazy sync - trust SetCurrentStrategy() value!
-	// Lazy sync was OVERWRITING correct strategies with stale data from TacticalState.
-	// Now that SetCurrentStrategy() is called explicitly, we TRUST that value.
-
-	// Diagnostic only: Check if FollowerAgent has different strategy (should NOT happen)
-	if (FollowerAgent)
-	{
-		EStrategyType FollowerReportedStrategy = FollowerAgent->GetAssignedStrategy();
-
-		if (FollowerReportedStrategy != CurrentStrategy)
-		{
-			static TMap<URewardCalculator*, int32> MismatchCounts;
-			int32& Count = MismatchCounts.FindOrAdd(this, 0);
-
-			if (++Count <= 3)  // Log first 3 mismatches only
-			{
-				UE_LOG(LogTemp, Error, TEXT("❌ [STRATEGY MISMATCH v9.0] '%s': FollowerAgent reports '%s', but CurrentStrategy is '%s' (occurrence %d)"),
-					*GetOwner()->GetName(),
-					*UEnum::GetValueAsString(FollowerReportedStrategy),
-					*UEnum::GetValueAsString(CurrentStrategy),
-					Count);
-				UE_LOG(LogTemp, Error, TEXT("   └─ USING CurrentStrategy '%s' (from SetCurrentStrategy). FollowerAgent data is STALE."),
-					*UEnum::GetValueAsString(CurrentStrategy));
-
-				if (Count == 3)
-				{
-					UE_LOG(LogTemp, Error, TEXT("   └─ Further mismatch warnings suppressed. This indicates TacticalState is not syncing with MCTS assignments."));
-				}
-			}
-
-			// DO NOT SYNC - trust SetCurrentStrategy value!
-			// CurrentStrategy stays as-is (correct value from MCTS → SetCurrentStrategy)
-		}
-	}
 
 	switch (CurrentStrategy)
 	{
-		case EStrategyType::Assault:
-			return CalculateAssaultReward(PrevObs, CurrentObs);
-		case EStrategyType::Defend:
-			return CalculateDefendReward(PrevObs, CurrentObs);
-		case EStrategyType::Support:
-			return CalculateSupportReward(PrevObs, CurrentObs);
-		case EStrategyType::Retreat:
-			return CalculateRetreatReward(PrevObs, CurrentObs);
-		default:
-			return 0.0f;
+	case EStrategyType::Assault:
+		return CalculateAssaultReward(PrevObs, CurrentObs);
+	case EStrategyType::Defend:
+		return CalculateDefendReward(PrevObs, CurrentObs);
+	default:
+		return 0.0f;
 	}
 }
 
@@ -397,117 +312,6 @@ float URewardCalculator::CalculateDefendReward(
 	return Reward;
 }
 
-float URewardCalculator::CalculateSupportReward(
-	const FObservationElement& PrevObs,
-	const FObservationElement& CurrentObs)
-{
-	// v9.0 GRADIENT-BASED: Support focuses on proximity to allies in need
-	// Uses continuous distance gradient when ally needs help
-	float Reward = 0.0f;
-
-	// Only provide support rewards if ally actually needs help
-	if (!CurrentObs.bAllyNeedsHelp)
-	{
-		return 0.0f;
-	}
-
-	float Distance = CurrentObs.AllyDistance;  // [0, 1] normalized
-
-	// ========================================
-	// GRADIENT REWARD: Closer to ally = higher reward
-	// ========================================
-	// Distance 0.0 (at ally) → reward = 12.0
-	// Distance 0.5 (halfway) → reward = 6.0
-	// Distance 1.0 (max distance) → reward = 0.0
-	// Higher base multiplier (12.0 vs 10.0) because support is critical
-	Reward = (1.0f - Distance) * 12.0f;
-
-	// ========================================
-	// BONUS: Very close support (<5% distance = ~250cm)
-	// ========================================
-	if (Distance < 0.05f)
-	{
-		Reward += 15.0f;  // Large bonus for reaching ally in need
-	}
-
-	// ========================================
-	// BONUS: Covering ally under fire
-	// ========================================
-	// Reward staying close while enemies are nearby (protective support)
-	if (CurrentObs.VisibleEnemyCount > 0 && Distance < 0.08f)
-	{
-		Reward += 5.0f;  // Bonus for providing cover fire
-	}
-
-	// v9.0 DEBUG: Log gradient reward calculation
-	static TMap<URewardCalculator*, int32> SupportLogCounts;
-	int32& LogCount = SupportLogCounts.FindOrAdd(this, 0);
-	if (++LogCount % 100 == 0)
-	{
-		UE_LOG(LogTemp, Display, TEXT("🟡 [SUPPORT GRADIENT] %s: AllyDist=%.3f, NeedsHelp=%d → BaseReward=%.2f, Bonuses=%.2f → Total=%.2f"),
-			*GetOwner()->GetName(),
-			Distance,
-			CurrentObs.bAllyNeedsHelp ? 1 : 0,
-			(1.0f - Distance) * 12.0f,
-			Reward - ((1.0f - Distance) * 12.0f),
-			Reward
-		);
-	}
-
-	return Reward;
-}
-
-float URewardCalculator::CalculateRetreatReward(
-	const FObservationElement& PrevObs,
-	const FObservationElement& CurrentObs)
-{
-	// v9.0 GRADIENT-BASED: Retreat focuses on maximizing distance from enemies
-	// Uses continuous distance gradient instead of delta-only rewards
-	float Reward = 0.0f;
-	float Distance = CurrentObs.DistanceToNearestEnemy;  // [0, 1] normalized
-
-	// ========================================
-	// GRADIENT REWARD: Farther from enemies = higher reward
-	// ========================================
-	// Distance 1.0 (max distance) → reward = 10.0
-	// Distance 0.5 (halfway) → reward = 5.0
-	// Distance 0.0 (touching enemy) → reward = 0.0
-	Reward = Distance * 10.0f;
-
-	// ========================================
-	// BONUS: Safe distance achieved (>80% max distance)
-	// ========================================
-	if (Distance > 0.8f)
-	{
-		Reward += 10.0f;  // Large bonus for reaching safety
-	}
-
-	// ========================================
-	// PENALTY: Surrounded by multiple enemies
-	// ========================================
-	// Penalize failed retreat (still near many enemies)
-	if (CurrentObs.VisibleEnemyCount > 2)
-	{
-		Reward -= 5.0f;  // Penalty for being surrounded
-	}
-
-	// v9.0 DEBUG: Log gradient reward calculation
-	static TMap<URewardCalculator*, int32> RetreatLogCounts;
-	int32& LogCount = RetreatLogCounts.FindOrAdd(this, 0);
-	if (++LogCount % 100 == 0)
-	{
-		UE_LOG(LogTemp, Display, TEXT("🔴 [RETREAT GRADIENT] %s: EnemyDist=%.3f, EnemyCount=%d → BaseReward=%.2f, Modifiers=%.2f → Total=%.2f"),
-			*GetOwner()->GetName(),
-			Distance,
-			CurrentObs.VisibleEnemyCount,
-			Distance * 10.0f,
-			Reward - (Distance * 10.0f),
-			Reward
-		);
-	}
-
-	return Reward;
-}
 
 float URewardCalculator::CalculateCombatEffectivenessComponent(
 	const FObservationElement& CurrentObs)
@@ -572,61 +376,7 @@ float URewardCalculator::CalculateCoverUsageComponent(
 	return Reward;
 }
 
-float URewardCalculator::CalculateTeamCoordinationComponent(
-	const FObservationElement& CurrentObs)
-{
-	float Reward = 0.0f;
 
-	// ✅ v8.20 ENHANCEMENT: Strategy-aware coordination rewards
-	EStrategyType AssignedStrategy = FollowerAgent ? FollowerAgent->GetAssignedStrategy() : EStrategyType::Assault;
-
-	// [1] Support Strategy: Reward approaching low-health allies
-	if (AssignedStrategy == EStrategyType::Support)
-	{
-		// Check if observation contains ally health info
-		float AllyHP = CurrentObs.AllyHealth;  // Normalized [0,1]
-		float AllyDist = CurrentObs.AllyDistance;  // Normalized [0,1]
-
-		if (AllyHP > 0.0f && AllyHP < 0.6f && AllyDist > 0.0f)  // Ally has <60% HP
-		{
-			// Reward inversely proportional to distance (closer = better)
-			float ProximityReward = (1.0f - AllyDist) * RewardConfig::SUPPORT_PROXIMITY_BONUS;  // +2.0 at 0 dist
-			Reward += ProximityReward;
-
-			// Additional bonus if ally is critically low (<30% HP) and very close (<200cm)
-			if (AllyHP < 0.3f && AllyDist < 0.04f)
-			{
-				Reward += RewardConfig::SUPPORT_CRITICAL_BONUS;  // +5.0 for critical support
-			}
-
-			// ✅ LOG: Support behavior tracking
-			static int32 SupportLogCounter = 0;
-			if (++SupportLogCounter % 50 == 0)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[SUPPORT REWARD] Agent=%s | AllyHP=%.1f%% | AllyDist=%.2f | Reward=+%.2f"),
-					*GetOwner()->GetName(),
-					AllyHP * 100.0f,
-					AllyDist,
-					ProximityReward
-				);
-			}
-		}
-	}
-	// [2] Generic formation bonus for all other strategies
-	else if (ProtectedAlly && CurrentObs.AllyDistance > 0.0f)
-	{
-		float normalizedDist = CurrentObs.AllyDistance;
-		constexpr float MIN_FORMATION_DIST = 200.0f / RLConfig::MAX_DISTANCE_NORMALIZATION;  // ~0.04
-		constexpr float MAX_FORMATION_DIST = 800.0f / RLConfig::MAX_DISTANCE_NORMALIZATION;  // ~0.16
-
-		if (normalizedDist > MIN_FORMATION_DIST && normalizedDist < MAX_FORMATION_DIST)
-		{
-			Reward += RewardConfig::FORMATION_BONUS;  // +0.1 per step in formation
-		}
-	}
-
-	return Reward;
-}
 
 float URewardCalculator::CalculateTacticalParameterEffectivenessComponent(
 	const FObservationElement& CurrentObs,

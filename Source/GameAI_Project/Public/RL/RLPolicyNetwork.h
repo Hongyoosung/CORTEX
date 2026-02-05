@@ -71,7 +71,7 @@ public:
 	 * @return Value estimate [-1, 1]
 	 */
 	UFUNCTION(BlueprintCallable, Category = "RL|v8")
-	float GetStateValueV8(const FObservationElement& Observation, EStrategyType AssignedStrategy);
+	float GetStateValue(const FObservationElement& Observation, EStrategyType AssignedStrategy);
 
 	// ========================================
 	// API: Batched Inference (Performance Critical)

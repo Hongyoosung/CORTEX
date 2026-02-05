@@ -7,7 +7,6 @@
 #include "Observation/ObservationElement.h"
 #include "AI/MCTS/TeamMCTSNode.h"
 #include "AI/MCTS/MCTSAsyncTask.h"
-#include "Observation/TeamObservation.h"
 #include "RL/RLTypes.h"
 #include "MCTS.generated.h"
 
@@ -210,12 +209,7 @@ public:
      */
     void LogBatchPerformance();
 
-    // v8.20: Main entry point (refactored from v8.10)
-    TMap<AActor*, FStrategyAssignment> RunStrategyAssignment_v820(
-        const TArray<AActor*>& Agents,
-        const TArray<AObjectiveActor*>& Objectives,
-        int32 Simulations,
-        const TMap<AActor*, FObservationElement>& InCachedObservations);
+
 
 private:
     //--------------------------------------------------------------------------
@@ -260,27 +254,8 @@ private:
         const TMap<AActor*, FStrategyAssignment>& CurrentAssignments
     );
 
-    //--------------------------------------------------------------------------
-    // v8.0: COORDINATION HEURISTICS
-    //--------------------------------------------------------------------------
 
-    /**
-     * Team composition score: Balanced mix of strategies (v8.0)
-     * @return Score [0, 1] - Higher = better composition (e.g., not all assault)
-     */
-    float TeamCompositionScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const;
 
-    /**
-     * Objective coverage score: Both objectives have adequate coverage (v8.0)
-     * @return Score [0, 1] - Higher = better coverage (both friendly/hostile covered)
-     */
-    float ObjectiveCoverageScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const;
-
-    /**
-     * Strategy synergy score: Compatible strategies work together (v8.0)
-     * @return Score [0, 1] - Higher = better synergy (e.g., Assault + Support together)
-     */
-    float StrategySynergyScore(const TMap<AActor*, FStrategyAssignment>& Assignments) const;
 
 public:
     //--------------------------------------------------------------------------
@@ -320,10 +295,6 @@ private:
     //--------------------------------------------------------------------------
     /** Root node of team MCTS tree */
     TSharedPtr<FTeamMCTSNode> TeamRootNode;
-
-    /** Cached team observation for simulation */
-    UPROPERTY()
-    FTeamObservation CachedTeamObservation;
 
     // v8.20: Batch cache for persistent performance tracking
     UPROPERTY()

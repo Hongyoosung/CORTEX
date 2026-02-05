@@ -13,11 +13,6 @@ class AObjectiveActor;
 struct FDeathEventData;
 
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSimulationStart);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSimulationStop);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeStarted, int32, EnvironmentID, int32, EpisodeNumber);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeEnded, int32, EnvironmentID, const FEpisodeResult&, Result);
-
 
 /**
  * Simulation statistics
@@ -66,6 +61,14 @@ struct FEpisodeResult
 	UPROPERTY(BlueprintReadOnly, Category = "Episode")
 	int32 TotalSteps = 0;
 };
+
+
+
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSimulationStart);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSimulationStop);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeStarted, int32, EnvironmentID, int32, EpisodeNumber);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEpisodeEnded, int32, EnvironmentID, const FEpisodeResult&, Result);
 
 
 

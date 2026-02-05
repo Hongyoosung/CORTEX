@@ -26,7 +26,7 @@ void FMCTSAsyncTask::DoWork()
     float StartTime = FPlatformTime::Seconds();
 
     // [Fix] v8.20 함수 호출로 변경
-    ResultAssignments = MCTS->RunStrategyAssignment_v820(
+    ResultAssignments = MCTS->RunStrategyAssignment(
         Agents,
         Objectives,
         Simulations,

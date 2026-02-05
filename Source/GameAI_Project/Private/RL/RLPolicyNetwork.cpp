@@ -9,7 +9,6 @@
 #include "NNEModelData.h"
 #include "NNERuntimeCPU.h"
 #include "Misc/Paths.h"
-#include "Observation/TeamObservation.h"
 #include "Core/ProfilingMacros.h"  // v6.0: Performance profiling
 
 URLPolicyNetwork::URLPolicyNetwork()
@@ -41,14 +40,6 @@ FMacroAction URLPolicyNetwork::GetMacroAction(const FObservationElement& Observa
 			Action.TacticalParams = FTacticalParameters(0.2f, 0.9f, 0.4f, 0.3f);  // Low aggression, high cover
 			Action.CombatParams = FCombatParameters(ETargetPriority::Closest);
 			break;
-		case EStrategyType::Support:
-			Action.TacticalParams = FTacticalParameters(0.5f, 0.5f, 0.3f, 0.5f);  // Balanced
-			Action.CombatParams = FCombatParameters(ETargetPriority::LowestHP);   // Help finish kills
-			break;
-		case EStrategyType::Retreat:
-			Action.TacticalParams = FTacticalParameters(0.1f, 0.8f, 0.9f, 0.9f);  // Very defensive
-			Action.CombatParams = FCombatParameters(ETargetPriority::Closest);
-			break;
 		}
 		return Action;
 	}
@@ -76,7 +67,7 @@ FMacroAction URLPolicyNetwork::GetMacroAction(const FObservationElement& Observa
 	return Action;
 }
 
-float URLPolicyNetwork::GetStateValueV8(const FObservationElement& Observation, EStrategyType AssignedStrategy)
+float URLPolicyNetwork::GetStateValue(const FObservationElement& Observation, EStrategyType AssignedStrategy)
 {
 	SCOPE_CYCLE_COUNTER(STAT_RLGetStateValue);  // v8.0: Profile value estimation
 
@@ -185,14 +176,6 @@ TArray<FMacroAction> URLPolicyNetwork::GetMacroActionsBatched(
 			case EStrategyType::Defend:
 				TacticalParams = {DefendBuffer[TacticalOffset], DefendBuffer[TacticalOffset + 1],
 				                  DefendBuffer[TacticalOffset + 2], DefendBuffer[TacticalOffset + 3]};
-				break;
-			case EStrategyType::Support:
-				TacticalParams = {SupportBuffer[TacticalOffset], SupportBuffer[TacticalOffset + 1],
-				                  SupportBuffer[TacticalOffset + 2], SupportBuffer[TacticalOffset + 3]};
-				break;
-			case EStrategyType::Retreat:
-				TacticalParams = {RetreatBuffer[TacticalOffset], RetreatBuffer[TacticalOffset + 1],
-				                  RetreatBuffer[TacticalOffset + 2], RetreatBuffer[TacticalOffset + 3]};
 				break;
 			}
 
@@ -346,12 +329,6 @@ FTacticalParameters URLPolicyNetwork::SelectTacticalParameters(const FNetworkOut
 		break;
 	case EStrategyType::Defend:
 		Params = NetworkOutput.DefendTactical;
-		break;
-	case EStrategyType::Support:
-		Params = NetworkOutput.SupportTactical;
-		break;
-	case EStrategyType::Retreat:
-		Params = NetworkOutput.RetreatTactical;
 		break;
 	default:
 		// Fallback to Assault

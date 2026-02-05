@@ -6,7 +6,7 @@
 #include "AIController.h"
 #include "LeaderAIController.generated.h"
 
-class UTeamLeaderComponent;
+
 
 /**
  * Leader AI Controller
@@ -39,30 +39,6 @@ protected:
 	virtual void OnUnPossess() override;
 	virtual void Tick(float DeltaTime) override;
 
-
-public:
-	//--------------------------------------------------------------------------
-	// COMPONENTS
-	//--------------------------------------------------------------------------
-	/** Get team leader component from controlled pawn */
-	UFUNCTION(BlueprintPure, Category = "AI|Team Leader")
-	UTeamLeaderComponent* GetTeamLeaderComponent() const;
-
-
-	//--------------------------------------------------------------------------
-	// TEAM MANAGEMENT
-	//--------------------------------------------------------------------------
-
-	/** Is MCTS currently running? */
-	UFUNCTION(BlueprintPure, Category = "AI|Team Leader")
-	bool IsMCTSRunning() const;
-
-
-private:
-	/** Initialize components on possession */
-	void InitializeComponents();
-
-
 public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION
@@ -70,10 +46,4 @@ public:
 	/** Enable debug visualization */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Debug")
 	bool bEnableDebugDrawing = false;
-
-
-private:
-	/** Cached reference to team leader component */
-	UPROPERTY()
-	UTeamLeaderComponent* CachedTeamLeaderComponent = nullptr;
 };

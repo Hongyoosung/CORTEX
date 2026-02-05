@@ -2,7 +2,6 @@
 
 #include "AI/AIController/FollowerAIController.h"
 #include "StateTree/FollowerStateTreeComponent.h"
-#include "Team/Components/FollowerAgentComponent.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 
@@ -44,8 +43,7 @@ void AFollowerAIController::OnUnPossess()
 	// Stop State Tree
 	StopStateTree();
 
-	// Clear cached references
-	CachedFollowerComponent = nullptr;
+
 	CachedStateTreeComponent = nullptr;
 
 	Super::OnUnPossess();
@@ -62,25 +60,6 @@ void AFollowerAIController::Tick(float DeltaTime)
 	}
 }
 
-//------------------------------------------------------------------------------
-// COMPONENTS
-//------------------------------------------------------------------------------
-
-UFollowerAgentComponent* AFollowerAIController::GetFollowerComponent() const
-{
-	if (CachedFollowerComponent)
-	{
-		return CachedFollowerComponent;
-	}
-
-	APawn* ControlledPawn = GetPawn();
-	if (ControlledPawn)
-	{
-		return ControlledPawn->FindComponentByClass<UFollowerAgentComponent>();
-	}
-
-	return nullptr;
-}
 
 UFollowerStateTreeComponent* AFollowerAIController::GetStateTreeComponent() const
 {
@@ -160,10 +139,6 @@ FString AFollowerAIController::GetCurrentStateName() const
 
 void AFollowerAIController::DrawDebugInfo()
 {
-	if (GetFollowerComponent())
-	{
-		GetFollowerComponent()->DrawDebugInfo();
-	}
 
 	// Draw current state name above pawn
 	if (GetPawn())
@@ -179,14 +154,6 @@ void AFollowerAIController::DrawDebugInfo()
 
 void AFollowerAIController::InitializeComponents()
 {
-	// Cache follower component
-	CachedFollowerComponent = GetFollowerComponent();
-	if (!CachedFollowerComponent)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("FollowerAIController: No FollowerAgentComponent found on pawn '%s'"),
-			*GetNameSafe(GetPawn()));
-	}
-
 	// Cache state tree component
 	CachedStateTreeComponent = GetStateTreeComponent();
 	if (!CachedStateTreeComponent)

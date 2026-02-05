@@ -46,9 +46,6 @@ namespace RewardConfig {
 	constexpr float FORMATION_BONUS = 0.3f;                // Per step in formation (was 0.1f) - 3× increase
 	constexpr float COMBINED_FIRE_REWARD = 20.0f;          // Combined fire on same target (was 10.0f in code) - 2× increase
 
-	// Support strategy specific rewards
-	constexpr float SUPPORT_PROXIMITY_BONUS = 2.0f;        // Support approaching low-HP ally (scaled by proximity)
-	constexpr float SUPPORT_CRITICAL_BONUS = 5.0f;         // Support reaching critically wounded ally (<30% HP, <200cm)
 
 	// Tactical parameter effectiveness (INCREASED - improve parameter learning)
 	constexpr float TACTICAL_EFFECTIVENESS_BONUS = 0.5f;   // Per step when parameters match outcomes (was 0.15f) - 3.3× increase
@@ -86,25 +83,6 @@ namespace RewardConfig {
 		0.8f   // TacticalEffectiveness: High (parameter alignment matters)
 	};
 
-	// Support: Stick with ally, balanced positioning
-	constexpr FStrategyWeights SUPPORT_WEIGHTS = {
-		0.5f,  // ObjectiveProgress: Medium (follow ally)
-		0.4f,  // CombatEffectiveness: Medium-low (assist, don't solo)
-		0.7f,  // Survival: Medium-high (stay alive to support)
-		0.5f,  // CoverUsage: Medium (balanced)
-		1.0f,  // TeamCoordination: High (stick with ally)
-		0.9f   // TacticalEffectiveness: Highest (critical for support behavior)
-	};
-
-	// Retreat: Survive at all costs, avoid combat
-	constexpr FStrategyWeights RETREAT_WEIGHTS = {
-		0.8f,  // ObjectiveProgress: High (reach safe zone)
-		0.0f,  // CombatEffectiveness: None (avoid combat)
-		1.2f,  // Survival: Highest (survival paramount)
-		0.7f,  // CoverUsage: High (use cover while retreating)
-		0.3f,  // TeamCoordination: Low (self-preservation)
-		0.7f   // TacticalEffectiveness: Medium-high (escape efficiency)
-	};
 
 	// Lookup helper
 	inline const FStrategyWeights& GetWeightsForStrategy(EStrategyType Strategy)
@@ -113,8 +91,6 @@ namespace RewardConfig {
 		{
 			case EStrategyType::Assault:  return ASSAULT_WEIGHTS;
 			case EStrategyType::Defend:   return DEFEND_WEIGHTS;
-			case EStrategyType::Support:  return SUPPORT_WEIGHTS;
-			case EStrategyType::Retreat:  return RETREAT_WEIGHTS;
 			default:                       return ASSAULT_WEIGHTS;
 		}
 	}
@@ -222,12 +198,19 @@ public:
 	URewardCalculator();
 
 	virtual void BeginPlay() override;
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 
 	//============================================================
 	// CORE REWARD CALCULATION
 	//============================================================
+
+	UFUNCTION(BlueprintCallable, Category = "Reward")
+	FRewardComponentBreakdown ComputeCurrentReward(
+		const FObservationElement& PrevObs,
+		const FObservationElement& CurrentObs,
+		EStrategyType CurrentStrategy,
+		const FTacticalParameters& CurrentParams
+	);
 
 	/**
 	 * Calculate total reward (delegates to CalculateUnifiedReward)
@@ -265,7 +248,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
 	float CalculateObjectiveProgressComponent(
 		const FObservationElement& PrevObs,
-		const FObservationElement& CurrentObs
+		const FObservationElement& CurrentObs,
+		EStrategyType CurrentStrategy
 	);
 
 	/**
@@ -292,13 +276,6 @@ public:
 		const FObservationElement& CurrentObs
 	);
 
-	/**
-	 * Team coordination component (formation, ally proximity)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Reward|Components")
-	float CalculateTeamCoordinationComponent(
-		const FObservationElement& CurrentObs
-	);
 
 	/**
 	 * Tactical parameter effectiveness component
@@ -335,22 +312,6 @@ public:
 	 * Defend reward: Incentivize staying near friendly objective
 	 */
 	float CalculateDefendReward(
-		const FObservationElement& PrevObs,
-		const FObservationElement& CurrentObs
-	);
-
-	/**
-	 * Support reward: Incentivize proximity to allies (uses AllyDistance)
-	 */
-	float CalculateSupportReward(
-		const FObservationElement& PrevObs,
-		const FObservationElement& CurrentObs
-	);
-
-	/**
-	 * Retreat reward: Incentivize distance from enemies (uses DistanceToNearestEnemy)
-	 */
-	float CalculateRetreatReward(
 		const FObservationElement& PrevObs,
 		const FObservationElement& CurrentObs
 	);

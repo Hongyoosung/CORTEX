@@ -7,7 +7,6 @@
 #include "FollowerAIController.generated.h"
 
 class UFollowerStateTreeComponent;
-class UFollowerAgentComponent;
 
 /**
  * Follower AI Controller - State Tree Based
@@ -46,9 +45,6 @@ public:
 	//--------------------------------------------------------------------------
 	// COMPONENTS
 	//--------------------------------------------------------------------------
-	/** Get follower agent component from controlled pawn */
-	UFUNCTION(BlueprintPure, Category = "AI|Follower")
-	UFollowerAgentComponent* GetFollowerComponent() const;
 
 	/** Get follower state tree component from controlled pawn */
 	UFUNCTION(BlueprintPure, Category = "AI|State Tree")
@@ -100,10 +96,6 @@ public:
 
 
 private:
-	/** Cached reference to follower component */
-	UPROPERTY()
-	UFollowerAgentComponent* CachedFollowerComponent = nullptr;
-
 	/** Cached reference to state tree component */
 	UPROPERTY()
 	UFollowerStateTreeComponent* CachedStateTreeComponent = nullptr;

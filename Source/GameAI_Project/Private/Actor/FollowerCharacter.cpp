@@ -156,6 +156,35 @@ void AFollowerCharacter::Tick(float DeltaTime)
 		return;
 	}
 
+	// 1. 데이터 수집 (ObservationComponent에서 가져옴)
+	FObservationElement CurrentObs = ObservationBuilder->BuildLocalObservation();
+	FObservationElement PrevObs = ObservationBuilder->GetPreviousObservation(); // 필요하다면 저장해둔 것
+
+	// 2. 현재 상태 확인
+	EStrategyType CurrentStrategy = CurrentAssigned.Strategy;
+	FTacticalParameters CurrentParams = CurrentMacroAction.TacticalParams;
+
+	// 3. RewardCalculator에게 계산 '요청' (Push 방식)
+	if (RewardCalculatorComponent)
+	{
+		// 계산기가 캐릭터를 참조하는 게 아니라, 캐릭터가 데이터를 찔러 넣어줌
+		FRewardComponentBreakdown RewardResult = RewardCalculatorComponent->ComputeCurrentReward(
+			PrevObs,
+			CurrentObs,
+			CurrentStrategy,
+			CurrentParams
+		);
+
+		// 4. 결과를 ScholaAgent(RL)에게 전달
+		if (ScholaAgentComponent)
+		{
+			ScholaAgentComponent->ProviderReward(RewardResult.Total);
+		}
+
+		// 필요 시 로그 출력
+		// if (bEnableDebug) Print(RewardResult.ToString());
+	}
+
 	// ========================================
 	// HIERARCHICAL DECISION MAKING (v9.0)
 	//

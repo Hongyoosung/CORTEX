@@ -7,10 +7,13 @@
 #include "ScholaCombatEnvironment.generated.h"
 
 
+
 class ASimulationManagerGameMode;
+class AObjectiveActor;
 class UScholaAgentComponent;
 class UEnvRegistryComponent;
 class UEpisodeManagerComponent;
+
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnScholaEnvironmentInitialized);
@@ -68,8 +71,8 @@ public:
 	bool UnRegisterTeam(int32 TeamID);
 	bool UnRegisterObjective(AObjectiveActor* Objective);
 
-	FORCEINLINE int32 GetRegisterTeamCount()		const { return EnvRegistry ? EnvRegistry->GetRegisteredTeams().Num() : 0; }
-	FORCEINLINE int32 GetRegisteredObjectiveCount() const { return EnvRegistry ? EnvRegistry->GetRegisteredObjectives().Num() : 0; }
+	int32 GetRegisterTeamCount()	const;
+	int32 GetRegisteredObjectiveCount() const;
 	
 
 

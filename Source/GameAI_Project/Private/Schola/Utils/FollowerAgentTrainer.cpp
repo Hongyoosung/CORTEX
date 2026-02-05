@@ -3,7 +3,7 @@
 #include "Schola/Utils/FollowerAgentTrainer.h"
 #include "Schola/ScholaAgentComponent.h"
 #include "Schola/ScholaCombatEnvironment.h"
-#include "Schola/Rewards/TacticalRewardProvider.h"
+#include "Schola/Rewards/AgentRewardManager.h"
 #include "Actor/FollowerCharacter.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Core/SimulationManagerGameMode.h"
@@ -13,7 +13,7 @@ AFollowerAgentTrainer::AFollowerAgentTrainer()
 	, ScholaAgent(nullptr)
 	, FollowerAgent(nullptr)
 	, AgentHealthComponent(nullptr)
-	, RewardProvider(nullptr)
+	, RewardManager(nullptr)
 	, EpisodeReward(0.0f)
 	, EpisodeSteps(0)
 {
@@ -29,8 +29,8 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 	}
 
 	ScholaAgent = InAgent;
-	FollowerAgent = InAgent->FollowerAgent;
-	RewardProvider = InAgent->RewardProvider;
+
+
 	AgentHealthComponent = InAgent->HealthComponent;
 
 	// Verify components
@@ -39,7 +39,7 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] InAgent->FollowerAgent is NULL! Agent won't work!"));
 		return;
 	}
-	if (!RewardProvider)
+	if (!RewardManager)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] InAgent->RewardProvider is NULL! Rewards won't work!"));
 		return;
@@ -112,12 +112,12 @@ void AFollowerAgentTrainer::Initialize(UScholaAgentComponent* InAgent)
 
 float AFollowerAgentTrainer::ComputeReward()
 {
-	if (!RewardProvider)
+	if (!RewardManager)
 	{
 		return 0.0f;
 	}
 
-	float StepReward = RewardProvider->GetReward();
+	float StepReward = ScholaAgent->GetCurrentReward();
 	EpisodeReward += StepReward;
 	EpisodeSteps++;
 
@@ -142,14 +142,8 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 			CallCounter, RunningCounter, CompletedCounter, TruncatedCounter);
 	}
 
-	if (!ScholaAgent || !ScholaAgent->ScholaEnvironment)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeStatus: ScholaAgent or Environment is NULL!"));
-		return EAgentTrainingStatus::Running;
-	}
-
 	// Get SimulationManager from environment
-	AScholaCombatEnvironment* Env = Cast<AScholaCombatEnvironment>(ScholaAgent->ScholaEnvironment);
+	AScholaCombatEnvironment* Env = Cast<AScholaCombatEnvironment>(GetWorld());
 	if (!Env || !Env->SimulationManager)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[FollowerTrainer] ComputeStatus: SimulationManager not found!"));
@@ -162,18 +156,6 @@ EAgentTrainingStatus AFollowerAgentTrainer::ComputeStatus()
 	// Each actor manages its own environment, so EnvId IS the environment ID
 	int32 EnvironmentID = Env->GetEnvId();
 	
-
-	// Optional: Get TeamID for logging purposes - v9.0 PHASE 4: Use FollowerCharacter
-	int32 InTeamID = -1;
-	AFollowerCharacter* FollowerChar = Cast<AFollowerCharacter>(FollowerAgent ? FollowerAgent->GetOwner() : nullptr);
-	if (FollowerChar)
-	{
-		UTeamLeaderComponent* Leader = FollowerChar->GetTeamLeader();
-		if (Leader)
-		{
-			InTeamID = Leader->TeamID;
-		}
-	}
 
 	// Check per-environment termination flags for THIS environment
 	bool bShouldTerminate = SimManager->IsEnvironmentEpisodeEnding(EnvironmentID) ||
@@ -218,34 +200,29 @@ void AFollowerAgentTrainer::GetInfo(TMap<FString, FString>& Info)
 	Info.Add(TEXT("episode_reward"), FString::SanitizeFloat(EpisodeReward));
 	Info.Add(TEXT("episode_steps"), FString::FromInt(EpisodeSteps));
 
-	if (FollowerAgent)
-	{
-		Info.Add(TEXT("is_alive"), AgentHealthComponent.Get()->bIsAlive ? TEXT("true") : TEXT("false"));
-	}
 
-	if (RewardProvider)
+	if (ScholaAgent)
 	{
-		Info.Add(TEXT("current_reward"), FString::SanitizeFloat(RewardProvider->GetReward()));
+		Info.Add(TEXT("current_reward"), FString::SanitizeFloat(ScholaAgent->GetCurrentReward()));
 	}
 
 	// Multi-actor architecture: Pass environment ID to Python
 	// Each actor IS a physical environment, so we use the actor's EnvId
 	int32 EnvironmentID = -1;
-	if (ScholaAgent && ScholaAgent->ScholaEnvironment)
+
+	AScholaCombatEnvironment* Env = Cast<AScholaCombatEnvironment>(GetWorld());
+	if (Env)
 	{
-		AScholaCombatEnvironment* Env = Cast<AScholaCombatEnvironment>(ScholaAgent->ScholaEnvironment);
-		if (Env)
-		{
-			EnvironmentID = Env->GetEnvId();
-		}
+		EnvironmentID = Env->GetEnvId();
 	}
+	
 	Info.Add(TEXT("environment_id"), FString::FromInt(EnvironmentID));
 
 	// Also include team ID for debugging - v9.0 PHASE 4: Use FollowerCharacter
 	AFollowerCharacter* FollowerChar2 = Cast<AFollowerCharacter>(FollowerAgent ? FollowerAgent->GetOwner() : nullptr);
 	if (FollowerChar2)
 	{
-		UTeamLeaderComponent* Leader = FollowerChar2->GetTeamLeader();
+		UTeamLeaderComponent* Leader = FollowerChar->GetTeamLeader();
 		if (Leader)
 		{
 			Info.Add(TEXT("team_id"), FString::FromInt(Leader->TeamID));

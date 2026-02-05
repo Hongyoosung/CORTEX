@@ -9,7 +9,6 @@
 class URewardCalculator;
 class UAgentPerceptionComponent;
 class UHealthComponent;
-class UTeamLeaderComponent;
 struct FDamageEventData;
 struct FDeathEventData;
 
@@ -64,10 +63,6 @@ public:
 	//--------------------------------------------------------------------------
 	// CONFIGURATION
 	//--------------------------------------------------------------------------
-
-	/** Team leader for event signaling (optional, can be set externally) */
-	UPROPERTY(BlueprintReadWrite, Category = "Combat|Config")
-	TObjectPtr<UTeamLeaderComponent> TeamLeader = nullptr;
 
 	/** Reward calculator for combat rewards (optional, can be set externally) */
 	UPROPERTY(BlueprintReadWrite, Category = "Combat|Config")

@@ -165,22 +165,3 @@ void UTeamManagerComponent::ClearVisibleEnemies()
 		UE_LOG(LogTemp, Log, TEXT("[TeamManager] Cleared %d Visible enemies"), PreviousCount);
 	}
 }
-
-FTeamObservation UTeamManagerComponent::BuildTeamObservation(const TArray<AActor*>& Followers)
-{
-	// Use the static helper from FTeamObservation to build complete observation
-	// This includes all follower observations and team metrics
-	AActor* PrimaryObjective = HostileObjective ? Cast<AActor>(HostileObjective) : Cast<AActor>(FriendlyObjective);
-	TArray<AActor*> Enemies = GetVisibleEnemies();
-
-	FTeamObservation Observation = FTeamObservation::BuildFromTeam(
-		Followers,
-		PrimaryObjective,
-		Enemies
-	);
-
-	// Cache observation
-	CurrentTeamObservation = Observation;
-
-	return Observation;
-}

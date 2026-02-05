@@ -104,17 +104,6 @@ void UCombatExecutorComponent::ExecuteCombat(const FCombatParameters& CombatPara
 		return;
 	}
 
-	TArray<AActor*> Enemies = CachedPerceptionComponent->GetDetectedEnemies();
-	if (Enemies.Num() == 0)
-	{
-		// No enemies detected, clear focus
-		AAIController* AIController = Cast<AAIController>(GetOwner()->GetInstigatorController());
-		if (AIController)
-		{
-			AIController->ClearFocus(EAIFocusPriority::Gameplay);
-		}
-		return;
-	}
 
 	// ========================================
 	// v8.0: RL-controlled target selection
@@ -123,20 +112,6 @@ void UCombatExecutorComponent::ExecuteCombat(const FCombatParameters& CombatPara
 
 	AActor* Target = nullptr;
 
-	switch (CombatParams.Priority)
-	{
-		case ETargetPriority::Closest:
-			Target = GetClosestEnemy(Enemies);
-			break;
-
-		case ETargetPriority::LowestHP:
-			Target = GetLowestHPEnemy(Enemies);
-			break;
-
-		default:
-			Target = GetClosestEnemy(Enemies); // Fallback
-			break;
-	}
 
 	if (!Target)
 	{

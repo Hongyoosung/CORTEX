@@ -5,21 +5,19 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Observation/TeamObservation.h"
 #include "Team/TeamTypes.h"
 #include "TeamManagerComponent.generated.h"
 
-// Forward declarations
+
+
 class AObjectiveActor;
 
 
-/**
- * Delegate fired when objectives are discovered and ready for use.
- * Allows followers to defer observation initialization until objectives exist.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnObjectivesDiscovered);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAllAgentsRegistered, int32, AgentCount)
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnObjectivesDiscovered);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllAgentsRegistered);
+
+
 
 /**
  * Manages enemy tracking, objective discovery, and team observation building.
@@ -124,20 +122,6 @@ public:
 	FORCEINLINE		int32		GetVisibleEnemyCount() const { return VisibleEnemies.Num(); }
 
 
-
-	//=====================================================
-	// Observation Building
-	//=====================================================
-
-	/**
-	 * Build a team observation from provided followers.
-	 * @param Followers List of follower actors to include in observation
-	 * @return Team observation structure with aggregated intel
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Team Manager")
-	FTeamObservation BuildTeamObservation(const TArray<AActor*>& Followers);
-
-
 	//=====================================================
 	// Team Information Access
 	//=====================================================
@@ -186,8 +170,4 @@ private:
 	/** Hostile objective (assault) */
 	UPROPERTY()
 	TObjectPtr<AObjectiveActor> HostileObjective;
-
-	/** Current team observation (cached) */
-	UPROPERTY()
-	FTeamObservation CurrentTeamObservation;
 };
