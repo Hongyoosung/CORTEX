@@ -10,19 +10,19 @@ Now I'll create the comprehensive CORTEX v10.1 design document following your sp
 ***
 
 ## Executive Summary
+CORTEX v10.1 implements a three-layer hierarchical AI system combining Multi-Head Option-Conditioned Reinforcement Learning with Model-Based Planning and Spatial Query Optimization. The architecture enables high-level tactical reasoning by decoupling strategic intent from low-level navigation, utilizing Unreal Engine’s Environment Query System (EQS) as the final execution layer.
 
-CORTEX v10.1 implements a three-layer hierarchical AI system combining **Multi-Head Option-Conditioned Reinforcement Learning** with **Model-Based Planning**. The architecture enables real-time tactical decision-making in high-fidelity FPS combat through learned world models and strategy-specialized policy heads.
+Core Innovation: Strategy-Driven Spatial Reasoning
 
-**Core Innovation: Strategy-Specialized Action Generation**
+The system shifts from direct action generation to Tactical Parameter Tuning. Instead of outputting movement vectors, the RL policy generates optimal weightings for EQS environmental tests (e.g., Cover, Distance, Visibility). This allows the AI to learn "what to value" in a combat scenario while delegating "how to move" to the engine's navigation stack, ensuring 100% navigable actions and robust generalization across varying map layouts.
 
-The system employs four independent action heads, each trained to excel at a specific tactical strategy (Attack/Defend). A learned world model predicts state transitions under different strategic options, while a multi-objective value network evaluates predicted outcomes across win probability, health preservation, objective control, and time efficiency.
 **Key Technical Contributions:**
-
-- **Multi-Head RL Policy**: Four strategy-specific action heads (128-dim hidden → 6-dim continuous actions) with specialized reward functions 
-- **Option-Conditioned Training**: Phase 1 training with random option sampling to teach strategy-dependent behavior from the start
-- **World Model Prediction**: 59-dim input (State + Option + Target) → 52-dim next state + confidence score
-- **Multi-Objective Value Network**: Four evaluation heads providing holistic state assessment (WinProb, HealthDelta, ObjectiveScore, TimeEfficiency)
-- **Batch Inference Architecture**: Processes 8 MCTS leaves simultaneously for 14x throughput improvement
+- Multi-Head RL Policy: Two strategy-specialized heads (Attack/Defend) that output 4-dim tactical weights for EQS scoring equations.
+- EQS Integration Layer: Decouples RL decisions from physical coordinates, allowing the agent to adapt to new environments without retraining by evaluating spatial features rather than absolute positions.
+- Option-Conditioned Training: Phase 1 training with 2-option sampling (Attack/Defend) to teach context-specific environmental prioritization.
+- World Model Prediction: 57-dim input (State + 2-dim Option + Target) → 52-dim next state prediction with integrated confidence scores for uncertainty-aware planning.
+- Multi-Objective Value Network: Four evaluation heads providing holistic state assessment across Win Probability, Health Preservation, Objective Control, and Time Efficiency.
+- Event-Driven Replanning: MCTS-based strategic switching triggered by high-volatility events (e.g., ally death, health drop), maintaining a 15ms per-frame compute budget.
 
 ***
 
@@ -93,8 +93,8 @@ graph TD
     
     J --> K[Multi-Head Policy]
     K --> L[Strategy-Specific Head]
-    L --> M[6-dim Continuous Action]
-    M --> N[Combat System]
+    L --> M[EQS Parameter Set]
+    M --> N[EQS Query -> Pathfinding]
     
     style G fill:#f9f,stroke:#333,stroke-width:2px
     style K fill:#9ff,stroke:#333,stroke-width:2px
@@ -115,7 +115,7 @@ The policy network features a shared backbone encoder with four independent acti
 /**
  * Multi-Head Option-Conditioned RL Policy
  * Input: 57-dim (State=52, OptionIdx=1, Target=3, Duration=1)
- * Output: 6-dim continuous actions per selected head
+ * Output: EQS Weight Parameters (e.g., DistanceWeight, CoverWeight, LineOfSightWeight)
  */
 struct FRLObservation {
     FObservation BaseState;        // 52-dim: Positions, health, visibility
@@ -135,10 +135,12 @@ struct FRLObservation {
     }
 };
 
-struct FRLAction {
-    float Movement;      // Forward/backward [-1, 1]
-    float Strafe;        // Left/right [-1, 1]
-    float Aggression;    // Combat intensity [0, 1]
+
+struct FEQSWeights {
+    float TargetProximity; // 적/아군 거점 접근성 가중치
+    float CoverDensity;    // 엄폐 선호도
+    float Visibility;      // 적 가시성 확보/회피 가중치
+    float Aggression;      // 공격성 (전투 거리 결정)
 };
 ```
 
@@ -227,7 +229,7 @@ class MultiHeadRLPolicy(nn.Module):
 
 ### 2.3 Strategy-Specific Reward Functions
 
-Each action head receives specialized rewards to encourage strategy-appropriate behaviors: [sciencedirect](https://www.sciencedirect.com/science/article/abs/pii/S2210650224000889)
+Each action head receives specialized rewards to encourage strategy-appropriate behaviors: 
 
 ```python
 # File: training/reward_functions.py
@@ -235,23 +237,9 @@ Each action head receives specialized rewards to encourage strategy-appropriate 
 class StrategyRewards:
     """Option-conditioned reward computation"""
     
-    @staticmethod
-    def compute_attack_reward(state, action, next_state):
-        """Maximize damage output and eliminations"""
-        kills = next_state['team_kills'] - state['team_kills']
-        damage = next_state['damage_dealt'] - state['damage_dealt']
-        self_damage = next_state['self_damage_taken']
-        
-        return 10.0 * kills + 0.5 * damage - 2.0 * self_damage
-    
-    @staticmethod
-    def compute_defend_reward(state, action, next_state):
-        """Maximize survival and cover usage"""
-        in_cover = float(next_state['in_cover_position'])
-        health_preserved = 1.0 - (state['health'] - next_state['health']) / 100.0
-        self_damage = next_state['self_damage_taken']
-        
-        return 5.0 * in_cover + 3.0 * health_preserved - 5.0 * self_damage
+    Attack Head: + (거점 점령 진행도) + (적 거점과의 거리 감소)
+
+    Defend Head: + (아군 거점과의 거리 감소) + (체력 보존)
 ```
 
 ### 2.4 UE5 Integration
@@ -294,7 +282,7 @@ The world model predicts state transitions conditioned on tactical options witho
 ```cpp
 // Total: 59-dim
 State:          52-dim (positions, health, visibility, etc.)
-Option:          4-dim (one-hot: [Attack, Defend])
+Option:          2-dim (one-hot: [Attack, Defend])
 Target:          3-dim (X, Y, Z coordinates)
 ```
 
@@ -938,19 +926,19 @@ public:
 namespace ModelConfig {
     // === Dimension Specifications ===
     constexpr int32 STATE_DIM = 52;
-    constexpr int32 OPTION_DIM = 4;         // One-hot encoding
+    constexpr int32 OPTION_DIM = 2;         // One-hot encoding
     constexpr int32 TARGET_DIM = 3;
     constexpr int32 DURATION_DIM = 1;
     
-    constexpr int32 WORLD_MODEL_INPUT = 59; // 52 + 4 + 3
-    constexpr int32 RL_POLICY_INPUT = 57;   // 52 + 1 + 3 + 1
+    constexpr int32 WORLD_MODEL_INPUT = 57; // 52 + 2 + 3
+    constexpr int32 RL_POLICY_INPUT = 55;   // 52 + 1 + 2 (OptionIdx는 int로 처리 시)
     
     // === Network Architecture ===
     constexpr int32 SHARED_BACKBONE_DIM = 256;
     constexpr int32 OPTION_EMBED_DIM = 16;
     constexpr int32 TARGET_EMBED_DIM = 16;
     constexpr int32 ACTION_HEAD_HIDDEN = 128;
-    constexpr int32 ACTION_DIM = 6;
+    constexpr int32 ACTION_DIM = 4; // number of EQS Weights
     
     // === MCTS Parameters ===
     constexpr int32 BATCH_SIZE = 8;
@@ -1145,6 +1133,9 @@ class FTransitionLogger {
 };
 ```
 
+**EQS system**
+Added EQS template (Cover, Distance, LOS test) build
+
 ### Week 3-4: Phase 1 Policy Training
 
 **Objectives:**
@@ -1189,6 +1180,10 @@ FTacticalOption FModelBasedMCTS::FindBestOption(const FObservation& RootState) {
     // - Confidence-weighted backprop
 }
 ```
+
+**RL-EQS Pipeline**
+Pipeline integration: "RL output -> Apply EQS parameters -> Move navigation"
+
 
 ### Week 9-10: Performance Optimization
 
