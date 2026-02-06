@@ -18,7 +18,7 @@
  * - RL selects appropriate strategies
  * - Agents move to correct positions
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegration4v4CaptureTest, "CORTEX.Integration.4v4Capture",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegration4v4CaptureTest, "MOC.Integration.4v4Capture",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FIntegration4v4CaptureTest::RunTest(const FString& Parameters)
@@ -86,7 +86,7 @@ bool FIntegration4v4CaptureTest::RunTest(const FString& Parameters)
  * - Heals → switches back to Assault
  * - Verify smooth transitions, no crashes
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationDynamicStrategySwitchingTest, "CORTEX.Integration.DynamicStrategySwitching",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationDynamicStrategySwitchingTest, "MOC.Integration.DynamicStrategySwitching",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FIntegrationDynamicStrategySwitchingTest::RunTest(const FString& Parameters)
@@ -130,7 +130,7 @@ bool FIntegrationDynamicStrategySwitchingTest::RunTest(const FString& Parameters
  * - RL selects Support strategy
  * - Agents move toward threatened ally
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationSupportStrategyTest, "CORTEX.Integration.SupportStrategy",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationSupportStrategyTest, "MOC.Integration.SupportStrategy",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FIntegrationSupportStrategyTest::RunTest(const FString& Parameters)
@@ -189,7 +189,7 @@ bool FIntegrationSupportStrategyTest::RunTest(const FString& Parameters)
  * - Agent willing to sacrifice (die) to complete objective
  * - Net reward is positive (Objective reward > Death penalty)
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationValueAlignmentTest, "CORTEX.Integration.ValueAlignment",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationValueAlignmentTest, "MOC.Integration.ValueAlignment",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FIntegrationValueAlignmentTest::RunTest(const FString& Parameters)
@@ -252,7 +252,7 @@ bool FIntegrationValueAlignmentTest::RunTest(const FString& Parameters)
  * - RL: Batched inference <4ms
  * - StateTree: <2ms for 4 agents
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationSystemLatencyTest, "CORTEX.Integration.Performance.SystemLatency",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIntegrationSystemLatencyTest, "MOC.Integration.Performance.SystemLatency",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::PerfFilter)
 
 bool FIntegrationSystemLatencyTest::RunTest(const FString& Parameters)

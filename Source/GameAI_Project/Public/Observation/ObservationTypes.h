@@ -4,7 +4,7 @@
 #include "ObservationTypes.generated.h"
 
 /**
- * CORTEX v10.1: Raycast Hit Types
+ * MOC v10.1: Raycast Hit Types
  */
 UENUM(BlueprintType)
 enum class ERaycastHitType : uint8
@@ -18,7 +18,7 @@ enum class ERaycastHitType : uint8
 };
 
 /**
- * CORTEX v10.1: Enemy Perception Unit
+ * MOC v10.1: Enemy Perception Unit
  * Used as a sub-component of the World Model Input
  */
 USTRUCT(BlueprintType)

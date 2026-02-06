@@ -5,7 +5,7 @@
 #include "ObservationElement.generated.h"
 
 /**
- * CORTEX v10.1 Observation State
+ * MOC v10.1 Observation State
  * * The primary input for the Learned World Model and Value Network.
  * Total Feature Count: 56 Floats
  * * Structure:
@@ -28,15 +28,15 @@ struct GAMEAI_PROJECT_API FObservationElement
     //--------------------------------------------------------------------------
 
     /** World Position (Normalized relative to map bounds usually, or local) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Agent")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Agent")
     FVector Position = FVector::ZeroVector; // 3 floats
 
     /** Agent Velocity (Normalized by MaxSpeed) - NEW for v10.1 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Agent")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Agent")
     FVector Velocity = FVector::ZeroVector; // 3 floats
 
     /** Health percentage (0-1) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Agent")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Agent")
     float AgentHealth = 1.0f; // 1 float
 
 
@@ -45,7 +45,7 @@ struct GAMEAI_PROJECT_API FObservationElement
     //--------------------------------------------------------------------------
 
     /** Distance to nearest enemy (Normalized) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Combat")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Combat")
     float DistanceToNearestEnemy = 1.0f;
 
     //--------------------------------------------------------------------------
@@ -53,23 +53,23 @@ struct GAMEAI_PROJECT_API FObservationElement
     //--------------------------------------------------------------------------
 
     /** Lidar-like raycasts (Normalized Distance) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Perception")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Perception")
     TArray<float> RaycastDistances; 
 
     //--------------------------------------------------------------------------
     // 4. SUPPORT CONTEXT (5 features)
     //--------------------------------------------------------------------------
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Support")
     bool bAllyNeedsHelp = false; // 1 float
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Support")
     float AllyHealth = 1.0f; // 1 float
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Support")
     float AllyDistance = 1.0f; // 1 float
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Support")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Support")
     FVector2D AllyDirection = FVector2D::ZeroVector; // 2 floats
 
     //--------------------------------------------------------------------------
@@ -77,20 +77,20 @@ struct GAMEAI_PROJECT_API FObservationElement
     // Top 5 enemies sorted by threat/distance
     //--------------------------------------------------------------------------
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Enemies")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Enemies")
     TArray<FEnemyObservation> NearbyEnemies; // 5 * 3 = 15 floats
 
     //--------------------------------------------------------------------------
     // 6. TACTICAL / COVER (4 features)
     //--------------------------------------------------------------------------
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Tactical")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Tactical")
     bool bHasCover = false; // 1 float
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Tactical")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Tactical")
     float NearestCoverDistance = 1.0f; // 1 float
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Tactical")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Tactical")
     FVector2D CoverDirection = FVector2D::ZeroVector; // 2 floats
 
     //--------------------------------------------------------------------------
@@ -98,17 +98,17 @@ struct GAMEAI_PROJECT_API FObservationElement
     //--------------------------------------------------------------------------
 
     /** Friendly Objective (Capture point/Flag) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Objective")
     float FriendlyObjDistance = 1.0f; // 1 float
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Objective")
     FVector2D FriendlyObjDirection = FVector2D::ZeroVector; // 2 floats
 
     /** Hostile Objective */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Objective")
     float HostileObjDistance = 1.0f; // 1 float
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CORTEX|Objective")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Objective")
     FVector2D HostileObjDirection = FVector2D::ZeroVector; // 2 floats
 
     //--------------------------------------------------------------------------
@@ -168,6 +168,6 @@ struct GAMEAI_PROJECT_API FObservationElement
         return Features;
     }
 
-    /** Returns the fixed input size for CORTEX v10.1 models */
+    /** Returns the fixed input size for MOC v10.1 models */
     static int32 GetFeatureCount() { return 56; }
 };

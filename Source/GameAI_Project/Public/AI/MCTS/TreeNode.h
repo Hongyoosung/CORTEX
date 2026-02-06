@@ -1,14 +1,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AI/Options/TacticalOption.h"
+#include "Types/MocTypes.h"
 #include "AI/Models/LearnedWorldModel.h" // FObservation, FCompositeReward 정의 포함
 #include "Templates/SharedPointer.h"
 
 class FTreeNode;
 
 /**
- * CORTEX v10.1: Model-Based MCTS Node
+ * MOC v10.1: Model-Based MCTS Node
  * * Represents a state in the decision tree.
  * - Stores the State (Observation) predicted by the World Model.
  * - Stores the Action (TacticalOption) that led to this state.

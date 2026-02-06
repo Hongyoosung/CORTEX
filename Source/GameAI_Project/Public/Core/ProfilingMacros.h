@@ -6,7 +6,7 @@
 #include "Stats/Stats.h"
 
 /**
- * Performance Profiling Macros for CORTEX v6.0
+ * Performance Profiling Macros for MOC v6.0
  *
  * Usage:
  *   1. Declare stats in this file
@@ -25,7 +25,7 @@
  */
 
 // Stat group for AI systems
-DECLARE_STATS_GROUP(TEXT("AI"), STATGROUP_CORTEXAI, STATCAT_Advanced);
+DECLARE_STATS_GROUP(TEXT("AI"), STATGROUP_MOCAI, STATCAT_Advanced);
 
 // ========================================
 // MCTS Performance Stats
@@ -174,31 +174,31 @@ DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Agents: Active Count"), STAT_ActiveAgent
 /**
  * Scoped profiling macro with automatic logging
  * Usage:
- *   CORTEX_PROFILE_SCOPE(TEXT("MyFunction"))
+ *   MOC_PROFILE_SCOPE(TEXT("MyFunction"))
  *   {
  *       // Code to profile
  *   }
  */
-#define CORTEX_PROFILE_SCOPE(ScopeName) \
+#define MOC_PROFILE_SCOPE(ScopeName) \
 	SCOPE_LOG_TIME_IN_SECONDS(ScopeName, nullptr)
 
 /**
  * Conditional profiling based on verbosity level
  * Usage:
- *   CORTEX_PROFILE_VERBOSE(STAT_RLInference, bEnableVerboseProfiling)
+ *   MOC_PROFILE_VERBOSE(STAT_RLInference, bEnableVerboseProfiling)
  *   {
  *       // Code to profile only if verbose profiling enabled
  *   }
  */
-#define CORTEX_PROFILE_VERBOSE(StatName, bEnabled) \
+#define MOC_PROFILE_VERBOSE(StatName, bEnabled) \
 	SCOPE_CYCLE_COUNTER_IF(StatName, bEnabled)
 
 /**
  * Profile with automatic threshold warning
  * Usage:
- *   CORTEX_PROFILE_WITH_THRESHOLD(TEXT("SlowFunction"), 5.0f)  // Warn if >5ms
+ *   MOC_PROFILE_WITH_THRESHOLD(TEXT("SlowFunction"), 5.0f)  // Warn if >5ms
  */
-#define CORTEX_PROFILE_WITH_THRESHOLD(FunctionName, ThresholdMs) \
+#define MOC_PROFILE_WITH_THRESHOLD(FunctionName, ThresholdMs) \
 	FScopedDurationTimer ScopedTimer([](double ElapsedSeconds) { \
 		float ElapsedMs = static_cast<float>(ElapsedSeconds * 1000.0); \
 		if (ElapsedMs > ThresholdMs) { \
@@ -210,7 +210,7 @@ DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Agents: Active Count"), STAT_ActiveAgent
 /**
  * Log performance summary for a frame
  * Usage:
- *   CORTEX_LOG_FRAME_PERF()  // Call once per frame
+ *   MOC_LOG_FRAME_PERF()  // Call once per frame
  */
-#define CORTEX_LOG_FRAME_PERF() \
+#define MOC_LOG_FRAME_PERF() \
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FramePerformance);

@@ -18,7 +18,7 @@
  */
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FMCTSAssignmentTest, 
-	"CORTEX.MCTS.ObjectiveAssignment",
+	"MOC.MCTS.ObjectiveAssignment",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FMCTSAssignmentTest::RunTest(const FString& Parameters)
@@ -37,7 +37,7 @@ bool FMCTSAssignmentTest::RunTest(const FString& Parameters)
  * - Multiple agents can be assigned to same Mission
  * - No agent assigned to multiple Missions
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCTSAssignmentQualityTest, "CORTEX.MCTS.AssignmentQuality",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCTSAssignmentQualityTest, "MOC.MCTS.AssignmentQuality",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FMCTSAssignmentQualityTest::RunTest(const FString& Parameters)
@@ -52,7 +52,7 @@ bool FMCTSAssignmentQualityTest::RunTest(const FString& Parameters)
  *
  * Validates that MCTS correctly uses RL value estimates for leaf evaluation
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCTSRLValueIntegrationTest, "CORTEX.MCTS.RLValueIntegration",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCTSRLValueIntegrationTest, "MOC.MCTS.RLValueIntegration",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FMCTSRLValueIntegrationTest::RunTest(const FString& Parameters)
@@ -67,7 +67,7 @@ bool FMCTSRLValueIntegrationTest::RunTest(const FString& Parameters)
  *
  * Validates that MCTS completes assignment within 50ms target (v6.0 requirement)
  */
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCTSAssignmentLatencyTest, "CORTEX.MCTS.Performance.Latency",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCTSAssignmentLatencyTest, "MOC.MCTS.Performance.Latency",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::PerfFilter)
 
 bool FMCTSAssignmentLatencyTest::RunTest(const FString& Parameters)

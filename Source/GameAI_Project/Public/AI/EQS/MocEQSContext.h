@@ -1,0 +1,67 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "EnvironmentQuery/EnvQueryContext.h"
+#include "MocEQSContext.generated.h"
+
+/**
+ * EQS Context: Provides querier (agent) information
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocQuerier : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
+
+/**
+ * EQS Context: Provides enemy positions visible to team
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocEnemies : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
+
+/**
+ * EQS Context: Provides ally positions
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocAllies : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
+
+/**
+ * EQS Context: Provides capture point positions
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocCapturePoints : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
+
+/**
+ * EQS Context: Provides resource pickup locations (health/ammo)
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocPickups : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};

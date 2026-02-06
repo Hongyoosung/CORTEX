@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AI/Options/TacticalOption.h"
+#include "Types/MocTypes.h"
 #include "AI/Models/LearnedWorldModel.h"
 #include "AI/MCTS/TreeNode.h"
 #include "ModelBasedMCTS.generated.h"
@@ -29,7 +29,7 @@ struct FAgentPersonality
 };
 
 /**
- * CORTEX v10.1: Model-Based MCTS Planner
+ * MOC v10.1: Model-Based MCTS Planner
  * AlphaZero 스타일의 계획 수립기입니다.
  * 물리 시뮬레이션 대신 World Model을 사용하여 미래를 예측하고, 배치 처리를 통해 성능을 최적화합니다.
  */

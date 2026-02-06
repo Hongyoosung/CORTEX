@@ -10,7 +10,7 @@ UValueNetwork::UValueNetwork()
 
 bool UValueNetwork::InitNetwork(const FString& ModelPath)
 {
-    // [CORTEX v10.1] Offline Training Phase
+    // [MOC v10.1] Offline Training Phase
     // 실제 구현에서는 여기서 ONNX Runtime 또는 UE5 NNE(Neural Network Engine)를 초기화합니다.
     // 설계 문서에 따르면 이 모델은 사전 학습(Pre-trained)된 상태여야 합니다.
     

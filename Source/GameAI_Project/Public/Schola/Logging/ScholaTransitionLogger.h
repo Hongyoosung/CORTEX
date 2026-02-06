@@ -4,7 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "AI/Options/TacticalOption.h" // CORTEX Defined
+#include "Types/MocTypes.h"
+#include "Rewards/RewardTypes.h"
 #include "ScholaTransitionLogger.generated.h"
 
 // World Model 학습을 위한 데이터 튜플
@@ -35,6 +36,7 @@ public:
 
     // 에피소드가 끝나면 디스크에 저장
     void FlushToDisk();
+
 
 private:
     TArray<FTransitionTuple> TransitionBuffer;

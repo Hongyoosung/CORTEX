@@ -342,7 +342,7 @@ Next steps:
 
 3. **Verify:**
    ```bash
-   cd CORTEX_Training
+   cd CORTEXTraining
    python verify_multi_actor_setup.py
    ```
 

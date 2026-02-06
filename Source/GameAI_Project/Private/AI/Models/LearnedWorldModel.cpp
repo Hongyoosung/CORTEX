@@ -6,7 +6,7 @@ ULearnedWorldModel::ULearnedWorldModel()
 
 bool ULearnedWorldModel::InitModel(const FString& ModelPath)
 {
-    // TODO: [CORTEX v10.1] ONNX Runtime C++ API 또는 UE NNE를 사용하여 모델 로드
+    // TODO: [MOC v10.1] ONNX Runtime C++ API 또는 UE NNE를 사용하여 모델 로드
     // UE_LOG(LogTemp, Log, TEXT("Loading World Model from %s..."), *ModelPath);
     return true;
 }
@@ -27,7 +27,7 @@ FBatchModelOutput ULearnedWorldModel::PredictBatch(const FBatchModelInput& Batch
     Output.Confidences.SetNum(BatchSize);
 
     // ==========================================================
-    // [CORTEX v10.1] Neural Network Inference Logic Placeholder
+    // [MOC v10.1] Neural Network Inference Logic Placeholder
     // ==========================================================
     // 실제 구현 시:
     // 1. BatchInput을 Flat TArray<float> (Tensor)로 변환
