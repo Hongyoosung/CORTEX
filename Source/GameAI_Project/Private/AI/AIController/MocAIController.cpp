@@ -1,13 +1,15 @@
-// File: AI/CortexAIController.cpp
 
-#include "CortexAIController.h"
+
+#include "AI/AIController/MocAIController.h"
+#include "AI/EQS/EQSWeightParameters.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISenseConfig_Hearing.h"
 #include "Perception/AISenseConfig_Damage.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
 
-ACortexAIController::ACortexAIController(const FObjectInitializer& ObjectInitializer)
+
+AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
     : Super(ObjectInitializer)
 {
     // Components 생성
@@ -18,12 +20,12 @@ ACortexAIController::ACortexAIController(const FObjectInitializer& ObjectInitial
     BlackboardComp = CreateDefaultSubobject<UBlackboardComponent>(TEXT("Blackboard"));
     
     // CORTEX Components
-    PolicyExecutor = CreateDefaultSubobject<UCortexPolicyExecutor>(TEXT("PolicyExecutor"));
-    MCTSPlanner = CreateDefaultSubobject<UCortexMCTSPlanner>(TEXT("MCTSPlanner"));
-    WorldModel = CreateDefaultSubobject<UCortexWorldModel>(TEXT("WorldModel"));
-    ValueNetwork = CreateDefaultSubobject<UCortexValueNetwork>(TEXT("ValueNetwork"));
+    PolicyExecutor = CreateDefaultSubobject<UMocPolicyExecutor>(TEXT("PolicyExecutor"));
+    MCTSPlanner = CreateDefaultSubobject<UMocMCTSPlanner>(TEXT("MCTSPlanner"));
+    WorldModel = CreateDefaultSubobject<UMocWorldModel>(TEXT("WorldModel"));
+    ValueNetwork = CreateDefaultSubobject<UMocValueNetwork>(TEXT("ValueNetwork"));
     EQSApplicator = CreateDefaultSubobject<UEQSDynamicWeightApplicator>(TEXT("EQSApplicator"));
-    EventMonitor = CreateDefaultSubobject<UCortexEventMonitor>(TEXT("EventMonitor"));
+    EventMonitor = CreateDefaultSubobject<UMocEventMonitor>(TEXT("EventMonitor"));
     
     // Perception 설정
     SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
@@ -56,7 +58,7 @@ ACortexAIController::ACortexAIController(const FObjectInitializer& ObjectInitial
     TimeSinceLastReplan = 0.0f;
 }
 
-void ACortexAIController::BeginPlay()
+void AMocAIController::BeginPlay()
 {
     Super::BeginPlay();
     
@@ -68,7 +70,7 @@ void ACortexAIController::BeginPlay()
     UE_LOG(LogCortex, Log, TEXT("CORTEX AI Controller initialized"));
 }
 
-void ACortexAIController::OnPossess(APawn* InPawn)
+void AMocAIController::OnPossess(APawn* InPawn)
 {
     Super::OnPossess(InPawn);
     
@@ -86,7 +88,7 @@ void ACortexAIController::OnPossess(APawn* InPawn)
     UpdateBlackboard(CurrentOption, TacticalProfiles::DEFENSIVE);
 }
 
-void ACortexAIController::Tick(float DeltaTime)
+void AMocAIController::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
     
@@ -118,7 +120,7 @@ void ACortexAIController::Tick(float DeltaTime)
     }
 }
 
-FObservation ACortexAIController::GatherObservation()
+FObservation AMocAIController::GatherObservation()
 {
     FObservation Obs;
     
@@ -150,7 +152,7 @@ FObservation ACortexAIController::GatherObservation()
     return Obs;
 }
 
-bool ACortexAIController::ShouldReplan(const FObservation& NewObservation)
+bool AMocAIController::ShouldReplan(const FObservation& NewObservation)
 {
     // EventMonitor에게 위임
     return EventMonitor->CheckReplanningTriggers(
@@ -160,7 +162,7 @@ bool ACortexAIController::ShouldReplan(const FObservation& NewObservation)
     );
 }
 
-FTacticalOption ACortexAIController::PlanNewStrategy()
+FTacticalOption AMocAIController::PlanNewStrategy()
 {
     // MCTS 실행 (15ms budget)
     return MCTSPlanner->FindBestOption(
@@ -171,7 +173,7 @@ FTacticalOption ACortexAIController::PlanNewStrategy()
     );
 }
 
-FEQSWeightParameters ACortexAIController::GetCurrentEQSWeights()
+FEQSWeightParameters AMocAIController::GetCurrentEQSWeights()
 {
     // RL Policy에 상태 전달
     FRLObservation PolicyInput = {
@@ -185,7 +187,7 @@ FEQSWeightParameters ACortexAIController::GetCurrentEQSWeights()
     return PolicyExecutor->PredictEQSWeights(PolicyInput);
 }
 
-void ACortexAIController::UpdateBlackboard(
+void AMocAIController::UpdateBlackboard(
     const FTacticalOption& Option, 
     const FEQSWeightParameters& Weights
 )
@@ -217,7 +219,7 @@ void ACortexAIController::UpdateBlackboard(
         Weights.HeightAdvantage);
 }
 
-void ACortexAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
+void AMocAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
 {
     // 적 감지 시 즉시 Blackboard 업데이트
     TArray<AActor*> Enemies;

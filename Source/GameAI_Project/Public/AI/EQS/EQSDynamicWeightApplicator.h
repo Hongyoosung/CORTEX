@@ -1,9 +1,17 @@
-// File: AI/EQS/EQSDynamicWeightApplicator.h
+#pragma once
 
+#include "CoreMinimal.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
 
-class UEQSDynamicWeightApplicator : public UObject {
+#include "UEQSDynamicWeightApplicator.generated.h"
+
+
+UCLASS()
+class GAMEAI_PROJECT_API UEQSDynamicWeightApplicator : public UObject {
+
+    GENERATED_BODY()
+
 public:
     /**
      * RL Policy 출력을 받아 EQS Query에 실시간 가중치 주입

@@ -19,7 +19,7 @@
  * - Behavior Tree 실행 제어
  */
 UCLASS()
-class MOC_API AMocAIController : public AAIController
+class GAMEAI_PROJECT_API AMocAIController : public AAIController
 {
     GENERATED_BODY()
 

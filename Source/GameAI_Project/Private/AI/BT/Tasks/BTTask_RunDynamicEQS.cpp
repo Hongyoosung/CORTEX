@@ -1,4 +1,6 @@
-#include "BTTask_RunDynamicEQS.h"
+#include "AI/BT/Tasks/BTTask_RunDynamicEQS.h"
+#include "AI/EQS/EQSWeightParameters.h"
+#include "AI/AIController/MocAIController.h"
 
 
 EBTNodeResult::Type UBTTask_RunDynamicEQS::ExecuteTask(
@@ -6,7 +8,7 @@ EBTNodeResult::Type UBTTask_RunDynamicEQS::ExecuteTask(
     uint8* NodeMemory
 )
 {
-    ACortexAIController* AIController = Cast<ACortexAIController>(
+    AMocAIController* AIController = Cast<AMocAIController>(
         OwnerComp.GetAIOwner()
     );
     

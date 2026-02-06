@@ -9,7 +9,7 @@ struct FTreeNode;
  * MOC v10.1: Confidence-Aware UCB1 Strategy
  * 표준 UCB 공식에 World Model의 불확실성(Confidence) 페널티를 추가한 버전입니다.
  */
-class MOCAI_API ConfidenceUCB
+class GAMEAI_PROJECT_API ConfidenceUCB
 {
 public:
     // 하이퍼파라미터 (Design Doc v10.1 참조)

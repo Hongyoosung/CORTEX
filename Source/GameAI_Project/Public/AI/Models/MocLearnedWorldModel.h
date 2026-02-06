@@ -38,7 +38,7 @@ struct FBatchModelOutput {
  * 배치 처리를 통해 GPU 처리량을 극대화합니다.
  */
 UCLASS(Blueprintable, BlueprintType)
-class MOCAI_API ULearnedWorldModel : public UObject
+class GAMEAI_PROJECT_API ULearnedWorldModel : public UObject
 {
     GENERATED_BODY()
 

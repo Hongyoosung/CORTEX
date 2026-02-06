@@ -16,7 +16,8 @@
 
 
 UCLASS()
-class UBTTask_MoveToEQSLocation : public UBTTaskNode {
+class GAMEAI_PROJECT_API UBTTask_MoveToEQSLocation : public UBTTaskNode {
+
     GENERATED_BODY()
     
 public:
