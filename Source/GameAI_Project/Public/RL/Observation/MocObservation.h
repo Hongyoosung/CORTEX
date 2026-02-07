@@ -9,7 +9,7 @@
  * See v10.0Architecture.md Section 2.1 for specification.
  */
 USTRUCT(BlueprintType)
-struct FMocObservation
+struct GAMEAI_PROJECT_API FMocObservation
 {
 	GENERATED_BODY()
 

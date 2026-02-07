@@ -95,8 +95,6 @@ Agents execute **hybrid actions** combining:
 
 ### Strategic Implications
 - **Resource Control**: Teams controlling Center Plaza (Point C) gain access to 3 health packs + 2 ammo crates within 15m 
-- **Scout Strategy**: High-value pickups become priority targets for Scout role to deny enemy resources 
-- **Retreat Strategy**: Knowledge of nearest health pack location critical for low-HP agents
 
 ***
 
@@ -164,9 +162,8 @@ struct FSharedTeamKnowledge {
 4. **Resource Status**: **Shared only if ally within 30m** of pickup - requires proximity
 
 ### Observability Design Rationale
-- **Partial Enemy Observation**: Forces Scout strategy to provide value through information gathering 
 - **Perfect Ally Awareness**: Enables coordination without explicit communication channels (simplification for Phase 1) 
-- **Decay Mechanics**: Punishes static strategies, rewards Scout roles that maintain map pressure 
+
 
 ***
 
@@ -175,18 +172,18 @@ struct FSharedTeamKnowledge {
 ### Individual Agent Rewards (Per-Step)
 Agents receive **strategy-conditioned rewards** during training: 
 
-| Event | Assault | Defend | Support | Scout | Retreat |
-|-------|---------|--------|--------|---------|-------|---------|
-| Enemy Kill | **+10** | +5 | +3 | +5 | -2 |
-| Assist (damage) | +3 | +2 | +4 | +2 | 0 |
-| Death | -20 | -15 | -10 | -8 | **-30** |
-| Capture Point | +15 | **+20** | +10 | +5 | 0 |
-| Lose Point | -25  | **-30** | -15 | -5 | 0 |
-| Heal Ally (40+ HP) | 0 | +3 | **+12** | 0 | 0 |
-| Reveal Enemy (first sight) | +2 | +1 | +1 | **+7** | 0 |
-| Pickup Deny (take before enemy) | +1 | +1 | +2 | **+5** | 0 |
-| Survive at <30% HP (per 5s) | -5 | -3 | -2 | 0 | +1 | **+20** |
-| Distance to assigned target | -0.01/m | -0.01/m | -0.015/m | -0.03/m | N/A |
+| Event | Assault | Defend | Support |
+|-------|---------|--------|--------|---------|
+| Enemy Kill | **+10** | +5 | +3 |
+| Assist (damage) | +3 | +2 | +4 | 
+| Death | -20 | -15 | -10 |
+| Capture Point | +15 | **+20** | +10 |
+| Lose Point | -25  | **-30** | -15 | 
+| Heal Ally (40+ HP) | 0 | +3 | **+12** |
+| Reveal Enemy (first sight) | +2 | +1 | +1 | 
+| Pickup Deny (take before enemy) | +1 | +1 | +2 | 
+| Survive at <30% HP (per 5s) | -5 | -3 | -2 | 0 |
+| Distance to assigned target | -0.01/m | -0.01/m | -0.015/m |
 
 
 | Strategy | Primary Reward              | Secondary Reward            | Penalty                       |
@@ -194,8 +191,6 @@ Agents receive **strategy-conditioned rewards** during training:
 | Assault  | Enemy kills (+10)           | Objective capture (+15)     | Death (-20) arxiv​            |
 | Defend   | Objective retention (+8)    | Ally survival bonus (+3)    | Objective loss (-25)          |
 | Support  | Ally HP healed (+0.02/pt)   | Team fight win assist (+12) | Ally death nearby (-8) arxiv​ |
-| Scout    | Fog reveal area (+0.1/tile) | Enemy detection (+7)        | Detection by enemy (-10) mun​ |
-| Retreat  | Survival when HP<30% (+20)  | Successful regroup (+6)     | Death while retreating (-15)  |
 
 
 ### Team-Level Rewards (Shared)
@@ -278,7 +273,6 @@ void AMocGameMode::Tick(float DeltaTime) {
 1. **Symmetric Start**: Both teams spawn, all points neutral → tests balanced play
 2. **Comeback Challenge**: Red team starts with 0 points, Blue with 150 → tests adaptation
 3. **Resource Scarcity**: Only 4 health packs spawn (vs 12 default) → tests Retreat/Support value
-4. **Fog Stress Test**: Vision range reduced to 40m → tests Scout strategy necessity
 
 ### Comparison Baselines
 - **Scripted FSM**: Hand-coded 3-state machine (Attack nearest → Defend if losing → Retreat if low HP)

@@ -11,6 +11,7 @@ class UScholaMocAgent;
 class ACapturePoint;
 class APickupBase;
 class AFogOfWarManager;
+class ASquadManager;
 
 /**
  * Team state tracking for shared knowledge
@@ -171,6 +172,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "TeamManager")
 	AFogOfWarManager* GetFogOfWarManager() const { return FogOfWarManager; }
 
+	//========================================
+	// v10.2 Squad Commander Access
+	//========================================
+
+	/** Get Squad Commander for team (v10.2 centralized planning) */
+	UFUNCTION(BlueprintPure, Category = "TeamManager")
+	ASquadManager* GetSquadCommander(int32 TeamID) const;
+
+	/** Set Squad Commander for team */
+	UFUNCTION(BlueprintCallable, Category = "TeamManager")
+	void SetSquadCommander(int32 TeamID, ASquadManager* Commander);
+
 protected:
 	//========================================
 	// Internal Helpers
@@ -254,4 +267,11 @@ protected:
 	/** All spawned agents (for cleanup) */
 	UPROPERTY()
 	TArray<AMocCharacter*> AllAgents;
+
+	/** Squad Commanders (v10.2) */
+	UPROPERTY()
+	ASquadManager* RedTeamCommander;
+
+	UPROPERTY()
+	ASquadManager* BlueTeamCommander;
 };

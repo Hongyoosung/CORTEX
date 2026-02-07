@@ -76,7 +76,6 @@ struct FRewardEvent
  * Example:
  * - Assault agent kills enemy: +10 reward
  * - Defend agent kills enemy: +5 reward (less important for role)
- * - Scout reveals new enemy: +7 reward (core objective)
  */
 UCLASS(ClassGroup=(MOC), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UMocRewardCalculator : public UActorComponent
@@ -88,63 +87,63 @@ public:
 
 	/**
 	 * Calculate reward for enemy kill
-	 * Assault: +10, Defend: +5, Support: +3, Scout: +5, Retreat: -2
+	 * Assault: +10, Defend: +5, Support: +3
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateKillReward(EStrategyType ActiveStrategy);
 
 	/**
 	 * Calculate reward for assist (damage contribution)
-	 * Assault: +3, Defend: +2, Support: +4, Scout: +2, Retreat: 0
+	 * Assault: +3, Defend: +2, Support: +4
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateAssistReward(EStrategyType ActiveStrategy, float DamageDealt);
 
 	/**
 	 * Calculate penalty for death
-	 * Assault: -20, Defend: -15, Support: -10, Scout: -8, Retreat: -30 (severe)
+	 * Assault: -20, Defend: -15, Support: -10
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateDeathPenalty(EStrategyType ActiveStrategy);
 
 	/**
 	 * Calculate reward for capturing point
-	 * Assault: +15, Defend: +20 (core objective), Support: +10, Scout: +5, Retreat: 0
+	 * Assault: +15, Defend: +20 (core objective), Support: +10
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateCaptureReward(EStrategyType ActiveStrategy);
 
 	/**
 	 * Calculate penalty for losing point
-	 * Assault: -25, Defend: -30 (critical failure), Support: -15, Scout: -5, Retreat: 0
+	 * Assault: -25, Defend: -30 (critical failure), Support: -15
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateLosePointPenalty(EStrategyType ActiveStrategy);
 
 	/**
 	 * Calculate reward for healing ally (40+ HP)
-	 * Assault: 0, Defend: +3, Support: +12 (core objective), Scout: 0, Retreat: 0
+	 * Assault: 0, Defend: +3, Support: +12 (core objective)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateHealAllyReward(EStrategyType ActiveStrategy, float HPRestored);
 
 	/**
 	 * Calculate reward for revealing enemy (first sight)
-	 * Assault: +2, Defend: +1, Support: +1, Scout: +7 (core objective), Retreat: 0
+	 * Assault: +2, Defend: +1, Support: +1,(core objective)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateRevealEnemyReward(EStrategyType ActiveStrategy);
 
 	/**
 	 * Calculate reward for pickup denial (take before enemy)
-	 * Assault: +1, Defend: +1, Support: +2, Scout: +5 (resource control), Retreat: 0
+	 * Assault: +1, Defend: +1, Support: +2, (resource control)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculatePickupDenyReward(EStrategyType ActiveStrategy);
 
 	/**
 	 * Calculate reward for survival at low HP (per 5 seconds)
-	 * Assault: -5, Defend: -3, Support: -2, Scout: +1, Retreat: +20 (core objective)
+	 * Assault: -5, Defend: -3, Support: -2
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateSurvivalReward(EStrategyType ActiveStrategy, float CurrentHP, float MaxHP);

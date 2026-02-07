@@ -18,7 +18,7 @@
  * Architecture:
  * - Input: 61-dim (State=52, OptionOneHot=5, Target=3, Duration=1)
  * - Output: 8-dim (EQS weight parameters)
- * - Five strategy-specialized heads: Assault, Defend, Support, Scout, Retreat
+ * - Five strategy-specialized heads: Assault, Defend, Support
  *
  * Usage:
  * 1. Load ONNX model: LoadPolicyModel(ModelPath)

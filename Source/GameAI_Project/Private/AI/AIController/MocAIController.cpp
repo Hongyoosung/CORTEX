@@ -19,13 +19,15 @@ AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
     BehaviorTreeComp = CreateDefaultSubobject<UBehaviorTreeComponent>(TEXT("BehaviorTree"));
     BlackboardComp = CreateDefaultSubobject<UBlackboardComponent>(TEXT("Blackboard"));
     
-    // CORTEX Components
+    // CORTEX Components (v10.2 - reduced to essential executor components)
     PolicyExecutor = CreateDefaultSubobject<UMocPolicyExecutor>(TEXT("PolicyExecutor"));
-    MCTSPlanner = CreateDefaultSubobject<UMocMCTSPlanner>(TEXT("MCTSPlanner"));
-    WorldModel = CreateDefaultSubobject<UMocWorldModel>(TEXT("WorldModel"));
-    ValueNetwork = CreateDefaultSubobject<UMocValueNetwork>(TEXT("ValueNetwork"));
     EQSApplicator = CreateDefaultSubobject<UEQSDynamicWeightApplicator>(TEXT("EQSApplicator"));
-    EventMonitor = CreateDefaultSubobject<UMocEventMonitor>(TEXT("EventMonitor"));
+
+    // Removed components (moved to ASquadManager in v10.2):
+    // - MCTSPlanner → ASquadManager::TeamMCTSPlanner
+    // - WorldModel → ASquadManager::TeamWorldModel
+    // - ValueNetwork → Centralized evaluation
+    // - EventMonitor → ASquadManager::OnCriticalEvent()
     
     // Perception 설정
     SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
@@ -61,13 +63,11 @@ AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
 void AMocAIController::BeginPlay()
 {
     Super::BeginPlay();
-    
-    // ONNX 모델 로드
+
+    // ONNX 모델 로드 (v10.2: Policy only, no world model/value network)
     PolicyExecutor->LoadModel(TEXT("Content/AI/Models/policy_weights.onnx"));
-    WorldModel->LoadModel(TEXT("Content/AI/Models/world_model.onnx"));
-    ValueNetwork->LoadModel(TEXT("Content/AI/Models/value_net.onnx"));
-    
-    UE_LOG(LogCortex, Log, TEXT("CORTEX AI Controller initialized"));
+
+    UE_LOG(LogCortex, Log, TEXT("MOC AI Controller initialized (v10.2 executor mode)"));
 }
 
 void AMocAIController::OnPossess(APawn* InPawn)
@@ -91,87 +91,39 @@ void AMocAIController::OnPossess(APawn* InPawn)
 void AMocAIController::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
-    
-    TimeSinceLastReplan += DeltaTime;
-    
-    // 1. 상태 관측
-    FObservation NewObservation = GatherObservation();
-    
-    // 2. Replanning 필요성 체크
-    if (ShouldReplan(NewObservation))
+
+    // v10.2: Agents receive commands from Squad Commander
+    // No local MCTS planning
+
+    AMocCharacter* MyChar = Cast<AMocCharacter>(GetPawn());
+    if (MyChar)
     {
-        UE_LOG(LogCortex, Warning, TEXT("Replanning triggered"));
-        
-        // MCTS로 새 전략 선택 (15ms budget)
-        CurrentOption = PlanNewStrategy();
-        TimeSinceLastReplan = 0.0f;
-        
-        // Blackboard 업데이트 → BT가 자동 반응
-        FEQSWeightParameters NewWeights = GetCurrentEQSWeights();
-        UpdateBlackboard(CurrentOption, NewWeights);
+        // Get commanded strategy (set by SquadManager)
+        EStrategyType CurrentStrategy = MyChar->GetCommandedStrategy();
+
+        // Update Blackboard for Behavior Tree
+        if (BlackboardComp)
+        {
+            BlackboardComp->SetValueAsEnum(TEXT("CurrentStrategy"),
+                static_cast<uint8>(CurrentStrategy));
+        }
+
+        // Generate EQS weights from policy (still used for spatial reasoning)
+        if (PolicyExecutor)
+        {
+            FEQSWeightParameters Weights = PolicyExecutor->InferWeights(CurrentStrategy);
+            UpdateBlackboardWeights(Weights);
+        }
     }
-    
-    CurrentObservation = NewObservation;
-    
-    // 디버그 시각화
+
+    // Debug visualization
     if (CVarCortexDebug.GetValueOnGameThread())
     {
         DrawDebugInfo();
     }
 }
 
-FObservation AMocAIController::GatherObservation()
-{
-    FObservation Obs;
-    
-    APawn* MyPawn = GetPawn();
-    if (!MyPawn) return Obs;
-    
-    // 기본 정보
-    Obs.SelfPosition = MyPawn->GetActorLocation();
-    Obs.SelfRotation = MyPawn->GetActorRotation();
-    Obs.SelfHealth = Cast<ACortexCharacter>(MyPawn)->GetHealth();
-    
-    // Perception 기반 적 정보
-    TArray<AActor*> PerceivedEnemies;
-    AIPerception->GetCurrentlyPerceivedActors(
-        UAISense_Sight::StaticClass(), 
-        PerceivedEnemies
-    );
-    
-    for (int32 i = 0; i < FMath::Min(PerceivedEnemies.Num(), 3); ++i)
-    {
-        Obs.EnemyPositions[i] = PerceivedEnemies[i]->GetActorLocation();
-        Obs.EnemyHealths[i] = Cast<ACortexCharacter>(PerceivedEnemies[i])->GetHealth();
-    }
-    Obs.NumVisibleEnemies = PerceivedEnemies.Num();
-    
-    // 거점 정보 (GameMode에서 가져오기)
-    // ... (기존 문서와 동일)
-    
-    return Obs;
-}
 
-bool AMocAIController::ShouldReplan(const FObservation& NewObservation)
-{
-    // EventMonitor에게 위임
-    return EventMonitor->CheckReplanningTriggers(
-        CurrentObservation, 
-        NewObservation, 
-        TimeSinceLastReplan
-    );
-}
-
-FTacticalOption AMocAIController::PlanNewStrategy()
-{
-    // MCTS 실행 (15ms budget)
-    return MCTSPlanner->FindBestOption(
-        CurrentObservation,
-        WorldModel,
-        ValueNetwork,
-        15.0f  // milliseconds
-    );
-}
 
 FEQSWeightParameters AMocAIController::GetCurrentEQSWeights()
 {
@@ -188,34 +140,42 @@ FEQSWeightParameters AMocAIController::GetCurrentEQSWeights()
 }
 
 void AMocAIController::UpdateBlackboard(
-    const FTacticalOption& Option, 
+    const FTacticalOption& Option,
     const FEQSWeightParameters& Weights
 )
 {
     if (!BlackboardComp) return;
-    
+
     // 전략 정보
-    BlackboardComp->SetValueAsEnum(TEXT("CurrentStrategy"), 
+    BlackboardComp->SetValueAsEnum(TEXT("CurrentStrategy"),
         static_cast<uint8>(Option.Strategy));
-    BlackboardComp->SetValueAsVector(TEXT("TargetLocation"), 
+    BlackboardComp->SetValueAsVector(TEXT("TargetLocation"),
         Option.TargetLocation);
-    
+
+    // EQS 가중치
+    UpdateBlackboardWeights(Weights);
+}
+
+void AMocAIController::UpdateBlackboardWeights(const FEQSWeightParameters& Weights)
+{
+    if (!BlackboardComp) return;
+
     // EQS 가중치 (각각 개별 키로 저장)
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_EnemyObj"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_EnemyObj"),
         Weights.EnemyObjectiveProximity);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_AllyObj"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_AllyObj"),
         Weights.AllyObjectiveProximity);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_Cover"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_Cover"),
         Weights.CoverDensity);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_Visibility"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_Visibility"),
         Weights.EnemyVisibility);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_AllyProx"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_AllyProx"),
         Weights.AllyProximity);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_Range"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_Range"),
         Weights.CombatRange);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_Pickup"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_Pickup"),
         Weights.PickupProximity);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_Height"), 
+    BlackboardComp->SetValueAsFloat(TEXT("Weight_Height"),
         Weights.HeightAdvantage);
 }
 

@@ -42,23 +42,16 @@ protected:
     UFUNCTION()
     void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
-    // ==================== Core AI Loop ====================
-    
-    /** 관측 상태 수집 (Perception → 52-dim vector) */
-    FObservation GatherObservation();
-    
-    /** Event-driven replanning 체크 */
-    bool ShouldReplan(const FObservation& NewObservation);
-    
-    /** MCTS 실행하여 새 전략 선택 */
-    FTacticalOption PlanNewStrategy();
-    
-    /** 현재 전략에 맞는 EQS 가중치 생성 */
+
+    UE_DEPRECATED(5.6, "EQS weights now from centralized policy")
     FEQSWeightParameters GetCurrentEQSWeights();
-    
-    /** Blackboard 업데이트 (BT와 통신) */
-    void UpdateBlackboard(const FTacticalOption& Option, 
+
+    /** Blackboard 업데이트 (BT와 통신) - Still used for commanded strategies */
+    void UpdateBlackboard(const FTacticalOption& Option,
                          const FEQSWeightParameters& Weights);
+
+    /** Blackboard 업데이트 (EQS weights only) - v10.2 simplified */
+    void UpdateBlackboardWeights(const FEQSWeightParameters& Weights);
 
 
                          
@@ -95,30 +88,21 @@ protected:
     UBlackboardComponent* BlackboardComp;
     
     // ==================== MOC Custom Components ====================
-    
-    /** RL Policy Executor (ONNX inference) */
+
+    /** RL Policy Executor (ONNX inference) - Still used for EQS weights */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
     UMocPolicyExecutor* PolicyExecutor;
-    
-    /** MCTS Strategic Planner */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
-    UMocMCTSPlanner* MCTSPlanner;
-    
-    /** World Model (state prediction) */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
-    UMocWorldModel* WorldModel;
-    
-    /** Value Network (state evaluation) */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
-    UMocValueNetwork* ValueNetwork;
-    
-    /** EQS Weight Applicator */
+
+    /** EQS Weight Applicator - Still used for spatial reasoning */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
     UEQSDynamicWeightApplicator* EQSApplicator;
-    
-    /** Event Monitor (replanning trigger detection) */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
-    UMocEventMonitor* EventMonitor;
+
+    // ==================== REMOVED (v10.2) ====================
+    // The following components moved to centralized Squad Commander:
+    // - UMocMCTSPlanner* MCTSPlanner → ASquadManager::TeamMCTSPlanner
+    // - UMocWorldModel* WorldModel → ASquadManager::TeamWorldModel
+    // - UMocValueNetwork* ValueNetwork → Centralized evaluation
+    // - UMocEventMonitor* EventMonitor → ASquadManager::OnCriticalEvent()
 
     // ==================== Configuration ====================
     

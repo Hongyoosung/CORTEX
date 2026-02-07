@@ -2,6 +2,7 @@
 
 #include "Team/TeamManager.h"
 #include "Team/FogOfWarManager.h"
+#include "Team/SquadManager.h"
 #include "Characters/MocCharacter.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Actors/PickupBase.h"
@@ -424,4 +425,36 @@ bool ATeamManager::IsEnemyPositionValid(int32 TeamID, AActor* Enemy) const
 	}
 
 	return FogOfWarManager->IsEnemyPositionValid(TeamID, Enemy);
+}
+
+//========================================
+// v10.2 Squad Commander Access
+//========================================
+
+ASquadManager* ATeamManager::GetSquadCommander(int32 TeamID) const
+{
+	if (TeamID == 0)
+	{
+		return RedTeamCommander;
+	}
+	else if (TeamID == 1)
+	{
+		return BlueTeamCommander;
+	}
+
+	return nullptr;
+}
+
+void ATeamManager::SetSquadCommander(int32 TeamID, ASquadManager* Commander)
+{
+	if (TeamID == 0)
+	{
+		RedTeamCommander = Commander;
+		UE_LOG(LogTemp, Log, TEXT("TeamManager: Red Team Commander set"));
+	}
+	else if (TeamID == 1)
+	{
+		BlueTeamCommander = Commander;
+		UE_LOG(LogTemp, Log, TEXT("TeamManager: Blue Team Commander set"));
+	}
 }

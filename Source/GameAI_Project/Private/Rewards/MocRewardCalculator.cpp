@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Rewards/MocRewardCalculator.h"
+#include "RL/Rewards/MocRewardCalculator.h"
 #include "Characters/MocCharacter.h"
 
 
@@ -24,12 +24,6 @@ float UMocRewardCalculator::CalculateKillReward(EStrategyType ActiveStrategy)
 	case EStrategyType::Support:
 		Reward = 3.0f;
 		break;
-	case EStrategyType::Scout:
-		Reward = 5.0f;
-		break;
-	case EStrategyType::Retreat:
-		Reward = -2.0f; // Discourage combat during retreat
-		break;
 	}
 
 	LogRewardEvent(ERewardEventType::Kill, ActiveStrategy, Reward);
@@ -50,13 +44,7 @@ float UMocRewardCalculator::CalculateAssistReward(EStrategyType ActiveStrategy, 
 		BaseReward = 2.0f;
 		break;
 	case EStrategyType::Support:
-		BaseReward = 4.0f; // Support values team contribution
-		break;
-	case EStrategyType::Scout:
-		BaseReward = 2.0f;
-		break;
-	case EStrategyType::Retreat:
-		BaseReward = 0.0f;
+		BaseReward = 4.0f; 
 		break;
 	}
 
@@ -83,12 +71,6 @@ float UMocRewardCalculator::CalculateDeathPenalty(EStrategyType ActiveStrategy)
 	case EStrategyType::Support:
 		Penalty = -10.0f;
 		break;
-	case EStrategyType::Scout:
-		Penalty = -8.0f;
-		break;
-	case EStrategyType::Retreat:
-		Penalty = -30.0f; // Severe penalty - retreat should prevent death
-		break;
 	}
 
 	LogRewardEvent(ERewardEventType::Death, ActiveStrategy, Penalty);
@@ -111,12 +93,6 @@ float UMocRewardCalculator::CalculateCaptureReward(EStrategyType ActiveStrategy)
 	case EStrategyType::Support:
 		Reward = 10.0f;
 		break;
-	case EStrategyType::Scout:
-		Reward = 5.0f;
-		break;
-	case EStrategyType::Retreat:
-		Reward = 0.0f;
-		break;
 	}
 
 	LogRewardEvent(ERewardEventType::CapturePoint, ActiveStrategy, Reward);
@@ -138,12 +114,6 @@ float UMocRewardCalculator::CalculateLosePointPenalty(EStrategyType ActiveStrate
 		break;
 	case EStrategyType::Support:
 		Penalty = -15.0f;
-		break;
-	case EStrategyType::Scout:
-		Penalty = -5.0f;
-		break;
-	case EStrategyType::Retreat:
-		Penalty = 0.0f;
 		break;
 	}
 
@@ -185,12 +155,6 @@ float UMocRewardCalculator::CalculateRevealEnemyReward(EStrategyType ActiveStrat
 	case EStrategyType::Support:
 		Reward = 1.0f;
 		break;
-	case EStrategyType::Scout:
-		Reward = 7.0f; // Core objective - information gathering
-		break;
-	case EStrategyType::Retreat:
-		Reward = 0.0f;
-		break;
 	}
 
 	LogRewardEvent(ERewardEventType::RevealEnemy, ActiveStrategy, Reward);
@@ -212,12 +176,6 @@ float UMocRewardCalculator::CalculatePickupDenyReward(EStrategyType ActiveStrate
 		break;
 	case EStrategyType::Support:
 		Reward = 2.0f;
-		break;
-	case EStrategyType::Scout:
-		Reward = 5.0f; // Resource control objective
-		break;
-	case EStrategyType::Retreat:
-		Reward = 0.0f;
 		break;
 	}
 
@@ -247,12 +205,6 @@ float UMocRewardCalculator::CalculateSurvivalReward(EStrategyType ActiveStrategy
 	case EStrategyType::Support:
 		Reward = -2.0f;
 		break;
-	case EStrategyType::Scout:
-		Reward = 1.0f; // Slight positive for information value
-		break;
-	case EStrategyType::Retreat:
-		Reward = 20.0f; // Core objective - stay alive to recover
-		break;
 	}
 
 	LogRewardEvent(ERewardEventType::Survival, ActiveStrategy, Reward);
@@ -280,11 +232,6 @@ float UMocRewardCalculator::CalculateDistanceShaping(EStrategyType ActiveStrateg
 	case EStrategyType::Support:
 		PenaltyPerMeter = -0.015f;
 		break;
-	case EStrategyType::Scout:
-		PenaltyPerMeter = -0.03f; // High penalty for scouts not exploring
-		break;
-	case EStrategyType::Retreat:
-		return 0.0f; // N/A for retreat
 	}
 
 	float Penalty = PenaltyPerMeter * DistanceToTarget;

@@ -362,28 +362,6 @@ FEQSWeightParameters UMultiHeadPolicyExecutor::GetDefaultWeightsForStrategy(EStr
 		Weights.HeightAdvantage = 0.3f;
 		break;
 
-	case EStrategyType::Scout:
-		Weights.EnemyObjectiveProximity = 0.4f;
-		Weights.AllyObjectiveProximity = -0.5f;
-		Weights.CoverDensity = 0.3f;
-		Weights.EnemyVisibility = 0.9f; // Maximize visibility
-		Weights.AllyProximity = -0.6f; // Operate independently
-		Weights.CombatRange = 0.3f;
-		Weights.PickupProximity = 0.7f; // Deny resources
-		Weights.HeightAdvantage = 0.9f; // High ground for vision
-		break;
-
-	case EStrategyType::Retreat:
-		Weights.EnemyObjectiveProximity = -0.9f; // Away from danger
-		Weights.AllyObjectiveProximity = 0.8f; // Toward safety
-		Weights.CoverDensity = 0.9f; // Maximum cover
-		Weights.EnemyVisibility = -0.7f; // Avoid enemies
-		Weights.AllyProximity = 0.5f;
-		Weights.CombatRange = -0.8f; // Disengage
-		Weights.PickupProximity = 0.9f; // Prioritize health
-		Weights.HeightAdvantage = 0.2f;
-		break;
-
 	default:
 		UE_LOG(LogTemp, Warning, TEXT("Unknown strategy type: %d. Using neutral weights."),
 			static_cast<int32>(Strategy));

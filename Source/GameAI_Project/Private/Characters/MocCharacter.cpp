@@ -6,6 +6,7 @@
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Core/MocGameMode.h"
 #include "Team/TeamManager.h"
+#include "Team/SquadManager.h"
 #include "Team/FogOfWarManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -14,6 +15,7 @@
 #include "Perception/AISense_Sight.h"
 #include "AIController.h"
 #include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "BrainComponent.h"
 
 AMocCharacter::AMocCharacter()
@@ -81,26 +83,39 @@ void AMocCharacter::BeginPlay()
 			AI->RunBehaviorTree(BehaviorTree);
 		}
 	}
+
+	// v10.2: Find Squad Commander reference
+	if (UWorld* World = GetWorld())
+	{
+		if (AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
+		{
+			if (ATeamManager* TM = GameMode->GetTeamManager())
+			{
+				int32 MyTeamID = GetTeamID_Implementation();
+				// TODO: Get Squad Commander from TeamManager
+				// SquadCommander = TM->GetSquadCommander(MyTeamID);
+			}
+		}
+	}
 }
 
 void AMocCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Update fog-of-war vision (report current vision to team)
-	if (!bIsDead)
+	// Update fog-of-war vision ONLY if alive (FIXED: was inverted logic)
+	if (!bIsAlive)
 	{
-		return;
+		return; // Skip if dead
 	}
 
 	UWorld* World = GetWorld();
-	if (World)
+	if (!World) // FIXED: Return only if World is NULL
 	{
 		return;
 	}
 
 	AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode());
-
 	if (!GameMode)
 	{
 		return;
@@ -269,4 +284,59 @@ void AMocCharacter::ResetCharacter()
 
 	// Clear dead flag
 	bIsAlive = true;
+}
+
+//========================================
+// v10.2 Command Interface
+//========================================
+
+void AMocCharacter::SetCommandedStrategy(EStrategyType NewStrategy)
+{
+	if (CommandedStrategy != NewStrategy)
+	{
+		CommandedStrategy = NewStrategy;
+
+		// Update Blackboard for Behavior Tree
+		if (AAIController* AICtrl = Cast<AAIController>(GetController()))
+		{
+			if (UBlackboardComponent* BB = AICtrl->GetBlackboardComponent())
+			{
+				BB->SetValueAsEnum("CurrentStrategy", static_cast<uint8>(NewStrategy));
+
+				UE_LOG(LogTemp, Log, TEXT("Agent %s received command: %s"),
+					*GetName(), *UEnum::GetValueAsString(NewStrategy));
+			}
+		}
+	}
+}
+
+//========================================
+// Combat Stats Interface
+//========================================
+
+float AMocCharacter::GetHealthPercentage() const
+{
+	if (HealthComponent)
+	{
+		return HealthComponent->GetHealthPercentage();
+	}
+	return 1.0f;
+}
+
+float AMocCharacter::GetWeaponCooldown() const
+{
+	if (WeaponComponent)
+	{
+		return WeaponComponent->GetCooldownProgress();
+	}
+	return 0.0f;
+}
+
+bool AMocCharacter::CanFireWeapon() const
+{
+	if (WeaponComponent)
+	{
+		return WeaponComponent->CanFire();
+	}
+	return false;
 }
