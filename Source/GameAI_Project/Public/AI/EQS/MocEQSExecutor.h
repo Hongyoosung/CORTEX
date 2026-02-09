@@ -1,11 +1,11 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "EnvironmentQuery/EnvQueryManager.h"
-#include "EQS/EQSWeightParameters.h"
+#include "EnvironmentQuery/EnvQueryTypes.h"
+#include "EnvironmentQuery/EnvQuery.h"
+#include "AI/EQS/EQSWeightParameters.h"
 #include "MocEQSExecutor.generated.h"
 
 class UEnvQuery;
@@ -39,25 +39,19 @@ public:
 	 * @param Weights - 8-dimensional weights from RL policy output
 	 * @param OnComplete - Callback with best location (FVector::ZeroVector if failed)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|EQS")
 	void ExecuteTacticalQuery(
 		const FEQSWeightParameters& Weights,
-		FEnvQueryFinishedSignature OnComplete
+		FQueryFinishedSignature OnComplete
 	);
 
-	/**
-	 * Synchronous version for testing/debugging
-	 * Returns best location immediately (blocks until query completes)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|EQS")
-	FVector ExecuteTacticalQuerySync(const FEQSWeightParameters& Weights);
 
 	/**
 	 * Set the EQS query template to use
 	 * Default: EQ_TacticalMovement (configured in Blueprint)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|EQS")
 	void SetQueryTemplate(UEnvQuery* NewTemplate);
+
+
 
 protected:
 	/** EQS Query Template - configured in editor */
@@ -90,7 +84,4 @@ private:
 	 * Callback for async query completion
 	 */
 	void OnQueryFinished(TSharedPtr<FEnvQueryResult> Result);
-
-	/** Stored completion delegate for async queries */
-	FEnvQueryFinishedSignature StoredDelegate;
 };

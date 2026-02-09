@@ -65,11 +65,6 @@ void UWeaponComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	// Update cooldown
 	UpdateCooldown(DeltaTime);
 
-	// Update auto fire
-	if (bIsFiring && FireMode == EWeaponFireMode::FullAuto)
-	{
-		UpdateAutoFire(DeltaTime);
-	}
 
 	// Debug drawing
 	if (bEnableDebugDrawing)
@@ -173,6 +168,17 @@ bool UWeaponComponent::CanFire() const
 //------------------------------------------------------------------------------
 // AMMO & RELOAD
 //------------------------------------------------------------------------------
+
+float UWeaponComponent::GetCooldownProgress() const
+{
+	if (AttackSpeed <= 0.0f) return 1.0f;
+
+	const float TotalCooldown = 1.0f / AttackSpeed;
+	const float Progress = (TotalCooldown - CurrentCooldown) / TotalCooldown;
+
+	return FMath::Clamp(Progress, 0.0f, 1.0f);
+	
+}
 
 void UWeaponComponent::Reload()
 {

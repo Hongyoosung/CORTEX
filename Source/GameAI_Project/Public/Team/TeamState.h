@@ -20,7 +20,7 @@
  * Usage:
  * - Collected by ASquadManager every planning cycle
  * - Input to Centralized MCTS for tactical play selection
- * - Batch processed by UTeamWorldModel for prediction
+ * - Batch processed by UMocTeamWorldModel for prediction
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FTeamState

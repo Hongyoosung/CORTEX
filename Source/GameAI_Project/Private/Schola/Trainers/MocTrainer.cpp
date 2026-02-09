@@ -1,74 +1,128 @@
 // File: Schola/Trainers/MocTrainer.cpp
 
-#include "MocTrainer.h"
-#include "ScholaMocAgent.h"
+#include "Schola/Trainers/MocTrainer.h"
+#include "Schola/Components/ScholaMocAgent.h"
+#include "Schola/Logging/ScholaTransitionLogger.h"
+#include "Schola/Logging/MocTransitionLogger.h"
 #include "Characters/MocCharacter.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
+#include "EnvironmentQuery/EnvQueryTypes.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
+#include "RL/Rewards/RewardTypes.h"
+#include "AIController.h"
+#include "Navigation/PathFollowingComponent.h"
+#include "Training/StateStructs/TrainerState.h"
 
 AMocTrainer::AMocTrainer()
 {
     PrimaryActorTick.bCanEverTick = true;
     PrimaryActorTick.TickInterval = 0.0167f;  // 60Hz
-    
+
+    // Episode state
     CurrentEpisodeSteps = 0;
     EpisodeReward = 0.0f;
+
+    // Training statistics
+    TotalEpisodes = 0;
+    CumulativeReward = 0.0f;
+    AverageEpisodeLength = 0.0f;
+
+    // Initialize pointers
+    MocAgent = nullptr;
+    ControlledCharacter = nullptr;
+    TransitionLogger = nullptr;
+
+    // Default strategy
+    CachedCommandedStrategy = EStrategyType::Assault;
+    LastEQSTargetLocation = FVector::ZeroVector;
 }
 
-void AMocTrainer::Initialize(UScholaAgentComponent* InAgent)
+void AMocTrainer::InitializeMocTrainer(UScholaMocAgent* InAgent)
 {
-    Super::Initialize(InAgent);
-    
-    MocAgent = Cast<UScholaMocAgent>(InAgent);
+    MocAgent = InAgent;
     if (!MocAgent)
     {
-        UE_LOG(LogTemp, Error, TEXT("MocTrainer: Agent is not UScholaMocAgent!"));
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Invalid agent reference! Initialization failed."));
         return;
     }
-    
+
     // Character 참조 획득
     ControlledCharacter = Cast<AMocCharacter>(MocAgent->GetOwner());
-    
+    if (!ControlledCharacter)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Agent owner is not AMocCharacter! Initialization failed."));
+        return;
+    }
+
+    // EQS Query Template 검증
+    if (!EQSQueryTemplate)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS Query Template not set! EQS execution will be disabled."));
+    }
+
     // Transition Logger 초기화
     if (bLogTransitions)
     {
-        TransitionLogger = MakeShared<FTransitionLogger>(TransitionLogPath);
-        UE_LOG(LogTemp, Log, TEXT("Transition logging enabled: %s"), *TransitionLogPath);
+        TransitionLogger = NewObject<UScholaTransitionLogger>(this);
+        if (TransitionLogger)
+        {
+            TransitionLogger->Initialize(TransitionLogPath);
+            UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Transition logging enabled: %s"), *TransitionLogPath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Failed to create TransitionLogger!"));
+        }
     }
-    
-    UE_LOG(LogTemp, Log, TEXT("MocTrainer initialized for agent: %s"), 
-        *MocAgent->GetName());
+
+    // 초기 commanded strategy 캐시
+    CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] v10.2 Executor initialized for agent: %s (Strategy: %s)"),
+        *ControlledCharacter->GetName(),
+        *UEnum::GetValueAsString(CachedCommandedStrategy));
 }
 
 void AMocTrainer::BeginPlay()
 {
     Super::BeginPlay();
-    
-    // 초기 Option 샘플링
-    SampleNewOption();
+
+    // v10.2: Strategy는 Squad Commander가 할당
+    // Executor는 commanded strategy를 수행하는 데만 집중
+
+    // Initialize observation state
+    PreviousObservation = FObservation();
+    CurrentObservation = GatherStateObservation();
 }
 
 void AMocTrainer::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
-    
-    CurrentEpisodeSteps++;
-    
-    // Option 전환 체크 (주기적 또는 Volatility 기반)
-    if (CurrentEpisodeSteps % OptionSwitchInterval == 0)
+
+    if (!ControlledCharacter || !ControlledCharacter->IsAlive())
     {
-        FObservation NewObs = GatherStateObservation();
-        float Volatility = CalculateVolatility(CurrentObservation, NewObs);
-        
-        if (Volatility > VolatilityThreshold)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("High volatility detected: %.3f, switching option"), 
-                Volatility);
-            SampleNewOption();
-        }
+        return; // Skip tick if character is invalid or dead
+    }
+
+    CurrentEpisodeSteps++;
+
+    // v10.2: Update commanded strategy cache (may change from Squad Commander)
+    EStrategyType NewStrategy = ControlledCharacter->GetCommandedStrategy();
+    if (NewStrategy != CachedCommandedStrategy)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Strategy changed: %s -> %s"),
+            *UEnum::GetValueAsString(CachedCommandedStrategy),
+            *UEnum::GetValueAsString(NewStrategy));
+        CachedCommandedStrategy = NewStrategy;
+    }
+
+    // Debug visualization
+    if (bEnableDebugVisualization)
+    {
+        DrawTrainingDebug();
     }
 }
 
@@ -76,82 +130,105 @@ void AMocTrainer::Tick(float DeltaTime)
 
 TArray<float> AMocTrainer::GetObservation()
 {
-    TArray<float> Observation;
-    
-    // 1. State (52-dim)
+    // v10.2: 52-dim agent state only
+    // Commanded strategy is already set in Character by Squad Commander
     CurrentObservation = GatherStateObservation();
-    Observation.Append(CurrentObservation.ToArray());
-    
-    // 2. Option (1-dim - index)
-    Observation.Add(static_cast<float>(CurrentOption));
-    
-    // 3. Target (3-dim)
-    Observation.Add(CurrentTarget.X);
-    Observation.Add(CurrentTarget.Y);
-    Observation.Add(CurrentTarget.Z);
-    
-    // 4. Duration (1-dim)
-    Observation.Add(CurrentOptionDuration);
-    
-    check(Observation.Num() == 57);  // 안전 체크
-    
+
+    // Observation 유효성 검사
+    if (!ValidateObservation(CurrentObservation))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Observation validation failed, returning zeroed observation"));
+        return TArray<float>();
+    }
+
+    TArray<float> Observation = CurrentObservation.ToArray();
+
+    // 차원 검증
+    if (Observation.Num() != 52)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Observation dimension mismatch: %d (expected 52)"),
+            Observation.Num());
+    }
+
     return Observation;
 }
 
 void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
 {
-    if (!MocAgent || !ControlledCharacter) return;
-    
-    // ActionValues는 [8-dim] EQS Weights (이미 [-1, 1] 범위)
-    check(ActionValues.Num() == 8);
-    
-    // FEQSWeightParameters 구조체로 변환
+    if (!MocAgent || !ControlledCharacter)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot apply action - invalid agent or character"));
+        return;
+    }
+
+    // ActionValues 검증
+    if (ActionValues.Num() != 8)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Invalid action size: %d (expected 8)"), ActionValues.Num());
+        return;
+    }
+
+    // FEQSWeightParameters 구조체로 변환 및 클램핑
     FEQSWeightParameters Weights;
-    Weights.EnemyObjectiveProximity = ActionValues[0];
-    Weights.AllyObjectiveProximity  = ActionValues[1];
-    Weights.CoverDensity            = ActionValues[2];
-    Weights.EnemyVisibility         = ActionValues[3];
-    Weights.AllyProximity           = ActionValues[4];
-    Weights.CombatRange             = ActionValues[5];
-    Weights.PickupProximity         = ActionValues[6];
-    Weights.HeightAdvantage         = ActionValues[7];
-    
+    Weights.EnemyObjectiveProximity = FMath::Clamp(ActionValues[0], -1.0f, 1.0f);
+    Weights.AllyObjectiveProximity  = FMath::Clamp(ActionValues[1], -1.0f, 1.0f);
+    Weights.CoverDensity            = FMath::Clamp(ActionValues[2], -1.0f, 1.0f);
+    Weights.EnemyVisibility         = FMath::Clamp(ActionValues[3], -1.0f, 1.0f);
+    Weights.AllyProximity           = FMath::Clamp(ActionValues[4], -1.0f, 1.0f);
+    Weights.CombatRange             = FMath::Clamp(ActionValues[5], -1.0f, 1.0f);
+    Weights.PickupProximity         = FMath::Clamp(ActionValues[6], -1.0f, 1.0f);
+    Weights.HeightAdvantage         = FMath::Clamp(ActionValues[7], -1.0f, 1.0f);
+
+    // 가중치 유효성 검사
+    if (!ValidateEQSWeights(Weights))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS weights validation failed, using defaults"));
+        return;
+    }
+
     LastAction = Weights;
-    
+
     // EQS 가중치를 Character의 이동 시스템에 적용
-    ApplyEQSWeightsToCharacter(Weights);
+    ApplyEQSWeightsToCharacter_Implementation(Weights);
 }
 
 float AMocTrainer::ComputeReward()
 {
-    if (!MocAgent) return 0.0f;
-    
+    if (!MocAgent || !ControlledCharacter)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot compute reward - invalid agent or character"));
+        return 0.0f;
+    }
+
+    // v10.2: Get commanded strategy from Character (set by Squad Commander)
+    EStrategyType CommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+
     // 현재 상태와 이전 상태 비교하여 보상 계산
-    float StepReward = ComputeOptionReward(
-        CurrentOption,
+    float StepReward = ComputeCommandedStrategyReward(
+        CommandedStrategy,
         PreviousObservation,
         CurrentObservation,
         LastAction
     );
-    
+
     EpisodeReward += StepReward;
-    
+
     // Transition 로깅 (World Model 학습용)
-    if (bLogTransitions && TransitionLogger.IsValid())
+    if (bLogTransitions && TransitionLogger)
     {
         LogTransition(
             PreviousObservation,
-            CurrentOption,
+            CommandedStrategy,
             LastAction,
             StepReward,
             CurrentObservation,
             IsEpisodeDone()
         );
     }
-    
+
     // 이전 상태 업데이트
     PreviousObservation = CurrentObservation;
-    
+
     return StepReward;
 }
 
@@ -164,7 +241,7 @@ bool AMocTrainer::IsEpisodeDone()
         return true;
     }
     
-    if (!ControlledCharacter || ControlledCharacter->GetHealth() <= 0.0f)
+    if (!ControlledCharacter || ControlledCharacter->GetHealthPercentage() <= 0.0f)
     {
         UE_LOG(LogTemp, Log, TEXT("Episode ended: Agent died"));
         return true;
@@ -183,26 +260,28 @@ bool AMocTrainer::IsEpisodeDone()
 
 void AMocTrainer::ResetEpisode()
 {
-    UE_LOG(LogTemp, Log, TEXT("Resetting episode. Total reward: %.2f, Steps: %d"),
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Resetting episode. Total reward: %.2f, Steps: %d"),
         EpisodeReward, CurrentEpisodeSteps);
-    
+
+    // 훈련 통계 업데이트
+    UpdateTrainingStatistics();
+
     // 통계 초기화
     CurrentEpisodeSteps = 0;
     EpisodeReward = 0.0f;
-    
-    // Character 리셋
+
+    // v10.2: Squad Commander가 새로운 전략을 할당
     if (ControlledCharacter)
     {
-        ControlledCharacter->ResetToSpawnLocation();
-        ControlledCharacter->SetHealth(100.0f);
+        CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
     }
-    
-    // 새 Option 샘플링
-    SampleNewOption();
-    
+
     // 상태 초기화
     PreviousObservation = FObservation();
     CurrentObservation = GatherStateObservation();
+
+    // EQS 타겟 초기화
+    LastEQSTargetLocation = FVector::ZeroVector;
 }
 
 // ==================== Helper Functions ====================
@@ -210,186 +289,199 @@ void AMocTrainer::ResetEpisode()
 FObservation AMocTrainer::GatherStateObservation()
 {
     FObservation Obs;
-    
+
     if (!ControlledCharacter) return Obs;
-    
-    // 자신의 정보
-    Obs.SelfPosition = ControlledCharacter->GetActorLocation();
-    Obs.SelfRotation = ControlledCharacter->GetActorRotation();
-    Obs.SelfHealth = ControlledCharacter->GetHealth();
-    Obs.SelfAmmo = ControlledCharacter->GetCurrentAmmo();
-    
-    // 적 정보 (Perception 또는 간단한 거리 기반)
-    TArray<AActor*> Enemies;
+
+    // Self state
+    Obs.Position = ControlledCharacter->GetActorLocation();
+    Obs.Health = ControlledCharacter->GetHealthPercentage(); // [0.0-1.0]
+    Obs.Velocity = ControlledCharacter->GetVelocity();
+    Obs.WeaponCooldown = ControlledCharacter->GetWeaponCooldown_Implementation();
+    Obs.CurrentStrategy = ControlledCharacter->GetCommandedStrategy();
+    Obs.bIsAlive = ControlledCharacter->IsAlive();
+
+    // 팀원 정보 (4 allies)
+    TArray<AActor*> AllCharacters;
     UGameplayStatics::GetAllActorsOfClass(
-        GetWorld(), 
-        AMocCharacter::StaticClass(), 
-        Enemies
+        GetWorld(),
+        AMocCharacter::StaticClass(),
+        AllCharacters
     );
-    
-    int32 EnemyCount = 0;
-    for (AActor* Actor : Enemies)
+
+    int32 AllyIndex = 0;
+    int32 EnemyIndex = 0;
+
+    for (AActor* Actor : AllCharacters)
     {
-        AMocCharacter* Enemy = Cast<AMocCharacter>(Actor);
-        if (Enemy && Enemy->GetTeamID() != ControlledCharacter->GetTeamID())
+        AMocCharacter* Character = Cast<AMocCharacter>(Actor);
+        if (!Character || Character == ControlledCharacter) continue;
+
+        if (Character->GetTeamID() == ControlledCharacter->GetTeamID())
         {
-            if (EnemyCount < 3)  // 최대 3명
+            // Ally
+            if (AllyIndex < 4)
             {
-                Obs.EnemyPositions[EnemyCount] = Enemy->GetActorLocation();
-                Obs.EnemyHealths[EnemyCount] = Enemy->GetHealth();
-                EnemyCount++;
+                Obs.AllyPositions[AllyIndex] = Character->GetActorLocation();
+                Obs.AllyHealths[AllyIndex] = Character->GetHealthPercentage();
+                Obs.AllyStrategies[AllyIndex] = Character->GetCommandedStrategy();
+                AllyIndex++;
+            }
+        }
+        else
+        {
+            // Enemy
+            if (EnemyIndex < 5)
+            {
+                Obs.EnemyPositions[EnemyIndex] = Character->GetActorLocation();
+
+                // Simple visibility check: line of sight within vision range
+                FVector ToEnemy = Character->GetActorLocation() - ControlledCharacter->GetActorLocation();
+                float Distance = ToEnemy.Size();
+                bool bVisible = false;
+
+                if (Distance < 8000.0f) // Vision range from FAgentStats
+                {
+                    // Simple line trace for visibility
+                    FHitResult HitResult;
+                    FCollisionQueryParams QueryParams;
+                    QueryParams.AddIgnoredActor(ControlledCharacter);
+
+                    bVisible = !GetWorld()->LineTraceSingleByChannel(
+                        HitResult,
+                        ControlledCharacter->GetActorLocation() + FVector(0, 0, 90), // Eye height
+                        Character->GetActorLocation() + FVector(0, 0, 90),
+                        ECC_Visibility,
+                        QueryParams
+                    );
+                }
+
+                Obs.EnemyVisible[EnemyIndex] = bVisible;
+                EnemyIndex++;
             }
         }
     }
-    Obs.NumVisibleEnemies = EnemyCount;
-    
-    // 거점 정보 (게임 모드에서 가져오기)
-    // ... 프로젝트별 구현
-    
-    // 팀원 정보
-    // ... 프로젝트별 구현
-    
+
+    // Map state (capture points)
+    // TODO: Implement capture point balance calculation
+    Obs.CapturePointBalance = 0;
+    Obs.TimeRemaining = 1.0f; // TODO: Get from game mode
+
     return Obs;
 }
 
-void AMocTrainer::SampleNewOption()
-{
-    // Random Option Sampling (Phase 1 Training)
-    int32 RandomIndex = FMath::RandRange(0, AvailableStrategies.Num() - 1);
-    CurrentOption = AvailableStrategies[RandomIndex];
-    
-    // 전략에 맞는 Target 선택
-    CurrentTarget = SelectTargetForOption(CurrentOption);
-    
-    // Duration 랜덤 설정 (5-20초)
-    CurrentOptionDuration = FMath::FRandRange(5.0f, 20.0f);
-    
-    UE_LOG(LogTemp, Log, TEXT("Sampled Option: %s, Target: %s, Duration: %.1fs"),
-        *UEnum::GetValueAsString(CurrentOption),
-        *CurrentTarget.ToString(),
-        CurrentOptionDuration);
-}
-
-FVector AMocTrainer::SelectTargetForOption(EStrategyType Strategy)
-{
-    // 전략에 따라 타겟 거점 선택
-    switch (Strategy)
-    {
-    case EStrategyType::Attack:
-        // 적 거점으로
-        return GetNearestEnemyObjective();
-        
-    case EStrategyType::Defend:
-        // 아군 거점으로
-        return GetNearestAllyObjective();
-        
-    default:
-        return ControlledCharacter->GetActorLocation();
-    }
-}
-
-float AMocTrainer::CalculateVolatility(const FObservation& Prev, const FObservation& Current)
-{
-    // State 변화량 계산 (주요 feature만)
-    float HealthDelta = FMath::Abs(Current.SelfHealth - Prev.SelfHealth);
-    float PositionDelta = FVector::Dist(Current.SelfPosition, Prev.SelfPosition);
-    float EnemyCountDelta = FMath::Abs(
-        static_cast<float>(Current.NumVisibleEnemies - Prev.NumVisibleEnemies)
-    );
-    
-    // 정규화 및 가중 합산
-    float Volatility = 
-        (HealthDelta / 100.0f) * 0.5f +        // 체력 변화 50%
-        (PositionDelta / 1000.0f) * 0.2f +     // 위치 변화 20%
-        (EnemyCountDelta / 3.0f) * 0.3f;       // 적 감지 변화 30%
-    
-    return FMath::Clamp(Volatility, 0.0f, 1.0f);
-}
-
-float AMocTrainer::ComputeOptionReward(
-    EStrategyType Strategy,
+float AMocTrainer::ComputeCommandedStrategyReward(
+    EStrategyType CommandedStrategy,
     const FObservation& Prev,
     const FObservation& Current,
     const FEQSWeightParameters& Action
 )
 {
     float Reward = 0.0f;
-    
-    // Strategy-Specific Rewards (v10.1 설계)
-    switch (Strategy)
+
+    // v10.2: Team-aligned rewards based on commanded strategy execution quality
+    // Using configurable parameters for reward shaping
+
+    switch (CommandedStrategy)
     {
-    case EStrategyType::Attack:
+    case EStrategyType::Assault:
         {
-            // 적 거점 접근
-            float PrevDist = FVector::Dist(Prev.SelfPosition, CurrentTarget);
-            float CurrDist = FVector::Dist(Current.SelfPosition, CurrentTarget);
-            float DistanceReduction = (PrevDist - CurrDist) / 100.0f;
-            Reward += 0.5f * DistanceReduction;
-            
-            // 킬/데미지
-            if (Current.TotalKills > Prev.TotalKills)
+            // Reward for aggressive positioning toward enemies
+            float PositionChange = FVector::Dist(Prev.Position, Current.Position);
+            Reward += AssaultMovementReward * PositionChange;
+
+            // Health management (aggressive but not reckless)
+            float HealthLoss = Prev.Health - Current.Health;
+            if (HealthLoss > 0.3f)
             {
-                Reward += 10.0f;  // +10 per kill
+                Reward -= AssaultHealthPenalty * HealthLoss;
             }
-            Reward += (Current.TotalDamageDealt - Prev.TotalDamageDealt) * 0.01f;
-            
-            // 자기 피해 페널티
-            float SelfDamage = Prev.SelfHealth - Current.SelfHealth;
-            if (SelfDamage > 0.0f)
+
+            // Reward for maintaining weapon readiness
+            if (Current.WeaponCooldown < 0.5f)
             {
-                Reward -= 2.0f * (SelfDamage / 100.0f);
+                Reward += 0.5f;
             }
         }
         break;
-        
+
     case EStrategyType::Defend:
         {
-            // 아군 거점 근처 유지
-            float DistToAllyObj = FVector::Dist(Current.SelfPosition, CurrentTarget);
-            if (DistToAllyObj < 500.0f)  // 5m 이내
+            // Reward for staying in defensive position (low movement)
+            float PositionChange = FVector::Dist(Prev.Position, Current.Position);
+            if (PositionChange < 200.0f) // Staying relatively still
             {
-                Reward += 5.0f * DeltaTime;  // 초당 +5
+                Reward += DefendPositionReward;
             }
-            
-            // 엄폐 상태 보상
-            if (Current.bInCover)
+
+            // Health preservation is critical for defenders
+            if (Current.Health > 0.7f)
             {
-                Reward += 0.5f * DeltaTime;
+                Reward += DefendHealthBonus;
             }
-            
-            // 체력 보존
-            float HealthPreserved = (Current.SelfHealth / 100.0f);
-            Reward += 3.0f * HealthPreserved * DeltaTime;
+
+            // Reward for weapon readiness
+            if (Current.WeaponCooldown < 0.3f)
+            {
+                Reward += 1.0f;
+            }
+        }
+        break;
+
+    case EStrategyType::Support:
+        {
+            // Reward for moderate positioning (not too aggressive, not too passive)
+            float PositionChange = FVector::Dist(Prev.Position, Current.Position);
+            if (PositionChange > 100.0f && PositionChange < 500.0f)
+            {
+                Reward += SupportPositionReward;
+            }
+
+            // Health preservation important for support
+            if (Current.Health > 0.8f)
+            {
+                Reward += SupportHealthBonus;
+            }
         }
         break;
     }
-    
-    // 공통 페널티: Time cost
-    Reward -= 0.001f;  // 시간당 작은 페널티 (효율성 유도)
-    
+
+    // Common penalties
+    if (!Current.bIsAlive)
+    {
+        Reward -= DeathPenalty;
+    }
+
+    Reward -= TimePenalty; // Encourage efficiency
+
     return Reward;
 }
 
-void AMocTrainer::ApplyEQSWeightsToCharacter(const FEQSWeightParameters& Weights)
+void AMocTrainer::ApplyEQSWeightsToCharacter_Implementation(const FEQSWeightParameters& Weights)
 {
-    if (!ControlledCharacter) return;
-    
+    if (!ControlledCharacter)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot apply EQS weights - invalid character"));
+        return;
+    }
+
     // Training Mode: EQS를 직접 실행하여 이동 위치 결정
     UEnvQueryManager* EQSManager = UEnvQueryManager::GetCurrent(GetWorld());
-    if (!EQSManager) return;
-    
-    // EQS Query 로드 (Blueprint 에셋)
-    UEnvQuery* QueryTemplate = LoadObject<UEnvQuery>(
-        nullptr, 
-        TEXT("/Game/AI/EQS/EQ_TacticalMovement.EQ_TacticalMovement")
-    );
-    
-    if (!QueryTemplate) return;
-    
+    if (!EQSManager)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS Manager not available"));
+        return;
+    }
+
+    if (!EQSQueryTemplate)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS Query Template not set"));
+        return;
+    }
+
     // 가중치 적용하여 Query 생성
-    FEnvQueryRequest QueryRequest(QueryTemplate, ControlledCharacter);
-    
-    // Named Parameters로 가중치 전달
+    FEnvQueryRequest QueryRequest(EQSQueryTemplate, ControlledCharacter);
+
+    // Named Parameters로 가중치 전달 (스케일링하여 적용)
     QueryRequest.SetFloatParam(TEXT("EnemyObjectiveWeight"), Weights.EnemyObjectiveProximity * 2.0f);
     QueryRequest.SetFloatParam(TEXT("AllyObjectiveWeight"), Weights.AllyObjectiveProximity * 2.0f);
     QueryRequest.SetFloatParam(TEXT("CoverDensityWeight"), Weights.CoverDensity * 2.0f);
@@ -398,84 +490,495 @@ void AMocTrainer::ApplyEQSWeightsToCharacter(const FEQSWeightParameters& Weights
     QueryRequest.SetFloatParam(TEXT("CombatRangeWeight"), Weights.CombatRange * 2.0f);
     QueryRequest.SetFloatParam(TEXT("PickupWeight"), Weights.PickupProximity * 2.0f);
     QueryRequest.SetFloatParam(TEXT("HeightWeight"), Weights.HeightAdvantage * 2.0f);
-    
+
+    // 검색 반경 설정
+    QueryRequest.SetFloatParam(TEXT("SearchRadius"), EQSSearchRadius);
+
     // 비동기 실행
     FQueryFinishedSignature Delegate;
     Delegate.BindLambda([this](TSharedPtr<FEnvQueryResult> Result)
     {
-        if (Result->IsSuccessful() && ControlledCharacter)
+        if (!Result.IsValid() || !Result->IsSuccessful())
         {
-            FVector TargetLocation = Result->GetItemAsLocation(0);
-            
-            // Simple Move (Navigation System 사용)
-            UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
-            if (NavSys)
+            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS query failed"));
+            return;
+        }
+
+        if (!ControlledCharacter)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Character destroyed during EQS execution"));
+            return;
+        }
+
+        FVector TargetLocation = Result->GetItemAsLocation(0);
+        LastEQSTargetLocation = TargetLocation;
+
+        AAIController* AIC = Cast<AAIController>(ControlledCharacter->GetController());
+        if (AIC)
+        {
+
+            EPathFollowingRequestResult::Type MoveResult = AIC->MoveToLocation(TargetLocation, EQSAcceptanceRadius);
+            if (MoveResult != EPathFollowingRequestResult::RequestSuccessful)
             {
-                NavSys->SimpleMoveToLocation(
-                    ControlledCharacter->GetController(), 
-                    TargetLocation
-                );
+                UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Movement request failed"));
             }
         }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Character has no AI controller"));
+        }
     });
-    
+
     QueryRequest.Execute(EEnvQueryRunMode::SingleResult, Delegate);
 }
 
 void AMocTrainer::LogTransition(
     const FObservation& State,
-    EStrategyType Option,
+    EStrategyType CommandedStrategy,
     const FEQSWeightParameters& Action,
     float Reward,
     const FObservation& NextState,
     bool bDone
 )
 {
-    if (!TransitionLogger.IsValid()) return;
-    
-    // JSON 형태로 Transition 기록
-    FTransitionData Transition;
-    Transition.State = State.ToArray();
-    Transition.Option = static_cast<int32>(Option);
-    Transition.Action = Action.ToArray();
-    Transition.Reward = Reward;
-    Transition.NextState = NextState.ToArray();
-    Transition.Done = bDone;
-    Transition.Timestamp = FDateTime::Now().ToUnixTimestamp();
-    
-    TransitionLogger->AppendTransition(Transition);
+    if (!TransitionLogger) return;
+
+    // Convert to UScholaTransitionLogger format
+    TArray<float> StateBefore = State.ToArray();
+    TArray<float> StateAfter = NextState.ToArray();
+
+    // Create FTacticalOption from commanded strategy
+    // v10.2: Individual agents don't choose options, they execute commanded strategies
+    // We log the commanded strategy as a tactical option for consistency
+    FTacticalOption Option;
+    Option.Strategy = CommandedStrategy;
+    Option.Confidence = 1.0f; // Full confidence in commanded strategy
+
+    // Convert scalar reward to FCompositeReward
+    // v10.2: For simplicity, put the entire reward in ObjectiveScore
+    FCompositeReward CompositeReward;
+    CompositeReward.WinProb = 0.0f;
+    CompositeReward.HealthDelta = (NextState.Health - State.Health);
+    CompositeReward.ObjectiveScore = Reward;
+
+
+    // Record transition
+    TransitionLogger->RecordTransition(StateBefore, Option, CompositeReward, StateAfter, bDone);
 }
 
 void AMocTrainer::DrawTrainingDebug()
 {
-    if (!ControlledCharacter) return;
-    
-    // Current Option 표시
+    if (!ControlledCharacter || !GetWorld()) return;
+
+    FVector CharLocation = ControlledCharacter->GetActorLocation();
+
+    // === Agent Info Text ===
     FString DebugText = FString::Printf(
-        TEXT("Option: %s\nSteps: %d\nReward: %.2f"),
-        *UEnum::GetValueAsString(CurrentOption),
+        TEXT("Strategy: %s\n")
+        TEXT("Health: %.1f%%\n")
+        TEXT("Steps: %d / %d\n")
+        TEXT("Episode Reward: %.2f\n")
+        TEXT("Total Episodes: %d"),
+        *UEnum::GetValueAsString(CachedCommandedStrategy),
+        CurrentObservation.Health * 100.0f,
         CurrentEpisodeSteps,
-        EpisodeReward
+        MaxEpisodeSteps,
+        EpisodeReward,
+        TotalEpisodes
     );
-    
+
     DrawDebugString(
         GetWorld(),
-        ControlledCharacter->GetActorLocation() + FVector(0, 0, 200),
+        CharLocation + FVector(0, 0, 250),
         DebugText,
         nullptr,
         FColor::Cyan,
         0.0f,
-        true
+        true,
+        1.2f
     );
-    
-    // Target 시각화
+
+    // === EQS Target Location ===
+    if (!LastEQSTargetLocation.IsZero())
+    {
+        DrawDebugSphere(
+            GetWorld(),
+            LastEQSTargetLocation,
+            100.0f,
+            16,
+            FColor::Yellow,
+            false,
+            0.0f,
+            0,
+            5.0f
+        );
+
+        DrawDebugLine(
+            GetWorld(),
+            CharLocation,
+            LastEQSTargetLocation,
+            FColor::Yellow,
+            false,
+            0.0f,
+            0,
+            2.0f
+        );
+
+        float DistToTarget = FVector::Dist(CharLocation, LastEQSTargetLocation);
+        DrawDebugString(
+            GetWorld(),
+            LastEQSTargetLocation + FVector(0, 0, 150),
+            FString::Printf(TEXT("Target\nDist: %.0f"), DistToTarget),
+            nullptr,
+            FColor::Yellow,
+            0.0f,
+            true
+        );
+    }
+
+    // === Allies (Green) ===
+    for (int32 i = 0; i < CurrentObservation.AllyPositions.Num(); ++i)
+    {
+        if (!CurrentObservation.AllyPositions[i].IsZero())
+        {
+            DrawDebugSphere(
+                GetWorld(),
+                CurrentObservation.AllyPositions[i],
+                50.0f,
+                12,
+                FColor::Green,
+                false,
+                0.0f,
+                0,
+                2.0f
+            );
+        }
+    }
+
+    // === Enemies (Red - visible only) ===
+    for (int32 i = 0; i < CurrentObservation.EnemyPositions.Num(); ++i)
+    {
+        if (CurrentObservation.EnemyVisible[i] && !CurrentObservation.EnemyPositions[i].IsZero())
+        {
+            DrawDebugSphere(
+                GetWorld(),
+                CurrentObservation.EnemyPositions[i],
+                50.0f,
+                12,
+                FColor::Red,
+                false,
+                0.0f,
+                0,
+                2.0f
+            );
+
+            DrawDebugLine(
+                GetWorld(),
+                CharLocation + FVector(0, 0, 90),
+                CurrentObservation.EnemyPositions[i] + FVector(0, 0, 90),
+                FColor::Red,
+                false,
+                0.0f,
+                0,
+                1.0f
+            );
+        }
+    }
+
+    // === Strategy-specific indicators ===
+    FColor StrategyColor;
+    switch (CachedCommandedStrategy)
+    {
+    case EStrategyType::Assault:
+        StrategyColor = FColor::Orange;
+        break;
+    case EStrategyType::Defend:
+        StrategyColor = FColor::Blue;
+        break;
+    case EStrategyType::Support:
+        StrategyColor = FColor::Purple;
+        break;
+    default:
+        StrategyColor = FColor::White;
+        break;
+    }
+
     DrawDebugSphere(
         GetWorld(),
-        CurrentTarget,
-        100.0f,
-        12,
-        FColor::Yellow,
+        CharLocation,
+        150.0f,
+        8,
+        StrategyColor,
         false,
-        0.1f
+        0.0f,
+        0,
+        3.0f
     );
+}
+
+// ==================== AAbstractTrainer Pure Virtual Implementations ====================
+
+EAgentTrainingStatus AMocTrainer::ComputeStatus()
+{
+    // Check termination conditions
+    if (CurrentEpisodeSteps >= MaxEpisodeSteps)
+    {
+        return EAgentTrainingStatus::Truncated; // Episode truncated due to max steps
+    }
+
+    if (!ControlledCharacter || !ControlledCharacter->IsAlive())
+    {
+        return EAgentTrainingStatus::Completed; // Episode complete (agent died)
+    }
+
+    // Check game mode for victory/defeat conditions
+    // TODO: Implement game-specific termination logic
+
+    return EAgentTrainingStatus::Running;
+}
+
+void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
+{
+    // Provide comprehensive debug/training information
+    Info.Add(TEXT("TotalEpisodes"), FString::FromInt(TotalEpisodes));
+    Info.Add(TEXT("CurrentSteps"), FString::FromInt(CurrentEpisodeSteps));
+    Info.Add(TEXT("MaxSteps"), FString::FromInt(MaxEpisodeSteps));
+    Info.Add(TEXT("EpisodeReward"), FString::Printf(TEXT("%.3f"), EpisodeReward));
+    Info.Add(TEXT("AverageReward"), FString::Printf(TEXT("%.3f"),
+        TotalEpisodes > 0 ? CumulativeReward / TotalEpisodes : 0.0f));
+    Info.Add(TEXT("AverageLength"), FString::Printf(TEXT("%.1f"), AverageEpisodeLength));
+
+    if (ControlledCharacter)
+    {
+        Info.Add(TEXT("Strategy"), UEnum::GetValueAsString(CachedCommandedStrategy));
+        Info.Add(TEXT("Health"), FString::Printf(TEXT("%.1f%%"),
+            ControlledCharacter->GetHealthPercentage() * 100.0f));
+        Info.Add(TEXT("IsAlive"), ControlledCharacter->IsAlive() ? TEXT("true") : TEXT("false"));
+
+        if (!LastEQSTargetLocation.IsZero())
+        {
+            float DistToTarget = FVector::Dist(
+                ControlledCharacter->GetActorLocation(),
+                LastEQSTargetLocation
+            );
+            Info.Add(TEXT("DistanceToTarget"), FString::Printf(TEXT("%.0f"), DistToTarget));
+        }
+    }
+
+    // Reward breakdown
+    if (ControlledCharacter)
+    {
+        FRewardBreakdown Breakdown = CalculateRewardBreakdown(
+            CachedCommandedStrategy,
+            PreviousObservation,
+            CurrentObservation
+        );
+        Info.Add(TEXT("RewardPosition"), FString::Printf(TEXT("%.3f"), Breakdown.PositionComponent));
+        Info.Add(TEXT("RewardHealth"), FString::Printf(TEXT("%.3f"), Breakdown.HealthComponent));
+        Info.Add(TEXT("RewardDeath"), FString::Printf(TEXT("%.3f"), Breakdown.DeathPenaltyComponent));
+    }
+}
+
+void AMocTrainer::ResetTrainer()
+{
+    // Reset per-episode state
+    CurrentEpisodeSteps = 0;
+    EpisodeReward = 0.0f;
+
+    // Reset observations
+    PreviousObservation = FObservation();
+
+    if (ControlledCharacter)
+    {
+        CurrentObservation = GatherStateObservation();
+        CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+    }
+    else
+    {
+        CurrentObservation = FObservation();
+    }
+
+    // Reset EQS target
+    LastEQSTargetLocation = FVector::ZeroVector;
+
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] v10.2 Trainer reset for episode %d"), TotalEpisodes + 1);
+}
+
+void AMocTrainer::OnCompletion()
+{
+    // Episode completion callback
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Episode completed. Final reward: %.2f, Steps: %d"),
+        EpisodeReward, CurrentEpisodeSteps);
+
+    // 훈련 통계 업데이트
+    UpdateTrainingStatistics();
+
+    // Flush transition logs if enabled
+    if (bLogTransitions && TransitionLogger)
+    {
+        TransitionLogger->FlushToDisk();
+        UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Transition logs flushed to disk"));
+    }
+}
+
+// ==================== Utility Functions ====================
+
+bool AMocTrainer::ValidateEQSWeights(const FEQSWeightParameters& Weights) const
+{
+    // 모든 가중치가 유효 범위 내에 있는지 확인
+    bool bValid = true;
+
+    auto CheckRange = [&bValid](float Value, const FString& Name)
+    {
+        if (FMath::IsNaN(Value) || FMath::IsFinite(Value) == false)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Invalid EQS weight %s: %f"), *Name, Value);
+            bValid = false;
+        }
+    };
+
+    CheckRange(Weights.EnemyObjectiveProximity, TEXT("EnemyObjectiveProximity"));
+    CheckRange(Weights.AllyObjectiveProximity, TEXT("AllyObjectiveProximity"));
+    CheckRange(Weights.CoverDensity, TEXT("CoverDensity"));
+    CheckRange(Weights.EnemyVisibility, TEXT("EnemyVisibility"));
+    CheckRange(Weights.AllyProximity, TEXT("AllyProximity"));
+    CheckRange(Weights.CombatRange, TEXT("CombatRange"));
+    CheckRange(Weights.PickupProximity, TEXT("PickupProximity"));
+    CheckRange(Weights.HeightAdvantage, TEXT("HeightAdvantage"));
+
+    return bValid;
+}
+
+bool AMocTrainer::ValidateObservation(const FObservation& Obs) const
+{
+    // Observation의 주요 필드가 유효한지 확인
+    if (FMath::IsNaN(Obs.Health) || Obs.Health < 0.0f || Obs.Health > 1.0f)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Invalid health value: %f"), Obs.Health);
+        return false;
+    }
+
+    if (!Obs.Position.ContainsNaN() == false || !Obs.Position.IsNormalized())
+    {
+        // Position can be any valid vector
+        if (Obs.Position.ContainsNaN())
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Position contains NaN"));
+            return false;
+        }
+    }
+
+    if (Obs.AllyPositions.Num() != 4 || Obs.AllyHealths.Num() != 4 || Obs.AllyStrategies.Num() != 4)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Ally data array size mismatch"));
+        return false;
+    }
+
+    if (Obs.EnemyPositions.Num() != 5 || Obs.EnemyVisible.Num() != 5)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Enemy data array size mismatch"));
+        return false;
+    }
+
+    return true;
+}
+
+void AMocTrainer::UpdateTrainingStatistics()
+{
+    TotalEpisodes++;
+    CumulativeReward += EpisodeReward;
+
+    // 이동 평균으로 평균 에피소드 길이 업데이트
+    float Alpha = 0.1f; // 지수 이동 평균 계수
+    AverageEpisodeLength = Alpha * CurrentEpisodeSteps + (1.0f - Alpha) * AverageEpisodeLength;
+
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Episode %d completed - Reward: %.2f, Steps: %d, Avg Length: %.1f"),
+        TotalEpisodes, EpisodeReward, CurrentEpisodeSteps, AverageEpisodeLength);
+}
+
+AMocTrainer::FRewardBreakdown AMocTrainer::CalculateRewardBreakdown(
+    EStrategyType Strategy,
+    const FObservation& Prev,
+    const FObservation& Current
+) const
+{
+    FRewardBreakdown Breakdown;
+    Breakdown.StrategyReward = 0.0f;
+    Breakdown.HealthComponent = 0.0f;
+    Breakdown.PositionComponent = 0.0f;
+    Breakdown.DeathPenaltyComponent = 0.0f;
+    Breakdown.TimePenaltyComponent = -TimePenalty;
+
+    float PositionChange = FVector::Dist(Prev.Position, Current.Position);
+    float HealthLoss = Prev.Health - Current.Health;
+
+    switch (Strategy)
+    {
+    case EStrategyType::Assault:
+        Breakdown.PositionComponent = AssaultMovementReward * PositionChange;
+        if (HealthLoss > 0.3f)
+        {
+            Breakdown.HealthComponent = -AssaultHealthPenalty * HealthLoss;
+        }
+        break;
+
+    case EStrategyType::Defend:
+        if (PositionChange < 200.0f)
+        {
+            Breakdown.PositionComponent = DefendPositionReward;
+        }
+        if (Current.Health > 0.7f)
+        {
+            Breakdown.HealthComponent = DefendHealthBonus;
+        }
+        break;
+
+    case EStrategyType::Support:
+        if (PositionChange > 100.0f && PositionChange < 500.0f)
+        {
+            Breakdown.PositionComponent = SupportPositionReward;
+        }
+        if (Current.Health > 0.8f)
+        {
+            Breakdown.HealthComponent = SupportHealthBonus;
+        }
+        break;
+    }
+
+    if (!Current.bIsAlive)
+    {
+        Breakdown.DeathPenaltyComponent = -DeathPenalty;
+    }
+
+    Breakdown.StrategyReward = Breakdown.PositionComponent + Breakdown.HealthComponent;
+    Breakdown.Total = Breakdown.StrategyReward + Breakdown.DeathPenaltyComponent + Breakdown.TimePenaltyComponent;
+
+    return Breakdown;
+}
+
+void AMocTrainer::GetTrainingStats(int32& OutEpisodes, float& OutAvgReward, float& OutAvgLength) const
+{
+    OutEpisodes = TotalEpisodes;
+    OutAvgReward = TotalEpisodes > 0 ? CumulativeReward / TotalEpisodes : 0.0f;
+    OutAvgLength = AverageEpisodeLength;
+}
+
+void AMocTrainer::LogRewardBreakdown() const
+{
+    if (!ControlledCharacter) return;
+
+    FRewardBreakdown Breakdown = CalculateRewardBreakdown(
+        CachedCommandedStrategy,
+        PreviousObservation,
+        CurrentObservation
+    );
+
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Reward Breakdown - Strategy: %s"),
+        *UEnum::GetValueAsString(CachedCommandedStrategy));
+    UE_LOG(LogTemp, Log, TEXT("  Position: %.3f, Health: %.3f, Death: %.3f, Time: %.3f"),
+        Breakdown.PositionComponent,
+        Breakdown.HealthComponent,
+        Breakdown.DeathPenaltyComponent,
+        Breakdown.TimePenaltyComponent);
+    UE_LOG(LogTemp, Log, TEXT("  Total: %.3f"), Breakdown.Total);
 }

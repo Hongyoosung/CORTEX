@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "Types/MocTypes.h"
 #include "Team/TeamState.h"
-#include "AI/Models/TeamWorldModel.h"
+#include "AI/Models/MocTeamWorldModel.h"
 #include "AI/MCTS/TeamTreeNode.h"
 #include "TeamMCTS.generated.h"
 
@@ -29,7 +29,7 @@ struct FTeamMCTSConfig
  * - State Space: FObservation (56-dim) → FTeamState (60-dim)
  * - Action Space: FTacticalOption (3 per agent) → ETacticalPlay (10 total)
  * - Scope: Individual survival → Team win rate + coordination
- * - World Model: ULearnedWorldModel → UTeamWorldModel (batch aggregator)
+ * - World Model: UMocAgentWorldModel → UMocTeamWorldModel (batch aggregator)
  *
  * Usage:
  * ```cpp
@@ -56,7 +56,7 @@ public:
 	 * @param InTeamWorldModel - Team-level world model for predictions
 	 * @param InConfig - MCTS configuration (time budget, batch size)
 	 */
-	void Setup(UTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig);
+	void Setup(UMocTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig);
 
 	/**
 	 * Main entry point: Find best tactical play for current team state
@@ -120,7 +120,7 @@ private:
 	 *
 	 * Process collected (Node, Play) pairs:
 	 * 1. Build FTeamBatchInput from pending batch
-	 * 2. Call TeamWorldModel->PredictBatch()
+	 * 2. Call MocTeamWorldModel->PredictBatch()
 	 * 3. Create child nodes from predictions
 	 * 4. Backpropagate values up the tree
 	 * 5. Remove virtual loss
@@ -132,7 +132,7 @@ private:
 	/**
 	 * Scalarize team reward into single value for MCTS
 	 *
-	 * Uses FTeamReward::TotalReward (pre-computed by TeamWorldModel)
+	 * Uses FTeamReward::TotalReward (pre-computed by MocTeamWorldModel)
 	 * Or custom MCTS weights if needed for exploration
 	 *
 	 * @param Reward - Multi-objective team reward
@@ -143,7 +143,7 @@ private:
 private:
 	/** Team-level world model for predictions */
 	UPROPERTY()
-	UTeamWorldModel* TeamWorldModel;
+	UMocTeamWorldModel* TeamWorldModel;
 
 	/** MCTS configuration */
 	FTeamMCTSConfig Config;

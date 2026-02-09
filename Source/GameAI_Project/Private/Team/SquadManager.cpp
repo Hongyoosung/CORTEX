@@ -4,8 +4,8 @@
 #include "Team/TeamManager.h"
 #include "Characters/MocCharacter.h"
 #include "AI/MCTS/TeamMCTS.h"
-#include "AI/Models/LearnedWorldModel.h"
-#include "AI/Models/TeamWorldModel.h"
+#include "AI/Models/MocAgentWorldModel.h"
+#include "AI/Models/MocTeamWorldModel.h"
 #include "DrawDebugHelpers.h"
 
 ASquadManager::ASquadManager()
@@ -64,11 +64,11 @@ void ASquadManager::Initialize(int32 InTeamID, ATeamManager* InTeamManager)
 	TeamManager = InTeamManager;
 
 	// Initialize agent-level world model (existing infrastructure)
-	AgentWorldModel = NewObject<ULearnedWorldModel>(this);
+	AgentWorldModel = NewObject<UMocAgentWorldModel>(this);
 	AgentWorldModel->InitModel(TEXT("Content/AI/Models/agent_world_model.onnx"));
 
 	// Initialize team-level world model (NEW - v10.2 Week 2)
-	TeamWorldModel = NewObject<UTeamWorldModel>(this);
+	TeamWorldModel = NewObject<UMocTeamWorldModel>(this);
 	TeamWorldModel->Initialize(AgentWorldModel);
 
 	// Initialize Team MCTS planner (NEW - v10.2 Week 3)
@@ -157,11 +157,11 @@ void ASquadManager::PerformTacticalPlanning()
 	LogPlanningDecision(BestPlay, PlanConfidence);
 }
 
-void ASquadManager::OnCriticalEvent(ECriticalEventType EventType, AActor* Instigator)
+void ASquadManager::ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AActor* InstigatorActor)
 {
 	// Immediate replanning on high-volatility events
-	UE_LOG(LogTemp, Warning, TEXT("Squad Commander: Critical event %s - triggering replan"),
-		*UEnum::GetValueAsString(EventType));
+	UE_LOG(LogTemp, Warning, TEXT("Squad Commander: Critical event %s in &s - triggering replan"),
+		*UEnum::GetValueAsString(EventType), InstigatorActor.GetName());
 
 	PerformTacticalPlanning();
 	EventDrivenReplanCount++;

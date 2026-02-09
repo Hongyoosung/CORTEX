@@ -21,7 +21,7 @@ class FTeamTreeNode;
  * - TotalValue (W): Cumulative value from backpropagation
  * - VisitCount (N): Number of times node visited
  * - VirtualLoss: Temporary visit penalty for batch processing
- * - PredictionConfidence: TeamWorldModel confidence score [0-1]
+ * - PredictionConfidence: MocTeamWorldModel confidence score [0-1]
  *
  * UCB Logic (unchanged):
  * - Confidence-aware UCB1 for child selection

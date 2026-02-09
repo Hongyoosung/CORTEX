@@ -1,10 +1,10 @@
-// TacticalParameterActuator.cpp - v8.0 tactical parameter actuator implementation
+
 
 #include "Schola/Actuators/TacticalParameterActuator.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
 #include "GameFramework/Pawn.h"
-#include "Actor/FollowerCharacter.h"
+#include "Characters/MocCharacter.h"
 
 UTacticalParameterActuator::UTacticalParameterActuator()
 {
@@ -30,20 +30,14 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 
 void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 {
-	if (!Follower)
+	if (!MocAgent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[TacticalParamActuator] %s: OwnerActor not found or invalid!"),
 			*GetNameSafe(GetOuter()));
 		return;
 	}
 
-	// Validate action size
-	if (Action.Values.Num() != RLConfig::NUM_TACTICAL_PARAMS)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalParamActuator] %s: Invalid action size %d, expected %d"),
-			*GetNameSafe(GetOuter()), Action.Values.Num(), RLConfig::NUM_TACTICAL_PARAMS);
-		return;
-	}
+
 
 	// Parse continuous values into FTacticalParameters
 	FTacticalParameters Params;
@@ -58,8 +52,6 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 	// Cache for debugging
 	LastTacticalParams = Params;
 
-	// Apply to follower agent
-	Follower->SetTacticalParameters(Params);
 
 	if (bDebugLogging)
 	{
@@ -72,9 +64,9 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 void UTacticalParameterActuator::InitializeActuator()
 {
 	AActor* Owner = GetTypedOuter<AActor>();
-	Follower = Cast<AFollowerCharacter>(Owner);
+	MocAgent = Cast<AMocCharacter>(Owner);
 
-	if (!Follower)
+	if (!MocAgent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[TacticalParamActuator] %s: Failed to find FollowerActor!"),
 			*GetNameSafe(GetOuter()));
@@ -82,7 +74,7 @@ void UTacticalParameterActuator::InitializeActuator()
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[TacticalParamActuator] %s: Initialized (Follower=%s, ActionSpace=Box([0,1]^4))"),
-		*GetNameSafe(GetOuter()), *GetNameSafe(Follower));
+		*GetNameSafe(GetOuter()), *GetNameSafe(MocAgent));
 }
 
 void UTacticalParameterActuator::ResetActuator()
@@ -90,9 +82,9 @@ void UTacticalParameterActuator::ResetActuator()
 	// Reset to neutral parameters
 	LastTacticalParams = FTacticalParameters(0.5f, 0.5f, 0.5f, 0.5f);
 
-	if (Follower->IsValidLowLevel())
+	if (MocAgent->IsValidLowLevel())
 	{
-		Follower->SetTacticalParameters(LastTacticalParams);
+
 	}
 }
 

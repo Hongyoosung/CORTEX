@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Team/TeamTypes.h"
 #include "Team/MocTeamInterface.h"
 #include "CapturePoint.generated.h"
 

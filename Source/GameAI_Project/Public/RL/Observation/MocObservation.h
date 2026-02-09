@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Types/MocTypes.h"
 #include "MocObservation.generated.h"
 
 /**

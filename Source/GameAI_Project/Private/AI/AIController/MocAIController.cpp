@@ -1,7 +1,10 @@
 
 
 #include "AI/AIController/MocAIController.h"
+#include "AI/Policy/MocPolicyExecutor.h"
 #include "AI/EQS/EQSWeightParameters.h"
+#include "Characters/MocCharacter.h"
+#include "RL/Observation/MocObservation.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISenseConfig_Hearing.h"
 #include "Perception/AISenseConfig_Damage.h"
@@ -25,7 +28,7 @@ AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
 
     // Removed components (moved to ASquadManager in v10.2):
     // - MCTSPlanner → ASquadManager::TeamMCTSPlanner
-    // - WorldModel → ASquadManager::TeamWorldModel
+    // - WorldModel → ASquadManager::MocTeamWorldModel
     // - ValueNetwork → Centralized evaluation
     // - EventMonitor → ASquadManager::OnCriticalEvent()
     
@@ -50,8 +53,8 @@ AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
     AIPerception->SetDominantSense(SightConfig->GetSenseImplementation());
     
     // Perception 콜백 바인딩
-    AIPerception->OnPerceptionUpdated.AddDynamic(this, &ACortexAIController::OnPerceptionUpdated);
-    AIPerception->OnTargetPerceptionUpdated.AddDynamic(this, &ACortexAIController::OnTargetPerceptionUpdated);
+    AIPerception->OnPerceptionUpdated.AddDynamic(this, &AMocAIController::OnPerceptionUpdated);
+    AIPerception->OnTargetPerceptionUpdated.AddDynamic(this, &AMocAIController::OnTargetPerceptionUpdated);
     
     // Tick 활성화
     PrimaryActorTick.bCanEverTick = true;
@@ -67,7 +70,7 @@ void AMocAIController::BeginPlay()
     // ONNX 모델 로드 (v10.2: Policy only, no world model/value network)
     PolicyExecutor->LoadModel(TEXT("Content/AI/Models/policy_weights.onnx"));
 
-    UE_LOG(LogCortex, Log, TEXT("MOC AI Controller initialized (v10.2 executor mode)"));
+    UE_LOG(LogTemp, Log, TEXT("MOC AI Controller initialized (v10.2 executor mode)"));
 }
 
 void AMocAIController::OnPossess(APawn* InPawn)
@@ -79,13 +82,25 @@ void AMocAIController::OnPossess(APawn* InPawn)
     {
         UseBlackboard(BehaviorTree->BlackboardAsset, BlackboardComp);
         RunBehaviorTree(BehaviorTree);
-        
-        UE_LOG(LogCortex, Log, TEXT("Behavior Tree started"));
+
+        UE_LOG(LogTemp, Log, TEXT("Behavior Tree started"));
     }
     
     // 초기 전략 설정 (Defend)
-    CurrentOption = FTacticalOption::CreateDefensive(GetPawn()->GetActorLocation());
-    UpdateBlackboard(CurrentOption, TacticalProfiles::DEFENSIVE);
+    CurrentOption = FTacticalOption(EStrategyType::Defend, GetPawn()->GetActorLocation(), 5.0f);
+
+    // Default defensive weights
+    FEQSWeightParameters DefaultWeights;
+    DefaultWeights.EnemyObjectiveProximity = -0.7f;
+    DefaultWeights.AllyObjectiveProximity = 0.9f;
+    DefaultWeights.CoverDensity = 0.8f;
+    DefaultWeights.EnemyVisibility = 0.3f;
+    DefaultWeights.AllyProximity = 0.7f;
+    DefaultWeights.CombatRange = -0.4f;
+    DefaultWeights.PickupProximity = 0.2f;
+    DefaultWeights.HeightAdvantage = 0.7f;
+
+    UpdateBlackboard(CurrentOption, DefaultWeights);
 }
 
 void AMocAIController::Tick(float DeltaTime)
@@ -117,7 +132,7 @@ void AMocAIController::Tick(float DeltaTime)
     }
 
     // Debug visualization
-    if (CVarCortexDebug.GetValueOnGameThread())
+    if (bShowDebugInfo)
     {
         DrawDebugInfo();
     }
@@ -128,13 +143,12 @@ void AMocAIController::Tick(float DeltaTime)
 FEQSWeightParameters AMocAIController::GetCurrentEQSWeights()
 {
     // RL Policy에 상태 전달
-    FRLObservation PolicyInput = {
-        .BaseState = CurrentObservation,
-        .CurrentOption = CurrentOption.Strategy,
-        .TargetPosition = CurrentOption.TargetLocation,
-        .OptionDuration = CurrentOption.PlannedDuration
-    };
-    
+    FMocObservation PolicyInput;
+    PolicyInput.BaseState = CurrentObservation;
+    PolicyInput.CurrentOption = CurrentOption.Strategy;
+    PolicyInput.TargetPosition = CurrentOption.TargetPosition;
+    PolicyInput.OptionDuration = CurrentOption.Duration;
+
     // ONNX inference
     return PolicyExecutor->PredictEQSWeights(PolicyInput);
 }

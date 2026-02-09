@@ -9,7 +9,7 @@
 #include "SquadManager.generated.h"
 
 // Forward declarations
-class ULearnedWorldModel;
+class UMocAgentWorldModel;
 class UTeamMCTS;
 class AMocCharacter;
 class ATeamManager;
@@ -112,7 +112,7 @@ public:
 	 * @param Instigator - Actor that triggered event (optional)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "SquadManager")
-	void OnCriticalEvent(ECriticalEventType EventType, AActor* Instigator);
+	void ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AActor* InstigatorActor);
 
 	/**
 	 * Check if replanning is needed based on timer or volatility
@@ -194,11 +194,11 @@ protected:
 
 	/** Team-level world model for centralized planning (v10.2) */
 	UPROPERTY()
-	class UTeamWorldModel* TeamWorldModel;
+	class UMocTeamWorldModel* TeamWorldModel;
 
-	/** Individual agent world model (wrapped by TeamWorldModel) */
+	/** Individual agent world model (wrapped by MocTeamWorldModel) */
 	UPROPERTY()
-	ULearnedWorldModel* AgentWorldModel;
+	UMocAgentWorldModel* AgentWorldModel;
 
 	/** Reference to TeamManager for agent queries */
 	UPROPERTY()

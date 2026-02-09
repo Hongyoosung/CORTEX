@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Types/MocTypes.h"
-#include "Observation/ObservationTypes.h"
+#include "RL/Observation/MocObservation.h"
 #include "MocTransitionLogger.generated.h"
 
 class AMocCharacter;
@@ -110,7 +110,7 @@ public:
 		float OptionDuration,
 		const TArray<float>& EQSWeights,
 		float Reward,
-		const FObservation& NextState,
+		const FMocObservation& NextState,
 		bool bDone
 	);
 

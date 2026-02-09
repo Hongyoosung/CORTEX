@@ -73,7 +73,7 @@ bool UMultiHeadPolicyExecutor::LoadPolicyModel(const FString& ModelPath)
 	return true;
 }
 
-FEQSWeightParameters UMultiHeadPolicyExecutor::GetEQSWeights(const FRLObservation& Observation)
+FEQSWeightParameters UMultiHeadPolicyExecutor::GetEQSWeights(const FMocObservation& Observation)
 {
 	PROFILE_SCOPE_LOG("PolicyInference");
 
@@ -116,7 +116,7 @@ FEQSWeightParameters UMultiHeadPolicyExecutor::GetEQSWeights(const FRLObservatio
 	return Weights;
 }
 
-TArray<FEQSWeightParameters> UMultiHeadPolicyExecutor::GetEQSWeightsBatch(const TArray<FRLObservation>& Observations)
+TArray<FEQSWeightParameters> UMultiHeadPolicyExecutor::GetEQSWeightsBatch(const TArray<FMocObservation>& Observations)
 {
 	PROFILE_SCOPE_LOG("PolicyInferenceBatch");
 
@@ -134,7 +134,7 @@ TArray<FEQSWeightParameters> UMultiHeadPolicyExecutor::GetEQSWeightsBatch(const 
 
 		// Return default weights for each observation
 		Results.Reserve(BatchSize);
-		for (const FRLObservation& Obs : Observations)
+		for (const FMocObservation& Obs : Observations)
 		{
 			Results.Add(GetDefaultWeightsForStrategy(Obs.CurrentOption));
 		}
@@ -145,7 +145,7 @@ TArray<FEQSWeightParameters> UMultiHeadPolicyExecutor::GetEQSWeightsBatch(const 
 	TArray<float> BatchInputTensor;
 	BatchInputTensor.Reserve(BatchSize * 61);
 
-	for (const FRLObservation& Obs : Observations)
+	for (const FMocObservation& Obs : Observations)
 	{
 		BatchInputTensor.Append(Obs.ToTensor());
 	}
@@ -170,7 +170,7 @@ TArray<FEQSWeightParameters> UMultiHeadPolicyExecutor::GetEQSWeightsBatch(const 
 
 		// Return defaults
 		Results.Reserve(BatchSize);
-		for (const FRLObservation& Obs : Observations)
+		for (const FMocObservation& Obs : Observations)
 		{
 			Results.Add(GetDefaultWeightsForStrategy(Obs.CurrentOption));
 		}

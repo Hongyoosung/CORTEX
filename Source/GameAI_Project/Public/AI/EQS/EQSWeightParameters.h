@@ -94,5 +94,18 @@ struct FEQSWeightParameters
 		PickupProximity = FMath::Clamp(PickupProximity, -1.0f, 1.0f);
 		HeightAdvantage = FMath::Clamp(HeightAdvantage, -1.0f, 1.0f);
 	}
+
+	FString ToString() const
+	{
+		return FString::Printf(TEXT("E_Obj:%.2f, A_Obj:%.2f, Cover:%.2f, Vis:%.2f, Ally:%.2f, Rng:%.2f, Pick:%.2f, H_Adv:%.2f"),
+			EnemyObjectiveProximity,
+			AllyObjectiveProximity,
+			CoverDensity,
+			EnemyVisibility,
+			AllyProximity,
+			CombatRange,
+			PickupProximity,
+			HeightAdvantage);
+	}
 };
 

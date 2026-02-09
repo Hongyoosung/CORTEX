@@ -5,11 +5,11 @@
 
 #include "CoreMinimal.h"
 #include "Actuators/AbstractActuators.h"
-#include "RL/RLTypes.h"
+#include "Types/MocTypes.h"
 #include "TacticalParameterActuator.generated.h"
 
 
-class AFollowerCharacter;
+class AMocCharacter;
 
 
 /** //============================================================
@@ -41,9 +41,9 @@ public:
 	virtual void ResetActuator() override;
 
 
-	/** Auto-find follower agent on owner actor */
+	/** Auto-find Moc agent on owner actor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
-	bool bAutoFindFollower = true;
+	bool bAutoFindMoc = true;
 
 	/** Enable debug logging */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
@@ -59,5 +59,5 @@ protected:
 	/** Last received tactical parameters (cached for debugging) */
 	FTacticalParameters LastTacticalParams;
 
-	TObjectPtr<AFollowerCharacter> Follower;
+	TObjectPtr<AMocCharacter> MocAgent;
 };

@@ -1,15 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "AI/Models/TeamWorldModel.h"
+#include "AI/Models/MocTeamWorldModel.h"
 #include "Misc/ScopeLock.h"
 
-UTeamWorldModel::UTeamWorldModel()
+UMocTeamWorldModel::UMocTeamWorldModel()
 	: AgentWorldModel(nullptr)
 	, LastInferenceTimeMs(0.0f)
 {
 }
 
-bool UTeamWorldModel::Initialize(ULearnedWorldModel* InAgentWorldModel)
+bool UMocTeamWorldModel::Initialize(UMocAgentWorldModel* InAgentWorldModel)
 {
 	if (!InAgentWorldModel)
 	{
@@ -23,7 +23,7 @@ bool UTeamWorldModel::Initialize(ULearnedWorldModel* InAgentWorldModel)
 	return true;
 }
 
-FTeamStatePrediction UTeamWorldModel::PredictTeamTransition(
+FTeamStatePrediction UMocTeamWorldModel::PredictTeamTransition(
 	const FTeamState& CurrentState,
 	ETacticalPlay SelectedPlay)
 {
@@ -111,7 +111,7 @@ FTeamStatePrediction UTeamWorldModel::PredictTeamTransition(
 	return Result;
 }
 
-FTeamBatchOutput UTeamWorldModel::PredictBatch(const FTeamBatchInput& BatchInput)
+FTeamBatchOutput UMocTeamWorldModel::PredictBatch(const FTeamBatchInput& BatchInput)
 {
 	FScopeLock Lock(&PredictionMutex);
 
@@ -163,7 +163,7 @@ FTeamBatchOutput UTeamWorldModel::PredictBatch(const FTeamBatchInput& BatchInput
 // Decompose & Convert (Team → Agent)
 //========================================
 
-TArray<EStrategyType> UTeamWorldModel::DecomposeTacticalPlay(ETacticalPlay Play) const
+TArray<EStrategyType> UMocTeamWorldModel::DecomposeTacticalPlay(ETacticalPlay Play) const
 {
 	// Reuse logic from ASquadManager::DecodeTacticalPlay()
 	TArray<EStrategyType> Roles;
@@ -285,7 +285,7 @@ TArray<EStrategyType> UTeamWorldModel::DecomposeTacticalPlay(ETacticalPlay Play)
 	return Roles;
 }
 
-TArray<FObservation> UTeamWorldModel::ConvertTeamStateToAgentObservations(
+TArray<FObservation> UMocTeamWorldModel::ConvertTeamStateToAgentObservations(
 	const FTeamState& TeamState,
 	const TArray<EStrategyType>& Strategies) const
 {
@@ -302,7 +302,7 @@ TArray<FObservation> UTeamWorldModel::ConvertTeamStateToAgentObservations(
 	return Observations;
 }
 
-FObservation UTeamWorldModel::ExtractAgentObservation(
+FObservation UMocTeamWorldModel::ExtractAgentObservation(
 	const FTeamState& TeamState,
 	int32 AgentIndex) const
 {
@@ -388,7 +388,7 @@ FObservation UTeamWorldModel::ExtractAgentObservation(
 	return Obs;
 }
 
-FTacticalOption UTeamWorldModel::GenerateTacticalOption(
+FTacticalOption UMocTeamWorldModel::GenerateTacticalOption(
 	int32 AgentIndex,
 	EStrategyType Strategy,
 	const FTeamState& TeamState) const
@@ -497,7 +497,7 @@ FTacticalOption UTeamWorldModel::GenerateTacticalOption(
 // Aggregate (Agent → Team)
 //========================================
 
-FTeamState UTeamWorldModel::AggregateToTeamState(
+FTeamState UMocTeamWorldModel::AggregateToTeamState(
 	const TArray<FObservation>& Predictions,
 	const FTeamState& OriginalState) const
 {
@@ -560,7 +560,7 @@ FTeamState UTeamWorldModel::AggregateToTeamState(
 	return NextState;
 }
 
-FTeamReward UTeamWorldModel::AggregateRewards(
+FTeamReward UMocTeamWorldModel::AggregateRewards(
 	const TArray<FCompositeReward>& IndividualRewards,
 	const TArray<EStrategyType>& Strategies) const
 {
@@ -625,7 +625,7 @@ FTeamReward UTeamWorldModel::AggregateRewards(
 	return TeamRwd;
 }
 
-float UTeamWorldModel::CalculateDiversityBonus(const TArray<EStrategyType>& Strategies) const
+float UMocTeamWorldModel::CalculateDiversityBonus(const TArray<EStrategyType>& Strategies) const
 {
 	if (Strategies.Num() != 5)
 	{

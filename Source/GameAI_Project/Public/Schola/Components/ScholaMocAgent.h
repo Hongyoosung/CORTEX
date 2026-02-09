@@ -3,19 +3,58 @@
 
 #include "CoreMinimal.h"
 #include "Inference/InferenceComponent.h"
-#include "Inference/IInferenceAgent.h"
-#include "AI/MCTS/ModelBasedMCTS.h"
-#include "AI/Models/LearnedWorldModel.h"
-#include "AI/Networks/ValueNetwork.h"
-#include "Schola/Logging/ScholaTransitionLogger.h"
+#include "Types/MocTypes.h"
 #include "ScholaMocAgent.generated.h"
 
+
+/**
+ * Agent Operation Mode
+ * - Training: Python (RLlib) controls actions via Schola Policy
+ * - Inference: Local ONNX models execute via Schola Policy
+ */
 UENUM(BlueprintType)
-enum class EAgentMode : uint8 {
-    Training,   // Python(RLlib)이 액션을 결정 (데이터 수집용)
-    Inference   // 내부 MCTS가 액션을 결정 (실전용)
+enum class EAgentMode : uint8
+{
+    Training    UMETA(DisplayName = "Training Mode (Python RLlib)"),
+    Inference   UMETA(DisplayName = "Inference Mode (Local ONNX)")
 };
 
+
+/**
+ * UScholaMocAgent - MOC v10.2 Schola Integration Component
+ *
+ * Purpose:
+ * Thin integration layer between Schola framework and MOC v10.2 architecture.
+ * Implements proper Segregation of Responsibilities by delegating work to
+ * parent class components (Observers, Policy, Brain, Actuators).
+ *
+ * v10.2 Architecture Integration:
+ * 1. SquadManager performs centralized MCTS → assigns EStrategyType
+ * 2. AMocCharacter.SetCommandedStrategy() updates this agent
+ * 3. This agent provides strategy to Observers (included in observation)
+ * 4. Policy (Python/ONNX) converts (State + Strategy) → EQS Weights
+ * 5. Actuators (TacticalParameterActuator) apply weights to EQS system
+ *
+ * Responsibilities (What this class DOES):
+ * - Store commanded strategy from SquadManager
+ * - Provide strategy to Observers (via GetCommandedStrategy)
+ * - Support mode switching (Training vs Inference)
+ * - Configure Schola components in BeginPlay
+ *
+ * Non-Responsibilities (What this class does NOT do):
+ * - ✗ MCTS Planning (done by SquadManager in v10.2)
+ * - ✗ Data Logging (done by ScholaEnvironment)
+ * - ✗ Direct Action Execution (done by Actuators)
+ * - ✗ Reward Calculation (done by Environment)
+ * - ✗ World Model Management (separate system)
+ *
+ * Usage:
+ * 1. Add to AMocCharacter as component
+ * 2. Configure Observers/Actuators in Blueprint
+ * 3. Set CurrentMode (Training/Inference)
+ * 4. SquadManager calls UpdateCommandedStrategy()
+ * 5. Schola's Think/Act cycle handles rest automatically
+ */
 UCLASS(ClassGroup = (AI), meta = (BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UScholaMocAgent : public UInferenceComponent
 {
@@ -25,44 +64,48 @@ public:
     UScholaMocAgent(const FObjectInitializer& ObjectInitializer);
 
     virtual void BeginPlay() override;
-    virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-    // ===== 1. Action Interface =====
-    /** Gym의 MultiDiscrete 액션을 게임 내 FTacticalOption으로 변환하여 실행 */
-    void ExecuteGymAction(const TArray<int32>& GymActionVector);
-    
-    /** MCTS가 결정한 FTacticalOption을 직접 실행 */
-    void ExecuteOption(const FTacticalOption& Option);
+    //========================================
+    // Command Reception (v10.2 Architecture)
+    //========================================
 
-    // ===== 2. Model Management =====
-    /** 런타임에 ONNX 모델 핫로딩 */
-    UFUNCTION(BlueprintCallable, Category="MOC|Models")
-    void ReloadModels(FString WorldModelPath, FString ValueNetPath);
+    /**
+     * Update commanded strategy from Squad Commander
+     * Called by AMocCharacter.SetCommandedStrategy()
+     *
+     * @param NewStrategy - Strategy assigned by centralized MCTS planner
+     */
+    UFUNCTION(BlueprintCallable, Category = "MOC|Commands")
+    void UpdateCommandedStrategy(EStrategyType NewStrategy);
 
-    // ===== 3. State Access =====
-    /** 현재 Observation(State) 반환 */
-    TArray<float> GetCurrentState() const;
+    /**
+     * Get current commanded strategy
+     * Used by Observers to include strategy in observation space
+     */
+    UFUNCTION(BlueprintPure, Category = "MOC|Commands")
+    EStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
 
-public:
+    //========================================
+    // Mode Management
+    //========================================
+
+    /**
+     * Current operation mode
+     * - Training: Schola Policy connects to Python (RLlib)
+     * - Inference: Schola Policy uses local ONNX models
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC")
     EAgentMode CurrentMode = EAgentMode::Inference;
 
 private:
-    // MOC Core Systems
-    UPROPERTY()
-    UModelBasedMCTS* MCTSAlgorithm;
+    //========================================
+    // Runtime State
+    //========================================
 
-    UPROPERTY()
-    ULearnedWorldModel* WorldModel;
-
-    UPROPERTY()
-    UValueNetwork* ValueNetwork;
-
-    UPROPERTY()
-    UScholaTransitionLogger* DataLogger;
-
-    // State Tracking for Logger (s_t, a_t -> s_t+1)
-    TArray<float> LastState;
-    FTacticalOption LastOption;
-    bool bHasLastAction = false;
+    /**
+     * Current strategy commanded by SquadManager
+     * Injected into observation space by Observers
+     * Used by Policy to condition EQS weight output
+     */
+    EStrategyType CommandedStrategy = EStrategyType::Assault;
 };

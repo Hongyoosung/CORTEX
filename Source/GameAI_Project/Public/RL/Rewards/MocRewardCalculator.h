@@ -121,13 +121,6 @@ public:
 	float CalculateLosePointPenalty(EStrategyType ActiveStrategy);
 
 	/**
-	 * Calculate reward for healing ally (40+ HP)
-	 * Assault: 0, Defend: +3, Support: +12 (core objective)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
-	float CalculateHealAllyReward(EStrategyType ActiveStrategy, float HPRestored);
-
-	/**
 	 * Calculate reward for revealing enemy (first sight)
 	 * Assault: +2, Defend: +1, Support: +1,(core objective)
 	 */

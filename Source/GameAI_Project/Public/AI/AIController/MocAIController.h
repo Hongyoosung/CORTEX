@@ -7,6 +7,8 @@
 #include "Perception/AIPerceptionComponent.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "AI/EQS/EQSDynamicWeightApplication.h"
+#include "Types/MocTypes.h"
 #include "MocAIController.generated.h"
 
 /**
@@ -59,11 +61,9 @@ public:
     // ==================== Blueprint Accessible ====================
     
     /** 현재 전략 타입 가져오기 */
-    UFUNCTION(BlueprintCallable, Category="MOC")
     EStrategyType GetCurrentStrategy() const { return CurrentOption.Strategy; }
     
     /** EQS 쿼리 동적 실행 */
-    UFUNCTION(BlueprintCallable, Category="MOC")
     FEnvQueryRequest CreateDynamicEQSQuery(const FEQSWeightParameters& Weights);
     
     /** 디버그 정보 출력 */
@@ -100,7 +100,7 @@ protected:
     // ==================== REMOVED (v10.2) ====================
     // The following components moved to centralized Squad Commander:
     // - UMocMCTSPlanner* MCTSPlanner → ASquadManager::TeamMCTSPlanner
-    // - UMocWorldModel* WorldModel → ASquadManager::TeamWorldModel
+    // - UMocWorldModel* WorldModel → ASquadManager::MocTeamWorldModel
     // - UMocValueNetwork* ValueNetwork → Centralized evaluation
     // - UMocEventMonitor* EventMonitor → ASquadManager::OnCriticalEvent()
 
@@ -117,12 +117,16 @@ protected:
     /** AI Perception Configs */
     UPROPERTY(EditDefaultsOnly, Category="Perception")
     UAISenseConfig_Sight* SightConfig;
-    
+
     UPROPERTY(EditDefaultsOnly, Category="Perception")
     UAISenseConfig_Hearing* HearingConfig;
-    
+
     UPROPERTY(EditDefaultsOnly, Category="Perception")
     UAISenseConfig_Damage* DamageConfig;
+
+    /** Enable debug visualization */
+    UPROPERTY(EditAnywhere, Category="Debug")
+    bool bShowDebugInfo = false;
 
     // ==================== State Management ====================
     
@@ -138,5 +142,5 @@ protected:
     float TimeSinceLastReplan;
     
     /** MCTS 계획 캐시 */
-    TSharedPtr<FMCTSNode> CachedPlanRoot;
+    TSharedPtr<FTeamTreeNode> CachedPlanRoot;
 };

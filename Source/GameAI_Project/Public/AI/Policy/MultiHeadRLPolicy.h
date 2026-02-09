@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Types/MocTypes.h"
+#include "RL/Observation/MocObservation.h"
 #include "MultiHeadRLPolicy.generated.h"
 
 
@@ -22,7 +23,7 @@
  *
  * Usage:
  * 1. Load ONNX model: LoadPolicyModel(ModelPath)
- * 2. Prepare observation: FRLObservation Obs = {...}
+ * 2. Prepare observation: FMocObservation Obs = {...}
  * 3. Get weights: FEQSWeightParameters Weights = GetEQSWeights(Obs)
  * 4. Apply to EQS: ApplyWeightsToQuery(EQSQuery, Weights)
  *
@@ -54,7 +55,7 @@ public:
 	 * @return EQS weight parameters (8-dim)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
-	FEQSWeightParameters GetEQSWeights(const FRLObservation& Observation);
+	FEQSWeightParameters GetEQSWeights(const FMocObservation& Observation);
 
 	/**
 	 * Batch inference for multiple agents (performance optimization).
@@ -63,7 +64,7 @@ public:
 	 * @return Array of EQS weight parameters
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
-	TArray<FEQSWeightParameters> GetEQSWeightsBatch(const TArray<FRLObservation>& Observations);
+	TArray<FEQSWeightParameters> GetEQSWeightsBatch(const TArray<FMocObservation>& Observations);
 
 	/**
 	 * Check if policy model is loaded and ready.

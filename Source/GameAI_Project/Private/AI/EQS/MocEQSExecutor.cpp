@@ -1,11 +1,11 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "MOC/EQS/MocEQSExecutor.h"
-#include "MOC/MocCharacter.h"
+
+
+#include "AI/EQS/MocEQSExecutor.h"
+#include "Characters/MocCharacter.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
-#include "EnvironmentQuery/EnvQuery.h"
-#include "EnvironmentQuery/EnvQueryInstanceBlueprintWrapper.h"
 #include "AIController.h"
+
 
 UMocEQSExecutor::UMocEQSExecutor()
 {
@@ -35,7 +35,7 @@ void UMocEQSExecutor::SetQueryTemplate(UEnvQuery* NewTemplate)
 
 void UMocEQSExecutor::ExecuteTacticalQuery(
 	const FEQSWeightParameters& Weights,
-	FEnvQueryFinishedSignature OnComplete)
+	FQueryFinishedSignature OnComplete)
 {
 	if (!TacticalMovementQuery)
 	{
@@ -59,8 +59,6 @@ void UMocEQSExecutor::ExecuteTacticalQuery(
 		return;
 	}
 
-	// Store delegate for callback
-	StoredDelegate = OnComplete;
 
 	// Create query request
 	FEnvQueryRequest QueryRequest(TacticalMovementQuery, OwnerCharacter);
@@ -79,44 +77,18 @@ void UMocEQSExecutor::ExecuteTacticalQuery(
 		CurrentQueryID, *Weights.ToString());
 }
 
-FVector UMocEQSExecutor::ExecuteTacticalQuerySync(const FEQSWeightParameters& Weights)
-{
-	if (!TacticalMovementQuery || !OwnerCharacter)
-	{
-		return FVector::ZeroVector;
-	}
-
-	FEnvQueryRequest QueryRequest(TacticalMovementQuery, OwnerCharacter);
-
-	double StartTime = FPlatformTime::Seconds();
-	TSharedPtr<FEnvQueryResult> Result = QueryRequest.Execute(EEnvQueryRunMode::SingleResult, nullptr);
-	LastQueryDuration = static_cast<float>((FPlatformTime::Seconds() - StartTime) * 1000.0);
-
-	if (Result.IsValid() && Result->IsSuccessful())
-	{
-		LastBestLocation = Result->GetItemAsLocation(0);
-		UE_LOG(LogTemp, Log, TEXT("MocEQSExecutor: Query succeeded - Best location: %s (%.2fms)"),
-			*LastBestLocation.ToString(), LastQueryDuration);
-		return LastBestLocation;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query failed or returned no results"));
-	return FVector::ZeroVector;
-}
 
 void UMocEQSExecutor::OnQueryFinished(TSharedPtr<FEnvQueryResult> Result)
 {
 	if (!Result.IsValid())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query result is invalid"));
-		StoredDelegate.ExecuteIfBound(nullptr);
 		return;
 	}
 
 	if (!Result->IsSuccessful())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query execution failed"));
-		StoredDelegate.ExecuteIfBound(nullptr);
 		return;
 	}
 
@@ -128,19 +100,10 @@ void UMocEQSExecutor::OnQueryFinished(TSharedPtr<FEnvQueryResult> Result)
 		UE_LOG(LogTemp, Log, TEXT("MocEQSExecutor: Query completed - Best location: %s (%.2fms, %d candidates)"),
 			*LastBestLocation.ToString(), LastQueryDuration, Result->Items.Num());
 
-		// Create wrapper for blueprint access
-		UEnvQueryInstanceBlueprintWrapper* Wrapper = NewObject<UEnvQueryInstanceBlueprintWrapper>();
-		if (Wrapper)
-		{
-			Wrapper->SetQueryResult(Result);
-		}
-
-		StoredDelegate.ExecuteIfBound(Wrapper);
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query returned no items"));
-		StoredDelegate.ExecuteIfBound(nullptr);
 	}
 }
 

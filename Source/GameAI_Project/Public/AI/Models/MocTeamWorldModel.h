@@ -6,8 +6,8 @@
 #include "UObject/NoExportTypes.h"
 #include "Team/TeamState.h"
 #include "Types/MocTypes.h"
-#include "AI/Models/MocLearnedWorldModel.h"
-#include "TeamWorldModel.generated.h"
+#include "AI/Models/MocAgentWorldModel.h"
+#include "MocTeamWorldModel.generated.h"
 
 /**
  * FTeamReward - Team-level multi-objective reward structure
@@ -158,24 +158,24 @@ struct GAMEAI_PROJECT_API FTeamBatchOutput
 };
 
 /**
- * UTeamWorldModel - MOC v10.2 Team-Level World Model Orchestrator
+ * UMocTeamWorldModel - MOC v10.2 Team-Level World Model Orchestrator
  *
  * Architecture: Hybrid Wrapper Pattern
- * Wraps existing ULearnedWorldModel (56-dim agent observations) and aggregates
+ * Wraps existing UMocAgentWorldModel (56-dim agent observations) and aggregates
  * predictions into team-level state transitions (60-dim FTeamState).
  *
  * Flow:
  * 1. FTeamState + ETacticalPlay → Decompose → 5 × EStrategyType
  * 2. Convert → 5 × FObservation (56-dim each)
  * 3. Generate → 5 × FTacticalOption (target positions per strategy)
- * 4. Batch Predict → ULearnedWorldModel::PredictBatch()
+ * 4. Batch Predict → UMocAgentWorldModel::PredictBatch()
  * 5. Aggregate → FTeamState (next state) + FTeamReward
  *
  * Performance Target: 3-5ms per prediction (within 15ms MCTS budget)
  *
  * Usage:
  * ```cpp
- * UTeamWorldModel* TeamModel = NewObject<UTeamWorldModel>();
+ * UMocTeamWorldModel* TeamModel = NewObject<UMocTeamWorldModel>();
  * TeamModel->Initialize(AgentWorldModel);
  *
  * FTeamStatePrediction Prediction = TeamModel->PredictTeamTransition(
@@ -185,12 +185,12 @@ struct GAMEAI_PROJECT_API FTeamBatchOutput
  * ```
  */
 UCLASS(Blueprintable, BlueprintType)
-class GAMEAI_PROJECT_API UTeamWorldModel : public UObject
+class GAMEAI_PROJECT_API UMocTeamWorldModel : public UObject
 {
 	GENERATED_BODY()
 
 public:
-	UTeamWorldModel();
+	UMocTeamWorldModel();
 
 	//========================================
 	// Initialization
@@ -198,11 +198,11 @@ public:
 
 	/**
 	 * Initialize with agent-level world model
-	 * @param InAgentWorldModel - Pre-initialized ULearnedWorldModel for individual agents
+	 * @param InAgentWorldModel - Pre-initialized UMocAgentWorldModel for individual agents
 	 * @return True if initialization successful
 	 */
 	UFUNCTION(BlueprintCallable, Category = "TeamWorldModel")
-	bool Initialize(ULearnedWorldModel* InAgentWorldModel);
+	bool Initialize(UMocAgentWorldModel* InAgentWorldModel);
 
 	//========================================
 	// Main Prediction Interface
@@ -387,7 +387,7 @@ protected:
 
 	/** Agent-level world model (wrapped by this team model) */
 	UPROPERTY()
-	ULearnedWorldModel* AgentWorldModel;
+	UMocAgentWorldModel* AgentWorldModel;
 
 	//========================================
 	// Runtime State

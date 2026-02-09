@@ -122,23 +122,6 @@ float UMocRewardCalculator::CalculateLosePointPenalty(EStrategyType ActiveStrate
 	return Penalty;
 }
 
-float UMocRewardCalculator::CalculateHealAllyReward(EStrategyType ActiveStrategy, float HPRestored)
-{
-	float Reward = 0.0f;
-
-	if (ActiveStrategy == EStrategyType::Support && HPRestored >= 40.0f)
-	{
-		Reward = 12.0f; // Core objective for support
-	}
-	else if (ActiveStrategy == EStrategyType::Defend && HPRestored >= 40.0f)
-	{
-		Reward = 3.0f;
-	}
-
-	LogRewardEvent(ERewardEventType::HealAlly, ActiveStrategy, Reward);
-	AddReward(Reward);
-	return Reward;
-}
 
 float UMocRewardCalculator::CalculateRevealEnemyReward(EStrategyType ActiveStrategy)
 {

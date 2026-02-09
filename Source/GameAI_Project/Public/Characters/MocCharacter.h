@@ -70,10 +70,10 @@ public:
 	//========================================
 	// Combat Interfaces Implementions
 	//========================================
-	virtual float	GetHealthPercentage() const override;
-	virtual bool	IsAlive() const override;
-	virtual float	GetWeaponCooldown() const override;
-	virtual bool	CanFireWeapon() const override;
+	virtual float	GetHealthPercentage_Implementation() const override;
+	virtual bool	IsAlive_Implementation() const override;
+	virtual float	GetWeaponCooldown_Implementation() const override;
+	virtual bool	CanFireWeapon_Implementation() const override;
 
 
 	//========================================
@@ -136,10 +136,6 @@ public:
 	//========================================
 	// Configuration
 	//========================================
-
-	/** AI Controller class */
-	UPROPERTY(EditDefaultsOnly, Category = "AI")
-	TSubclassOf<AAIController> AIControllerClass;
 
 	/** Behavior Tree to run */
 	UPROPERTY(EditDefaultsOnly, Category = "AI")

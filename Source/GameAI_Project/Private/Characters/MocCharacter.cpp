@@ -161,7 +161,7 @@ int32 AMocCharacter::GetTeamID_Implementation() const
 	return -1; // No team
 }
 
-bool AMocCharacter::IsAlive() const
+bool AMocCharacter::IsAlive_Implementation() const
 {
 	return bIsAlive;
 }
@@ -174,7 +174,7 @@ bool AMocCharacter::IsAlive() const
 
 void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 {
-	bIsDead = true;
+	bIsAlive = false;
 
 	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s died - Killer: %s"),
 		*GetName(), DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("None"));
@@ -296,17 +296,23 @@ void AMocCharacter::SetCommandedStrategy(EStrategyType NewStrategy)
 	{
 		CommandedStrategy = NewStrategy;
 
-		// Update Blackboard for Behavior Tree
+		// 1. Update Schola Agent (for RL observation)
+		if (ScholaAgent)
+		{
+			ScholaAgent->UpdateCommandedStrategy(NewStrategy);
+		}
+
+		// 2. Update Blackboard for Behavior Tree (for BT tasks)
 		if (AAIController* AICtrl = Cast<AAIController>(GetController()))
 		{
 			if (UBlackboardComponent* BB = AICtrl->GetBlackboardComponent())
 			{
 				BB->SetValueAsEnum("CurrentStrategy", static_cast<uint8>(NewStrategy));
-
-				UE_LOG(LogTemp, Log, TEXT("Agent %s received command: %s"),
-					*GetName(), *UEnum::GetValueAsString(NewStrategy));
 			}
 		}
+
+		UE_LOG(LogTemp, Log, TEXT("[MocCharacter] Agent %d received strategy command: %s"),
+			AgentID, *UEnum::GetValueAsString(NewStrategy));
 	}
 }
 
@@ -314,7 +320,7 @@ void AMocCharacter::SetCommandedStrategy(EStrategyType NewStrategy)
 // Combat Stats Interface
 //========================================
 
-float AMocCharacter::GetHealthPercentage() const
+float AMocCharacter::GetHealthPercentage_Implementation() const
 {
 	if (HealthComponent)
 	{
@@ -323,7 +329,7 @@ float AMocCharacter::GetHealthPercentage() const
 	return 1.0f;
 }
 
-float AMocCharacter::GetWeaponCooldown() const
+float AMocCharacter::GetWeaponCooldown_Implementation() const
 {
 	if (WeaponComponent)
 	{
@@ -332,7 +338,7 @@ float AMocCharacter::GetWeaponCooldown() const
 	return 0.0f;
 }
 
-bool AMocCharacter::CanFireWeapon() const
+bool AMocCharacter::CanFireWeapon_Implementation() const
 {
 	if (WeaponComponent)
 	{

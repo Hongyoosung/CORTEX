@@ -3,8 +3,7 @@
 #include "CoreMinimal.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
-
-#include "UEQSDynamicWeightApplicator.generated.h"
+#include "EQSDynamicWeightApplicator.generated.h"
 
 
 UCLASS()

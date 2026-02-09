@@ -1,17 +1,16 @@
-// ScholaCombatEnvironment.h - Schola environment for combat AI training
+// ScholaEnvironment.h - Schola training environment for v10.2 Commander-Executor Architecture
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Environment/StaticEnvironment.h"
-#include "ScholaCombatEnvironment.generated.h"
+#include "ScholaEnvironment.generated.h"
 
 
 
-class ASimulationManagerGameMode;
-class AObjectiveActor;
-class UScholaAgentComponent;
-class UEnvRegistryComponent;
+class AMocGameMode;
+class ASquadManager;
+class UScholaMocAgent;
 class UEpisodeManagerComponent;
 
 
@@ -20,33 +19,59 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnScholaEnvironmentInitialized);
 
 
 /** //==========================================================================
- * Schola Combat Environment
+ * Schola Training Environment (v10.2)
  *
- * v9.0 REFACTORED: Component-based architecture following Single Responsibility Principle
+ * ARCHITECTURE: Centralized Commander-Executor (v10.2)
  *
- * Coordinates Schola environment functionality through actor components:
- * - UEnvRegistryComponent: Team and objective registration
+ * Coordinates Schola RL training environment for hierarchical team-based AI:
+ *
+ * [Layer 1] Squad Commander (ASquadManager):
+ *   - Centralized MCTS planning (15ms budget)
+ *   - Tactical Play selection → Role Distribution
+ *   - Input: FTeamState (60-dim team state)
+ *   - Output: 5 × EStrategyType (Assault/Defend/Support)
+ *   - Frequency: 0.5s or critical events
+ *
+ * [Layer 2] Executor Agents (AMocCharacter × 5):
+ *   - Receive role assignments from commander
+ *   - RL Policy → EQS Weights (8-dim spatial reasoning)
+ *   - No local MCTS (removed in v10.2)
+ *
+ * [Layer 3] EQS Spatial Reasoning:
+ *   - Query 48 samples, 8 weighted tests
+ *   - Output: Best tactical location
+ *
+ * Component Architecture:
  * - UEpisodeManagerComponent: Episode lifecycle management
+ * - Integration with AMocGameMode: Game orchestration
+ * - Integration with ASquadManager: Centralized planning
  *
- * Architecture:
- * - Spawns at level start (place in level or spawn in GameMode)
- * - Auto-discovers ScholaAgentComponents on follower pawns
- * - Starts gRPC server on configured port (default: 50051)
- * - Communicates with Python RLlib training script
+ * Key Changes (v10.1 → v10.2):
+ * - Planning: Decentralized (5 MCTS) → Centralized (1 MCTS)
+ * - Compute: 75ms → 15ms (5× reduction)
+ * - Action Space: 243 combinations → ~10 Tactical Plays
+ * - Coordination: Implicit → Explicit command-driven
+ * - Agents: AMocCharacter with UScholaMocAgent component
+ * - Trainers: AMocTrainer for RL training interface
  *
- * Usage:
- * 1. Place this actor in your level (or spawn in GameMode::BeginPlay)
- * 2. Configure team IDs in EnvRegistry component
- * 3. Ensure follower pawns have ScholaAgentComponent
+ * Training Integration:
+ * 1. Place this actor in level (or spawn in AMocGameMode)
+ * 2. Agents auto-discovered (AMocCharacter with UScholaMocAgent)
+ * 3. SquadManager performs centralized planning
  * 4. Start UE5 + run Python training script (train_rllib.py)
+ *
+ * Multi-Environment Setup:
+ * - Each actor instance = 1 physical training environment
+ * - For 4 parallel environments, spawn 4 actors
+ * - Schola CollectEnvironments() aggregates all actors
  */ //==========================================================================
 UCLASS()
-class GAMEAI_PROJECT_API AScholaCombatEnvironment : public AStaticScholaEnvironment
+class GAMEAI_PROJECT_API AScholaEnvironment : public AStaticScholaEnvironment
 {
 	GENERATED_BODY()
 
 public:
-	AScholaCombatEnvironment(const FObjectInitializer& ObjectInitializer);
+	AScholaEnvironment(const FObjectInitializer& ObjectInitializer);
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -64,16 +89,17 @@ public:
 
 
 	//==========================================================================
-	// TEAM MANAGEMENT INTERFACE
+	// v10.2 COMMANDER INTEGRATION
 	//==========================================================================
-	bool RegisterTeam(int32 TeamID);
-	bool RegisterObjective(AObjectiveActor* Objective);
-	bool UnRegisterTeam(int32 TeamID);
-	bool UnRegisterObjective(AObjectiveActor* Objective);
 
-	int32 GetRegisterTeamCount()	const;
-	int32 GetRegisteredObjectiveCount() const;
-	
+	/** Get the Squad Commander for a specific team (centralized planner) */
+	UFUNCTION(BlueprintCallable, Category = "Schola|v10.2")
+	const ASquadManager* GetSquadCommander(int32 TeamID) const;
+
+	/** Get all registered Squad Commanders across all teams */
+	UFUNCTION(BlueprintCallable, Category = "Schola|v10.2")
+	TArray<ASquadManager*> GetAllSquadCommanders() const;
+
 
 
 	//==========================================================================
@@ -87,8 +113,11 @@ public:
 
 
 private:
-	/** Validate agent for training (has required components) */
-	bool ValidateAgent(UScholaAgentComponent* Agent) const;
+	/** Validate agent for training (v10.2: must be AMocCharacter) */
+	bool ValidateAgent(UScholaMocAgent* Agent) const;
+
+	/** Cache Squad Commander references for each team */
+	void CacheSquadCommanders();
 
 
 
@@ -100,12 +129,8 @@ public:
 
 public:
 	//==========================================================================
-	// COMPONENTS (v9.0 REFACTOR)
+	// COMPONENTS (v10.2 REFACTOR)
 	//==========================================================================
-
-	/** Environment Registry Component - manages team/objective registration */
-	UPROPERTY(VisibleAnywhere,	BlueprintReadOnly, Category = "Schola|Components")
-	UEnvRegistryComponent*		EnvRegistry;
 
 	/** Episode Manager Component - manages episode lifecycle */
 	UPROPERTY(VisibleAnywhere,	BlueprintReadOnly, Category = "Schola|Components")
@@ -120,6 +145,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoDiscoverAgents;
 
+	/** Enable centralized planning via Squad Commanders (v10.2) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
+	bool bEnableCentralizedPlanning;
+
+	/** Log tactical play assignments for analysis */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
+	bool bLogTacticalPlays;
+
 
 	//==========================================================================
 	// STATE
@@ -127,11 +160,15 @@ public:
 
 	/** All registered Schola agent components */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	TArray<UScholaAgentComponent*> RegisteredAgents;
+	TArray<UScholaMocAgent*> RegisteredAgents;
 
-	/** Reference to simulation manager */
+	/** Reference to MOC game mode */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	ASimulationManagerGameMode* SimulationManager;
+	AMocGameMode* GameMode;
+
+	/** Cached Squad Commander references per team (v10.2) */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|State|v10.2")
+	TMap<int32, ASquadManager*> SquadCommanders;
 
 	/** Is gRPC server running? */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")

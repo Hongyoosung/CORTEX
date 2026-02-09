@@ -3,7 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "AI/Models/MocLearnedWorldModel.h" // FObservation 정의 포함
+#include "AI/Models/MocTeamWorldModel.h" // FObservation 정의 포함
 #include "MocValueNetwork.generated.h"
 
 /**

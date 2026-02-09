@@ -1,6 +1,6 @@
 #include "AI/MCTS/TeamMCTS.h"
 #include "AI/MCTS/TeamTreeNode.h"
-#include "AI/Models/TeamWorldModel.h"
+#include "AI/Models/MocTeamWorldModel.h"
 
 UTeamMCTS::UTeamMCTS()
 	: TeamWorldModel(nullptr)
@@ -9,7 +9,7 @@ UTeamMCTS::UTeamMCTS()
 {
 }
 
-void UTeamMCTS::Setup(UTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig)
+void UTeamMCTS::Setup(UMocTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig)
 {
 	TeamWorldModel = InTeamWorldModel;
 	Config = InConfig;

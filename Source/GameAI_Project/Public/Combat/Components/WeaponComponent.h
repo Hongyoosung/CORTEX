@@ -11,16 +11,7 @@ class AProjectileBase;
 class USkeletalMeshComponent;
 class UAnimMontage;
 
-/**
- * Weapon fire mode
- */
-UENUM(BlueprintType)
-enum class EWeaponFireMode : uint8
-{
-	Single UMETA(DisplayName = "Single Shot"),
-	Burst UMETA(DisplayName = "Burst Fire"),
-	FullAuto UMETA(DisplayName = "Full Auto")
-};
+
 
 /**
  * Weapon fire data
@@ -191,6 +182,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
 	bool IsReloading() const { return bIsReloading; }
 
+	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
+	float GetCooldownProgress() const;
+
 	/** Get fire rate (shots per second) */
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
 	float GetFireRate() const { return AttackSpeed; }
@@ -298,10 +292,6 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config|FireRate", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AttackRandomCycle = 0.15f;
-
-	/** Fire mode (single, burst, auto) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config|FireRate")
-	EWeaponFireMode FireMode = EWeaponFireMode::Single;
 
 	/** Burst count (for burst mode) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config|FireRate", meta = (EditCondition = "FireMode == EWeaponFireMode::Burst", ClampMin = "2", ClampMax = "10"))
