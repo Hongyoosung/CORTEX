@@ -3,7 +3,7 @@
 
 #include "Util/Components/VisualLoggerComponent.h"
 #include "DrawDebugHelpers.h"
-#include "Team/ObjectiveActor.h"
+
 
 UVisualLoggerComponent::UVisualLoggerComponent()
 {
@@ -29,8 +29,6 @@ FLinearColor UVisualLoggerComponent::GetStrategyColor(EStrategyType Strategy) co
 		return FLinearColor::Blue;
 	case EStrategyType::Support:
 		return FLinearColor::Green;
-	case EStrategyType::Retreat:
-		return FLinearColor::Yellow;
 	default:
 		return FLinearColor::White;
 	}
@@ -73,7 +71,6 @@ void UVisualLoggerComponent::DrawFollowerState(
 	case EStrategyType::Assault: StrategyName = TEXT("ASSAULT"); break;
 	case EStrategyType::Defend: StrategyName = TEXT("DEFEND"); break;
 	case EStrategyType::Support: StrategyName = TEXT("SUPPORT"); break;
-	case EStrategyType::Retreat: StrategyName = TEXT("RETREAT"); break;
 	default: StrategyName = TEXT("NONE"); break;
 	}
 

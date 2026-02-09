@@ -160,8 +160,12 @@ void ASquadManager::PerformTacticalPlanning()
 void ASquadManager::ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AActor* InstigatorActor)
 {
 	// Immediate replanning on high-volatility events
-	UE_LOG(LogTemp, Warning, TEXT("Squad Commander: Critical event %s in &s - triggering replan"),
-		*UEnum::GetValueAsString(EventType), InstigatorActor.GetName());
+	if (InstigatorActor)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Squad Commander: Critical event %s by %s - triggering replan"),
+			*UEnum::GetValueAsString(EventType), *InstigatorActor->GetName());
+	}
+	
 
 	PerformTacticalPlanning();
 	EventDrivenReplanCount++;

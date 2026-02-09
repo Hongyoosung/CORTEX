@@ -32,12 +32,6 @@ class ATeamManager;
  * - Frequency: Every 0.5s or on high-volatility events
  * - Batch inference: Process 8-16 leaves simultaneously
  *
- * Benefits vs v10.1:
- * - 5× computational reduction (1 MCTS run vs 5 parallel)
- * - Squad-level tactical synergy (coordinated plays)
- * - Sacrificial decision-making capability
- * - 16× action space pruning (Tactical Plays vs per-agent strategies)
- *
  * Usage:
  * 1. Spawned by ATeamManager at match start (one per team)
  * 2. Initialize() called with TeamID and TeamManager reference

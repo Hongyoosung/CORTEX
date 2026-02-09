@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "MOC/PickupBase.h"
+#include "Actors/PickupBase.h"
 #include "HealthPack.generated.h"
 
 /**

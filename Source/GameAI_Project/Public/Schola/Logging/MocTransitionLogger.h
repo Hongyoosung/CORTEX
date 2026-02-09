@@ -110,7 +110,7 @@ public:
 		float OptionDuration,
 		const TArray<float>& EQSWeights,
 		float Reward,
-		const FMocObservation& NextState,
+		const FObservation& NextState,
 		bool bDone
 	);
 

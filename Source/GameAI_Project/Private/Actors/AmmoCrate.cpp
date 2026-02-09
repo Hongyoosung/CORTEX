@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "MOC/AmmoCrate.h"
+#include "Actors/AmmoCrate.h"
 #include "Combat/Components/WeaponComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"

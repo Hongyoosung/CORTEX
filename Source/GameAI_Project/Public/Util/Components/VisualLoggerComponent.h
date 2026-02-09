@@ -5,8 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Team/TeamTypes.h"
-#include "RL/RLTypes.h"
+#include "Types/MocTypes.h"
 #include "VisualLoggerComponent.generated.h"
 
 /**

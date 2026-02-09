@@ -74,7 +74,7 @@ void UMocTransitionLogger::LogTransition(
 	Transition.bDone = bDone;
 	Transition.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	Transition.AgentID = OwnerCharacter ? OwnerCharacter->AgentID : -1;
-	Transition.TeamID = OwnerCharacter ? OwnerCharacter->TeamID : -1;
+	Transition.TeamID = OwnerCharacter ? OwnerCharacter->GetTeamID_Implementation() : -1;
 	Transition.EpisodeID = CurrentEpisodeID;
 
 	TransitionBuffer.Add(Transition);

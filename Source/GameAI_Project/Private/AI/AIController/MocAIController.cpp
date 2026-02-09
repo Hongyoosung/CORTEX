@@ -10,6 +10,7 @@
 #include "Perception/AISenseConfig_Damage.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "MocAIController.h"
 
 
 AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
@@ -24,13 +25,13 @@ AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
     
     // CORTEX Components (v10.2 - reduced to essential executor components)
     PolicyExecutor = CreateDefaultSubobject<UMocPolicyExecutor>(TEXT("PolicyExecutor"));
-    EQSApplicator = CreateDefaultSubobject<UEQSDynamicWeightApplicator>(TEXT("EQSApplicator"));
 
     // Removed components (moved to ASquadManager in v10.2):
     // - MCTSPlanner → ASquadManager::TeamMCTSPlanner
     // - WorldModel → ASquadManager::MocTeamWorldModel
     // - ValueNetwork → Centralized evaluation
     // - EventMonitor → ASquadManager::OnCriticalEvent()
+    // - EQSDynamicWeightApplicator → Inlined in CreateDynamicEQSQuery()
     
     // Perception 설정
     SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
@@ -86,10 +87,10 @@ void AMocAIController::OnPossess(APawn* InPawn)
         UE_LOG(LogTemp, Log, TEXT("Behavior Tree started"));
     }
     
-    // 초기 전략 설정 (Defend)
-    CurrentOption = FTacticalOption(EStrategyType::Defend, GetPawn()->GetActorLocation(), 5.0f);
+    // 초기 전략 설정 (Defend) - v10.2: 대기 상태, Squad Commander가 명령 발령
+    CurrentOption = FTacticalOption(EStrategyType::Defend, 5.0f);
 
-    // Default defensive weights
+    // Default defensive weights (초기화용)
     FEQSWeightParameters DefaultWeights;
     DefaultWeights.EnemyObjectiveProximity = -0.7f;
     DefaultWeights.AllyObjectiveProximity = 0.9f;
@@ -100,7 +101,13 @@ void AMocAIController::OnPossess(APawn* InPawn)
     DefaultWeights.PickupProximity = 0.2f;
     DefaultWeights.HeightAdvantage = 0.7f;
 
-    UpdateBlackboard(CurrentOption, DefaultWeights);
+    // 초기 전략 및 가중치 설정
+    if (BlackboardComp)
+    {
+        BlackboardComp->SetValueAsEnum(TEXT("CurrentStrategy"),
+            static_cast<uint8>(CurrentOption.Strategy));
+        UpdateBlackboardWeights(DefaultWeights);
+    }
 }
 
 void AMocAIController::Tick(float DeltaTime)
@@ -137,39 +144,6 @@ void AMocAIController::Tick(float DeltaTime)
         DrawDebugInfo();
     }
 }
-
-
-
-FEQSWeightParameters AMocAIController::GetCurrentEQSWeights()
-{
-    // RL Policy에 상태 전달
-    FMocObservation PolicyInput;
-    PolicyInput.BaseState = CurrentObservation;
-    PolicyInput.CurrentOption = CurrentOption.Strategy;
-    PolicyInput.TargetPosition = CurrentOption.TargetPosition;
-    PolicyInput.OptionDuration = CurrentOption.Duration;
-
-    // ONNX inference
-    return PolicyExecutor->PredictEQSWeights(PolicyInput);
-}
-
-void AMocAIController::UpdateBlackboard(
-    const FTacticalOption& Option,
-    const FEQSWeightParameters& Weights
-)
-{
-    if (!BlackboardComp) return;
-
-    // 전략 정보
-    BlackboardComp->SetValueAsEnum(TEXT("CurrentStrategy"),
-        static_cast<uint8>(Option.Strategy));
-    BlackboardComp->SetValueAsVector(TEXT("TargetLocation"),
-        Option.TargetLocation);
-
-    // EQS 가중치
-    UpdateBlackboardWeights(Weights);
-}
-
 void AMocAIController::UpdateBlackboardWeights(const FEQSWeightParameters& Weights)
 {
     if (!BlackboardComp) return;
@@ -191,6 +165,41 @@ void AMocAIController::UpdateBlackboardWeights(const FEQSWeightParameters& Weigh
         Weights.PickupProximity);
     BlackboardComp->SetValueAsFloat(TEXT("Weight_Height"),
         Weights.HeightAdvantage);
+}
+
+FEnvQueryRequest AMocAIController::CreateDynamicEQSQuery(const FEQSWeightParameters& Weights) const
+{
+    if (!EQS_TacticalMovement)
+    {
+        return FEnvQueryRequest();
+    }
+
+    FEnvQueryRequest QueryRequest(EQS_TacticalMovement, this);
+
+    // Normalize RL output [-1, 1] to EQS scale [-2, 2]
+    // Game AI Pro recommended range for EQS weights
+    auto Normalize = [](float RLOutput) {
+        return FMath::Clamp(RLOutput * 2.0f, -2.0f, 2.0f);
+        };
+
+    QueryRequest.SetFloatParam(TEXT("EnemyObjectiveWeight"),
+        Normalize(Weights.EnemyObjectiveProximity));
+    QueryRequest.SetFloatParam(TEXT("AllyObjectiveWeight"),
+        Normalize(Weights.AllyObjectiveProximity));
+    QueryRequest.SetFloatParam(TEXT("CoverDensityWeight"),
+        Normalize(Weights.CoverDensity));
+    QueryRequest.SetFloatParam(TEXT("EnemyVisibilityWeight"),
+        Normalize(Weights.EnemyVisibility));
+    QueryRequest.SetFloatParam(TEXT("AllyProximityWeight"),
+        Normalize(Weights.AllyProximity));
+    QueryRequest.SetFloatParam(TEXT("CombatRangeWeight"),
+        Normalize(Weights.CombatRange));
+    QueryRequest.SetFloatParam(TEXT("PickupWeight"),
+        Normalize(Weights.PickupProximity));
+    QueryRequest.SetFloatParam(TEXT("HeightWeight"),
+        Normalize(Weights.HeightAdvantage));
+
+    return QueryRequest;
 }
 
 void AMocAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)

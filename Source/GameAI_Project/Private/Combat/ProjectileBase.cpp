@@ -10,7 +10,7 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
-#include "Core/SimulationManagerGameMode.h"
+
 
 AProjectileBase::AProjectileBase()
 {
@@ -310,22 +310,7 @@ bool AProjectileBase::ValidateHit(AActor* HitActor) const
 		return false;
 	}
 
-	// Check friendly fire using SimulationManager team system
-	if (!bAllowFriendlyFire && OwnerActor)
-	{
-		// Get SimulationManager for proper team checking
-		if (UWorld* World = GetWorld())
-		{
-			if (ASimulationManagerGameMode* SimManager = Cast<ASimulationManagerGameMode>(World->GetAuthGameMode()))
-			{
-				// If actors are NOT enemies (same team or neutral), block hit
-				if (!SimManager->AreActorsEnemies(OwnerActor, HitActor))
-				{
-					return false;
-				}
-			}
-		}
-	}
+	
 
 	return true;
 }

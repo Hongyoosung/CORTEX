@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "MOC/HealthPack.h"
+#include "Actors/HealthPack.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
@@ -37,7 +37,8 @@ void AHealthPack::ApplyPickupEffect_Implementation(AActor* Collector)
 	if (HealthComp)
 	{
 		// Apply healing
-		float CurrentHealth = HealthComp->GetHealth();
+		float CurrentHealth = HealthComp->GetCurrentHealth();
+		
 		float MaxHealth = HealthComp->GetMaxHealth();
 		float NewHealth = FMath::Min(CurrentHealth + HealAmount, MaxHealth);
 		float ActualHealing = NewHealth - CurrentHealth;
@@ -86,7 +87,7 @@ bool AHealthPack::CanCollect_Implementation(AActor* Collector) const
 	UHealthComponent* HealthComp = Collector->FindComponentByClass<UHealthComponent>();
 	if (HealthComp)
 	{
-		float HealthPercent = HealthComp->GetHealth() / HealthComp->GetMaxHealth();
+		float HealthPercent = HealthComp->GetHealthPercentage();
 		return HealthPercent < MaxHealthPercentForCollection;
 	}
 

@@ -7,16 +7,18 @@
 #include "Perception/AIPerceptionComponent.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
-#include "AI/EQS/EQSDynamicWeightApplication.h"
 #include "Types/MocTypes.h"
 #include "MocAIController.generated.h"
 
+
+struct FEQSWeightParameters;
+
 /**
- * MOC v10.1 메인 AI Controller
- * 
+ * MOC v10.2 AI Controller (Executor Layer)
+ *
  * 역할:
  * - Perception 데이터 수집 및 상태 업데이트
- * - MCTS를 통한 전략 선택 (event-driven)
+ * - Squad Commander로부터 전략 명령 수신
  * - RL Policy를 통한 EQS 가중치 생성
  * - Behavior Tree 실행 제어
  */
@@ -34,6 +36,7 @@ protected:
     virtual void Tick(float DeltaTime) override;
 
 
+public:
     // ==================== Perception Callbacks ====================
     
     /** Perception 업데이트 콜백 */
@@ -45,26 +48,20 @@ protected:
     void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
 
-    UE_DEPRECATED(5.6, "EQS weights now from centralized policy")
-    FEQSWeightParameters GetCurrentEQSWeights();
 
-    /** Blackboard 업데이트 (BT와 통신) - Still used for commanded strategies */
-    void UpdateBlackboard(const FTacticalOption& Option,
-                         const FEQSWeightParameters& Weights);
-
-    /** Blackboard 업데이트 (EQS weights only) - v10.2 simplified */
+    /** Blackboard 업데이트 (EQS weights only) - v10.2 */
     void UpdateBlackboardWeights(const FEQSWeightParameters& Weights);
 
-
-                         
-public:
     // ==================== Blueprint Accessible ====================
-    
+
     /** 현재 전략 타입 가져오기 */
     EStrategyType GetCurrentStrategy() const { return CurrentOption.Strategy; }
-    
-    /** EQS 쿼리 동적 실행 */
-    FEnvQueryRequest CreateDynamicEQSQuery(const FEQSWeightParameters& Weights);
+
+    /**
+     * EQS 쿼리 동적 실행 (v10.2 consolidated)
+     * RL Policy 출력을 EQS 가중치로 변환하여 Query 생성
+     */
+    FEnvQueryRequest CreateDynamicEQSQuery(const FEQSWeightParameters& Weights) const;
     
     /** 디버그 정보 출력 */
     UFUNCTION(BlueprintCallable, Category="Debug")
@@ -89,20 +86,10 @@ protected:
     
     // ==================== MOC Custom Components ====================
 
-    /** RL Policy Executor (ONNX inference) - Still used for EQS weights */
+    /** RL Policy Executor (ONNX inference) - Generates EQS weights from commanded strategy */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
     UMocPolicyExecutor* PolicyExecutor;
 
-    /** EQS Weight Applicator - Still used for spatial reasoning */
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="MOC")
-    UEQSDynamicWeightApplicator* EQSApplicator;
-
-    // ==================== REMOVED (v10.2) ====================
-    // The following components moved to centralized Squad Commander:
-    // - UMocMCTSPlanner* MCTSPlanner → ASquadManager::TeamMCTSPlanner
-    // - UMocWorldModel* WorldModel → ASquadManager::MocTeamWorldModel
-    // - UMocValueNetwork* ValueNetwork → Centralized evaluation
-    // - UMocEventMonitor* EventMonitor → ASquadManager::OnCriticalEvent()
 
     // ==================== Configuration ====================
     
@@ -129,18 +116,15 @@ protected:
     bool bShowDebugInfo = false;
 
     // ==================== State Management ====================
-    
+
     /** 현재 관측 상태 (52-dim) */
     UPROPERTY(BlueprintReadOnly, Category="State")
     FObservation CurrentObservation;
-    
+
     /** 현재 실행 중인 전술 옵션 */
     UPROPERTY(BlueprintReadOnly, Category="Strategy")
     FTacticalOption CurrentOption;
-    
+
     /** 마지막 리플래닝 시간 */
     float TimeSinceLastReplan;
-    
-    /** MCTS 계획 캐시 */
-    TSharedPtr<FTeamTreeNode> CachedPlanRoot;
 };

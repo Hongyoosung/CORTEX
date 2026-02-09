@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Team/MocTeamInterface.h"
+#include "Types/MocTypes.h"
 #include "Combat/CombatStatsInterface.h"
 #include "MocCharacter.generated.h"
 

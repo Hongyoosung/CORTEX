@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "EQS/MocEQSContext.h"
+#include "AI/EQS/MocEQSContext.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"
 #include "AIController.h"
@@ -58,21 +58,27 @@ void UEnvQueryContext_MocEnemies::ProvideContext(FEnvQueryInstance& QueryInstanc
 		return;
 	}
 
-	ATeamManager* TeamManager = (MocChar->TeamID == 0) ? GameMode->GetRedTeamManager() : GameMode->GetBlueTeamManager();
+	ATeamManager* TeamManager = GameMode->GetTeamManager();
 	if (!TeamManager)
 	{
 		return;
 	}
 
-	// Get visible enemy positions
+	int32 MyTeamID = MocChar->GetTeamID_Implementation();
+
+	// Get enemy positions from enemy team agents
 	TArray<FVector> EnemyPositions;
-	for (const FSharedKnowledge& Knowledge : TeamManager->GetSharedKnowledge())
+	TArray<AMocCharacter*> EnemyAgents = TeamManager->GetEnemyAgents(MyTeamID);
+
+	for (AMocCharacter* Enemy : EnemyAgents)
 	{
-		for (const FEnemyInfo& EnemyInfo : Knowledge.LastKnownEnemyPositions)
+		if (Enemy && Enemy->IsAlive())
 		{
-			if (EnemyInfo.TimeSinceLastSeen < 5.0f) // 5-second memory decay
+			// Use FogOfWarManager to check if enemy is visible
+			AFogOfWarManager* FogManager = TeamManager->GetFogOfWarManager();
+			if (FogManager && TeamManager->IsEnemyPositionValid(MyTeamID, Enemy))
 			{
-				EnemyPositions.Add(EnemyInfo.LastKnownPosition);
+				EnemyPositions.Add(TeamManager->GetLastKnownEnemyPosition(MyTeamID, Enemy));
 			}
 		}
 	}
@@ -115,17 +121,21 @@ void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance
 		return;
 	}
 
-	ATeamManager* TeamManager = (MocChar->TeamID == 0) ? GameMode->GetRedTeamManager() : GameMode->GetBlueTeamManager();
+	ATeamManager* TeamManager = GameMode->GetTeamManager();
 	if (!TeamManager)
 	{
 		return;
 	}
 
+	int32 MyTeamID = MocChar->GetTeamID_Implementation();
+
 	// Get ally positions
 	TArray<FVector> AllyPositions;
-	for (AMocCharacter* Ally : TeamManager->GetTeamMembers())
+	TArray<AMocCharacter*> TeamAgents = TeamManager->GetTeamAgents(MyTeamID);
+
+	for (AMocCharacter* Ally : TeamAgents)
 	{
-		if (Ally && Ally != MocChar && !Ally->IsDead())
+		if (Ally && Ally != MocChar && Ally->IsAlive())
 		{
 			AllyPositions.Add(Ally->GetActorLocation());
 		}
@@ -148,15 +158,12 @@ void UEnvQueryContext_MocCapturePoints::ProvideContext(FEnvQueryInstance& QueryI
 		return;
 	}
 
-	AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(World));
-	if (!GameMode)
-	{
-		return;
-	}
+	// Get all capture points by tag
+	TArray<AActor*> FoundCapturePoints;
+	UGameplayStatics::GetAllActorsWithTag(World, FName("CapturePoint"), FoundCapturePoints);
 
-	// Get all capture points
 	TArray<FVector> PointPositions;
-	for (ACapturePoint* Point : GameMode->GetCapturePoints())
+	for (AActor* Point : FoundCapturePoints)
 	{
 		if (Point)
 		{

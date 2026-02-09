@@ -1,14 +1,14 @@
-#include "AI/Networks/ValueNetwork.h"
+#include "AI/Networks/MocValueNetwork.h"
 #include "Config/ModelConfig.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFilemanager.h"
 
-UValueNetwork::UValueNetwork()
+UMocValueNetwork::UMocValueNetwork()
 {
     // 생성자 로직
 }
 
-bool UValueNetwork::InitNetwork(const FString& ModelPath)
+bool UMocValueNetwork::InitNetwork(const FString& ModelPath)
 {
     // [MOC v10.1] Offline Training Phase
     // 실제 구현에서는 여기서 ONNX Runtime 또는 UE5 NNE(Neural Network Engine)를 초기화합니다.
@@ -33,7 +33,7 @@ bool UValueNetwork::InitNetwork(const FString& ModelPath)
     return true;
 }
 
-float UValueNetwork::EvaluateState(const FObservation& State)
+float UMocValueNetwork::EvaluateState(const FObservation& State)
 {
     // 1. 입력 데이터 전처리 (Flattening)
     // FObservation 구조체를 신경망 입력 텐서(TArray<float>)로 변환합니다.
@@ -54,7 +54,7 @@ float UValueNetwork::EvaluateState(const FObservation& State)
     return FMath::Clamp(WinProbability, 0.0f, 1.0f);
 }
 
-float UValueNetwork::RunInference(const TArray<float>& InputTensor)
+float UMocValueNetwork::RunInference(const TArray<float>& InputTensor)
 {
     // =========================================================
     // [MOCK INFERENCE LOGIC]

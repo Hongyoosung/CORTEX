@@ -1,9 +1,10 @@
-// File: AI/Networks/ValueNetwork.h
+
 #pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "AI/Models/MocTeamWorldModel.h" // FObservation 정의 포함
+#include "Types/MocTypes.h"
+#include "AI/Models/MocTeamWorldModel.h" 
 #include "MocValueNetwork.generated.h"
 
 /**
@@ -17,7 +18,7 @@ class GAMEAI_PROJECT_API UMocValueNetwork : public UObject
     GENERATED_BODY()
 
 public:
-    UValueNetwork();
+    UMocValueNetwork();
 
     /**
      * 네트워크 모델을 로드하고 초기화합니다.

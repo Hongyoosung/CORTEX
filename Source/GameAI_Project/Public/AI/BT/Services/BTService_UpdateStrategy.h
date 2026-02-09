@@ -7,7 +7,7 @@
 #include "AIController.h"                    
          
 #include "AI/AIController/MocAIController.h"   
-#include "Team/MocTypes.h"
+#include "Types/MocTypes.h"
 #include "BTService_UpdateStrategy.generated.h"
 
 
