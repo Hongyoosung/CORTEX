@@ -3,6 +3,7 @@
 
 #include "Util/Components/VisualLoggerComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Types/StrategyTypes.h"
 
 
 UVisualLoggerComponent::UVisualLoggerComponent()
@@ -31,86 +32,6 @@ FLinearColor UVisualLoggerComponent::GetStrategyColor(EStrategyType Strategy) co
 		return FLinearColor::Green;
 	default:
 		return FLinearColor::White;
-	}
-}
-
-FString UVisualLoggerComponent::FormatTacticalParams(const FTacticalParameters& Params) const
-{
-	return FString::Printf(
-		TEXT("Aggr:%.2f Cvr:%.2f Spd:%.2f Risk:%.2f"),
-		Params.Aggression,
-		Params.CoverPreference,
-		Params.SpreadDistance,
-		Params.RiskTolerance
-	);
-}
-
-void UVisualLoggerComponent::DrawFollowerState(
-	const FVector& Location,
-	EStrategyType Strategy,
-	float Health,
-	const FTacticalParameters& TacticalParams,
-	AActor* TargetObjective
-)
-{
-	if (!IsDebugDrawingEnabled() || !bDrawAgentInfo)
-	{
-		return;
-	}
-
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	// Get strategy name
-	FString StrategyName;
-	switch (Strategy)
-	{
-	case EStrategyType::Assault: StrategyName = TEXT("ASSAULT"); break;
-	case EStrategyType::Defend: StrategyName = TEXT("DEFEND"); break;
-	case EStrategyType::Support: StrategyName = TEXT("SUPPORT"); break;
-	default: StrategyName = TEXT("NONE"); break;
-	}
-
-	// Draw agent info text
-	FString InfoText = FString::Printf(
-		TEXT("%s\nHP: %.0f%%"),
-		*StrategyName,
-		Health * 100.0f
-	);
-
-	FLinearColor StrategyColor = GetStrategyColor(Strategy);
-	DrawDebugString(
-		World,
-		Location + FVector(0, 0, TextHeightOffset),
-		InfoText,
-		nullptr,
-		StrategyColor.ToFColor(true),
-		0.0f,  // Duration (0 = single frame)
-		true   // Draw shadow
-	);
-
-	// Draw tactical parameters if enabled
-	if (bDrawTacticalParams)
-	{
-		FString TacticalText = FormatTacticalParams(TacticalParams);
-		DrawDebugString(
-			World,
-			Location + FVector(0, 0, TextHeightOffset + 30.0f),
-			TacticalText,
-			nullptr,
-			FColor::Cyan,
-			0.0f,
-			true
-		);
-	}
-
-	// Draw line to objective if set
-	if (bDrawObjectives && TargetObjective)
-	{
-		DrawLineToTarget(Location, TargetObjective->GetActorLocation(), StrategyColor);
 	}
 }
 

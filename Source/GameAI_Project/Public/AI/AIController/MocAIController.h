@@ -7,11 +7,24 @@
 #include "Perception/AIPerceptionComponent.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
-#include "Types/MocTypes.h"
+#include "Types/StrategyTypes.h"
+#include "Types/ObservationTypes.h"
 #include "MocAIController.generated.h"
 
 
+class UAIPerceptionComponent;
+class UBehaviorTreeComponent;
+class UBlackboardComponent;
+class UBehaviorTree;
+class UEnvQuery;
+class UAISenseConfig_Sight;
+class UAISenseConfig_Hearing;
+class UAISenseConfig_Damage;
+class UMocPolicyExecutor;
 struct FEQSWeightParameters;
+struct FEnvQueryRequest;
+struct FObservation;
+
 
 /**
  * MOC v10.2 AI Controller (Executor Layer)
@@ -52,6 +65,13 @@ public:
     /** Blackboard 업데이트 (EQS weights only) - v10.2 */
     void UpdateBlackboardWeights(const FEQSWeightParameters& Weights);
 
+    /**
+     * Build local observation from perception data (v10.2)
+     * Gathers 52-dim observation: self state, allies, enemies, map state
+     * Based on UMocTacticalObserver::GatherBaseObservation()
+     */
+    FObservation BuildObservationFromPerception();
+
     // ==================== Blueprint Accessible ====================
 
     /** 현재 전략 타입 가져오기 */
@@ -62,10 +82,6 @@ public:
      * RL Policy 출력을 EQS 가중치로 변환하여 Query 생성
      */
     FEnvQueryRequest CreateDynamicEQSQuery(const FEQSWeightParameters& Weights) const;
-    
-    /** 디버그 정보 출력 */
-    UFUNCTION(BlueprintCallable, Category="Debug")
-    void DrawDebugInfo();
 
 
 
@@ -99,7 +115,7 @@ protected:
     
     /** EQS Query Template */
     UPROPERTY(EditDefaultsOnly, Category="EQS")
-    UEnvQuery* EQS_TacticalMovement;
+    const UEnvQuery* EQS_TacticalMovement;
     
     /** AI Perception Configs */
     UPROPERTY(EditDefaultsOnly, Category="Perception")

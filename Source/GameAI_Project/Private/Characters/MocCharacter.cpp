@@ -19,6 +19,20 @@
 #include "BrainComponent.h"
 
 AMocCharacter::AMocCharacter()
+	: Super()
+	, HealthComponent(nullptr)
+	, WeaponComponent(nullptr)
+	, ScholaAgent(nullptr)
+	, StimuliSource(nullptr)
+	, BehaviorTree(nullptr)
+	, VisionRange(3000.0f)
+	, AgentID(0)
+	, bIsAlive(true)
+	, CommandedStrategy(EStrategyType::Assault)
+	, SquadCommander(nullptr)
+	, GameMode(nullptr)
+	, TM(nullptr)
+	, FogManager(nullptr)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -87,15 +101,30 @@ void AMocCharacter::BeginPlay()
 	// v10.2: Find Squad Commander reference
 	if (UWorld* World = GetWorld())
 	{
-		if (AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
+		if (GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
 		{
-			if (ATeamManager* TM = GameMode->GetTeamManager())
+			if (TM = GameMode->GetTeamManager())
 			{
 				int32 MyTeamID = GetTeamID_Implementation();
 				// TODO: Get Squad Commander from TeamManager
 				// SquadCommander = TM->GetSquadCommander(MyTeamID);
 			}
 		}
+	}
+
+
+	TM = GameMode->GetTeamManager();
+	if (!TM)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetTeamManager"));
+		return;
+	}
+
+	FogManager = TM->GetFogOfWarManager();
+	if (!FogManager)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetFogManager"));
+		return;
 	}
 }
 
@@ -109,35 +138,11 @@ void AMocCharacter::Tick(float DeltaTime)
 		return; // Skip if dead
 	}
 
-	UWorld* World = GetWorld();
-	if (!World) // FIXED: Return only if World is NULL
-	{
-		return;
-	}
-
-	AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode());
-	if (!GameMode)
-	{
-		return;
-	}
-
-	ATeamManager* TM = GameMode->GetTeamManager();
-	if (!TM)
-	{
-		return;
-	}
-
-	AFogOfWarManager* FoWManager = TM->GetFogOfWarManager();
-	if (!FoWManager)
-	{
-		return;
-	}
-
 	int32 MyTeamID = GetTeamID_Implementation();
 	if (MyTeamID >= 0)
 	{
 		FVector MyLocation = GetActorLocation();
-		FoWManager->UpdateVision(MyTeamID, MyLocation, VisionRange);
+		FogManager->UpdateVision(MyTeamID, MyLocation, VisionRange);
 	}
 }
 
@@ -192,13 +197,9 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 
-	// Enable ragdoll physics
-	if (USkeletalMeshComponent* Mesh = GetMesh())
-	{
-		Mesh->SetSimulatePhysics(true);
-		Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	}
-
+	GetMesh()->SetSimulatePhysics(true);
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	
 	// Stop AI
 	if (AAIController* AI = Cast<AAIController>(GetController()))
 	{
@@ -209,25 +210,19 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 	}
 
 	// Notify GameMode → TeamManager
-	if (UWorld* World = GetWorld())
+	if (TM)
 	{
-		if (AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
+		int32 KillerTeamID = -1;
+		if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
 		{
-			if (ATeamManager* TM = GameMode->GetTeamManager())
-			{
-				int32 KillerTeamID = -1;
-				if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
-				{
-					KillerTeamID = Killer->GetTeamID();
-				}
-
-				// Register kill (TeamManager broadcasts OnAgentKilled)
-				TM->RegisterKill(KillerTeamID, GetTeamID(), this);
-
-				// Queue respawn
-				TM->QueueRespawn(this, GetTeamID());
-			}
+			KillerTeamID = Killer->GetTeamID();
 		}
+
+		// Register kill (TeamManager broadcasts OnAgentKilled)
+		TM->RegisterKill(KillerTeamID, GetTeamID(), this);
+
+		// Queue respawn
+		TM->QueueRespawn(this, GetTeamID());
 	}
 }
 
@@ -255,17 +250,17 @@ void AMocCharacter::ResetCharacter()
 	}
 
 	// Disable ragdoll physics
-	if (USkeletalMeshComponent* Mesh = GetMesh())
+	if (USkeletalMeshComponent* InMesh = GetMesh())
 	{
-		Mesh->SetSimulatePhysics(false);
-		Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		InMesh->SetSimulatePhysics(false);
+		InMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 
 		// Re-attach mesh to capsule
-		Mesh->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		InMesh->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 
 		// Reset mesh transform
-		Mesh->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
-		Mesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+		InMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+		InMesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 	}
 
 	// Restart AI

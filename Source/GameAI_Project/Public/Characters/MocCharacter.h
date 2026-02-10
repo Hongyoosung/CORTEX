@@ -5,16 +5,22 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Team/MocTeamInterface.h"
-#include "Types/MocTypes.h"
+#include "Types/StrategyTypes.h"
+#include "Types/GameStateTypes.h"
 #include "Combat/CombatStatsInterface.h"
 #include "MocCharacter.generated.h"
 
 // Forward declarations
+
 class UHealthComponent;
 class UWeaponComponent;
 class UScholaMocAgent;
 class UAIPerceptionStimuliSourceComponent;
 class UBehaviorTree;
+class ASquadManager;
+class AMocGameMode;
+class ATeamManager;
+class AFogOfWarManager;
 struct FDeathEventData;
 
 /**
@@ -144,7 +150,7 @@ public:
 
 	/** Vision range for fog-of-war updates (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Vision")
-	float VisionRange = 3000.0f; // 30 meters
+	float VisionRange; // 30 meters
 
 	//========================================
 	// v10.2 Command Interface
@@ -167,7 +173,7 @@ public:
 
 	/** Agent ID for team coordination */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
-	int32 AgentID = 0;
+	int32 AgentID;
 
 protected:
 	//========================================
@@ -176,13 +182,18 @@ protected:
 
 	/** Is dead? */
 	UPROPERTY(BlueprintReadOnly, Category = "State")
-	bool bIsAlive = true;
+	bool bIsAlive;
 
 	/** Current strategy assigned by Squad Commander (v10.2) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
-	EStrategyType CommandedStrategy = EStrategyType::Assault;
+	EStrategyType CommandedStrategy;
 
 	/** Reference to Squad Commander (set on spawn) */
-	UPROPERTY()
-	class ASquadManager* SquadCommander;
+	TObjectPtr<ASquadManager> SquadCommander;
+
+	TObjectPtr<AMocGameMode> GameMode;
+
+	TObjectPtr<ATeamManager> TM;
+
+	TObjectPtr<AFogOfWarManager> FogManager;
 };

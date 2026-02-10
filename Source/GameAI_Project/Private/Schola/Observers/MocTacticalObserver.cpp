@@ -44,7 +44,7 @@ void UMocTacticalObserver::InitializeObserver()
 	Super::InitializeObserver();
 
 	// Cache trainer reference (owner should be AMocTrainer)
-	CachedTrainer = Cast<AMocTrainer>(GetOwner());
+	CachedTrainer = GetTypedOuter<AMocTrainer>();
 	if (!CachedTrainer)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Owner is not AMocTrainer! Observer will not function correctly."));

@@ -3,12 +3,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "EQSWeightParameters.generated.h"
+#include "EQSTypes.generated.h"
 
 /**
  * EQS Weight Parameters (8-dim output from RL policy)
  * These weights configure Environment Query System tests for spatial reasoning.
- * See v10.0Architecture.md Section 2.5 for detailed parameter descriptions.
+ * See v10.2 Architecture.md Section 2.5 for detailed parameter descriptions.
  */
 USTRUCT(BlueprintType)
 struct FEQSWeightParameters

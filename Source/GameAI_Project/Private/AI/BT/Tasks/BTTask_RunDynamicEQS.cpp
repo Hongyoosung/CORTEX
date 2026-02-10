@@ -1,7 +1,11 @@
 #include "AI/BT/Tasks/BTTask_RunDynamicEQS.h"
-#include "AI/EQS/EQSWeightParameters.h"
+#include "Types/EQSTypes.h"
 #include "AI/AIController/MocAIController.h"
 
+
+UBTTask_RunDynamicEQS::UBTTask_RunDynamicEQS()
+{
+}
 
 EBTNodeResult::Type UBTTask_RunDynamicEQS::ExecuteTask(
     UBehaviorTreeComponent& OwnerComp, 

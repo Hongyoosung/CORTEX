@@ -5,14 +5,16 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Team/TeamState.h"
-#include "Types/MocTypes.h"
+#include "Types/StrategyTypes.h"
+#include "Types/EventTypes.h"
+#include "Types/RewardTypes.h"
 #include "SquadManager.generated.h"
 
-// Forward declarations
-class UMocAgentWorldModel;
+
 class UTeamMCTS;
 class AMocCharacter;
 class ATeamManager;
+class UTeamDataCollector;
 
 /**
  * ASquadManager - MOC v10.2 Centralized Tactical Commander
@@ -139,6 +141,26 @@ public:
 	UPROPERTY(EditAnywhere, Category = "SquadManager|Debug")
 	bool bDrawRoleAssignments = true;
 
+	//========================================
+	// World Model Configuration (v10.2 Week 3)
+	//========================================
+
+	/** Path to team world model ONNX file (optional, empty = skip MCTS) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SquadManager|WorldModel")
+	FString TeamWorldModelPath;
+
+	//========================================
+	// Data Collection Mode (v10.2 Week 2)
+	//========================================
+
+	/** Enable data collection mode (skip MCTS, use ε-greedy policy for faster data collection) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SquadManager|DataCollection")
+	bool bDataCollectionMode = false;
+
+	/** Exploration rate for ε-greedy policy (0.0 = pure exploitation, 1.0 = pure exploration) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SquadManager|DataCollection", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ExplorationRate = 0.7f;
+
 protected:
 	//========================================
 	// Internal Implementation
@@ -186,13 +208,13 @@ protected:
 	UPROPERTY()
 	UTeamMCTS* TeamMCTSPlanner;
 
-	/** Team-level world model for centralized planning (v10.2) */
+	/** Team world model for MCTS predictions (NEW - v10.2 Week 3) */
 	UPROPERTY()
-	class UMocTeamWorldModel* TeamWorldModel;
+	class UTeamWorldModel* TeamWorldModel;
 
-	/** Individual agent world model (wrapped by MocTeamWorldModel) */
+	/** Training data collector for team world model (NEW - v10.2 Week 2) */
 	UPROPERTY()
-	UMocAgentWorldModel* AgentWorldModel;
+	UTeamDataCollector* DataCollector;
 
 	/** Reference to TeamManager for agent queries */
 	UPROPERTY()
@@ -232,4 +254,39 @@ protected:
 	/** Number of event-driven replans triggered */
 	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|Stats")
 	int32 EventDrivenReplanCount;
+
+	//========================================
+	// Training Data Collection (v10.2 Week 2)
+	//========================================
+
+	/** Previous team state (for transition recording) */
+	FTeamState PreviousTeamState;
+
+	/** Previous tactical play executed */
+	ETacticalPlay PreviousTacticalPlay;
+
+	/** Flag to track if we have a valid previous state */
+	bool bHasPreviousState;
+
+private:
+	/**
+	 * Calculate reward based on team state transition
+	 * @param OldState - Previous team state
+	 * @param NewState - Current team state
+	 * @return Multi-objective reward
+	 */
+	FCompositeReward CalculateTeamReward(const FTeamState& OldState, const FTeamState& NewState) const;
+
+	/**
+	 * Select tactical play using ε-greedy policy (for data collection)
+	 *
+	 * With probability ε: Random tactical play (exploration)
+	 * With probability 1-ε: Heuristic-based play (exploitation)
+	 *
+	 * This provides diverse training data without requiring expensive MCTS
+	 *
+	 * @param TeamState - Current team state for heuristic selection
+	 * @return Selected tactical play
+	 */
+	ETacticalPlay SelectEpsilonGreedyAction(const FTeamState& TeamState) const;
 };

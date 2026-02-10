@@ -1,8 +1,9 @@
 // File: AI/Policy/MocPolicyExecutor.cpp
-// MOC v10.2 Policy Executor Implementation
+// MOC v10.2 Multi-Head Policy Executor Implementation
 
 #include "AI/Policy/MocPolicyExecutor.h"
-#include "AI/EQS/EQSWeightParameters.h"
+#include "Types/EQSTypes.h"
+#include "Types/MocTypes.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
@@ -14,7 +15,7 @@ UMocPolicyExecutor::UMocPolicyExecutor()
 	PrimaryComponentTick.bCanEverTick = false;
 
 	// Default model path
-	PolicyModelPath = FPaths::ProjectContentDir() / TEXT("AI/Models/policy_weights.onnx");
+	PolicyModelPath = FPaths::ProjectContentDir() / TEXT("AI/Models/policy_multihead.onnx");
 }
 
 void UMocPolicyExecutor::BeginPlay()
@@ -33,7 +34,7 @@ bool UMocPolicyExecutor::LoadModel(const FString& ModelPath)
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	if (!PlatformFile.FileExists(*ModelPath))
 	{
-		UE_LOG(LogMocPolicy, Warning, TEXT("Policy model not found: %s. Using fallback defaults."), *ModelPath);
+		UE_LOG(LogMocPolicy, Warning, TEXT("Policy model not found: %s"), *ModelPath);
 
 		if (bUseFallbackDefaults)
 		{
@@ -46,7 +47,7 @@ bool UMocPolicyExecutor::LoadModel(const FString& ModelPath)
 	// TODO: Replace with actual ONNX Runtime loading
 	// For now, this is a placeholder implementation
 	// Real implementation would use:
-	// - NNE (Neural Network Engine) in UE5.3+
+	// - NNE (Neural Network Engine) in UE5.4+
 	// - Third-party ONNX Runtime plugin
 	// - Custom ONNX inference wrapper
 
@@ -58,9 +59,16 @@ bool UMocPolicyExecutor::LoadModel(const FString& ModelPath)
 	// Placeholder: Mark as not loaded, but allow fallback operation
 	bModelLoaded = false;
 
-	// TODO: Initialize ONNX session
-	// ONNXSession = CreateONNXSession(ModelPath);
-	// bModelLoaded = (ONNXSession != nullptr);
+	// TODO: Initialize ONNX session with multi-head model
+	// Expected architecture:
+	// - Input: [BatchSize, 52] (local state)
+	// - Shared backbone → 256-dim
+	// - 3 strategy heads (assault/defend/support)
+	// - Output: [BatchSize, 8] (EQS weights)
+	/*
+	ONNXSession = CreateONNXSession(ModelPath);
+	bModelLoaded = (ONNXSession != nullptr);
+	*/
 
 	if (!bModelLoaded && !bUseFallbackDefaults)
 	{
@@ -82,23 +90,25 @@ bool UMocPolicyExecutor::LoadModel(const FString& ModelPath)
 			return false;
 		}
 
-		UE_LOG(LogMocPolicy, Log, TEXT("✅ Policy model loaded successfully: %s"), *ModelPath);
+		UE_LOG(LogMocPolicy, Log, TEXT("✅ Multi-head policy model loaded successfully: %s"), *ModelPath);
 	}
 
 	return true;
 }
 
-FEQSWeightParameters UMocPolicyExecutor::InferWeights(EStrategyType Strategy)
+FEQSWeightParameters UMocPolicyExecutor::InferWeights(
+	EStrategyType CommandedStrategy,
+	const FObservation& LocalObservation)
 {
 	if (!bModelLoaded)
 	{
-		// Use fallback defaults
-		return GetDefaultWeights(Strategy);
+		// Use fallback defaults (no local adaptation)
+		return GetDefaultWeights(CommandedStrategy);
 	}
 
-	// Run ONNX inference
+	// Run ONNX multi-head inference with local state adaptation
 	const double StartTime = FPlatformTime::Seconds();
-	TArray<float> OutputTensor = RunONNXInference(Strategy);
+	TArray<float> OutputTensor = RunMultiHeadInference(CommandedStrategy, LocalObservation);
 	const double EndTime = FPlatformTime::Seconds();
 
 	LastInferenceTimeMs = static_cast<float>((EndTime - StartTime) * 1000.0);
@@ -112,7 +122,7 @@ FEQSWeightParameters UMocPolicyExecutor::InferWeights(EStrategyType Strategy)
 	if (OutputTensor.Num() != 8)
 	{
 		UE_LOG(LogMocPolicy, Error, TEXT("Invalid ONNX output size: %d (expected 8)"), OutputTensor.Num());
-		return GetDefaultWeights(Strategy);
+		return GetDefaultWeights(CommandedStrategy);
 	}
 
 	// Convert to EQS parameters
@@ -122,10 +132,9 @@ FEQSWeightParameters UMocPolicyExecutor::InferWeights(EStrategyType Strategy)
 	return Weights;
 }
 
-FEQSWeightParameters UMocPolicyExecutor::PredictEQSWeights(const FMocObservation& Observation)
+FEQSWeightParameters UMocPolicyExecutor::GetStrategyDefaults(EStrategyType Strategy)
 {
-	// Backward compatibility: Extract strategy from observation and use InferWeights
-	return InferWeights(Observation.CurrentOption);
+	return GetDefaultWeights(Strategy);
 }
 
 bool UMocPolicyExecutor::ReloadModel(const FString& NewModelPath)
@@ -144,23 +153,29 @@ bool UMocPolicyExecutor::ReloadModel(const FString& NewModelPath)
 	return LoadModel(NewModelPath);
 }
 
-TArray<float> UMocPolicyExecutor::RunONNXInference(EStrategyType Strategy)
+TArray<float> UMocPolicyExecutor::RunMultiHeadInference(
+	EStrategyType Strategy,
+	const FObservation& LocalObs)
 {
 	// TODO: Replace with actual ONNX Runtime call
-	// For now, return fallback defaults
+	// For now, return strategy-specific defaults
 
 	TArray<float> OutputTensor;
 	OutputTensor.SetNumZeroed(8);
 
-	// Placeholder: Convert strategy to one-hot and run inference
-	// TArray<float> StrategyOneHot = StrategyToOneHot(Strategy);
-
+	// Placeholder implementation (will be replaced with real ONNX call)
 	/*
 	// Real implementation would look like:
+
+	// 1. Encode local observation to 52-dim tensor
+	TArray<float> StateTensor = LocalObs.ToArray(); // 52-dim
+	check(StateTensor.Num() == 52);
+
+	// 2. Prepare ONNX input
 	Ort::MemoryInfo MemoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
-	std::vector<float> InputData = { StrategyOneHot[0], StrategyOneHot[1], StrategyOneHot[2] };
-	std::vector<int64_t> InputShape = {1, 3};
+	std::vector<float> InputData(StateTensor.GetData(), StateTensor.GetData() + 52);
+	std::vector<int64_t> InputShape = {1, 52}; // Batch size = 1
 
 	Ort::Value InputOrtValue = Ort::Value::CreateTensor<float>(
 		MemoryInfo,
@@ -170,9 +185,28 @@ TArray<float> UMocPolicyExecutor::RunONNXInference(EStrategyType Strategy)
 		InputShape.size()
 	);
 
-	const char* InputNames[] = {"strategy_input"};
-	const char* OutputNames[] = {"eqs_weights"};
+	// 3. Select output head based on strategy
+	const char* OutputName;
+	switch (Strategy)
+	{
+	case EStrategyType::Assault:
+		OutputName = "assault_head_output";
+		break;
+	case EStrategyType::Defend:
+		OutputName = "defend_head_output";
+		break;
+	case EStrategyType::Support:
+		OutputName = "support_head_output";
+		break;
+	default:
+		OutputName = "assault_head_output"; // Default fallback
+		break;
+	}
 
+	const char* InputNames[] = {"state_input"};
+	const char* OutputNames[] = {OutputName};
+
+	// 4. Run inference
 	auto OutputTensors = ONNXSession->Run(
 		Ort::RunOptions{nullptr},
 		InputNames,
@@ -182,6 +216,7 @@ TArray<float> UMocPolicyExecutor::RunONNXInference(EStrategyType Strategy)
 		1
 	);
 
+	// 5. Extract output weights [1, 8]
 	float* OutputData = OutputTensors[0].GetTensorMutableData<float>();
 	for (int i = 0; i < 8; ++i) {
 		OutputTensor[i] = OutputData[i];
@@ -194,8 +229,10 @@ TArray<float> UMocPolicyExecutor::RunONNXInference(EStrategyType Strategy)
 bool UMocPolicyExecutor::ValidateModelSchema()
 {
 	// TODO: Implement schema validation
-	// Expected input: [1, 3] (one-hot strategy encoding)
-	// Expected output: [1, 8] (EQS weights)
+	// Expected:
+	// - Input: [BatchSize, 52] (local state)
+	// - Output: [BatchSize, 8] (EQS weights) from selected head
+	// - 3 output nodes: assault_head_output, defend_head_output, support_head_output
 
 	return true; // Placeholder
 }
@@ -204,7 +241,7 @@ FEQSWeightParameters UMocPolicyExecutor::GetDefaultWeights(EStrategyType Strateg
 {
 	FEQSWeightParameters Weights;
 
-	// Strategy-specific default weights (based on v10.0Architecture.md Table 2.5)
+	// Strategy-specific default weights (based on v10.0Architecture.md Section 2.5)
 	switch (Strategy)
 	{
 	case EStrategyType::Assault:
@@ -250,33 +287,9 @@ FEQSWeightParameters UMocPolicyExecutor::GetDefaultWeights(EStrategyType Strateg
 	return Weights;
 }
 
-TArray<float> UMocPolicyExecutor::StrategyToOneHot(EStrategyType Strategy)
-{
-	TArray<float> OneHot = {0.0f, 0.0f, 0.0f};
-
-	switch (Strategy)
-	{
-	case EStrategyType::Assault:
-		OneHot[0] = 1.0f;
-		break;
-	case EStrategyType::Defend:
-		OneHot[1] = 1.0f;
-		break;
-	case EStrategyType::Support:
-		OneHot[2] = 1.0f;
-		break;
-	default:
-		UE_LOG(LogMocPolicy, Warning, TEXT("Invalid strategy type for one-hot encoding: %d"),
-			static_cast<int32>(Strategy));
-		break;
-	}
-
-	return OneHot;
-}
-
 void UMocPolicyExecutor::LogInferenceStats(float InferenceTimeMs)
 {
-	UE_LOG(LogMocPolicy, Verbose, TEXT("Policy inference: %.2f ms"), InferenceTimeMs);
+	UE_LOG(LogMocPolicy, Verbose, TEXT("Multi-head policy inference: %.2f ms"), InferenceTimeMs);
 
 	// Warn if exceeding budget (2ms target for real-time operation)
 	if (InferenceTimeMs > 2.0f)

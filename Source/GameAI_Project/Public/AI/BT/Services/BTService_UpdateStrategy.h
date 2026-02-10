@@ -1,12 +1,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "BehaviorTree/BTService.h"         
-#include "BehaviorTree/BlackboardComponent.h" 
-#include "BehaviorTree/BehaviorTreeComponent.h" 
-#include "AIController.h"                    
-         
-#include "AI/AIController/MocAIController.h"   
+#include "BehaviorTree/BTService.h"
+#include "BehaviorTree/BlackboardComponent.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
+#include "AIController.h"
+#include "AI/AIController/MocAIController.h"
 #include "Types/MocTypes.h"
 #include "BTService_UpdateStrategy.generated.h"
 
@@ -16,6 +15,7 @@ UCLASS()
 class GAMEAI_PROJECT_API UBTService_UpdateStrategy : public UBTService
 {
     GENERATED_BODY()
+
 
 protected:
     virtual void TickNode(UBehaviorTreeComponent& OwnerComp, 
@@ -39,7 +39,7 @@ protected:
         
         if (CurrentStrategy != PreviousStrategy)
         {
-            UE_LOG(LogCortex, Log, TEXT("Strategy changed: %d -> %d"), 
+            UE_LOG(LogTemp, Log, TEXT("Strategy changed: %d -> %d"), 
                 PreviousStrategy, CurrentStrategy);
             PreviousStrategy = CurrentStrategy;
         }

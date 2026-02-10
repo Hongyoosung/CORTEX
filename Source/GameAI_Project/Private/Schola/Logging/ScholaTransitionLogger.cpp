@@ -1,7 +1,12 @@
 #include "Schola/Logging/ScholaTransitionLogger.h"
 
 
-void UScholaTransitionLogger::RecordTransition(const TArray<float>& State, const FTacticalOption& Option, 
+
+void UScholaTransitionLogger::Initialize(FString InLogPath)
+{
+}
+
+void UScholaTransitionLogger::RecordTransition(const TArray<float>& State, const FTacticalOption& Option,
                                               const FCompositeReward& Reward, const TArray<float>& NextState, bool bTerminal)
 {
     FTransitionTuple NewTuple;
@@ -38,4 +43,9 @@ void UScholaTransitionLogger::FlushToDisk()
 
     TransitionBuffer.Empty();
     UE_LOG(LogTemp, Log, TEXT("[Logger] Flushed %d transitions to %s"), TransitionBuffer.Num(), *FileName);
+}
+
+FString UScholaTransitionLogger::SerializeTuple(const FTransitionTuple& Tuple)
+{
+    return FString();
 }

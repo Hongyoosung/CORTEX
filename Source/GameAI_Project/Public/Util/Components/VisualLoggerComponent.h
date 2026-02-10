@@ -5,7 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Types/MocTypes.h"
+#include "Types/StrategyTypes.h"
 #include "VisualLoggerComponent.generated.h"
 
 /**
@@ -76,19 +76,6 @@ public:
 	float SphereRadius = 30.0f;
 
 	// ========== Follower Visualization ==========
-
-	/**
-	 * Draw follower agent state.
-	 * Shows strategy, health, objective, tactical parameters.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Visual Logger")
-	void DrawFollowerState(
-		const FVector& Location,
-		EStrategyType Strategy,
-		float Health,
-		const FTacticalParameters& TacticalParams,
-		AActor* TargetObjective = nullptr
-	);
 
 	/**
 	 * Draw combat information.
@@ -203,11 +190,6 @@ private:
 	 * Get strategy color for visualization.
 	 */
 	FLinearColor GetStrategyColor(EStrategyType Strategy) const;
-
-	/**
-	 * Format tactical parameters as string.
-	 */
-	FString FormatTacticalParams(const FTacticalParameters& Params) const;
 
 	/**
 	 * Check if debug drawing is enabled (master switch + shipping build check).

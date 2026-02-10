@@ -2,15 +2,17 @@
 
 #include "AI/AIController/MocAIController.h"
 #include "AI/Policy/MocPolicyExecutor.h"
-#include "AI/EQS/EQSWeightParameters.h"
 #include "Characters/MocCharacter.h"
-#include "RL/Observation/MocObservation.h"
+#include "Types/EQSTypes.h"
+#include "Types/ObservationTypes.h"
+#include "Types/StrategyTypes.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISenseConfig_Hearing.h"
 #include "Perception/AISenseConfig_Damage.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
-#include "MocAIController.h"
+#include "EnvironmentQuery/EnvQueryManager.h"
+#include "Kismet/GameplayStatics.h"
 
 
 AMocAIController::AMocAIController(const FObjectInitializer& ObjectInitializer)
@@ -110,6 +112,131 @@ void AMocAIController::OnPossess(APawn* InPawn)
     }
 }
 
+FObservation AMocAIController::BuildObservationFromPerception()
+{
+    FObservation Obs;
+
+    AMocCharacter* MyChar = Cast<AMocCharacter>(GetPawn());
+    if (!MyChar)
+    {
+        return Obs; // Return default-initialized observation
+    }
+
+    // ========================================
+    // Self State (10-dim)
+    // ========================================
+    Obs.Position = MyChar->GetActorLocation();
+    Obs.Health = MyChar->GetHealthPercentage();
+    Obs.Velocity = MyChar->GetVelocity();
+    Obs.WeaponCooldown = MyChar->GetWeaponCooldown_Implementation();
+    Obs.CurrentStrategy = MyChar->GetCommandedStrategy();
+    Obs.bIsAlive = MyChar->IsAlive();
+
+    // ========================================
+    // Gather Team Information (Allies + Enemies)
+    // ========================================
+    TArray<AActor*> AllCharacters;
+    UGameplayStatics::GetAllActorsOfClass(
+        GetWorld(),
+        AMocCharacter::StaticClass(),
+        AllCharacters
+    );
+
+    // Initialize arrays
+    Obs.AllyPositions.Reserve(4);
+    Obs.AllyHealths.Reserve(4);
+    Obs.AllyStrategies.Reserve(4);
+    Obs.EnemyPositions.Reserve(5);
+    Obs.EnemyVisible.Reserve(5);
+
+    int32 AllyIndex = 0;
+    int32 EnemyIndex = 0;
+    const int32 MyTeamID = MyChar->GetTeamID();
+
+    for (AActor* Actor : AllCharacters)
+    {
+        AMocCharacter* OtherChar = Cast<AMocCharacter>(Actor);
+        if (!OtherChar || OtherChar == MyChar)
+        {
+            continue;
+        }
+
+        if (OtherChar->GetTeamID() == MyTeamID)
+        {
+            // ========================================
+            // Ally (max 4)
+            // ========================================
+            if (AllyIndex < 4)
+            {
+                Obs.AllyPositions.Add(OtherChar->GetActorLocation());
+                Obs.AllyHealths.Add(OtherChar->GetHealthPercentage());
+                Obs.AllyStrategies.Add(OtherChar->GetCommandedStrategy());
+                AllyIndex++;
+            }
+        }
+        else
+        {
+            // ========================================
+            // Enemy (max 5)
+            // ========================================
+            if (EnemyIndex < 5)
+            {
+                Obs.EnemyPositions.Add(OtherChar->GetActorLocation());
+
+                // Visibility check: Line of sight within vision range (3000 units = 30m)
+                FVector ToEnemy = OtherChar->GetActorLocation() - MyChar->GetActorLocation();
+                float Distance = ToEnemy.Size();
+                bool bVisible = false;
+
+                if (Distance < 3000.0f) // Match SightConfig radius from constructor
+                {
+                    FHitResult HitResult;
+                    FCollisionQueryParams QueryParams;
+                    QueryParams.AddIgnoredActor(MyChar);
+                    QueryParams.AddIgnoredActor(OtherChar);
+
+                    // Line trace from eye height to enemy eye height
+                    bVisible = !GetWorld()->LineTraceSingleByChannel(
+                        HitResult,
+                        MyChar->GetActorLocation() + FVector(0, 0, 90), // Eye height offset
+                        OtherChar->GetActorLocation() + FVector(0, 0, 90),
+                        ECC_Visibility,
+                        QueryParams
+                    );
+                }
+
+                Obs.EnemyVisible.Add(bVisible);
+                EnemyIndex++;
+            }
+        }
+    }
+
+    // Pad arrays to fixed size if needed
+    while (Obs.AllyPositions.Num() < 4)
+    {
+        Obs.AllyPositions.Add(FVector::ZeroVector);
+        Obs.AllyHealths.Add(0.0f);
+        Obs.AllyStrategies.Add(EStrategyType::Assault);
+    }
+
+    while (Obs.EnemyPositions.Num() < 5)
+    {
+        Obs.EnemyPositions.Add(FVector::ZeroVector);
+        Obs.EnemyVisible.Add(false);
+    }
+
+    // ========================================
+    // Map State (2-dim)
+    // ========================================
+    // TODO: Implement capture point balance calculation from game mode
+    Obs.CapturePointBalance = 0;
+
+    // TODO: Get actual time remaining from game mode
+    Obs.TimeRemaining = 1.0f;
+
+    return Obs;
+}
+
 void AMocAIController::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
@@ -130,18 +257,23 @@ void AMocAIController::Tick(float DeltaTime)
                 static_cast<uint8>(CurrentStrategy));
         }
 
-        // Generate EQS weights from policy (still used for spatial reasoning)
+        // Generate EQS weights from policy with local state adaptation (v10.2)
         if (PolicyExecutor)
         {
-            FEQSWeightParameters Weights = PolicyExecutor->InferWeights(CurrentStrategy);
+            // Build local observation from perception data
+            FObservation LocalObs = BuildObservationFromPerception();
+
+            // Cache for future reference
+            CurrentObservation = LocalObs;
+
+            // Generate weights using commanded strategy + local state
+            FEQSWeightParameters Weights = PolicyExecutor->InferWeights(
+                CurrentStrategy,
+                LocalObs
+            );
+
             UpdateBlackboardWeights(Weights);
         }
-    }
-
-    // Debug visualization
-    if (bShowDebugInfo)
-    {
-        DrawDebugInfo();
     }
 }
 void AMocAIController::UpdateBlackboardWeights(const FEQSWeightParameters& Weights)
@@ -174,7 +306,9 @@ FEnvQueryRequest AMocAIController::CreateDynamicEQSQuery(const FEQSWeightParamet
         return FEnvQueryRequest();
     }
 
-    FEnvQueryRequest QueryRequest(EQS_TacticalMovement, this);
+    UObject* OwnerObject = Cast<UObject>(GetPawn());
+
+    FEnvQueryRequest QueryRequest(EQS_TacticalMovement, OwnerObject);
 
     // Normalize RL output [-1, 1] to EQS scale [-2, 2]
     // Game AI Pro recommended range for EQS weights
@@ -220,4 +354,8 @@ void AMocAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     {
         BlackboardComp->SetValueAsBool(TEXT("HasTarget"), false);
     }
+}
+
+void AMocAIController::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
+{
 }

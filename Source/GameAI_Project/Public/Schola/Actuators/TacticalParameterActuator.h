@@ -5,7 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Actuators/AbstractActuators.h"
-#include "Types/MocTypes.h"
+#include "Types/StrategyTypes.h"
 #include "TacticalParameterActuator.generated.h"
 
 
@@ -49,15 +49,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Actuator")
 	bool bDebugLogging = false;
 
-	/** Get the last applied tactical parameters */
-	UFUNCTION(BlueprintPure, Category = "Actuator")
-	FTacticalParameters GetLastTacticalParameters() const { return LastTacticalParams; }
-
 
 
 protected:
-	/** Last received tactical parameters (cached for debugging) */
-	FTacticalParameters LastTacticalParams;
-
 	TObjectPtr<AMocCharacter> MocAgent;
 };

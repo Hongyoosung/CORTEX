@@ -4,8 +4,9 @@
 #include "Team/TeamManager.h"
 #include "Characters/MocCharacter.h"
 #include "AI/MCTS/TeamMCTS.h"
-#include "AI/Models/MocAgentWorldModel.h"
-#include "AI/Models/MocTeamWorldModel.h"
+#include "AI/Models/TeamWorldModel.h"
+#include "AI/Training/TeamDataCollector.h"
+#include "Types/RewardTypes.h"
 #include "DrawDebugHelpers.h"
 
 ASquadManager::ASquadManager()
@@ -20,6 +21,7 @@ ASquadManager::ASquadManager()
 	PlanConfidence = 0.5f;
 	PlanningCycleCount = 0;
 	EventDrivenReplanCount = 0;
+	bHasPreviousState = false;
 
 	// Initialize role assignments (default: standard comp)
 	CurrentRoleAssignments = {
@@ -63,25 +65,72 @@ void ASquadManager::Initialize(int32 InTeamID, ATeamManager* InTeamManager)
 	TeamID = InTeamID;
 	TeamManager = InTeamManager;
 
-	// Initialize agent-level world model (existing infrastructure)
-	AgentWorldModel = NewObject<UMocAgentWorldModel>(this);
-	AgentWorldModel->InitModel(TEXT("Content/AI/Models/agent_world_model.onnx"));
+	// Initialize Team World Model (NEW - v10.2 Week 3)
+	TeamWorldModel = NewObject<UTeamWorldModel>(this);
+	bool bModelLoaded = false;
 
-	// Initialize team-level world model (NEW - v10.2 Week 2)
-	TeamWorldModel = NewObject<UMocTeamWorldModel>(this);
-	TeamWorldModel->Initialize(AgentWorldModel);
+	if (TeamWorldModel && !TeamWorldModelPath.IsEmpty())
+	{
+		bModelLoaded = TeamWorldModel->InitModel(TeamWorldModelPath);
+
+		if (bModelLoaded)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Team %d: World model loaded from %s"), TeamID, *TeamWorldModelPath);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Team %d: Failed to load world model from %s - using data collection mode"),
+				TeamID, *TeamWorldModelPath);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Team %d: No world model path specified - using data collection mode"), TeamID);
+	}
 
 	// Initialize Team MCTS planner (NEW - v10.2 Week 3)
 	TeamMCTSPlanner = NewObject<UTeamMCTS>(this);
 
-	FTeamMCTSConfig MCTSConfig;
-	MCTSConfig.TimeBudgetSeconds = MCTSTimeBudget;  // 0.015s from header
-	MCTSConfig.BatchSize = MCTSBatchSize;            // 8 from header
-	MCTSConfig.MaxIterations = 50;
+	if (TeamMCTSPlanner && TeamWorldModel)
+	{
+		FTeamMCTSConfig MCTSConfig;
+		MCTSConfig.TimeBudgetSeconds = MCTSTimeBudget;  // 0.015s from header
+		MCTSConfig.BatchSize = MCTSBatchSize;            // 8 from header
+		MCTSConfig.MaxIterations = 50;
 
-	TeamMCTSPlanner->Setup(TeamWorldModel, MCTSConfig);
+		TeamMCTSPlanner->Setup(TeamWorldModel, MCTSConfig);
 
-	UE_LOG(LogTemp, Log, TEXT("Squad Commander initialized with Team MCTS for Team %d"), TeamID);
+		if (bModelLoaded)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Team %d: Team MCTS initialized with loaded world model"), TeamID);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Team %d: Team MCTS initialized but world model not loaded - MCTS will not work until model is trained"),
+				TeamID);
+		}
+	}
+
+	// Initialize training data collector (NEW - v10.2 Week 2)
+	DataCollector = NewObject<UTeamDataCollector>(this);
+	if (DataCollector)
+	{
+		DataCollector->bIsRecording = true; // Enable by default (can be toggled in editor)
+		DataCollector->BeginRecording(FMath::RandRange(1000, 9999));
+		UE_LOG(LogTemp, Log, TEXT("Team %d: Data collector initialized and recording started"), TeamID);
+	}
+
+	// Automatically enable data collection mode if no model is loaded
+	if (!bModelLoaded)
+	{
+		bDataCollectionMode = true;
+		UE_LOG(LogTemp, Display, TEXT("Team %d: Auto-enabled data collection mode (no world model available)"), TeamID);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Squad Commander initialized for Team %d (MCTS=%s, DataCollection=%s)"),
+		TeamID,
+		bModelLoaded ? TEXT("Enabled") : TEXT("Disabled"),
+		bDataCollectionMode ? TEXT("Enabled") : TEXT("Disabled"));
 }
 
 bool ASquadManager::ShouldReplan() const
@@ -107,12 +156,41 @@ void ASquadManager::PerformTacticalPlanning()
 	// 1. Collect global team state
 	FTeamState GlobalState = CollectTeamState();
 
-	// 2. Run centralized MCTS (15ms budget)
+	// Record transition from previous planning cycle (v10.2 Week 2 - Data Collection)
+	if (bHasPreviousState && DataCollector && DataCollector->bIsRecording)
+	{
+		// Calculate reward based on state transition
+		FCompositeReward Reward = CalculateTeamReward(PreviousTeamState, GlobalState);
+
+		// Record (s, a, s', r) transition
+		DataCollector->RecordTransition(
+			PreviousTeamState,
+			PreviousTacticalPlay,
+			GlobalState,
+			Reward
+		);
+	}
+
+	// 2. Select tactical play: ε-greedy (data collection) OR MCTS (production)
 	ETacticalPlay BestPlay = ETacticalPlay::StandardComp; // Default fallback
 	float PlanningStartTime = FPlatformTime::Seconds();
 
-	if (TeamMCTSPlanner && TeamWorldModel)
+	if (bDataCollectionMode)
 	{
+		// DATA COLLECTION MODE: Use ε-greedy for fast, diverse data collection
+		BestPlay = SelectEpsilonGreedyAction(GlobalState);
+
+		float SelectionTime = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
+
+		if (bShowDebugInfo)
+		{
+			UE_LOG(LogTemp, Display, TEXT("Team %d ε-Greedy Selection: %s (%.3f ms, ExplorationRate=%.2f)"),
+				TeamID, *UEnum::GetValueAsString(BestPlay), SelectionTime, ExplorationRate);
+		}
+	}
+	else if (TeamMCTSPlanner && TeamWorldModel && TeamWorldModel->IsModelLoaded())
+	{
+		// PRODUCTION MODE: Use MCTS for optimal tactical planning (requires trained world model)
 		BestPlay = TeamMCTSPlanner->FindBestTacticalPlay(GlobalState);
 
 		float PlanningTime = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
@@ -132,13 +210,17 @@ void ASquadManager::PerformTacticalPlanning()
 	}
 	else
 	{
-		// Fallback heuristic if MCTS not available
+		// Fallback heuristic if MCTS not available (no world model loaded)
+		// This is expected during initial data collection phase before model training
 		float AvgHealth = GlobalState.GetAverageHealth();
 		BestPlay = (AvgHealth < 0.3f) ? ETacticalPlay::FortressDefense
 			: (AvgHealth > 0.7f) ? ETacticalPlay::AggressivePush
 			: ETacticalPlay::StandardComp;
 
-		UE_LOG(LogTemp, Warning, TEXT("Team %d: MCTS not available, using fallback heuristic"), TeamID);
+		if (bShowDebugInfo)
+		{
+			UE_LOG(LogTemp, Display, TEXT("Team %d: Using fallback heuristic (world model not loaded)"), TeamID);
+		}
 	}
 
 	// 3. Convert to role distribution
@@ -153,7 +235,12 @@ void ASquadManager::PerformTacticalPlanning()
 	PlanConfidence = 0.8f; // Placeholder
 	PlanningCycleCount++;
 
-	// 6. Log for analytics
+	// 6. Store current state for next transition recording (v10.2 Week 2)
+	PreviousTeamState = GlobalState;
+	PreviousTacticalPlay = BestPlay;
+	bHasPreviousState = true;
+
+	// 7. Log for analytics
 	LogPlanningDecision(BestPlay, PlanConfidence);
 }
 
@@ -451,4 +538,164 @@ void ASquadManager::DrawDebugVisualization() const
 		0.0f,
 		true
 	);
+}
+
+FCompositeReward ASquadManager::CalculateTeamReward(const FTeamState& OldState, const FTeamState& NewState) const
+{
+	FCompositeReward Reward;
+
+	// 1. Calculate team health delta (sum of individual health changes)
+	float HealthDeltaSum = 0.0f;
+	int32 AliveCount = 0;
+
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (OldState.FriendlyAlive[i] || NewState.FriendlyAlive[i])
+		{
+			float OldHealth = OldState.FriendlyAlive[i] ? OldState.FriendlyHealths[i] : 0.0f;
+			float NewHealth = NewState.FriendlyAlive[i] ? NewState.FriendlyHealths[i] : 0.0f;
+			HealthDeltaSum += (NewHealth - OldHealth);
+		}
+
+		if (NewState.FriendlyAlive[i])
+		{
+			AliveCount++;
+		}
+	}
+
+	Reward.HealthDelta = HealthDeltaSum;
+
+	// 2. Calculate win probability estimate based on team advantage
+	// Factors: alive count difference, health advantage, objective control
+	int32 EnemyAliveCount = 0;
+	float EnemyHealthSum = 0.0f;
+
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (NewState.EnemyAlive[i])
+		{
+			EnemyAliveCount++;
+			EnemyHealthSum += NewState.EnemyHealths[i];
+		}
+	}
+
+	float TeamHealthSum = 0.0f;
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (NewState.FriendlyAlive[i])
+		{
+			TeamHealthSum += NewState.FriendlyHealths[i];
+		}
+	}
+
+	// Simple win probability heuristic
+	float AliveRatio = EnemyAliveCount > 0 ? float(AliveCount) / float(EnemyAliveCount + AliveCount) : 1.0f;
+	float HealthRatio = (EnemyHealthSum + TeamHealthSum) > 0.0f
+		? TeamHealthSum / (EnemyHealthSum + TeamHealthSum)
+		: 0.5f;
+
+	Reward.WinProb = FMath::Clamp((AliveRatio * 0.6f + HealthRatio * 0.4f), 0.0f, 1.0f);
+
+	// 3. Calculate objective score based on capture point control
+	float ObjScore = 0.0f;
+	int32 FriendlyPoints = 0;
+	int32 EnemyPoints = 0;
+	int32 NeutralPoints = 0;
+
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (NewState.CapturePointOwnership[i] == 1)
+		{
+			FriendlyPoints++;
+		}
+		else if (NewState.CapturePointOwnership[i] == -1)
+		{
+			EnemyPoints++;
+		}
+		else
+		{
+			NeutralPoints++;
+		}
+	}
+
+	// Reward for controlling more points
+	ObjScore = (FriendlyPoints - EnemyPoints) / 5.0f; // Normalized [-1, 1]
+	Reward.ObjectiveScore = ObjScore;
+
+	return Reward;
+}
+
+ETacticalPlay ASquadManager::SelectEpsilonGreedyAction(const FTeamState& TeamState) const
+{
+	// ε-greedy policy for data collection
+	// Provides diverse exploration without MCTS overhead
+
+	float RandomValue = FMath::FRand();
+
+	if (RandomValue < ExplorationRate)
+	{
+		// EXPLORATION: Random tactical play (uniform distribution)
+		int32 RandomIndex = FMath::RandRange(0, 9);
+
+		switch (RandomIndex)
+		{
+		case 0: return ETacticalPlay::AllOutRush;
+		case 1: return ETacticalPlay::AggressivePush;
+		case 2: return ETacticalPlay::Phalanx;
+		case 3: return ETacticalPlay::StandardComp;
+		case 4: return ETacticalPlay::FortressDefense;
+		case 5: return ETacticalPlay::TurtleFormation;
+		case 6: return ETacticalPlay::BaitStrategy;
+		case 7: return ETacticalPlay::PincerManeuver;
+		case 8: return ETacticalPlay::HealerComp;
+		case 9: return ETacticalPlay::ResourceDeny;
+		default: return ETacticalPlay::StandardComp;
+		}
+	}
+	else
+	{
+		// EXPLOITATION: Heuristic-based selection
+
+		float AvgHealth = TeamState.GetAverageHealth();
+		int32 AliveCount = 0;
+
+		for (int32 i = 0; i < 5; ++i)
+		{
+			if (TeamState.FriendlyAlive[i])
+			{
+				AliveCount++;
+			}
+		}
+
+		// Heuristic selection based on team state
+		if (AvgHealth < 0.25f)
+		{
+			// Critical health: Defensive plays
+			return (FMath::RandBool()) ? ETacticalPlay::FortressDefense : ETacticalPlay::TurtleFormation;
+		}
+		else if (AvgHealth < 0.5f)
+		{
+			// Low health: Balanced plays
+			return (FMath::RandBool()) ? ETacticalPlay::StandardComp : ETacticalPlay::Phalanx;
+		}
+		else if (AvgHealth > 0.75f)
+		{
+			// High health: Aggressive plays
+			return (FMath::RandBool()) ? ETacticalPlay::AggressivePush : ETacticalPlay::AllOutRush;
+		}
+		else
+		{
+			// Medium health: Mixed strategies
+			int32 RandomStrategy = FMath::RandRange(0, 3);
+
+			switch (RandomStrategy)
+			{
+			case 0: return ETacticalPlay::StandardComp;
+			case 1: return ETacticalPlay::HealerComp;
+			case 2: return ETacticalPlay::PincerManeuver;
+			case 3: return ETacticalPlay::BaitStrategy;
+			default: return ETacticalPlay::StandardComp;
+			}
+		}
+	}
 }

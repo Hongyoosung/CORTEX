@@ -7,9 +7,8 @@
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/EnvQuery.h"
 #include "DrawDebugHelpers.h"
-
 #include "AI/AIController/MocAIController.h"
-
+#include "Types/EQSTypes.h"
 #include "BTTask_MoveToEQSLocation.generated.h"
 
 

@@ -1,34 +1,40 @@
 // File: AI/Policy/MocPolicyExecutor.h
-// MOC v10.2 Policy Executor - Simplified interface for commanded strategies
+// MOC v10.2 Multi-Head Policy Executor - Command-driven spatial reasoning
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Types/MocTypes.h"
-#include "RL/Observation/MocObservation.h"
+#include "Types/StrategyTypes.h"
+#include "Types/ObservationTypes.h"
 #include "MocPolicyExecutor.generated.h"
 
+struct FEQSWeightParameters;
+struct FObservation;
+
 /**
- * MOC v10.2 Policy Executor
+ * MOC v10.2 Multi-Head Policy Executor
  *
- * Simplified policy interface for centralized commander-executor architecture.
- * Generates EQS weights from commanded strategies (Assault/Defend/Support).
+ * Architecture: Command-Driven Multi-Head Policy with Local State Adaptation
  *
- * Architecture:
- * - Input: EStrategyType (commanded by Squad Commander)
- * - Output: 8-dim EQS weight parameters
- * - Supports both ONNX inference and fallback defaults
+ * Key Innovation: Combines centralized command (from Squad Commander) with
+ * local state awareness for context-adaptive spatial reasoning.
  *
- * Usage:
- * 1. Load model: LoadModel(ModelPath)
- * 2. Get weights: InferWeights(CommandedStrategy)
- * 3. Apply to EQS query
+ * Design:
+ * - Multi-head architecture: 3 strategy-specialized heads (Assault/Defend/Support)
+ * - Commanded strategy selects which head to execute
+ * - Local observation provides context for weight adaptation
  *
- * Difference from MultiHeadPolicyExecutor:
- * - Simpler interface (strategy -> weights)
- * - Optimized for v10.2 centralized command flow
- * - No multi-head architecture (single policy head)
+ * Difference from v10.1 MultiHeadRLPolicy:
+ * - v10.1: Agent chooses strategy via MCTS → runs policy with full 61-dim obs
+ * - v10.2: Commander assigns strategy → agent executes with local 52-dim state
+ *
+ * Usage (v10.2):
+ * 1. Squad Commander issues commanded strategy (Assault/Defend/Support)
+ * 2. Executor calls: InferWeights(CommandedStrategy, LocalObservation)
+ * 3. Policy selects appropriate head based on command
+ * 4. Generates 8-dim EQS weights adapted to local state
+ * 5. EQS uses weights for spatial reasoning
  */
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UMocPolicyExecutor : public UActorComponent
@@ -40,8 +46,52 @@ public:
 
 	virtual void BeginPlay() override;
 
+	//========================================
+	// Primary v10.2 Interface
+	//========================================
+
 	/**
-	 * Load ONNX policy model from file.
+	 * PRIMARY INTERFACE: Generate EQS weights from commanded strategy + local state
+	 *
+	 * This is the main interface for v10.2 executor agents. Combines:
+	 * - High-level command (from Squad Commander)
+	 * - Local state awareness (health, position, nearby enemies, etc.)
+	 *
+	 * @param CommandedStrategy Strategy assigned by Squad Commander (Assault/Defend/Support)
+	 * @param LocalObservation Agent's current local state (52-dim: health, position, allies, enemies, etc.)
+	 * @return EQS weight parameters (8-dim) adapted to local conditions
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
+	FEQSWeightParameters InferWeights(
+		EStrategyType CommandedStrategy,
+		const FObservation& LocalObservation
+	);
+
+	/**
+	 * SIMPLIFIED INTERFACE: Get strategy default weights (no local adaptation)
+	 *
+	 * Used when:
+	 * - Model not loaded (fallback behavior)
+	 * - Testing/debugging with pure strategy defaults
+	 * - Baseline comparison
+	 *
+	 * @param Strategy Strategy type
+	 * @return Default EQS weights for strategy (based on v10.0Architecture.md Table 2.5)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
+	FEQSWeightParameters GetStrategyDefaults(EStrategyType Strategy);
+
+	//========================================
+	// Model Management
+	//========================================
+
+	/**
+	 * Load multi-head ONNX policy model
+	 *
+	 * Expected model architecture:
+	 * - Input: [BatchSize, 52] (local state only, no option/target/duration)
+	 * - Architecture: Shared backbone → 3 strategy heads
+	 * - Output: [BatchSize, 8] (EQS weights)
 	 *
 	 * @param ModelPath Absolute or project-relative path to .onnx file
 	 * @return True if loaded successfully
@@ -50,38 +100,7 @@ public:
 	bool LoadModel(const FString& ModelPath);
 
 	/**
-	 * Generate EQS weights from commanded strategy (primary v10.2 interface).
-	 *
-	 * @param Strategy Commanded strategy from Squad Commander
-	 * @return EQS weight parameters (8-dim)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
-	FEQSWeightParameters InferWeights(EStrategyType Strategy);
-
-	/**
-	 * Generate EQS weights from full observation (alternative interface).
-	 * Supports backward compatibility with v10.1-style observation input.
-	 *
-	 * @param Observation Current state + option + target + duration
-	 * @return EQS weight parameters (8-dim)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
-	FEQSWeightParameters PredictEQSWeights(const FMocObservation& Observation);
-
-	/**
-	 * Check if policy model is loaded and ready.
-	 */
-	UFUNCTION(BlueprintPure, Category = "MOC|Policy")
-	bool IsModelLoaded() const { return bModelLoaded; }
-
-	/**
-	 * Get inference latency (milliseconds) from last call.
-	 */
-	UFUNCTION(BlueprintPure, Category = "MOC|Policy")
-	float GetLastInferenceTime() const { return LastInferenceTimeMs; }
-
-	/**
-	 * Hot-reload policy model during runtime.
+	 * Hot-reload policy model during runtime
 	 *
 	 * @param NewModelPath Path to updated .onnx file
 	 * @return True if reload successful
@@ -89,7 +108,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
 	bool ReloadModel(const FString& NewModelPath);
 
+	/**
+	 * Check if policy model is loaded and ready
+	 */
+	UFUNCTION(BlueprintPure, Category = "MOC|Policy")
+	bool IsModelLoaded() const { return bModelLoaded; }
+
+	/**
+	 * Get inference latency (milliseconds) from last call
+	 */
+	UFUNCTION(BlueprintPure, Category = "MOC|Policy")
+	float GetLastInferenceTime() const { return LastInferenceTimeMs; }
+
 protected:
+	//========================================
+	// Configuration
+	//========================================
+
 	/** Path to ONNX policy model */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Policy")
 	FString PolicyModelPath;
@@ -107,7 +142,48 @@ protected:
 	bool bUseFallbackDefaults = true;
 
 private:
-	/** ONNX Runtime inference session (placeholder for future implementation) */
+	//========================================
+	// Internal Implementation
+	//========================================
+
+	/**
+	 * Internal multi-head ONNX inference
+	 *
+	 * Process:
+	 * 1. Encode local observation → 52-dim tensor
+	 * 2. Select policy head based on commanded strategy
+	 * 3. Run head-specific inference
+	 * 4. Return 8-dim EQS weights
+	 *
+	 * @param Strategy Commanded strategy (selects head)
+	 * @param LocalObs Local state observation
+	 * @return Output weights [8]
+	 */
+	TArray<float> RunMultiHeadInference(
+		EStrategyType Strategy,
+		const FObservation& LocalObs
+	);
+
+	/**
+	 * Validate ONNX model input/output shapes
+	 * Expected: Input [BatchSize, 52], Output [BatchSize, 8]
+	 */
+	bool ValidateModelSchema();
+
+	/**
+	 * Get default EQS weights for a strategy (fallback when model not loaded)
+	 * Based on v10.0Architecture.md Section 2.5 Table
+	 */
+	FEQSWeightParameters GetDefaultWeights(EStrategyType Strategy);
+
+	/** Log inference statistics */
+	void LogInferenceStats(float InferenceTimeMs);
+
+	//========================================
+	// Runtime State
+	//========================================
+
+	/** ONNX Runtime inference session (multi-head model) */
 	void* ONNXSession = nullptr;
 
 	/** Model loaded flag */
@@ -115,34 +191,4 @@ private:
 
 	/** Last inference time (milliseconds) */
 	float LastInferenceTimeMs = 0.0f;
-
-	/**
-	 * Internal ONNX inference call.
-	 * Takes strategy enum, converts to one-hot, runs inference.
-	 *
-	 * @param Strategy Strategy type
-	 * @return Output weights [8]
-	 */
-	TArray<float> RunONNXInference(EStrategyType Strategy);
-
-	/**
-	 * Validate ONNX model input/output shapes.
-	 * Expected: Input [1, 3] (one-hot strategy), Output [1, 8]
-	 */
-	bool ValidateModelSchema();
-
-	/**
-	 * Get default EQS weights for a strategy (fallback when model not loaded).
-	 * Based on v10.0Architecture.md Section 2.5 Table.
-	 */
-	FEQSWeightParameters GetDefaultWeights(EStrategyType Strategy);
-
-	/**
-	 * Convert strategy enum to one-hot encoding.
-	 * Assault=[1,0,0], Defend=[0,1,0], Support=[0,0,1]
-	 */
-	TArray<float> StrategyToOneHot(EStrategyType Strategy);
-
-	/** Log inference statistics */
-	void LogInferenceStats(float InferenceTimeMs);
 };

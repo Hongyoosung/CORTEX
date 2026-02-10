@@ -1,6 +1,6 @@
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Characters/MocCharacter.h"
-#include "Common/LogSchola.h"
+
 
 UScholaMocAgent::UScholaMocAgent(const FObjectInitializer& ObjectInitializer)
     : Super(ObjectInitializer)
@@ -18,13 +18,13 @@ void UScholaMocAgent::BeginPlay()
     AMocCharacter* OwnerCharacter = Cast<AMocCharacter>(GetOwner());
     if (!OwnerCharacter)
     {
-        UE_LOG(LogSchola, Error, TEXT("[ScholaMocAgent] Owner is not AMocCharacter! Agent will not function correctly."));
+        UE_LOG(LogTemp, Error, TEXT("[ScholaMocAgent] Owner is not AMocCharacter! Agent will not function correctly."));
         return;
     }
 
     // Log mode for debugging
     const FString ModeStr = (CurrentMode == EAgentMode::Training) ? TEXT("Training (Python RLlib)") : TEXT("Inference (Local ONNX)");
-    UE_LOG(LogSchola, Log, TEXT("[ScholaMocAgent] Initialized for Agent %d in %s mode"),
+    UE_LOG(LogTemp, Log, TEXT("[ScholaMocAgent] Initialized for Agent %d in %s mode"),
         OwnerCharacter->AgentID, *ModeStr);
 
     // Schola's Initialize() is called by parent BeginPlay()
@@ -42,7 +42,7 @@ void UScholaMocAgent::UpdateCommandedStrategy(EStrategyType NewStrategy)
         AMocCharacter* OwnerCharacter = Cast<AMocCharacter>(GetOwner());
         if (OwnerCharacter)
         {
-            UE_LOG(LogSchola, Verbose, TEXT("[ScholaMocAgent] Agent %d received strategy: %s"),
+            UE_LOG(LogTemp, Verbose, TEXT("[ScholaMocAgent] Agent %d received strategy: %s"),
                 OwnerCharacter->AgentID,
                 *UEnum::GetValueAsString(NewStrategy));
         }

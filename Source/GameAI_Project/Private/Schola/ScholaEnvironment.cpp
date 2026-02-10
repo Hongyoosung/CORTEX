@@ -208,7 +208,15 @@ void AScholaEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAg
 
 		if (Trainer)
 		{
-			Trainer->Initialize(Agent);
+			APawn* ControllerdPawn = Cast<APawn>(Agent);
+
+			if (!ControllerdPawn)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Failed Cast to APawn"));
+				return;
+			}
+
+			Trainer->Initialize(this->EnvId, i, ControllerdPawn);
 			FTrainerAgentPair Pair(ControlledPawn, Trainer);
 			OutAgentTrainerPairs.Add(Pair);
 			TrainersCreated++;

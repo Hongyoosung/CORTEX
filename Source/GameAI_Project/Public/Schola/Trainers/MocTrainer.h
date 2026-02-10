@@ -5,8 +5,10 @@
 #include "CoreMinimal.h"
 #include "Training/AbstractTrainer.h"
 #include "Perception/AIPerceptionComponent.h"
-#include "Types/MocTypes.h"
-#include "AI/EQS/EQSWeightParameters.h"
+#include "Types/RewardTypes.h"
+#include "Types/EQSTypes.h"
+#include "Types/ObservationTypes.h"
+#include "Types/StrategyTypes.h"
 #include "MocTrainer.generated.h"
 
 
@@ -94,7 +96,7 @@ protected:
                                          const FEQSWeightParameters& Action);
 
     /** Transition 로깅 (World Model 학습용) */
-    void LogTransition(const FObservation& State,
+    void LogTransition(const FObservation& InState,
                       EStrategyType CommandedStrategy,
                       const FEQSWeightParameters& Action,
                       float Reward,
@@ -103,8 +105,7 @@ protected:
 
 
     /** EQS 가중치를 Character의 이동에 실제 적용 */
-    UFUNCTION(BlueprintNativeEvent, Category = "AI")
-    void ApplyEQSWeightsToCharacter_Implementation(const FEQSWeightParameters& Weights);
+    void ApplyEQSWeightsToCharacter(const FEQSWeightParameters& Weights);
 
 
 public:

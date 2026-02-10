@@ -15,12 +15,6 @@ UEpisodeManagerComponent::UEpisodeManagerComponent()
 
 void UEpisodeManagerComponent::StartNewEpisode(int32 EnvID)
 {
-	if (!SimulationManager)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[EpisodeManager] Cannot start episode - SimulationManager is null"));
-		return;
-	}
-
 	// Get/increment episode counter
 	int32& EpisodeNum = EpisodeCounters.FindOrAdd(EnvID);
 

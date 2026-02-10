@@ -11,7 +11,7 @@
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
-#include "RL/Rewards/RewardTypes.h"
+#include "Types/RewardTypes.h"
 #include "AIController.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "Training/StateStructs/TrainerState.h"
@@ -189,7 +189,7 @@ void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
     LastAction = Weights;
 
     // EQS 가중치를 Character의 이동 시스템에 적용
-    ApplyEQSWeightsToCharacter_Implementation(Weights);
+    ApplyEQSWeightsToCharacter(Weights);
 }
 
 float AMocTrainer::ComputeReward()
@@ -313,17 +313,17 @@ FObservation AMocTrainer::GatherStateObservation()
 
     for (AActor* Actor : AllCharacters)
     {
-        AMocCharacter* Character = Cast<AMocCharacter>(Actor);
-        if (!Character || Character == ControlledCharacter) continue;
+        AMocCharacter* FoundCharacter = Cast<AMocCharacter>(Actor);
+        if (!FoundCharacter || FoundCharacter == ControlledCharacter) continue;
 
-        if (Character->GetTeamID() == ControlledCharacter->GetTeamID())
+        if (FoundCharacter->GetTeamID() == ControlledCharacter->GetTeamID())
         {
             // Ally
             if (AllyIndex < 4)
             {
-                Obs.AllyPositions[AllyIndex] = Character->GetActorLocation();
-                Obs.AllyHealths[AllyIndex] = Character->GetHealthPercentage();
-                Obs.AllyStrategies[AllyIndex] = Character->GetCommandedStrategy();
+                Obs.AllyPositions[AllyIndex] = FoundCharacter->GetActorLocation();
+                Obs.AllyHealths[AllyIndex] = FoundCharacter->GetHealthPercentage();
+                Obs.AllyStrategies[AllyIndex] = FoundCharacter->GetCommandedStrategy();
                 AllyIndex++;
             }
         }
@@ -332,10 +332,10 @@ FObservation AMocTrainer::GatherStateObservation()
             // Enemy
             if (EnemyIndex < 5)
             {
-                Obs.EnemyPositions[EnemyIndex] = Character->GetActorLocation();
+                Obs.EnemyPositions[EnemyIndex] = FoundCharacter->GetActorLocation();
 
                 // Simple visibility check: line of sight within vision range
-                FVector ToEnemy = Character->GetActorLocation() - ControlledCharacter->GetActorLocation();
+                FVector ToEnemy = FoundCharacter->GetActorLocation() - ControlledCharacter->GetActorLocation();
                 float Distance = ToEnemy.Size();
                 bool bVisible = false;
 
@@ -349,7 +349,7 @@ FObservation AMocTrainer::GatherStateObservation()
                     bVisible = !GetWorld()->LineTraceSingleByChannel(
                         HitResult,
                         ControlledCharacter->GetActorLocation() + FVector(0, 0, 90), // Eye height
-                        Character->GetActorLocation() + FVector(0, 0, 90),
+                        FoundCharacter->GetActorLocation() + FVector(0, 0, 90),
                         ECC_Visibility,
                         QueryParams
                     );
@@ -456,7 +456,7 @@ float AMocTrainer::ComputeCommandedStrategyReward(
     return Reward;
 }
 
-void AMocTrainer::ApplyEQSWeightsToCharacter_Implementation(const FEQSWeightParameters& Weights)
+void AMocTrainer::ApplyEQSWeightsToCharacter(const FEQSWeightParameters& Weights)
 {
     if (!ControlledCharacter)
     {
@@ -533,7 +533,7 @@ void AMocTrainer::ApplyEQSWeightsToCharacter_Implementation(const FEQSWeightPara
 }
 
 void AMocTrainer::LogTransition(
-    const FObservation& State,
+    const FObservation& InState,
     EStrategyType CommandedStrategy,
     const FEQSWeightParameters& Action,
     float Reward,
@@ -544,7 +544,7 @@ void AMocTrainer::LogTransition(
     if (!TransitionLogger) return;
 
     // Convert to UScholaTransitionLogger format
-    TArray<float> StateBefore = State.ToArray();
+    TArray<float> StateBefore = InState.ToArray();
     TArray<float> StateAfter = NextState.ToArray();
 
     // Create FTacticalOption from commanded strategy
@@ -558,7 +558,7 @@ void AMocTrainer::LogTransition(
     // v10.2: For simplicity, put the entire reward in ObjectiveScore
     FCompositeReward CompositeReward;
     CompositeReward.WinProb = 0.0f;
-    CompositeReward.HealthDelta = (NextState.Health - State.Health);
+    CompositeReward.HealthDelta = (NextState.Health - InState.Health);
     CompositeReward.ObjectiveScore = Reward;
 
 

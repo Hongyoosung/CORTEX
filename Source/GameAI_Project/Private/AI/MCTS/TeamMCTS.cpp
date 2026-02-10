@@ -1,6 +1,7 @@
 #include "AI/MCTS/TeamMCTS.h"
 #include "AI/MCTS/TeamTreeNode.h"
-#include "AI/Models/MocTeamWorldModel.h"
+#include "AI/Models/TeamWorldModel.h"
+
 
 UTeamMCTS::UTeamMCTS()
 	: TeamWorldModel(nullptr)
@@ -9,7 +10,7 @@ UTeamMCTS::UTeamMCTS()
 {
 }
 
-void UTeamMCTS::Setup(UMocTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig)
+void UTeamMCTS::Setup(UTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig)
 {
 	TeamWorldModel = InTeamWorldModel;
 	Config = InConfig;
@@ -175,7 +176,7 @@ void UTeamMCTS::ProcessBatch(TArray<TPair<TSharedPtr<FTeamTreeNode>, ETacticalPl
 	for (const auto& Pair : NodesToExpand)
 	{
 		BatchInput.CurrentStates.Add(Pair.Key->State);
-		BatchInput.SelectedPlays.Add(Pair.Value);
+		BatchInput.TacticalPlays.Add(Pair.Value);
 	}
 
 	// ===== 2. Batch prediction via TeamWorldModel (3-5ms) =====
@@ -200,7 +201,7 @@ void UTeamMCTS::ProcessBatch(TArray<TPair<TSharedPtr<FTeamTreeNode>, ETacticalPl
 		ETacticalPlay Play = NodesToExpand[i].Value;
 
 		FTeamState NextState = BatchOutput.PredictedStates[i];
-		FTeamReward Reward = BatchOutput.Rewards[i];
+		FCompositeReward Reward = BatchOutput.Rewards[i];
 		float Confidence = BatchOutput.Confidences[i];
 
 		// Skip low-confidence predictions
@@ -230,15 +231,14 @@ void UTeamMCTS::ProcessBatch(TArray<TPair<TSharedPtr<FTeamTreeNode>, ETacticalPl
 	}
 }
 
-float UTeamMCTS::ScalarizeReward(const FTeamReward& Reward) const
+float UTeamMCTS::ScalarizeReward(const FCompositeReward& Reward) const
 {
-	// Use pre-computed total from TeamWorldModel
-	// This already includes: WinProb*2.0 + TeamHealthDelta*0.01 + ObjectiveScore*1.5 + Diversity*0.5
-	return Reward.TotalReward;
-
-	// Alternative: Custom MCTS weights (if exploration tuning needed)
-	// return Reward.WinProb * 2.5f
-	//      + Reward.TeamHealthDelta * 0.015f
-	//      + Reward.ObjectiveScore * 2.0f
-	//      + Reward.DiversityBonus * 0.3f;
+	// Scalarize multi-objective reward for MCTS backpropagation
+	// Weights tuned for team-level centralized planning:
+	// - WinProb (0-1): Most important for team outcome
+	// - HealthDelta (-1 to 1): Team health preservation
+	// - ObjectiveScore: Strategic positioning and control
+	return Reward.WinProb * 2.0f
+	     + Reward.HealthDelta * 0.5f
+	     + Reward.ObjectiveScore * 1.5f;
 }

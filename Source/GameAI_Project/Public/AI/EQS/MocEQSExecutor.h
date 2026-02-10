@@ -5,7 +5,7 @@
 #include "Components/ActorComponent.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/EnvQuery.h"
-#include "AI/EQS/EQSWeightParameters.h"
+#include "Types/EQSTypes.h"
 #include "MocEQSExecutor.generated.h"
 
 class UEnvQuery;

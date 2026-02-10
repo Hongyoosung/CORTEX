@@ -4,8 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Types/MocTypes.h"
-#include "RL/Observation/MocObservation.h"
+#include "Types/StrategyTypes.h"
+#include "Types/ObservationTypes.h"
 #include "MocTransitionLogger.generated.h"
 
 class AMocCharacter;

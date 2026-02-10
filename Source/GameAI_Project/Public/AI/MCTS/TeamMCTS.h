@@ -1,9 +1,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Types/MocTypes.h"
+#include "Types/StrategyTypes.h"
+#include "AI/Models/TeamWorldModelTypes.h"
+#include "Types/RewardTypes.h"
 #include "Team/TeamState.h"
-#include "AI/Models/MocTeamWorldModel.h"
 #include "AI/MCTS/TeamTreeNode.h"
 #include "TeamMCTS.generated.h"
 
@@ -29,7 +30,7 @@ struct FTeamMCTSConfig
  * - State Space: FObservation (56-dim) → FTeamState (60-dim)
  * - Action Space: FTacticalOption (3 per agent) → ETacticalPlay (10 total)
  * - Scope: Individual survival → Team win rate + coordination
- * - World Model: UMocAgentWorldModel → UMocTeamWorldModel (batch aggregator)
+ * - World Model: UMocAgentWorldModel → UTeamWorldModel (pure neural network)
  *
  * Usage:
  * ```cpp
@@ -53,10 +54,10 @@ public:
 
 	/**
 	 * Initialize MCTS planner with team world model
-	 * @param InTeamWorldModel - Team-level world model for predictions
+	 * @param InTeamWorldModel - Team-level simulator for predictions (UTeamWorldModel)
 	 * @param InConfig - MCTS configuration (time budget, batch size)
 	 */
-	void Setup(UMocTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig);
+	void Setup(class UTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& InConfig);
 
 	/**
 	 * Main entry point: Find best tactical play for current team state
@@ -120,7 +121,7 @@ private:
 	 *
 	 * Process collected (Node, Play) pairs:
 	 * 1. Build FTeamBatchInput from pending batch
-	 * 2. Call MocTeamWorldModel->PredictBatch()
+	 * 2. Call TeamWorldModel->PredictBatch()
 	 * 3. Create child nodes from predictions
 	 * 4. Backpropagate values up the tree
 	 * 5. Remove virtual loss
@@ -132,18 +133,18 @@ private:
 	/**
 	 * Scalarize team reward into single value for MCTS
 	 *
-	 * Uses FTeamReward::TotalReward (pre-computed by MocTeamWorldModel)
-	 * Or custom MCTS weights if needed for exploration
+	 * Applies MCTS-specific weights to multi-objective reward components
+	 * for backpropagation in the search tree
 	 *
 	 * @param Reward - Multi-objective team reward
 	 * @return Scalar value for backpropagation
 	 */
-	float ScalarizeReward(const FTeamReward& Reward) const;
+	float ScalarizeReward(const FCompositeReward& Reward) const;
 
 private:
-	/** Team-level world model for predictions */
+	/** Team world model for state prediction */
 	UPROPERTY()
-	UMocTeamWorldModel* TeamWorldModel;
+	class UTeamWorldModel* TeamWorldModel;
 
 	/** MCTS configuration */
 	FTeamMCTSConfig Config;

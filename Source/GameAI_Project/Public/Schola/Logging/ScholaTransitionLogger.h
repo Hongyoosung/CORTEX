@@ -4,8 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "Types/MocTypes.h"
-#include "RL/Rewards/RewardTypes.h"
+#include "Types/StrategyTypes.h"
+#include "Types/RewardTypes.h"
 #include "ScholaTransitionLogger.generated.h"
 
 // World Model 학습을 위한 데이터 튜플
@@ -16,6 +16,8 @@ struct FTransitionTuple {
     FCompositeReward Reward;        // r_t (Multi-objective)
     float Confidence;               // 모델 예측 신뢰도 (Logging용)
     bool bIsTerminal;
+
+    FTransitionTuple() {}
 };
 
 /**

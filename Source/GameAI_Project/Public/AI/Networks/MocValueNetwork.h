@@ -3,8 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "Types/MocTypes.h"
-#include "AI/Models/MocTeamWorldModel.h" 
+#include "Types/ObservationTypes.h"
 #include "MocValueNetwork.generated.h"
 
 /**
