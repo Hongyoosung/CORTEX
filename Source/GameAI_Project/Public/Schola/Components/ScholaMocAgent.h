@@ -81,9 +81,16 @@ public:
     /**
      * Get current commanded strategy
      * Used by Observers to include strategy in observation space
+     *
+     * Phase 1 Training Mode:
+     * If bUseTrainingStrategyOverride is enabled, returns TrainingStrategyOverride
+     * instead of the commanded strategy from SquadManager.
      */
     UFUNCTION(BlueprintPure, Category = "MOC|Commands")
-    EStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
+    EStrategyType GetCommandedStrategy() const
+    {
+        return bUseTrainingStrategyOverride ? TrainingStrategyOverride : CommandedStrategy;
+    }
 
     //========================================
     // Mode Management
@@ -96,6 +103,35 @@ public:
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC")
     EAgentMode CurrentMode = EAgentMode::Inference;
+
+    //========================================
+    // Phase 1 Training Configuration
+    //========================================
+
+    /**
+     * Enable Training Strategy Override (Phase 1 Only)
+     * When enabled, ignores SquadManager commands and uses TrainingStrategyOverride instead.
+     * This allows training separate policies per strategy (Assault, Defend, Support).
+     *
+     * IMPORTANT: Disable this in Phase 3 when testing centralized planning!
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Phase1Training",
+        meta = (DisplayName = "Override Strategy (Phase 1 Training)"))
+    bool bUseTrainingStrategyOverride = false;
+
+    /**
+     * Training Strategy Override (Phase 1 Only)
+     * The strategy to train when bUseTrainingStrategyOverride is enabled.
+     * Set all agents to the same strategy to train a single policy.
+     *
+     * Training Plan:
+     * - Day 1: Set to Assault, train assault policy
+     * - Day 2: Set to Defend, train defend policy
+     * - Day 3: Set to Support, train support policy
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Phase1Training",
+        meta = (DisplayName = "Training Strategy", EditCondition = "bUseTrainingStrategyOverride"))
+    EStrategyType TrainingStrategyOverride = EStrategyType::Assault;
 
 private:
     //========================================

@@ -573,18 +573,38 @@ void AMocTrainer::DrawTrainingDebug()
     FVector CharLocation = ControlledCharacter->GetActorLocation();
 
     // === Agent Info Text ===
+    // Check if training override is active
+    FString StrategyInfo = UEnum::GetValueAsString(CachedCommandedStrategy);
+    if (MocAgent && MocAgent->bUseTrainingStrategyOverride)
+    {
+        StrategyInfo += TEXT(" [TRAINING OVERRIDE]");
+    }
+
     FString DebugText = FString::Printf(
         TEXT("Strategy: %s\n")
         TEXT("Health: %.1f%%\n")
         TEXT("Steps: %d / %d\n")
         TEXT("Episode Reward: %.2f\n")
-        TEXT("Total Episodes: %d"),
-        *UEnum::GetValueAsString(CachedCommandedStrategy),
+        TEXT("Total Episodes: %d\n")
+        TEXT("---EQS Weights---\n")
+        TEXT("EnemyObj: %.2f | AllyObj: %.2f\n")
+        TEXT("Cover: %.2f | Visibility: %.2f\n")
+        TEXT("AllyProx: %.2f | Range: %.2f\n")
+        TEXT("Pickup: %.2f | Height: %.2f"),
+        *StrategyInfo,
         CurrentObservation.Health * 100.0f,
         CurrentEpisodeSteps,
         MaxEpisodeSteps,
         EpisodeReward,
-        TotalEpisodes
+        TotalEpisodes,
+        LastAction.EnemyObjectiveProximity,
+        LastAction.AllyObjectiveProximity,
+        LastAction.CoverDensity,
+        LastAction.EnemyVisibility,
+        LastAction.AllyProximity,
+        LastAction.CombatRange,
+        LastAction.PickupProximity,
+        LastAction.HeightAdvantage
     );
 
     DrawDebugString(

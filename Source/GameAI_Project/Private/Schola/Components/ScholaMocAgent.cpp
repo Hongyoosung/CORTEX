@@ -27,6 +27,15 @@ void UScholaMocAgent::BeginPlay()
     UE_LOG(LogTemp, Log, TEXT("[ScholaMocAgent] Initialized for Agent %d in %s mode"),
         OwnerCharacter->AgentID, *ModeStr);
 
+    // Log training override status (Phase 1)
+    if (bUseTrainingStrategyOverride)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ScholaMocAgent] Agent %d: TRAINING OVERRIDE ENABLED - Strategy locked to %s"),
+            OwnerCharacter->AgentID,
+            *UEnum::GetValueAsString(TrainingStrategyOverride));
+        UE_LOG(LogTemp, Warning, TEXT("[ScholaMocAgent] SquadManager commands will be IGNORED. Disable this for Phase 3!"));
+    }
+
     // Schola's Initialize() is called by parent BeginPlay()
     // This sets up Observers, Policy, Brain, Actuators
     // No additional setup needed - proper separation of concerns

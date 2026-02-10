@@ -65,3 +65,42 @@ class GAMEAI_PROJECT_API UEnvQueryContext_MocPickups : public UEnvQueryContext
 public:
 	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
 };
+
+/**
+ * EQS Context: Provides enemy team's objective/base location
+ * Used for Weight [0] - EnemyObjectiveProximity
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocEnemyObjective : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
+
+/**
+ * EQS Context: Provides friendly team's objective/base location
+ * Used for Weight [1] - AllyObjectiveProximity
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocAllyObjective : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
+
+/**
+ * EQS Context: Provides cover point locations
+ * Used for Weight [2] - CoverDensity
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_MocCoverPoints : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
