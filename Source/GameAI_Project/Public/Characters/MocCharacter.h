@@ -22,6 +22,7 @@ class AMocGameMode;
 class ATeamManager;
 class AFogOfWarManager;
 struct FDeathEventData;
+struct FMocTeamInfo;
 
 /**
  * AMocCharacter - MOC v10.1 Component-Based Agent Character
@@ -171,9 +172,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Commands")
 	EStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
 
-	/** Agent ID for team coordination */
+
+public:
+	/** Agent Info for team coordination */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
-	int32 AgentID;
+	FMocTeamState TeamInfo;
+
+
 
 protected:
 	//========================================

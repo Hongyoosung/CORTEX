@@ -3,8 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Types/MocTypes.h"
-#include "TeamState.generated.h"
+#include "Types/StrategyTypes.h"
+#include "TeamWorldState.generated.h"
 
 /**
  * FTeamState - MOC v10.2 Global Squad Status for Centralized Planning
@@ -23,7 +23,7 @@
  * - Batch processed by UMocTeamWorldModel for prediction
  */
 USTRUCT(BlueprintType)
-struct GAMEAI_PROJECT_API FTeamState
+struct GAMEAI_PROJECT_API FTeamWorldState
 {
 	GENERATED_BODY()
 

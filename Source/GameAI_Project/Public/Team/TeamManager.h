@@ -17,7 +17,7 @@ class ASquadManager;
  * Team state tracking for shared knowledge
  */
 USTRUCT(BlueprintType)
-struct FMocTeamState
+struct FTeamState
 {
 	GENERATED_BODY()
 

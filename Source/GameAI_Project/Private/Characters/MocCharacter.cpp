@@ -98,7 +98,7 @@ void AMocCharacter::BeginPlay()
 		}
 	}
 
-	// v10.2: Find Squad Commander reference
+
 	if (UWorld* World = GetWorld())
 	{
 		if (GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
@@ -106,26 +106,31 @@ void AMocCharacter::BeginPlay()
 			if (TM = GameMode->GetTeamManager())
 			{
 				int32 MyTeamID = GetTeamID_Implementation();
-				// TODO: Get Squad Commander from TeamManager
-				// SquadCommander = TM->GetSquadCommander(MyTeamID);
+				SquadCommander = TM->GetSquadCommander(MyTeamID);
+			}
+
+			TM = GameMode->GetTeamManager();
+			if (!TM)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetTeamManager"));
+				return;
+			}
+
+			FogManager = TM->GetFogOfWarManager();
+			if (!FogManager)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetFogManager"));
+				return;
 			}
 		}
 	}
-
-
-	TM = GameMode->GetTeamManager();
-	if (!TM)
+	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetTeamManager"));
-		return;
+		UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetWorld"));
 	}
 
-	FogManager = TM->GetFogOfWarManager();
-	if (!FogManager)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetFogManager"));
-		return;
-	}
+
+	
 }
 
 void AMocCharacter::Tick(float DeltaTime)
@@ -153,17 +158,9 @@ void AMocCharacter::Tick(float DeltaTime)
 int32 AMocCharacter::GetTeamID_Implementation() const
 {
 	// Check tags set by TeamManager
-	if (Tags.Contains(FName("Team_0")))
-	{
-		return 0; // Red Team
-	}
-
-	if (Tags.Contains(FName("Team_1")))
-	{
-		return 1; // Blue Team
-	}
-
-	return -1; // No team
+	
+	TeamInfo
+	return 
 }
 
 bool AMocCharacter::IsAlive_Implementation() const
