@@ -119,15 +119,8 @@ Time Penalty = 0.001               // Small penalty per step
 
 Now you DON'T need to pass `--strategy` as an argument!
 
-### Old way (from training plan):
-```bash
-python train_strategy.py \
-    --strategy assault \          # ❌ No longer needed!
-    --num_agents 5 \
-    --max_iterations 50000
-```
 
-### New way (simplified):
+### way (simplified):
 ```bash
 python train_strategy.py \
     --num_agents 5 \

@@ -1,10 +1,50 @@
 
 services:
+  # =============================================================================
+  # v10.2 TRAINING SERVICES (Commander-Executor Architecture)
+  # =============================================================================
+
+  # v10.2 Phase 1: Policy Training (Command-Driven Executors)
+  training-v10.2:
+    build:
+      context: ..
+      dockerfile: MOC_Training/Dockerfile
+    container_name: cortex_training_v10_2
+    volumes:
+      - ./training_results_v10_2:/app/training_results_v10_2
+      - ./models:/app/models
+    environment:
+      - NUM_WORKERS=0  # Single process for Windows compatibility
+      - NUM_ITERATIONS=100
+      - HOST=host.docker.internal  # Connect to UE5 on host machine
+      - PORT=50051
+      - IS_DOCKER=true  # Enable Docker-specific gRPC settings
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: python training/phase1_policy_training_v10_2.py --mode rllib --iterations 100 --host host.docker.internal --port 50051
+    profiles:
+      - v10.2
+      - v10.2-policy
+
+  # v10.2 Example Mode (Architecture Demo)
+  training-v10.2-example:
+    build:
+      context: ..
+      dockerfile: MOC_Training/Dockerfile
+    container_name: cortex_training_v10_2_example
+    command: python training/phase1_policy_training_v10_2.py --mode example
+    profiles:
+      - v10.2-demo
+
+  # =============================================================================
+  # LEGACY TRAINING SERVICES (v8.0/v10.1)
+  # =============================================================================
+
   # Single-worker training (NUM_WORKERS=0, runs in main process)
   training-single:
     build:
       context: ..
-      dockerfile: CORTEX_Training/Dockerfile
+      dockerfile: MOC_Training/Dockerfile
     container_name: cortex_training_single
     volumes:
       - ./training_results:/app/training_results
@@ -22,13 +62,14 @@ services:
     command: python train_rllib.py --iterations 100 --host host.docker.internal --port 50051
     profiles:
       - single
+      - legacy
 
   # Multi-worker training (NUM_WORKERS=4, parallel environments)
   # Requires 4 UE instances running on ports 50051-50054
   training-multi:
     build:
       context: ..
-      dockerfile: CORTEX_Training/Dockerfile
+      dockerfile: MOC_Training/Dockerfile
     container_name: cortex_training_multi
     volumes:
       - ./training_results:/app/training_results
@@ -44,26 +85,51 @@ services:
     command: python train_rllib.py --iterations 100 --host host.docker.internal --port 50051
     profiles:
       - multi
+      - legacy
 
-  # TensorBoard for monitoring
+  # =============================================================================
+  # MONITORING SERVICES
+  # =============================================================================
+
+  # TensorBoard for v10.2 training
+  tensorboard-v10.2:
+    build:
+      context: ..
+      dockerfile: MOC_Training/Dockerfile
+    container_name: cortex_tensorboard_v10_2
+    volumes:
+      - ./training_results_v10_2:/app/training_results_v10_2
+    ports:
+      - "6006:6006"
+    command: tensorboard --logdir=/app/training_results_v10_2 --host=0.0.0.0
+    profiles:
+      - v10.2
+      - monitor
+
+  # TensorBoard for legacy training
   tensorboard:
     build:
       context: ..
-      dockerfile: CORTEX_Training/Dockerfile
+      dockerfile: MOC_Training/Dockerfile
     container_name: cortex_tensorboard
     volumes:
       - ./training_results:/app/training_results
     ports:
-      - "6006:6006"
+      - "6007:6006"  # Use different port to avoid conflict with v10.2
     command: tensorboard --logdir=/app/training_results --host=0.0.0.0
     profiles:
+      - legacy
       - monitor
+
+  # =============================================================================
+  # DIAGNOSTIC SERVICES
+  # =============================================================================
 
   # Connection diagnostics (TCP)
   test-connection:
     build:
       context: ..
-      dockerfile: CORTEX_Training/Dockerfile
+      dockerfile: MOC_Training/Dockerfile
     container_name: cortex_connection_test
     extra_hosts:
       - "host.docker.internal:host-gateway"

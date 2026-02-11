@@ -15,6 +15,10 @@
 #include "AIController.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "Training/StateStructs/TrainerState.h"
+#include "Team/TeamManager.h"
+#include "Team/FogOfWarManager.h"
+#include "Combat/Components/WeaponComponent.h"
+#include "Core/MocGameMode.h"
 
 AMocTrainer::AMocTrainer()
 {
@@ -118,6 +122,12 @@ void AMocTrainer::Tick(float DeltaTime)
             *UEnum::GetValueAsString(NewStrategy));
         CachedCommandedStrategy = NewStrategy;
     }
+
+    // Detect enemies and report to Fog of War (replaces BT service)
+    DetectAndReportEnemies();
+
+    // Handle combat (replaces BT task)
+    HandleCombat();
 
     // Debug visualization
     if (bEnableDebugVisualization)
@@ -300,7 +310,31 @@ FObservation AMocTrainer::GatherStateObservation()
     Obs.CurrentStrategy = ControlledCharacter->GetCommandedStrategy();
     Obs.bIsAlive = ControlledCharacter->IsAlive();
 
-    // 팀원 정보 (4 allies)
+    int32 MyTeamID = ControlledCharacter->GetTeamID();
+
+    // Get TeamManager and FogOfWarManager
+    AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+    if (!GameMode)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] GameMode not found"));
+        return Obs;
+    }
+
+    ATeamManager* TeamManager = GameMode->GetTeamManager();
+    if (!TeamManager)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] TeamManager not found"));
+        return Obs;
+    }
+
+    AFogOfWarManager* FogManager = TeamManager->GetFogOfWarManager();
+    if (!FogManager)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] FogOfWarManager not found"));
+        return Obs;
+    }
+
+    // Collect ally information (allies are always known)
     TArray<AActor*> AllCharacters;
     UGameplayStatics::GetAllActorsOfClass(
         GetWorld(),
@@ -309,16 +343,14 @@ FObservation AMocTrainer::GatherStateObservation()
     );
 
     int32 AllyIndex = 0;
-    int32 EnemyIndex = 0;
-
     for (AActor* Actor : AllCharacters)
     {
         AMocCharacter* FoundCharacter = Cast<AMocCharacter>(Actor);
         if (!FoundCharacter || FoundCharacter == ControlledCharacter) continue;
 
-        if (FoundCharacter->GetTeamID() == ControlledCharacter->GetTeamID())
+        if (FoundCharacter->GetTeamID() == MyTeamID)
         {
-            // Ally
+            // Ally - always known
             if (AllyIndex < 4)
             {
                 Obs.AllyPositions[AllyIndex] = FoundCharacter->GetActorLocation();
@@ -327,38 +359,45 @@ FObservation AMocTrainer::GatherStateObservation()
                 AllyIndex++;
             }
         }
-        else
+    }
+
+    // Collect enemy information from Fog of War (only known enemies)
+    TArray<AActor*> RememberedEnemies = FogManager->GetRememberedEnemies(MyTeamID);
+    int32 EnemyIndex = 0;
+
+    for (AActor* EnemyActor : RememberedEnemies)
+    {
+        if (EnemyIndex >= 5) break;
+
+        AMocCharacter* Enemy = Cast<AMocCharacter>(EnemyActor);
+        if (!Enemy) continue;
+
+        // Get last known position from Fog of War
+        FVector LastKnownPosition = FogManager->GetLastKnownEnemyPosition(MyTeamID, EnemyActor);
+        Obs.EnemyPositions[EnemyIndex] = LastKnownPosition;
+
+        // Check if enemy is currently visible (line of sight)
+        FVector ToEnemy = Enemy->GetActorLocation() - ControlledCharacter->GetActorLocation();
+        float Distance = ToEnemy.Size();
+        bool bVisible = false;
+
+        if (Distance < 8000.0f) // Vision range
         {
-            // Enemy
-            if (EnemyIndex < 5)
-            {
-                Obs.EnemyPositions[EnemyIndex] = FoundCharacter->GetActorLocation();
+            FHitResult HitResult;
+            FCollisionQueryParams QueryParams;
+            QueryParams.AddIgnoredActor(ControlledCharacter);
 
-                // Simple visibility check: line of sight within vision range
-                FVector ToEnemy = FoundCharacter->GetActorLocation() - ControlledCharacter->GetActorLocation();
-                float Distance = ToEnemy.Size();
-                bool bVisible = false;
-
-                if (Distance < 8000.0f) // Vision range from FAgentStats
-                {
-                    // Simple line trace for visibility
-                    FHitResult HitResult;
-                    FCollisionQueryParams QueryParams;
-                    QueryParams.AddIgnoredActor(ControlledCharacter);
-
-                    bVisible = !GetWorld()->LineTraceSingleByChannel(
-                        HitResult,
-                        ControlledCharacter->GetActorLocation() + FVector(0, 0, 90), // Eye height
-                        FoundCharacter->GetActorLocation() + FVector(0, 0, 90),
-                        ECC_Visibility,
-                        QueryParams
-                    );
-                }
-
-                Obs.EnemyVisible[EnemyIndex] = bVisible;
-                EnemyIndex++;
-            }
+            bVisible = !GetWorld()->LineTraceSingleByChannel(
+                HitResult,
+                ControlledCharacter->GetActorLocation() + FVector(0, 0, 90), // Eye height
+                Enemy->GetActorLocation() + FVector(0, 0, 90),
+                ECC_Visibility,
+                QueryParams
+            );
         }
+
+        Obs.EnemyVisible[EnemyIndex] = bVisible;
+        EnemyIndex++;
     }
 
     // Map state (capture points)
@@ -367,6 +406,131 @@ FObservation AMocTrainer::GatherStateObservation()
     Obs.TimeRemaining = 1.0f; // TODO: Get from game mode
 
     return Obs;
+}
+
+void AMocTrainer::DetectAndReportEnemies()
+{
+    if (!ControlledCharacter) return;
+
+    // Get managers
+    AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+    if (!GameMode) return;
+
+    ATeamManager* TeamManager = GameMode->GetTeamManager();
+    if (!TeamManager) return;
+
+    int32 MyTeamID = ControlledCharacter->GetTeamID();
+    FVector MyLocation = ControlledCharacter->GetActorLocation();
+
+    // Find all characters in the level
+    TArray<AActor*> AllCharacters;
+    UGameplayStatics::GetAllActorsOfClass(
+        GetWorld(),
+        AMocCharacter::StaticClass(),
+        AllCharacters
+    );
+
+    // Check each character for visibility
+    for (AActor* Actor : AllCharacters)
+    {
+        AMocCharacter* OtherCharacter = Cast<AMocCharacter>(Actor);
+        if (!OtherCharacter || OtherCharacter == ControlledCharacter) continue;
+
+        // Only check enemies
+        if (OtherCharacter->GetTeamID() == MyTeamID) continue;
+
+        // Check distance
+        FVector ToEnemy = OtherCharacter->GetActorLocation() - MyLocation;
+        float Distance = ToEnemy.Size();
+
+        if (Distance > 8000.0f) continue; // Outside vision range
+
+        // Line of sight check
+        FHitResult HitResult;
+        FCollisionQueryParams QueryParams;
+        QueryParams.AddIgnoredActor(ControlledCharacter);
+
+        bool bHasLineOfSight = !GetWorld()->LineTraceSingleByChannel(
+            HitResult,
+            MyLocation + FVector(0, 0, 90), // Eye height
+            OtherCharacter->GetActorLocation() + FVector(0, 0, 90),
+            ECC_Visibility,
+            QueryParams
+        );
+
+        // Report to Fog of War if visible
+        if (bHasLineOfSight)
+        {
+            TeamManager->ReportEnemySighting(MyTeamID, OtherCharacter, OtherCharacter->GetActorLocation());
+        }
+    }
+}
+
+void AMocTrainer::HandleCombat()
+{
+    if (!ControlledCharacter) return;
+
+    UWeaponComponent* Weapon = ControlledCharacter->GetWeaponComponent();
+    if (!Weapon || !Weapon->CanFire()) return;
+
+    // Get visible enemies from current observation
+    AActor* ClosestEnemy = nullptr;
+    float ClosestDistance = FLT_MAX;
+
+    int32 MyTeamID = ControlledCharacter->GetTeamID();
+    FVector MyLocation = ControlledCharacter->GetActorLocation();
+
+    // Get managers
+    AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+    if (!GameMode) return;
+
+    ATeamManager* TeamManager = GameMode->GetTeamManager();
+    if (!TeamManager) return;
+
+    AFogOfWarManager* FogManager = TeamManager->GetFogOfWarManager();
+    if (!FogManager) return;
+
+    // Get remembered enemies
+    TArray<AActor*> RememberedEnemies = FogManager->GetRememberedEnemies(MyTeamID);
+
+    for (AActor* EnemyActor : RememberedEnemies)
+    {
+        AMocCharacter* Enemy = Cast<AMocCharacter>(EnemyActor);
+        if (!Enemy || !Enemy->IsAlive()) continue;
+
+        // Check if currently visible (line of sight)
+        FVector ToEnemy = Enemy->GetActorLocation() - MyLocation;
+        float Distance = ToEnemy.Size();
+
+        if (Distance > 8000.0f) continue; // Outside vision range
+
+        FHitResult HitResult;
+        FCollisionQueryParams QueryParams;
+        QueryParams.AddIgnoredActor(ControlledCharacter);
+
+        bool bVisible = !GetWorld()->LineTraceSingleByChannel(
+            HitResult,
+            MyLocation + FVector(0, 0, 90),
+            Enemy->GetActorLocation() + FVector(0, 0, 90),
+            ECC_Visibility,
+            QueryParams
+        );
+
+        // Only fire at visible enemies
+        if (bVisible && Distance < ClosestDistance)
+        {
+            ClosestEnemy = Enemy;
+            ClosestDistance = Distance;
+        }
+    }
+
+    // Fire at closest visible enemy
+    if (ClosestEnemy)
+    {
+        // Use predictive aiming for training (helps agents learn tactical positioning)
+        bool bUsePrediction = true;
+        Weapon->FireAtTarget(ClosestEnemy, bUsePrediction);
+    }
 }
 
 float AMocTrainer::ComputeCommandedStrategyReward(

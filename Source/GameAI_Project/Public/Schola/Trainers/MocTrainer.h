@@ -89,6 +89,12 @@ protected:
     /** 52-dim State 수집 */
     FObservation GatherStateObservation();
 
+    /** Detect enemies in line of sight and report to FogOfWarManager */
+    void DetectAndReportEnemies();
+
+    /** Handle combat (fire at visible enemies during training) */
+    void HandleCombat();
+
     /** Team-aligned Reward 계산 (commanded strategy 수행 품질) */
     float ComputeCommandedStrategyReward(EStrategyType CommandedStrategy,
                                          const FObservation& Prev,

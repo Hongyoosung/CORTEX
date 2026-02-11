@@ -1,4 +1,4 @@
-# CORTEX v8.0 Training Environment (Linux)
+# CORTEX v10.2 Training Environment (Linux)
 # Solves Windows + Ray/RLlib compatibility issues by running in Linux container
 # UE5 runs on Windows host, Python training runs in Docker container
 #
@@ -6,6 +6,7 @@
 #   - UE5 (Windows host) :50051 ←→ gRPC ←→ Docker (Linux) Python/RLlib
 #   - Ray uses 'fork' multiprocessing (Linux-only, more efficient than Windows 'spawn')
 #   - Eliminates object store corruption and worker deadlock issues
+#   - Supports v10.2 Commander-Executor architecture with multi-head policy training
 
 FROM python:3.10-slim
 
@@ -22,7 +23,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements first for layer caching
-COPY CORTEX_Training/requirements.txt .
+COPY MOC_Training/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
@@ -35,11 +36,9 @@ COPY Plugins/Schola-1.3.0/Resources/python /tmp/schola
 RUN pip install --no-cache-dir /tmp/schola[rllib] && \
     rm -rf /tmp/schola
 
-# Copy training scripts
-COPY CORTEX_Training/ .
+# Copy training scripts (both legacy and v10.2)
+COPY MOC_Training/ .
 
-# Patch Schola for Docker insecure channel compatibility (host.docker.internal)
-RUN python patch_schola_insecure.py
 
 # Verify installation
 RUN python -c "import ray; import torch; import schola; print('✓ All packages installed')"

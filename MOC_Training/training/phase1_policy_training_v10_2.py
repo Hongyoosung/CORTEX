@@ -561,27 +561,527 @@ def example_training_integration():
 
 
 # ============================================================================
+# RLLIB INTEGRATION
+# ============================================================================
+
+try:
+    from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
+    from ray.rllib.utils.annotations import override
+    RLLIB_AVAILABLE = True
+except ImportError:
+    RLLIB_AVAILABLE = False
+    print("Warning: RLlib not available. Install with: pip install ray[rllib]")
+
+
+if RLLIB_AVAILABLE:
+    class MultiHeadRLPolicy_v10_2_RLlib(TorchModelV2, nn.Module):
+        """
+        RLlib wrapper for MultiHeadRLPolicy_v10_2.
+
+        This adapter allows the v10.2 policy to work with RLlib's PPO algorithm.
+        """
+
+        def __init__(self, obs_space, action_space, num_outputs, model_config, name):
+            TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
+            nn.Module.__init__(self)
+
+            # Extract configuration
+            custom_config = model_config.get("custom_model_config", {})
+            obs_dim = custom_config.get("obs_dim", 52)
+            num_strategies = custom_config.get("num_strategies", 3)
+            eqs_dim = custom_config.get("eqs_dim", 8)
+            hidden_dims = custom_config.get("hidden_dims", [256, 256])
+
+            # Create the core v10.2 policy
+            self.policy = MultiHeadRLPolicy_v10_2(
+                obs_dim=obs_dim,
+                num_strategies=num_strategies,
+                eqs_dim=eqs_dim,
+                hidden_dims=hidden_dims
+            )
+
+            # RLlib expects num_outputs = action_dim * 2 for continuous actions (mean + log_std)
+            self.num_outputs = num_outputs
+            self.action_dim = eqs_dim
+
+            # Store features for value function
+            self._last_features = None
+            self._last_strategy_idx = None
+
+            print(f"[v10.2 RLlib] Initialized with obs_dim={obs_dim}, strategies={num_strategies}, eqs_dim={eqs_dim}")
+
+        @override(TorchModelV2)
+        def forward(self, input_dict, state, seq_lens):
+            """
+            Forward pass for RLlib.
+
+            Args:
+                input_dict: Contains 'obs' with shape (B, 55)
+                state: RNN state (unused for feedforward)
+                seq_lens: Sequence lengths (unused for feedforward)
+
+            Returns:
+                output: (B, num_outputs) - contains means and log_stds
+                state: Unchanged RNN state
+            """
+            obs = input_dict["obs"]
+            batch_size = obs.shape[0]
+
+            # Extract base observation and strategy from obs
+            # obs format: [52 base features, 3 strategy one-hot] = 55 total
+            base_obs = obs[:, :52]
+            strategy_onehot = obs[:, 52:55]
+            strategy_idx = torch.argmax(strategy_onehot, dim=1)
+
+            # Store for value function
+            self._last_features = obs
+            self._last_strategy_idx = strategy_idx
+
+            # Get EQS weights from policy (these are the means)
+            eqs_weights = self.policy(base_obs, strategy_idx)  # (B, 8)
+
+            # For RLlib's continuous action space, we need to return [means, log_stds]
+            # Use fixed log_std for simplicity (can be learned if needed)
+            log_stds = torch.zeros(batch_size, self.action_dim, device=obs.device) - 0.5  # log(std) = -0.5 -> std ≈ 0.6
+
+            # Concatenate means and log_stds
+            output = torch.cat([eqs_weights, log_stds], dim=-1)  # (B, 16)
+
+            return output, state
+
+        @override(TorchModelV2)
+        def value_function(self):
+            """
+            Compute value estimate for the last forward pass.
+
+            Returns:
+                values: (B,) value estimates
+            """
+            if self._last_features is None or self._last_strategy_idx is None:
+                raise ValueError("Must call forward() before value_function()")
+
+            # Extract base observation
+            base_obs = self._last_features[:, :52]
+
+            # Get value from policy
+            values = self.policy.get_value(base_obs, self._last_strategy_idx)
+
+            return values
+
+
+# ============================================================================
+# TRAINING CONFIGURATION
+# ============================================================================
+
+class MOCv10_2TrainingConfig:
+    """Training configuration for MOC v10.2."""
+
+    # Environment
+    HOST = "localhost"
+    PORT = 50051
+    NUM_UE5_ENVIRONMENTS = 4
+
+    # Network architecture
+    HIDDEN_DIMS = [256, 256]
+
+    # PPO hyperparameters
+    LEARNING_RATE = 3e-4
+    TRAIN_BATCH_SIZE = 32000
+    SGD_MINIBATCH_SIZE = 2048
+    NUM_SGD_ITER = 10
+    GAMMA = 0.99
+    GAE_LAMBDA = 0.95
+    CLIP_PARAM = 0.2
+    ENTROPY_COEFF = 0.01
+    VF_LOSS_COEFF = 0.5
+    GRAD_CLIP = 0.5
+    VF_CLIP_PARAM = 10.0
+
+    # Training
+    NUM_WORKERS = 0  # Windows: single process
+    NUM_ENVS_PER_WORKER = 1
+    NUM_ITERATIONS = 100
+    CHECKPOINT_FREQ = 10
+
+    # Paths
+    OUTPUT_DIR = "training_results_v10_2"
+
+
+def create_env_config():
+    """Create environment configuration for v10.2."""
+    return {
+        "host": MOCv10_2TrainingConfig.HOST,
+        "base_port": MOCv10_2TrainingConfig.PORT,
+        "num_envs": MOCv10_2TrainingConfig.NUM_UE5_ENVIRONMENTS,
+    }
+
+
+def create_ppo_config():
+    """Create RLlib PPO configuration for v10.2."""
+    if not RLLIB_AVAILABLE:
+        raise ImportError("RLlib not available. Install with: pip install ray[rllib]")
+
+    from ray.rllib.algorithms.ppo import PPOConfig
+
+    config = PPOConfig()
+
+    # Environment
+    config = config.environment(
+        env="moc_v10_2_env",
+        env_config=create_env_config(),
+        disable_env_checking=True,
+    )
+
+    # Framework and Runner
+    config = config.framework("torch")
+    config = config.env_runners(
+        num_env_runners=MOCv10_2TrainingConfig.NUM_WORKERS,
+        num_envs_per_env_runner=MOCv10_2TrainingConfig.NUM_ENVS_PER_WORKER,
+        rollout_fragment_length=256,
+        batch_mode="truncate_episodes",
+    )
+
+    # Multi-agent
+    config = config.multi_agent(
+        policies={"shared_policy"},
+        policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "shared_policy",
+        count_steps_by="agent_steps",
+    )
+
+    # Debugging & Reporting
+    config = config.debugging(log_level="WARN")
+    config = config.reporting(
+        metrics_num_episodes_for_smoothing=10,
+        min_sample_timesteps_per_iteration=MOCv10_2TrainingConfig.TRAIN_BATCH_SIZE,
+    )
+
+    # Training
+    config = config.training(
+        lr=MOCv10_2TrainingConfig.LEARNING_RATE,
+        train_batch_size=MOCv10_2TrainingConfig.TRAIN_BATCH_SIZE,
+        lambda_=MOCv10_2TrainingConfig.GAE_LAMBDA,
+        clip_param=MOCv10_2TrainingConfig.CLIP_PARAM,
+        vf_clip_param=MOCv10_2TrainingConfig.VF_CLIP_PARAM,
+        entropy_coeff=MOCv10_2TrainingConfig.ENTROPY_COEFF,
+        vf_loss_coeff=MOCv10_2TrainingConfig.VF_LOSS_COEFF,
+        grad_clip=MOCv10_2TrainingConfig.GRAD_CLIP,
+        use_gae=True,
+        use_critic=True,
+        use_kl_loss=True,
+        kl_coeff=0.2,
+        kl_target=0.01,
+    )
+
+    # PPO-specific
+    config.num_epochs = MOCv10_2TrainingConfig.NUM_SGD_ITER
+    config.minibatch_size = MOCv10_2TrainingConfig.SGD_MINIBATCH_SIZE
+    config.shuffle_batch_per_epoch = True
+
+    # Model configuration
+    config.model = {
+        "custom_model": "multi_head_policy_v10_2",
+        "custom_model_config": {
+            "obs_dim": 52,
+            "num_strategies": 3,
+            "eqs_dim": 8,
+            "hidden_dims": MOCv10_2TrainingConfig.HIDDEN_DIMS,
+        },
+        "max_seq_len": 20,
+    }
+
+    return config
+
+
+def register_env():
+    """Register v10.2 environment with Ray."""
+    from ray.tune.registry import register_env
+    from moc_v10_2_env import MOCv10_2MultiAgentEnv
+
+    def env_creator(config):
+        return MOCv10_2MultiAgentEnv(**config)
+
+    register_env("moc_v10_2_env", env_creator)
+    print("[v10.2] Environment registered")
+
+
+def register_custom_model():
+    """Register v10.2 policy with RLlib."""
+    if not RLLIB_AVAILABLE:
+        return
+
+    from ray.rllib.models import ModelCatalog
+
+    ModelCatalog.register_custom_model("multi_head_policy_v10_2", MultiHeadRLPolicy_v10_2_RLlib)
+    print("[v10.2] Multi-head policy registered")
+
+
+def export_onnx(algo, output_dir):
+    """Export trained policy to ONNX format for UE5."""
+    try:
+        policy = algo.get_policy("shared_policy")
+        if not policy:
+            print("ERROR: Could not get 'shared_policy'")
+            return False
+
+        model = policy.model.policy  # Unwrap the RLlib wrapper
+
+        model.eval()
+
+        # Export with strategy conditioning
+        # UE5 will provide: [obs (52-dim), strategy_idx (scalar)]
+        dummy_obs = torch.randn(1, 52)
+        dummy_strategy = torch.zeros(1, dtype=torch.long)
+
+        model_path = os.path.join(output_dir, "moc_policy_v10_2.onnx")
+
+        torch.onnx.export(
+            model,
+            (dummy_obs, dummy_strategy),
+            model_path,
+            input_names=['observation', 'strategy_index'],
+            output_names=['eqs_weights'],
+            dynamic_axes={
+                'observation': {0: 'batch_size'},
+                'strategy_index': {0: 'batch_size'},
+                'eqs_weights': {0: 'batch_size'}
+            },
+            opset_version=14
+        )
+
+        print(f"[ONNX Export] Model saved to: {model_path}")
+        print(f"  Input: observation(B, 52), strategy_index(B)")
+        print(f"  Output: eqs_weights(B, 8) in [-1, 1]")
+        return True
+
+    except Exception as e:
+        print(f"ONNX export failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def train_with_rllib(args):
+    """Main training loop using RLlib."""
+    import ray
+    from datetime import datetime
+    from pathlib import Path
+
+    print("=" * 80)
+    print("MOC v10.2 - Command-Driven Policy Training")
+    print("=" * 80)
+    print(f"  Host: {MOCv10_2TrainingConfig.HOST}:{MOCv10_2TrainingConfig.PORT}")
+    print(f"  Workers: {MOCv10_2TrainingConfig.NUM_WORKERS}")
+    print(f"  UE5 Environments: {MOCv10_2TrainingConfig.NUM_UE5_ENVIRONMENTS}")
+    print(f"  Iterations: {args.iterations}")
+    print()
+
+    # Cleanup any existing Ray
+    try:
+        ray.shutdown()
+    except:
+        pass
+
+    # Windows multiprocessing fix
+    import multiprocessing
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass
+
+    # Initialize Ray
+    import tempfile
+    ray_temp_dir = os.path.join(tempfile.gettempdir(), "ray_moc_v10_2")
+    os.makedirs(ray_temp_dir, exist_ok=True)
+
+    print("Initializing Ray...")
+    try:
+        ray.init(
+            ignore_reinit_error=True,
+            include_dashboard=False,
+            _temp_dir=ray_temp_dir,
+            num_cpus=4,
+            object_store_memory=1 * 1024**3,
+            logging_level="ERROR",
+        )
+        print("Ray initialized successfully")
+    except Exception as e:
+        print(f"Ray init failed: {e}, using local mode")
+        ray.init(local_mode=True, ignore_reinit_error=True)
+
+    register_env()
+    register_custom_model()
+
+    # Create output directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(MOCv10_2TrainingConfig.OUTPUT_DIR, f"v10_2_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Output: {output_dir}")
+
+    # Create logger
+    from ray.tune.logger import UnifiedLogger, TBXLogger, JsonLogger, CSVLogger
+
+    def logger_creator(config_dict):
+        return UnifiedLogger(config_dict, output_dir, loggers=[JsonLogger, CSVLogger, TBXLogger])
+
+    # Build algorithm
+    print("\nConnecting to UE5...")
+    config = create_ppo_config()
+    try:
+        algo = config.build(logger_creator=logger_creator)
+        print("Connected!\n")
+    except Exception as e:
+        print(f"[ERROR] Failed to connect: {e}")
+        ray.shutdown()
+        return
+
+    # Training loop
+    best_reward = float("-inf")
+    cumulative_episodes = 0
+    cumulative_steps = 0
+
+    print("\n" + "="*80)
+    print("TRAINING PROGRESS")
+    print("="*80)
+    print(f"{'Iter':<6} {'Reward':>10} {'EpLen':>8} {'Episodes':>10} {'Steps':>12} {'Time':>8} {'Best':>10}")
+    print("-"*80)
+
+    for i in range(args.iterations):
+        iter_start = time.time()
+
+        result = algo.train()
+
+        iter_time = time.time() - iter_start
+
+        # Extract metrics
+        env_results = result.get("env_runners", {})
+        reward = env_results.get("episode_reward_mean", 0.0)
+        ep_len = env_results.get("episode_len_mean", 0.0)
+        episodes = env_results.get("episodes_this_iter", 0)
+        agent_steps = result.get("num_agent_steps_sampled", 0)
+
+        # Handle nan values
+        if reward is None or np.isnan(reward):
+            reward = 0
+        if ep_len is None or np.isnan(ep_len):
+            ep_len = 0
+
+        # Update cumulative counters
+        cumulative_episodes += episodes
+        cumulative_steps += agent_steps
+
+        # Print progress
+        current_iter = i + 1
+        status_indicator = "✓" if episodes > 0 else "→"
+        print(f"{status_indicator} {current_iter:>3}/{args.iterations:<3} {reward:>10.2f} {ep_len:>8.1f} "
+              f"{episodes:>10} {agent_steps:>12} {iter_time:>7.1f}s {best_reward:>10.2f}")
+
+        # Detailed breakdown every 10 iterations
+        if i == 0 or (i + 1) % 10 == 0:
+            print(f"\n  [ITERATION {current_iter} DETAILS]")
+            if episodes > 0:
+                reward_min = env_results.get("episode_reward_min", 0.0)
+                reward_max = env_results.get("episode_reward_max", 0.0)
+                print(f"    Episode Reward: mean={reward:.2f}, min={reward_min:.2f}, max={reward_max:.2f}")
+                print(f"    Episode length: {ep_len:.1f} steps")
+                print(f"    Episodes this iteration: {episodes}")
+            print(f"    Agent steps this iteration: {agent_steps}")
+            print(f"    Cumulative: {cumulative_episodes} episodes, {cumulative_steps} steps")
+
+            # Show learner stats
+            learner_info = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {})
+            if learner_info:
+                total_loss = learner_info.get('total_loss', 'N/A')
+                vf_loss = learner_info.get('vf_loss', 'N/A')
+                policy_loss = learner_info.get('policy_loss', 'N/A')
+                entropy = learner_info.get('entropy', 'N/A')
+                print(f"    Loss: total={total_loss:.4f}, policy={policy_loss:.4f}, vf={vf_loss:.4f}" if isinstance(total_loss, float) else f"    Loss: {total_loss}")
+                if isinstance(entropy, float):
+                    print(f"    Entropy: {entropy:.2f}")
+            print()
+
+        # Checkpoint
+        if (i + 1) % args.checkpoint_freq == 0:
+            algo.save(output_dir)
+            print(f"  >> Checkpoint saved at iteration {current_iter}\n")
+
+        # Track best
+        if reward > best_reward and not np.isnan(reward):
+            best_reward = reward
+            best_dir = os.path.join(output_dir, "best")
+            algo.save(best_dir)
+            print(f"  >> NEW BEST REWARD: {best_reward:.2f} (iteration {current_iter})\n")
+
+    # Final save
+    print("\n" + "="*80)
+    print("TRAINING COMPLETE!")
+    print("="*80)
+    print(f"Total iterations: {args.iterations}")
+    print(f"Total episodes: {cumulative_episodes}")
+    print(f"Total agent steps: {cumulative_steps}")
+    print(f"Best reward: {best_reward:.2f}")
+    print(f"Output directory: {output_dir}")
+    print("="*80 + "\n")
+
+    algo.save(output_dir)
+    print(f"Final model saved to: {output_dir}")
+
+    # Export ONNX
+    best_dir = os.path.join(output_dir, "best")
+    if os.path.exists(best_dir):
+        algo.restore(os.path.abspath(best_dir))
+    export_onnx(algo, output_dir)
+
+    algo.stop()
+    ray.shutdown()
+
+    return output_dir
+
+
+# ============================================================================
 # Main Entry Point
 # ============================================================================
 
 if __name__ == '__main__':
-    print("""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train MOC v10.2 command-driven policy")
+    parser.add_argument("--mode", type=str, default="rllib", choices=["example", "rllib"],
+                       help="Run mode: 'example' for architecture demo, 'rllib' for full training")
+    parser.add_argument("--iterations", type=int, default=100,
+                       help="Number of training iterations (for rllib mode)")
+    parser.add_argument("--checkpoint-freq", type=int, default=10,
+                       help="Checkpoint frequency (for rllib mode)")
+    parser.add_argument("--host", type=str, default=MOCv10_2TrainingConfig.HOST,
+                       help="UE5 host address")
+    parser.add_argument("--port", type=int, default=MOCv10_2TrainingConfig.PORT,
+                       help="UE5 gRPC port")
+
+    args = parser.parse_args()
+
+    if args.mode == "example":
+        print("""
     ╔══════════════════════════════════════════════════════════════════════════╗
     ║                                                                          ║
     ║              v10.2 Command-Driven Policy Training Script                ║
     ║                                                                          ║
     ║  This script demonstrates the v10.2 architecture integration.           ║
-    ║  For full training, integrate with your Schola environment.             ║
     ║                                                                          ║
     ╚══════════════════════════════════════════════════════════════════════════╝
-    """)
+        """)
 
-    example_training_integration()
+        example_training_integration()
 
-    print("\nNext Steps:")
-    print("1. Update your Schola environment to pass commanded_strategy")
-    print("2. Modify observation collection to use 52-dim local obs (no team state)")
-    print("3. Update action space to Box([-1, 1]^8)")
-    print("4. Connect TacticalParameterActuator_v10_2 in Blueprint")
-    print("5. Run training loop with PPOTrainer_v10_2")
-    print("\nSee ACTUATOR_v10.2_SUMMARY.md for detailed integration guide.")
+        print("\nTo start full training:")
+        print("  python phase1_policy_training_v10_2.py --mode rllib --iterations 100")
+        print("\nSee v10.2Architecture.md for detailed specification.")
+
+    elif args.mode == "rllib":
+        # Update config from args
+        MOCv10_2TrainingConfig.HOST = args.host
+        MOCv10_2TrainingConfig.PORT = args.port
+
+        if not RLLIB_AVAILABLE:
+            print("Error: RLlib not available. Install with: pip install ray[rllib]")
+            sys.exit(1)
+
+        train_with_rllib(args)
