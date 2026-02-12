@@ -101,7 +101,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         self.state_encoder = nn.Sequential(*encoder_layers)
 
         # Strategy-specific EQS weight heads
-        # Each outputs 8-dim weights with tanh activation (range [-1, 1])
+        # Each outputs 7-dim weights with tanh activation (range [-1, 1])
         final_dim = hidden_dims[-1]
 
         self.assault_head = nn.Sequential(
