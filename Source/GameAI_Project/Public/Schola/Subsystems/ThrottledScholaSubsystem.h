@@ -7,10 +7,15 @@
 #include "ThrottledScholaSubsystem.generated.h"
 
 /**
- * Custom Schola Manager Subsystem with Time-Based Throttling (v7.5)
+ * Custom Schola Manager Subsystem with Time-Based Throttling (v10.2)
  *
  * Replaces UScholaManagerSubsystem to add FPS-independent decision rate limiting.
  * Overrides Tick() to throttle CollectEnvironmentStates() calls to a fixed interval.
+ *
+ * v10.2 Architecture Integration:
+ * - Aligns observation collection (2 Hz) with Squad Commander planning (2 Hz)
+ * - Prevents wasted observations between centralized planning cycles
+ * - Ensures each state → action → reward transition is meaningful
  *
  * Why This Works:
  * - UE5's subsystem architecture allows overriding base subsystems
@@ -19,7 +24,7 @@
  *
  * Usage:
  * 1. This class is automatically used instead of UScholaManagerSubsystem (subsystem override)
- * 2. Configure DecisionInterval in Project Settings > Plugins > Schola (default: 1.0s = 1 Hz)
+ * 2. Configure DecisionInterval in Project Settings > Plugins > Schola (default: 0.5s = 2 Hz)
  * 3. Training will now run at consistent rate regardless of FPS
  */
 UCLASS(config = Schola)
@@ -34,9 +39,9 @@ public:
 	 */
 	virtual void Tick(float DeltaTime) override;
 
-	/** Decision interval in seconds (default: 1.0s = 1 Hz) */
+	/** Decision interval in seconds (v10.2: 0.5s = 2 Hz, aligned with Squad Commander) */
 	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling", meta = (ClampMin = "0.01", ClampMax = "10.0"))
-	float DecisionInterval = 0.1f;
+	float DecisionInterval = 0.5f;
 
 	/** Enable timing diagnostics (logs overhead every 100 decisions) */
 	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling")

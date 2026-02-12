@@ -164,11 +164,11 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 
 	// Self state (10-dim)
 	Obs.Position = Character->GetActorLocation();
-	Obs.Health = Character->GetHealthPercentage();
+	Obs.Health = Character->GetHealthPercentage_Implementation();
 	Obs.Velocity = Character->GetVelocity();
 	Obs.WeaponCooldown = Character->GetWeaponCooldown_Implementation();
 	Obs.CurrentStrategy = Character->GetCommandedStrategy();
-	Obs.bIsAlive = Character->IsAlive();
+	Obs.bIsAlive = Character->IsAlive_Implementation();
 
 	// Gather team information (allies + enemies)
 	TArray<AActor*> AllCharacters;
@@ -180,7 +180,7 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 
 	int32 AllyIndex = 0;
 	int32 EnemyIndex = 0;
-	const int32 MyTeamID = Character->GetTeamID();
+	const int32 MyTeamID = Character->GetTeamID_Implementation();
 
 	for (AActor* Actor : AllCharacters)
 	{
@@ -190,13 +190,13 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 			continue;
 		}
 
-		if (OtherChar->GetTeamID() == MyTeamID)
+		if (OtherChar->GetTeamID_Implementation() == MyTeamID)
 		{
 			// Ally (max 4)
 			if (AllyIndex < 4)
 			{
 				Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
-				Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage();
+				Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
 				Obs.AllyStrategies[AllyIndex] = OtherChar->GetCommandedStrategy();
 				AllyIndex++;
 			}

@@ -314,9 +314,9 @@ FTeamWorldState ASquadManager::CollectTeamState() const
 		if (TeamAgents[i])
 		{
 			State.FriendlyPositions[i] = TeamAgents[i]->GetActorLocation();
-			State.FriendlyHealths[i] = TeamAgents[i]->GetHealthPercentage();
-			State.FriendlyCooldowns[i] = TeamAgents[i]->GetWeaponCooldown();
-			State.FriendlyAlive[i] = TeamAgents[i]->IsAlive();
+			State.FriendlyHealths[i] = TeamAgents[i]->GetHealthPercentage_Implementation();
+			State.FriendlyCooldowns[i] = TeamAgents[i]->GetWeaponCooldown_Implementation();
+			State.FriendlyAlive[i] = TeamAgents[i]->IsAlive_Implementation();
 
 			// Get current strategy (if implemented)
 			// State.FriendlyStrategies[i] = TeamAgents[i]->GetCommandedStrategy();
@@ -330,8 +330,8 @@ FTeamWorldState ASquadManager::CollectTeamState() const
 		{
 			// Use FogOfWarManager for last known positions
 			State.EnemyPositions[i] = EnemyAgents[i]->GetActorLocation();
-			State.EnemyHealths[i] = EnemyAgents[i]->GetHealthPercentage();
-			State.EnemyAlive[i] = EnemyAgents[i]->IsAlive();
+			State.EnemyHealths[i] = EnemyAgents[i]->GetHealthPercentage_Implementation();
+			State.EnemyAlive[i] = EnemyAgents[i]->IsAlive_Implementation();
 			State.EnemyConfidences[i] = 1.0f; // Placeholder: should use FoW decay
 		}
 	}
@@ -490,7 +490,7 @@ void ASquadManager::DistributeRoles(const TArray<EStrategyType>& Roles)
 
 	for (int32 i = 0; i < FMath::Min(Roles.Num(), TeamAgents.Num()); ++i)
 	{
-		if (TeamAgents[i] && TeamAgents[i]->IsAlive())
+		if (TeamAgents[i] && TeamAgents[i]->IsAlive_Implementation())
 		{
 			// Direct command interface (v10.2)
 			TeamAgents[i]->SetCommandedStrategy(Roles[i]);
@@ -529,7 +529,7 @@ void ASquadManager::DrawDebugVisualization() const
 	// Draw role labels above agents
 	for (int32 i = 0; i < FMath::Min(CurrentRoleAssignments.Num(), TeamAgents.Num()); ++i)
 	{
-		if (TeamAgents[i] && TeamAgents[i]->IsAlive())
+		if (TeamAgents[i] && TeamAgents[i]->IsAlive_Implementation())
 		{
 			FVector AgentLocation = TeamAgents[i]->GetActorLocation();
 			FVector LabelLocation = AgentLocation + FVector(0, 0, 150);

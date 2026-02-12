@@ -16,6 +16,7 @@
 
 AScholaEnvironment::AScholaEnvironment(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+	, bAutoDiscoverAgents(true)         // v10.2 default: auto-discover agents
 	, bEnableCentralizedPlanning(true)  // v10.2 default: enabled
 	, bLogTacticalPlays(false)
 {
@@ -35,8 +36,9 @@ void AScholaEnvironment::BeginPlay()
 	// Schola's CollectEnvironments() will find all actors and create TrainingDefinition
 
 
-	// Reset registration flag for new PIE session
+	// Reset flags for new PIE session
 	bAgentsRegistered = false;
+	bEnvironmentInitialized = false;
 
 	// Get MocGameMode
 	GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(this));
@@ -77,6 +79,16 @@ void AScholaEnvironment::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Environment %s ending"), *GetName());
 
+	// Cleanup spawned trainers
+	for (AMocTrainer* Trainer : SpawnedTrainers)
+	{
+		if (Trainer && IsValid(Trainer))
+		{
+			Trainer->Destroy();
+		}
+	}
+	SpawnedTrainers.Empty();
+
 	// Clear cached Squad Commanders
 	SquadCommanders.Empty();
 
@@ -92,13 +104,76 @@ void AScholaEnvironment::InitializeEnvironment()
 	// Called by AAbstractScholaEnvironment::Initialize()
 	// Setup any environment-specific initialization here
 
+	// Guard against duplicate initialization
+	if (bEnvironmentInitialized)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] InitializeEnvironment() already called, skipping duplicate"));
+		return;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] InitializeEnvironment() called"));
+
+	// v10.2: Auto-discover agents in the world
+	if (bAutoDiscoverAgents)
+	{
+		RegisteredAgents.Empty();
+
+		UWorld* World = GetWorld();
+		if (!World)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] World is null, cannot auto-discover agents"));
+			return;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Auto-discovering agents..."));
+
+		// Count total AMocCharacter actors for debugging
+		int32 TotalMocCharacters = 0;
+		int32 MocCharactersWithScholaAgent = 0;
+
+		// Find all AMocCharacter actors with UScholaMocAgent components
+		for (TActorIterator<AMocCharacter> It(World); It; ++It)
+		{
+			AMocCharacter* MocChar = *It;
+			if (!MocChar)
+			{
+				continue;
+			}
+
+			TotalMocCharacters++;
+
+			// Try multiple methods to get ScholaMocAgent component
+			UScholaMocAgent* ScholaAgent = MocChar->GetScholaAgent(); // Direct getter
+			if (!ScholaAgent)
+			{
+				ScholaAgent = MocChar->FindComponentByClass<UScholaMocAgent>(); // Search
+			}
+
+			if (ScholaAgent)
+			{
+				MocCharactersWithScholaAgent++;
+				RegisteredAgents.Add(ScholaAgent);
+				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2]   ✓ Discovered: %s (Team %d, Component: %s)"),
+					*MocChar->GetName(), IMocTeamInterface::Execute_GetTeamID(MocChar), *ScholaAgent->GetName());
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2]   ✗ No ScholaAgent: %s (Team %d)"),
+					*MocChar->GetName(), IMocTeamInterface::Execute_GetTeamID(MocChar));
+			}
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Auto-discovery complete: %d/%d agents found (Total MocCharacters: %d)"),
+			RegisteredAgents.Num(), MocCharactersWithScholaAgent, TotalMocCharacters);
+	}
 
 	// v10.2: Ensure Squad Commanders are cached
 	if (bEnableCentralizedPlanning && SquadCommanders.Num() == 0)
 	{
 		CacheSquadCommanders();
 	}
+
+	bEnvironmentInitialized = true;
 }
 
 void AScholaEnvironment::ResetEnvironment()
@@ -154,7 +229,7 @@ void AScholaEnvironment::ResetEnvironment()
 	UE_LOG(LogTemp, Warning, TEXT("================================================================================\n"));
 }
 
-void AScholaEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAgentTrainerPairs)
+void AScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPawns)
 {
 	UE_LOG(LogTemp, Warning, TEXT("╔══════════════════════════════════════════════════════════════╗"));
 	UE_LOG(LogTemp, Warning, TEXT("║ [ScholaEnv v10.2] Registering agents (Commander-Executor)   ║"));
@@ -165,13 +240,39 @@ void AScholaEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAg
 
 	if (bAgentsRegistered)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] Already registered, skipping"));
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Already registered, returning existing pawns"));
+		// Return pawns that already have trainers
+		for (UScholaMocAgent* Agent : RegisteredAgents)
+		{
+			if (Agent && Agent->GetOwner())
+			{
+				APawn* Pawn = Cast<APawn>(Agent->GetOwner());
+				if (Pawn && Pawn->GetController())
+				{
+					OutTrainerControlledPawns.Add(Pawn);
+				}
+			}
+		}
 		return;
 	}
 
-	OutAgentTrainerPairs.Empty();
+	OutTrainerControlledPawns.Empty();
 
-	int32 TrainersCreated = 0;
+	// Determine which trainer class to use
+	TSubclassOf<AMocTrainer> TrainerClassToUse = TrainerClass;
+	if (!TrainerClassToUse)
+	{
+		TrainerClassToUse = AMocTrainer::StaticClass();
+		UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] Using default AMocTrainer class"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Using custom Trainer class: %s"),
+			*TrainerClassToUse->GetName());
+	}
+
+	int32 TrainersAssigned = 0;
+	int32 TrainersSpawned = 0;
 	int32 TrainersFailed = 0;
 
 	// Process all registered agents
@@ -188,62 +289,95 @@ void AScholaEnvironment::InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAg
 		// Get TeamID from MocCharacter
 		int32 TeamID = -1;
 		AMocCharacter* MocChar = Cast<AMocCharacter>(Agent->GetOwner());
-		if (MocChar)
+		if (!MocChar)
 		{
-			TeamID = MocChar->GetTeamID();
-		}
-
-		// Validate pawn (MocCharacter is the pawn in v10.2)
-		APawn* ControlledPawn = Cast<APawn>(Agent->GetOwner());
-		if (!ControlledPawn || !ControlledPawn->IsValidLowLevel())
-		{
-			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] - ✗ Invalid/NULL pawn for agent %s!"),
+			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] - ✗ Agent owner is not AMocCharacter: %s"),
 				*Agent->GetOwner()->GetName());
 			TrainersFailed++;
 			continue;
 		}
 
-		// Spawn MocTrainer
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Name = FName(*FString::Printf(TEXT("MocTrainer_Team%d_%s"),
-			TeamID, *Agent->GetOwner()->GetName()));
+		TeamID = IMocTeamInterface::Execute_GetTeamID(MocChar);
+		APawn* ControlledPawn = Cast<APawn>(MocChar);
 
-		AMocTrainer* Trainer = GetWorld()->SpawnActor<AMocTrainer>(
-			AMocTrainer::StaticClass(),
-			Agent->GetOwner()->GetActorLocation(),
-			FRotator::ZeroRotator,
-			SpawnParams
-		);
+		if (!ControlledPawn)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] - ✗ Failed to cast MocCharacter to Pawn"));
+			TrainersFailed++;
+			continue;
+		}
+
+		// Check if pawn already has a trainer controller
+		AMocTrainer* Trainer = Cast<AMocTrainer>(ControlledPawn->GetController());
 
 		if (Trainer)
 		{
-			APawn* ControllerdPawn = Cast<APawn>(Agent);
+			// Trainer already exists (placed in level or spawned by GameMode)
+			// v10.2 FIX: Ensure references are initialized even for pre-existing trainers
+			Trainer->InitializeMocTrainer(Agent);
 
-			if (!ControllerdPawn)
+			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] - ✓ Found existing Trainer: %s → Agent: %s (Team %d)"),
+				*Trainer->GetName(), *MocChar->GetName(), TeamID);
+			TrainersAssigned++;
+		}
+		else if (bAutoSpawnTrainers)
+		{
+			// Spawn new trainer
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+			Trainer = GetWorld()->SpawnActor<AMocTrainer>(
+				TrainerClassToUse,
+				ControlledPawn->GetActorLocation(),
+				FRotator::ZeroRotator,
+				SpawnParams
+			);
+
+			if (Trainer)
 			{
-				UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] Failed Cast to APawn"));
-				return;
-			}
+				// Possess the pawn (Trainer is an AIController)
+				Trainer->Possess(ControlledPawn);
 
-			Trainer->Initialize(this->EnvId, i, ControllerdPawn);
-			FTrainerAgentPair Pair(ControlledPawn, Trainer);
-			OutAgentTrainerPairs.Add(Pair);
-			TrainersCreated++;
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] - ✓ Agent: %s → Team %d (Trainer: %s) [Role: Executor]"),
-				*Agent->GetOwner()->GetName(), TeamID, *Trainer->GetName());
+				// Initialize trainer with environment and agent info
+				Trainer->Initialize(this->EnvId, i, ControlledPawn);
+
+				// v10.2 FIX: Initialize MocTrainer references BEFORE first Think() call
+				// Without this, ControlledCharacter is null when ComputeStatus() first runs,
+				// causing immediate Completed status → infinite reset loop
+				Trainer->InitializeMocTrainer(Agent);
+
+				SpawnedTrainers.Add(Trainer);  // Track for cleanup
+				TrainersSpawned++;
+
+				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] - ✓ Spawned Trainer: %s → Agent: %s (Team %d) [Role: Executor]"),
+					*Trainer->GetName(), *MocChar->GetName(), TeamID);
+			}
+			else
+			{
+				TrainersFailed++;
+				UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] - ✗ Failed to spawn Trainer for agent %s"),
+					*MocChar->GetName());
+				continue;
+			}
 		}
 		else
 		{
+			// No trainer and auto-spawn disabled
+			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] - ✗ Agent %s has no Trainer and bAutoSpawnTrainers=false"),
+				*MocChar->GetName());
 			TrainersFailed++;
-			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] - ✗ Failed to spawn MocTrainer"));
+			continue;
 		}
+
+		// Add to output list (parent class will extract trainer via GetController())
+		OutTrainerControlledPawns.Add(ControlledPawn);
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] === REGISTRATION COMPLETE ==="));
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Trainers Created: %d | Failed: %d"),
-		TrainersCreated, TrainersFailed);
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Trainers Found: %d | Spawned: %d | Failed: %d"),
+		TrainersAssigned, TrainersSpawned, TrainersFailed);
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] This actor (EnvID: %d) manages %d executor agents"),
-		EnvId, TrainersCreated);
+		EnvId, OutTrainerControlledPawns.Num());
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Squad Commanders: %d (centralized planning)"),
 		SquadCommanders.Num());
 
@@ -343,24 +477,4 @@ void AScholaEnvironment::CacheSquadCommanders()
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] Squad Commanders cached: %d"), SquadCommanders.Num());
-}
-
-
-bool AScholaEnvironment::ValidateAgent(UScholaMocAgent* Agent) const
-{
-	if (!Agent || !Agent->GetOwner())
-	{
-		return false;
-	}
-
-	// v10.2: Validate that owner is AMocCharacter
-	AMocCharacter* MocChar = Cast<AMocCharacter>(Agent->GetOwner());
-	if (!MocChar)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] Agent owner is not AMocCharacter: %s"),
-			*Agent->GetOwner()->GetName());
-		return false;
-	}
-
-	return true;
 }

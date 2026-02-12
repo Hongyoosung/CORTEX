@@ -73,7 +73,7 @@ void UEnvQueryContext_MocEnemies::ProvideContext(FEnvQueryInstance& QueryInstanc
 
 	for (AMocCharacter* Enemy : EnemyAgents)
 	{
-		if (Enemy && Enemy->IsAlive())
+		if (Enemy && Enemy->IsAlive_Implementation())
 		{
 			// Use FogOfWarManager to check if enemy is visible
 			AFogOfWarManager* FogManager = TeamManager->GetFogOfWarManager();
@@ -136,7 +136,7 @@ void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance
 
 	for (AMocCharacter* Ally : TeamAgents)
 	{
-		if (Ally && Ally != MocChar && Ally->IsAlive())
+		if (Ally && Ally != MocChar && Ally->IsAlive_Implementation())
 		{
 			AllyPositions.Add(Ally->GetActorLocation());
 		}

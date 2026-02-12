@@ -226,14 +226,14 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 		int32 KillerTeamID = -1;
 		if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
 		{
-			KillerTeamID = Killer->GetTeamID();
+			KillerTeamID = Killer->GetTeamID_Implementation();
 		}
 
 		// Register kill (TeamManager broadcasts OnAgentKilled)
-		TM->RegisterKill(KillerTeamID, GetTeamID(), this);
+		TM->RegisterKill(KillerTeamID, GetTeamID_Implementation(), this);
 
 		// Queue respawn
-		TM->QueueRespawn(this, GetTeamID());
+		TM->QueueRespawn(this, GetTeamID_Implementation());
 	}
 }
 
@@ -278,7 +278,12 @@ void AMocCharacter::ResetCharacter()
 		InMesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 	}
 
-	// 5. Restart AI
+	// 5. Clear dead flag BEFORE any AI/Schola callbacks
+	// v10.2 FIX: Must be set before ResetAgent() and RunBehaviorTree()
+	// so that ComputeStatus() sees an alive character if evaluated during reset chain
+	bIsAlive = true;
+
+	// 6. Restart AI
 	if (AAIController* AI = Cast<AAIController>(GetController()))
 	{
 		if (BehaviorTree)
@@ -287,14 +292,11 @@ void AMocCharacter::ResetCharacter()
 		}
 	}
 
-	// 6. Delegate to RL component
+	// 7. Delegate to RL component
 	if (ScholaAgent)
 	{
 		ScholaAgent->ResetAgent();
 	}
-
-	// 7. Clear dead flag
-	bIsAlive = true;
 
 	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] %s reset complete"), *GetName());
 }

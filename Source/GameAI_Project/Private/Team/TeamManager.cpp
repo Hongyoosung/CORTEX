@@ -53,19 +53,18 @@ void ATeamManager::BeginPlay()
 	// Find or spawn FogOfWarManager
 	if (!FogOfWarManager)
 	{
-		UE_LOG(LogTemp, Error, TEXT("TeamManager: Failed to create FogOfWarManager!"));
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		// Spawn FogOfWarManager
+		FogOfWarManager = GetWorld()->SpawnActor<AFogOfWarManager>(
+			FogOfWarManagerClass,
+			SpawnParams
+		);
 	}
 
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	// Spawn FogOfWarManager
-	FogOfWarManager = GetWorld()->SpawnActor<AFogOfWarManager>(
-		FogOfWarManagerClass,
-		SpawnParams
-
-	);
+	
 
 }
 

@@ -12,6 +12,7 @@ class AMocGameMode;
 class ASquadManager;
 class UScholaMocAgent;
 class UEpisodeManagerComponent;
+class AMocTrainer;
 
 
 
@@ -83,7 +84,7 @@ public:
 	//==========================================================================
 	virtual void InitializeEnvironment() override;
 	virtual void ResetEnvironment() override;
-	virtual void InternalRegisterAgents(TArray<FTrainerAgentPair>& OutAgentTrainerPairs) override;
+	virtual void RegisterAgents(TArray<APawn*>& OutTrainerControlledPawns) override;
 	virtual void SetEnvironmentOptions(const TMap<FString, FString>& Options) override;
 	virtual void SeedEnvironment(int Seed) override;
 
@@ -113,9 +114,6 @@ public:
 
 
 private:
-	/** Validate agent for training (v10.2: must be AMocCharacter) */
-	bool ValidateAgent(UScholaMocAgent* Agent) const;
-
 	/** Cache Squad Commander references for each team */
 	void CacheSquadCommanders();
 
@@ -141,9 +139,23 @@ public:
 	// CONFIGURATION
 	//==========================================================================
 
-	/** Auto-discover agents in level (finds all ScholaAgentComponents) */
+	/** Auto-discover agents in level (finds all AMocCharacter with ScholaAgentComponents) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
-	bool bAutoDiscoverAgents;
+	bool bAutoDiscoverAgents = true;
+
+	/**
+	 * Trainer class to use (can be Blueprint subclass of AMocTrainer)
+	 * If not set, defaults to AMocTrainer::StaticClass()
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	TSubclassOf<AMocTrainer> TrainerClass;
+
+	/**
+	 * Auto-spawn trainers for agents that don't have one
+	 * If false, expects trainers to already exist in level
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	bool bAutoSpawnTrainers = true;
 
 	/** Enable centralized planning via Squad Commanders (v10.2) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
@@ -177,9 +189,16 @@ public:
 	/** Has InternalRegisterAgents been called this session? */
 	bool bAgentsRegistered;
 
+	/** Has InitializeEnvironment been called this session? */
+	bool bEnvironmentInitialized = false;
+
 	/** Has environment been reset by Python? (indicates training is active) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	bool bTrainingActive;
+
+	/** Spawned trainers (for cleanup on EndPlay) */
+	UPROPERTY()
+	TArray<AMocTrainer*> SpawnedTrainers;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	int32 ScholaEnvID;

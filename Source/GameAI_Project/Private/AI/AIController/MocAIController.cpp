@@ -130,7 +130,7 @@ FObservation AMocAIController::BuildObservationFromPerception()
     Obs.Velocity = MyChar->GetVelocity();
     Obs.WeaponCooldown = MyChar->GetWeaponCooldown_Implementation();
     Obs.CurrentStrategy = MyChar->GetCommandedStrategy();
-    Obs.bIsAlive = MyChar->IsAlive();
+    Obs.bIsAlive = MyChar->IsAlive_Implementation();
 
     // ========================================
     // Gather Team Information (Allies + Enemies)
@@ -151,7 +151,7 @@ FObservation AMocAIController::BuildObservationFromPerception()
 
     int32 AllyIndex = 0;
     int32 EnemyIndex = 0;
-    const int32 MyTeamID = MyChar->GetTeamID();
+    const int32 MyTeamID = MyChar->GetTeamID_Implementation();
 
     for (AActor* Actor : AllCharacters)
     {
@@ -161,7 +161,7 @@ FObservation AMocAIController::BuildObservationFromPerception()
             continue;
         }
 
-        if (OtherChar->GetTeamID() == MyTeamID)
+        if (OtherChar->GetTeamID_Implementation() == MyTeamID)
         {
             // ========================================
             // Ally (max 4)
@@ -169,7 +169,7 @@ FObservation AMocAIController::BuildObservationFromPerception()
             if (AllyIndex < 4)
             {
                 Obs.AllyPositions.Add(OtherChar->GetActorLocation());
-                Obs.AllyHealths.Add(OtherChar->GetHealthPercentage());
+                Obs.AllyHealths.Add(OtherChar->GetHealthPercentage_Implementation());
                 Obs.AllyStrategies.Add(OtherChar->GetCommandedStrategy());
                 AllyIndex++;
             }

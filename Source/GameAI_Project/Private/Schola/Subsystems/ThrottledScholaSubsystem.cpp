@@ -2,12 +2,14 @@
 
 #include "Schola/Subsystems/ThrottledScholaSubsystem.h"
 #include "GymConnectors/AbstractGymConnector.h"
+#include "Environment/AbstractEnvironment.h"
 
 
 void UThrottledScholaSubsystem::Tick(float DeltaTime)
 {
-	// v7.5: Time-based throttling for CollectEnvironmentStates() / SubmitEnvironmentStates()
-	// This is the PRIMARY rate limiter - prevents UE5 from sending observations to Python too fast
+	// v10.2: Time-based throttling for the Schola decision cycle.
+	// Throttles to DecisionInterval (default 0.5s = 2 Hz), aligned with Squad Commander.
+	// Mirrors UScholaManagerSubsystem::Tick() with throttle gating.
 
 	double CurrentTime = FPlatformTime::Seconds();
 	bool bShouldCollectStates = false;
@@ -18,58 +20,57 @@ void UThrottledScholaSubsystem::Tick(float DeltaTime)
 		LastDecisionTime = CurrentTime;
 		bThrottleInitialized = true;
 		bFirstStep = true;
-		bShouldCollectStates = true; // Allow first observation immediately
-		UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v7.5] Subsystem initialized (Interval=%.2fs = %.1f Hz)"),
+		bShouldCollectStates = true;
+		UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v10.2] Subsystem initialized (Interval=%.2fs = %.1f Hz)"),
 			DecisionInterval, 1.0f / DecisionInterval);
 	}
 	else
 	{
 		double ElapsedTime = CurrentTime - LastDecisionTime;
-
-		// Check if enough time has passed
 		if (ElapsedTime >= DecisionInterval)
 		{
 			bShouldCollectStates = true;
 			LastDecisionTime = CurrentTime;
-
-			static int32 DecisionCounter = 0;
-			DecisionCounter++;
-			/*UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v7.5] ✅ Decision #%d allowed (elapsed=%.3fs)"),
-				DecisionCounter, ElapsedTime);*/
 		}
-		// else: Throttled, don't collect states this frame
 	}
 
-	// ===== PARENT'S TICK LOGIC (MODIFIED) =====
-	// Based on UScholaManagerSubsystem::Tick() from Schola plugin
+	// ===== SCHOLA TICK LOGIC (THROTTLED) =====
+	// Mirrors UScholaManagerSubsystem::Tick() from the Schola plugin.
+	// Phase order: CheckStart → Resolve → Apply → Reset → Collect → Submit → AutoReset
 
-	// Check for start
+	// Phase 0: Check for start (runs every frame, not throttled)
 	if (this->GymConnector && this->GymConnector->IsNotStarted())
 	{
-		bool bStarted = this->GymConnector->CheckForStart();
+		this->GymConnector->CheckForStart();
 	}
 
-	// THROTTLED Phase: Only run decision cycle at DecisionInterval
-	// Maintains Schola's RPC order: Resolve (Receive) → Apply → Collect → Submit (Respond)
+	// Throttled phases: only run at DecisionInterval
 	if (bShouldCollectStates && this->GymConnector && this->GymConnector->IsRunning())
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE_STR("Schola: Agents Acting & Thinking (Throttled)");
 
-		// 1. Resolve action from Python (calls Receive(), sets CurrExchange, waits for Python's RPC)
+		// Phase 1: Resolve - receive Python's gRPC request (BLOCKING)
 		FTrainingStateUpdate* StateUpdate = this->GymConnector->ResolveEnvironmentStateUpdate();
 		if (StateUpdate)
 		{
 			this->GymConnector->UpdateConnectorStatus(*StateUpdate);
 			this->GymConnector->UpdateEnvironments(*StateUpdate);
+		}
 
-			// 2. Reset completed environments (skip on first step)
-			if (!bFirstStep)
-			{
-				this->GymConnector->ResetCompletedEnvironments();
-			}
+		// Phase 2: Reset completed environments
+		// v10.2 FIX: NOT guarded by bFirstStep - matches standard Schola behavior.
+		// The standard UScholaManagerSubsystem always calls ResetCompletedEnvironments().
+		// Skipping it on the first step left the environment in Completed state
+		// (from Python's initial reset request), which cascaded into spurious resets
+		// on subsequent ticks since the stale Completed status was never cleared.
+		if (this->GymConnector && this->GymConnector->IsRunning())
+		{
+			this->GymConnector->ResetCompletedEnvironments();
+		}
 
-			// 3. Collect new observations
-			// v8.0 TIMING FIX: Measure observation collection overhead
+		// Phase 3: Collect observations and submit to Python
+		if (this->GymConnector && this->GymConnector->IsRunning())
+		{
 			double CollectStartTime = FPlatformTime::Seconds();
 			this->GymConnector->CollectEnvironmentStates();
 			double CollectEndTime = FPlatformTime::Seconds();
@@ -84,36 +85,23 @@ void UThrottledScholaSubsystem::Tick(float DeltaTime)
 			if (bEnableTimingDiagnostics && DecisionCount % 100 == 0)
 			{
 				double AvgOverheadMS = TotalCollectionOverhead / DecisionCount;
-				UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════════════════════════╗"));
-				UE_LOG(LogTemp, Warning, TEXT("║ TIMING DIAGNOSTICS (Decision #%d)"), DecisionCount);
-				UE_LOG(LogTemp, Warning, TEXT("║ Observation Collection Overhead:"));
-				UE_LOG(LogTemp, Warning, TEXT("║   Average: %.2f ms"), AvgOverheadMS);
-				UE_LOG(LogTemp, Warning, TEXT("║   Max: %.2f ms"), MaxCollectionOverhead);
-				UE_LOG(LogTemp, Warning, TEXT("║   Last: %.2f ms"), CollectionOverheadMS);
-				UE_LOG(LogTemp, Warning, TEXT("║ Timing Discrepancy Per Episode (60s):"));
-				UE_LOG(LogTemp, Warning, TEXT("║   ~%.2f seconds lost to observation collection"), AvgOverheadMS * (60.0f / DecisionInterval) / 1000.0);
-				UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════════════════════════╝"));
+				UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v10.2] Decision #%d | Collection avg=%.2fms max=%.2fms last=%.2fms"),
+					DecisionCount, AvgOverheadMS, MaxCollectionOverhead, CollectionOverheadMS);
 			}
 
-			// 4. Submit to Python (calls Respond(), sends observation, clears CurrExchange)
-			// CRITICAL: Check connector is still running before submit
-			// The OnConnectorClosed callback may have already consumed CurrExchange
-			// if Python disconnected during UpdateEnvironments/CollectEnvironmentStates
+			// Phase 4: Submit state to Python (responds to the gRPC exchange)
 			if (this->GymConnector->IsRunning())
 			{
 				this->GymConnector->SubmitEnvironmentStates();
 			}
-			else
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[THROTTLE v7.5] Connector closed before SubmitEnvironmentStates - skipping"));
-			}
 		}
 	}
 
-	// Auto-reset phase
-	if (this->GymConnector && !bFirstStep && this->GymConnector->IsRunning())
+	// Phase 5: Auto-reset (same-step) - only after the first step
+	if (bShouldCollectStates && this->GymConnector && !bFirstStep && this->GymConnector->IsRunning())
 	{
 		this->GymConnector->AutoReset();
 	}
+
 	bFirstStep = false;
 }

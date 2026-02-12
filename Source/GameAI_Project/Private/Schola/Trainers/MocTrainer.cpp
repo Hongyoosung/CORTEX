@@ -106,7 +106,7 @@ void AMocTrainer::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    if (!ControlledCharacter || !ControlledCharacter->IsAlive())
+    if (!ControlledCharacter || !ControlledCharacter->IsAlive_Implementation())
     {
         return; // Skip tick if character is invalid or dead
     }
@@ -165,16 +165,26 @@ TArray<float> AMocTrainer::GetObservation()
 
 void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
 {
-    if (!MocAgent || !ControlledCharacter)
+    // v10.2 FIX: Validate references before applying action
+    if (!MocAgent || !IsValid(MocAgent) || !ControlledCharacter || !IsValid(ControlledCharacter))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot apply action - invalid agent or character"));
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot apply action - invalid agent or character (MocAgent=%s, Character=%s)"),
+            MocAgent ? TEXT("Valid") : TEXT("NULL"),
+            ControlledCharacter ? TEXT("Valid") : TEXT("NULL"));
         return;
     }
 
-    // ActionValues 검증
-    if (ActionValues.Num() != 8)
+    // v10.2: Action space is 7-dim EQS weights (not 8!)
+    // [0]: EnemyObjectiveProximity
+    // [1]: AllyObjectiveProximity
+    // [2]: CoverDensity
+    // [3]: EnemyVisibility
+    // [4]: AllyProximity
+    // [5]: CombatRange
+    // [6]: PickupProximity
+    if (ActionValues.Num() != 7)
     {
-        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Invalid action size: %d (expected 8)"), ActionValues.Num());
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Invalid action size: %d (expected 7 for v10.2)"), ActionValues.Num());
         return;
     }
 
@@ -188,7 +198,6 @@ void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
     Weights.CombatRange             = FMath::Clamp(ActionValues[5], -1.0f, 1.0f);
     Weights.PickupProximity         = FMath::Clamp(ActionValues[6], -1.0f, 1.0f);
 
-
     // 가중치 유효성 검사
     if (!ValidateEQSWeights(Weights))
     {
@@ -200,13 +209,38 @@ void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
 
     // EQS 가중치를 Character의 이동 시스템에 적용
     ApplyEQSWeightsToCharacter(Weights);
+
+    // v10.2 DEBUG: Log applied action periodically
+    if (CurrentEpisodeSteps % 100 == 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Action applied at step %d: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f]"),
+            CurrentEpisodeSteps,
+            Weights.EnemyObjectiveProximity,
+            Weights.AllyObjectiveProximity,
+            Weights.CoverDensity,
+            Weights.EnemyVisibility,
+            Weights.AllyProximity,
+            Weights.CombatRange,
+            Weights.PickupProximity);
+    }
 }
 
 float AMocTrainer::ComputeReward()
 {
-    if (!MocAgent || !ControlledCharacter)
+    // v10.2 FIX: Improved validation and error reporting
+    if (!MocAgent || !IsValid(MocAgent))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot compute reward - invalid agent or character"));
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot compute reward - MocAgent is %s (Step: %d)"),
+            MocAgent ? TEXT("INVALID") : TEXT("NULL"),
+            CurrentEpisodeSteps);
+        return 0.0f;
+    }
+
+    if (!ControlledCharacter || !IsValid(ControlledCharacter))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot compute reward - ControlledCharacter is %s (Step: %d)"),
+            ControlledCharacter ? TEXT("INVALID") : TEXT("NULL"),
+            CurrentEpisodeSteps);
         return 0.0f;
     }
 
@@ -251,7 +285,7 @@ bool AMocTrainer::IsEpisodeDone()
         return true;
     }
     
-    if (!ControlledCharacter || ControlledCharacter->GetHealthPercentage() <= 0.0f)
+    if (!ControlledCharacter || ControlledCharacter->GetHealthPercentage_Implementation() <= 0.0f)
     {
         UE_LOG(LogTemp, Log, TEXT("Episode ended: Agent died"));
         return true;
@@ -304,13 +338,13 @@ FObservation AMocTrainer::GatherStateObservation()
 
     // Self state
     Obs.Position = ControlledCharacter->GetActorLocation();
-    Obs.Health = ControlledCharacter->GetHealthPercentage(); // [0.0-1.0]
+    Obs.Health = ControlledCharacter->GetHealthPercentage_Implementation(); // [0.0-1.0]
     Obs.Velocity = ControlledCharacter->GetVelocity();
     Obs.WeaponCooldown = ControlledCharacter->GetWeaponCooldown_Implementation();
     Obs.CurrentStrategy = ControlledCharacter->GetCommandedStrategy();
-    Obs.bIsAlive = ControlledCharacter->IsAlive();
+    Obs.bIsAlive = ControlledCharacter->IsAlive_Implementation();
 
-    int32 MyTeamID = ControlledCharacter->GetTeamID();
+    int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
 
     // Get TeamManager and FogOfWarManager
     AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
@@ -348,13 +382,13 @@ FObservation AMocTrainer::GatherStateObservation()
         AMocCharacter* FoundCharacter = Cast<AMocCharacter>(Actor);
         if (!FoundCharacter || FoundCharacter == ControlledCharacter) continue;
 
-        if (FoundCharacter->GetTeamID() == MyTeamID)
+        if (FoundCharacter->GetTeamID_Implementation() == MyTeamID)
         {
             // Ally - always known
             if (AllyIndex < 4)
             {
                 Obs.AllyPositions[AllyIndex] = FoundCharacter->GetActorLocation();
-                Obs.AllyHealths[AllyIndex] = FoundCharacter->GetHealthPercentage();
+                Obs.AllyHealths[AllyIndex] = FoundCharacter->GetHealthPercentage_Implementation();
                 Obs.AllyStrategies[AllyIndex] = FoundCharacter->GetCommandedStrategy();
                 AllyIndex++;
             }
@@ -419,7 +453,7 @@ void AMocTrainer::DetectAndReportEnemies()
     ATeamManager* TeamManager = GameMode->GetTeamManager();
     if (!TeamManager) return;
 
-    int32 MyTeamID = ControlledCharacter->GetTeamID();
+    int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
     FVector MyLocation = ControlledCharacter->GetActorLocation();
 
     // Find all characters in the level
@@ -437,7 +471,7 @@ void AMocTrainer::DetectAndReportEnemies()
         if (!OtherCharacter || OtherCharacter == ControlledCharacter) continue;
 
         // Only check enemies
-        if (OtherCharacter->GetTeamID() == MyTeamID) continue;
+        if (OtherCharacter->GetTeamID_Implementation() == MyTeamID) continue;
 
         // Check distance
         FVector ToEnemy = OtherCharacter->GetActorLocation() - MyLocation;
@@ -477,7 +511,7 @@ void AMocTrainer::HandleCombat()
     AActor* ClosestEnemy = nullptr;
     float ClosestDistance = FLT_MAX;
 
-    int32 MyTeamID = ControlledCharacter->GetTeamID();
+    int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
     FVector MyLocation = ControlledCharacter->GetActorLocation();
 
     // Get managers
@@ -496,7 +530,7 @@ void AMocTrainer::HandleCombat()
     for (AActor* EnemyActor : RememberedEnemies)
     {
         AMocCharacter* Enemy = Cast<AMocCharacter>(EnemyActor);
-        if (!Enemy || !Enemy->IsAlive()) continue;
+        if (!Enemy || !Enemy->IsAlive_Implementation()) continue;
 
         // Check if currently visible (line of sight)
         FVector ToEnemy = Enemy->GetActorLocation() - MyLocation;
@@ -909,7 +943,16 @@ EAgentTrainingStatus AMocTrainer::ComputeStatus()
         return EAgentTrainingStatus::Truncated; // Episode truncated due to max steps
     }
 
-    if (!ControlledCharacter || !ControlledCharacter->IsAlive())
+    // v10.2 FIX: Use IsValid() to guard against dangling pointers,
+    // and distinguish "not initialized yet" from "agent actually died"
+    if (!ControlledCharacter || !IsValid(ControlledCharacter))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] ComputeStatus: ControlledCharacter is %s - returning Running to avoid false completion"),
+            ControlledCharacter ? TEXT("INVALID (dangling)") : TEXT("NULL (not initialized)"));
+        return EAgentTrainingStatus::Running; // Don't trigger completion for uninitialized state
+    }
+
+    if (!ControlledCharacter->IsAlive_Implementation())
     {
         return EAgentTrainingStatus::Completed; // Episode complete (agent died)
     }
@@ -935,8 +978,8 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
     {
         Info.Add(TEXT("Strategy"), UEnum::GetValueAsString(CachedCommandedStrategy));
         Info.Add(TEXT("Health"), FString::Printf(TEXT("%.1f%%"),
-            ControlledCharacter->GetHealthPercentage() * 100.0f));
-        Info.Add(TEXT("IsAlive"), ControlledCharacter->IsAlive() ? TEXT("true") : TEXT("false"));
+            ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f));
+        Info.Add(TEXT("IsAlive"), ControlledCharacter->IsAlive_Implementation() ? TEXT("true") : TEXT("false"));
 
         if (!LastEQSTargetLocation.IsZero())
         {
@@ -964,27 +1007,90 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
 
 void AMocTrainer::ResetTrainer()
 {
+    // v10.2 FIX: Update training statistics on episode boundary.
+    // The Schola framework calls ResetTrainer() at the start of each new episode.
+    // OnCompletion() may not be called if the environment is marked completed
+    // through a path that bypasses Think()'s transition detection.
+    if (CurrentEpisodeSteps > 0)
+    {
+        UpdateTrainingStatistics();
+    }
+
     // Reset per-episode state
     CurrentEpisodeSteps = 0;
     EpisodeReward = 0.0f;
 
+    // v10.2 FIX: Re-validate agent and character references after reset
+    // References may become stale if characters were destroyed/recreated during reset
+    if (!MocAgent || !IsValid(MocAgent))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] MocAgent reference invalid after reset, attempting to re-acquire..."));
+
+        // Try to get agent from the pawn we're controlling
+        APawn* ControlledPawn = GetPawn();
+        if (ControlledPawn)
+        {
+            MocAgent = ControlledPawn->FindComponentByClass<UScholaMocAgent>();
+            if (MocAgent)
+            {
+                UE_LOG(LogTemp, Log, TEXT("[MocTrainer] ✓ MocAgent re-acquired successfully"));
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("[MocTrainer] ✗ Failed to re-acquire MocAgent - pawn has no ScholaMocAgent component!"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MocTrainer] ✗ Failed to re-acquire MocAgent - no controlled pawn!"));
+        }
+    }
+
+    if (!ControlledCharacter || !IsValid(ControlledCharacter))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] ControlledCharacter reference invalid after reset, attempting to re-acquire..."));
+
+        // Try to get character from the pawn we're controlling
+        APawn* ControlledPawn = GetPawn();
+        if (ControlledPawn)
+        {
+            ControlledCharacter = Cast<AMocCharacter>(ControlledPawn);
+            if (ControlledCharacter)
+            {
+                UE_LOG(LogTemp, Log, TEXT("[MocTrainer] ✓ ControlledCharacter re-acquired successfully: %s"), *ControlledCharacter->GetName());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("[MocTrainer] ✗ Failed to re-acquire ControlledCharacter - pawn is not AMocCharacter!"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MocTrainer] ✗ Failed to re-acquire ControlledCharacter - no controlled pawn!"));
+        }
+    }
+
     // Reset observations
     PreviousObservation = FObservation();
 
-    if (ControlledCharacter)
+    if (ControlledCharacter && IsValid(ControlledCharacter))
     {
         CurrentObservation = GatherStateObservation();
         CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+
+        UE_LOG(LogTemp, Log, TEXT("[MocTrainer] v10.2 Trainer reset for episode %d - Agent: %s, Strategy: %s"),
+            TotalEpisodes + 1,
+            *ControlledCharacter->GetName(),
+            *UEnum::GetValueAsString(CachedCommandedStrategy));
     }
     else
     {
         CurrentObservation = FObservation();
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] v10.2 Trainer reset for episode %d - NO VALID CHARACTER!"), TotalEpisodes + 1);
     }
 
     // Reset EQS target
     LastEQSTargetLocation = FVector::ZeroVector;
-
-    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] v10.2 Trainer reset for episode %d"), TotalEpisodes + 1);
 }
 
 void AMocTrainer::OnCompletion()
