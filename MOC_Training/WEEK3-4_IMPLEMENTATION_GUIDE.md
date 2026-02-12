@@ -87,7 +87,7 @@ Implementation notes:
 #### `models/multi_head_policy.py`
 Five-head policy architecture:
 - **Input:** 61-dim (State=52, OptionOneHot=5, Target=3, Duration=1)
-- **Output:** 8-dim EQS weights (range [-1, 1])
+- **Output:** 7-dim EQS weights (range [-1, 1])
 - **Heads:** Assault, Defend, Support, Scout, Retreat
 - **Parameters:** ~230k trainable parameters
 
@@ -101,7 +101,7 @@ Shared Encoder:
 Strategy Heads (5x):
   - Combined Features: 289-dim (256 + 16 + 16 + 1)
   - Hidden Layer: 289 → 128 (ReLU + Dropout 0.1)
-  - Output Layer: 128 → 8 (Tanh)
+  - Output Layer: 128 → 7 (Tanh)
 ```
 
 **Usage:**

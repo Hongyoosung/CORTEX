@@ -51,7 +51,7 @@ MOC v10.2 uses AMD's **Schola plugin (v1.3.0)** for RL training infrastructure. 
 │ │                                                              │ │
 │ │ Actuators (apply actions):                                  │ │
 │ │ • UTacticalParameterActuator → Apply EQS weights            │ │
-│ │   - 8-dim continuous action: [EnemyObjProx, AllyObjProx,... │ │
+│ │   - 7-dim continuous action: [EnemyObjProx, AllyObjProx,... │ │
 │ │                                                              │ │
 │ │ Reward Calculation:                                         │ │
 │ │ • ComputeReward() → Strategy-specific reward shaping        │ │
@@ -244,7 +244,7 @@ ASquadManager:
 2. Think:
    Python RL Policy (PPO/SAC)
    → Receives observation
-   → Returns 8-dim action (EQS weights)
+   → Returns 7-dim action (EQS weights)
 
 3. Act:
    UTacticalParameterActuator.ApplyAction()

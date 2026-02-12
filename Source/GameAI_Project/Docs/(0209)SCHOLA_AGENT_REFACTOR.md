@@ -71,7 +71,7 @@ These created overlap with other systems, violating single responsibility princi
 │ Schola Pipeline (Automatic):                                │
 │   ├─ Observers: Collect (State + Strategy) → Observation   │
 │   ├─ Brain: Request decision                               │
-│   ├─ Policy: Observation → EQS Weights (8-dim)            │
+│   ├─ Policy: Observation → EQS Weights (7-dim)            │
 │   └─ Actuators: Apply weights → Navigation                 │
 └──────────────────────────────────────────────────────────────┘
 ```
