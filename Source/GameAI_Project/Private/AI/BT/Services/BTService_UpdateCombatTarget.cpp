@@ -260,10 +260,6 @@ float UBTService_UpdateCombatTarget::CalculateThreatLevel(AActor* Target, APawn*
 		ThreatScore += HealthPercent * 0.5f;
 	}
 
-	// TODO: Could add more factors like:
-	// - Is target aiming at us?
-	// - Target's damage output
-	// - Target's strategic value
 
 	return ThreatScore;
 }

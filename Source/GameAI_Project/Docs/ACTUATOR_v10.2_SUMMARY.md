@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-The v10.2 TacticalParameterActuator has been completely redesigned to align with the centralized Commander-Executor architecture. It now outputs **8-dimensional EQS weights** directly instead of abstract tactical parameters.
+The v10.2 TacticalParameterActuator has been completely redesigned to align with the centralized Commander-Executor architecture. It now outputs **7-dimensional EQS weights** directly instead of abstract tactical parameters.
 
 ---
 
@@ -16,7 +16,7 @@ The v10.2 TacticalParameterActuator has been completely redesigned to align with
 
 | Aspect | v8.0 (Old) | v10.2 (New) |
 |--------|------------|-------------|
-| **Output Dimension** | 4-dim | 8-dim |
+| **Output Dimension** | 4-dim | 7-dim |
 | **Output Type** | Abstract parameters (Aggression, CoverPreference, etc.) | Direct EQS weights |
 | **Action Space** | Box([0, 1]^4) | Box([-1, 1]^8) |
 | **Strategy Context** | None | Receives commanded strategy from Squad Commander |
@@ -27,7 +27,7 @@ The v10.2 TacticalParameterActuator has been completely redesigned to align with
 
 ## 3. v10.2 Action Space
 
-### 3.1 8-Dimensional EQS Weights
+### 3.1 7-Dimensional EQS Weights
 
 ```cpp
 Box([-1, 1]^8):
@@ -38,7 +38,6 @@ Box([-1, 1]^8):
 [4] AllyProximity           // -1=solo play, +1=group with teammates
 [5] CombatRange             // Preferred engagement distance (normalized)
 [6] PickupProximity         // -1=ignore pickups, +1=prioritize health/ammo
-[7] HeightAdvantage         // -1=low ground, +1=high ground
 ```
 
 ### 3.2 Weight Range: [-1, 1]
@@ -71,12 +70,12 @@ This bidirectional range enables more expressive spatial reasoning compared to v
 │ Schola Agent (UScholaMocAgent)                               │
 │ • Observation Collection                                     │
 │ • Python RL Policy Inference                                 │
-│ • Output: 8-dim EQS weights                                  │
+│ • Output: 7-dim EQS weights                                  │
 └─────────────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ TacticalParameterActuator_v10_2 ← YOU ARE HERE              │
-│ • TakeAction(8-dim Box)                                      │
+│ • TakeAction(7-dim Box)                                      │
 │ • Convert to FEQSWeightParameters                            │
 │ • Store commanded strategy context                           │
 └─────────────────────────────────────────────────────────────┘
@@ -125,7 +124,7 @@ The actuator is **training-time only** - it receives actions from Python and app
 
 #### `TakeAction(const FBoxPoint& Action)`
 ```cpp
-// 1. Validate action is 8-dim
+// 1. Validate action is 7-dim
 // 2. Convert to FEQSWeightParameters
 // 3. Clamp to [-1, 1] if enabled
 // 4. Validate (check for NaN/Inf)
@@ -164,10 +163,10 @@ The actuator integrates with Schola's training loop:
 from schola import Actuator
 
 # Action space is automatically detected
-# action_space = Box(low=-1.0, high=1.0, shape=(8,))
+# action_space = Box(low=-1.0, high=1.0, shape=(7,))
 
-# RL policy outputs 8-dim weights
-action = policy.predict(observation)  # shape: (8,)
+# RL policy outputs 7-dim weights
+action = policy.predict(observation)  # shape: (7,)
 
 # Schola automatically calls TakeAction() via UE-Python bridge
 agent.take_action(action)
@@ -184,7 +183,6 @@ action = np.array([
     0.2,   # AllyProximity (loose formation)
     0.0,   # CombatRange (neutral)
     -0.5,  # PickupProximity (ignore pickups)
-    0.7,   # HeightAdvantage (seek high ground)
 ], dtype=np.float32)
 ```
 
@@ -208,7 +206,7 @@ E_Obj:0.80, A_Obj:-0.30, Cover:0.60, Vis:0.40, Ally:0.20, Rng:0.00, Pick:-0.50, 
 ### 7.2 Validation Checks
 
 The actuator automatically validates:
-- **Dimension**: Action must be 8-dim
+- **Dimension**: Action must be 7-dim
 - **Range**: All weights in [-1, 1]
 - **Finiteness**: No NaN or Inf values
 - **Clamping**: Optional safety clamp (enabled by default)
@@ -224,7 +222,7 @@ Public/Schola/Actuators/TacticalParameterActuator_v10_2.h
 
 **Contents:**
 - UTacticalParameterActuator_v10_2 class declaration
-- 8-dim Box actuator interface
+- 7-dim Box actuator interface
 - Commander integration methods (SetCommandedStrategy)
 - Configuration properties
 - Comprehensive documentation
@@ -237,7 +235,7 @@ Private/Schola/Actuators/TacticalParameterActuator_v10_2.cpp
 **Contents:**
 - GetActionSpace() - Returns Box([-1,1]^8)
 - TakeAction() - Converts action to EQS weights
-- ActionToEQSWeights() - Maps 8-dim array to FEQSWeightParameters
+- ActionToEQSWeights() - Maps 7-dim array to FEQSWeightParameters
 - ValidateEQSWeights() - Safety checks
 - SetCommandedStrategy() - Receives commands from Squad Commander
 
@@ -252,7 +250,7 @@ Private/Schola/Actuators/TacticalParameterActuator_v10_2.cpp
 - [x] Document architecture integration
 - [ ] **Update ScholaMocAgent to use v10.2 actuator**
 - [ ] **Create Blueprint BP_Agent_v10_2** with new actuator
-- [ ] **Update Python training script** for 8-dim action space
+- [ ] **Update Python training script** for 7-dim action space
 - [ ] **Test actuator in training loop**
 - [ ] **Validate EQS weight application**
 
@@ -268,8 +266,8 @@ Private/Schola/Actuators/TacticalParameterActuator_v10_2.cpp
 To migrate existing agents:
 
 1. Replace `UTacticalParameterActuator` with `UTacticalParameterActuator_v10_2`
-2. Update Python action space from `Box([0,1]^4)` to `Box([-1,1]^8)`
-3. Retrain RL policy with new 8-dim output head
+2. Update Python action space from `Box([0,1]^4)` to `Box([-1,1]^7)`
+3. Retrain RL policy with new 7-dim output head
 4. Update observation collection to include commanded strategy
 
 ---

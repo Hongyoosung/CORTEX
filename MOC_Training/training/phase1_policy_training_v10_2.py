@@ -12,9 +12,9 @@ Key Changes from v10.1:
 Architecture:
 - Input: 52-dim local observation + commanded strategy (1-hot, 3-dim) = 55-dim
 - Multi-head network: 3 strategy-specific heads (Assault/Defend/Support)
-- Output: 8-dim EQS weights per head, range [-1, 1]
+- Output: 7-dim EQS weights per head, range [-1, 1]
 
-Action Space: Box([-1, 1]^8)
+Action Space: Box([-1, 1]^7)
 - [0]: EnemyObjectiveProximity
 - [1]: AllyObjectiveProximity
 - [2]: CoverDensity
@@ -22,7 +22,6 @@ Action Space: Box([-1, 1]^8)
 - [4]: AllyProximity
 - [5]: CombatRange
 - [6]: PickupProximity
-- [7]: HeightAdvantage
 
 Target:
 - 100,000 transitions
@@ -54,7 +53,7 @@ class Transition:
     """Single training transition for v10.2."""
     state: np.ndarray              # (52,) local observation
     commanded_strategy: int        # 0=Assault, 1=Defend, 2=Support
-    eqs_weights: np.ndarray        # (8,) in range [-1, 1]
+    eqs_weights: np.ndarray        # (7,) in range [-1, 1]
     reward: float
     next_state: np.ndarray         # (52,)
     done: bool
@@ -69,14 +68,14 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
     - Input: 55-dim (52 local obs + 3 strategy one-hot)
     - Shared Encoder: [256, 256] ReLU
     - 3 Strategy Heads: Assault, Defend, Support
-    - Each head outputs: 8-dim EQS weights (tanh activation for [-1, 1] range)
+    - Each head outputs: 7-dim EQS weights (tanh activation for [-1, 1] range)
     """
 
     def __init__(
         self,
         obs_dim: int = 52,
         num_strategies: int = 3,
-        eqs_dim: int = 8,
+        eqs_dim: int = 7,
         hidden_dims: List[int] = [256, 256]
     ):
         super().__init__()
@@ -148,7 +147,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         print(f"[v10.2 Policy] Initialized: {obs_dim}-dim obs → {eqs_dim}-dim EQS weights")
         print(f"  Input: {input_dim} (52 obs + 3 strategy)")
         print(f"  Encoder: {hidden_dims}")
-        print(f"  Heads: 3 strategies × 8 EQS weights")
+        print(f"  Heads: 3 strategies × 7 EQS weights")
         print(f"  Action Range: [-1, 1] (tanh activation)")
 
     def forward(
@@ -164,7 +163,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
             strategy_idx: Commanded strategy indices (B,)
 
         Returns:
-            eqs_weights: (B, 8) in range [-1, 1]
+            eqs_weights: (B, 7) in range [-1, 1]
         """
         batch_size = obs.shape[0]
 
@@ -239,7 +238,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
 
         Expected usage in UE5:
         - Input: [obs (52), strategy_idx (1)]
-        - Output: [eqs_weights (8)]
+        - Output: [eqs_weights (7)]
         """
         self.eval()
 
@@ -263,7 +262,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
 
         print(f"[ONNX Export] Model saved to: {filepath}")
         print(f"  Input: observation(B, 52), strategy_index(B)")
-        print(f"  Output: eqs_weights(B, 8) in [-1, 1]")
+        print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
 
     def print_architecture(self):
         """Print model architecture summary."""
@@ -486,8 +485,8 @@ class PPOTrainer_v10_2:
         Compute log probability under Gaussian policy.
 
         Args:
-            actions: (B, 8) - Sampled EQS weights
-            means: (B, 8) - Mean from policy
+            actions: (B, 7) - Sampled EQS weights
+            means: (B, 7) - Mean from policy
             std: Standard deviation
 
         Returns:
@@ -517,7 +516,7 @@ def example_training_integration():
     policy = MultiHeadRLPolicy_v10_2(
         obs_dim=52,
         num_strategies=3,
-        eqs_dim=8,
+        eqs_dim=7,
         hidden_dims=[256, 256]
     )
     policy.print_architecture()
@@ -536,7 +535,7 @@ def example_training_integration():
     print("4. Run policy inference:")
     print("   >>> obs_tensor = torch.tensor(obs, dtype=torch.float32)")
     print("   >>> strategy_tensor = torch.tensor([commanded_strategy], dtype=torch.long)")
-    print("   >>> eqs_weights = policy(obs_tensor, strategy_tensor)  # Output: (1, 8)")
+    print("   >>> eqs_weights = policy(obs_tensor, strategy_tensor)  # Output: (1, 7)")
     print("5. Send eqs_weights to TacticalParameterActuator_v10_2 via Schola")
     print("6. Actuator calls TakeAction() and applies weights to AIController")
     print("7. Collect reward and next observation")
@@ -589,7 +588,7 @@ if RLLIB_AVAILABLE:
             custom_config = model_config.get("custom_model_config", {})
             obs_dim = custom_config.get("obs_dim", 52)
             num_strategies = custom_config.get("num_strategies", 3)
-            eqs_dim = custom_config.get("eqs_dim", 8)
+            eqs_dim = custom_config.get("eqs_dim", 7)
             hidden_dims = custom_config.get("hidden_dims", [256, 256])
 
             # Create the core v10.2 policy
@@ -783,7 +782,7 @@ def create_ppo_config():
         "custom_model_config": {
             "obs_dim": 52,
             "num_strategies": 3,
-            "eqs_dim": 8,
+            "eqs_dim": 7,
             "hidden_dims": MOCv10_2TrainingConfig.HIDDEN_DIMS,
         },
         "max_seq_len": 20,
@@ -850,7 +849,7 @@ def export_onnx(algo, output_dir):
 
         print(f"[ONNX Export] Model saved to: {model_path}")
         print(f"  Input: observation(B, 52), strategy_index(B)")
-        print(f"  Output: eqs_weights(B, 8) in [-1, 1]")
+        print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
         return True
 
     except Exception as e:

@@ -99,22 +99,14 @@
     │  │                                              │        │   │
     │  │ 3. Policy Makes Decision                     │        │   │
     │  │    Input: (State + Commanded Strategy) ─────┘        │   │
-    │  │    Output: EQS Weights [8-dim]                       │   │
-    │  │      ├─ CoverPreference                              │   │
-    │  │      ├─ DistanceToEnemy                              │   │
-    │  │      ├─ TeamSpread                                   │   │
-    │  │      ├─ ObjectiveProximity                           │   │
-    │  │      ├─ Aggression                                   │   │
-    │  │      ├─ FlankingAngle                                │   │
-    │  │      ├─ VisibilityToEnemies                          │   │
-    │  │      └─ PathToObjective                              │   │
+    │  │    Output: EQS Weights [7-dim]                       │   │                            │   │
     │  └──────────────────────────────────────────────────────┘   │
     │                                                               │
     │  ┌─────────────────────────────────────────────────────────┐   │
     │  │ ACT PHASE (Actuators)                                   │   │
     │  │                                                          │   │
     │  │ 1. TacticalParameterActuator Receives Weights          │   │
-    │  │    TakeAction(EQS Weights [8-dim])                     │   │
+    │  │    TakeAction(EQS Weights [7-dim])                     │   │
     │  │                                                          │   │
     │  │ 2. Apply to EQS Dynamic Weight System                  │   │
     │  │    MocAIController->SetEQSWeights(Weights)            │   │
@@ -201,11 +193,11 @@ Time: t=0.1s (Think Phase)
    Training Mode:
    └─> Python RLlib receives observation
        └─> Neural Network processes
-           └─> Returns: EQS Weights [8-dim]
+           └─> Returns: EQS Weights [7-dim]
 
    Inference Mode:
    └─> Local ONNX Model processes
-       └─> Returns: EQS Weights [8-dim]
+       └─> Returns: EQS Weights [7-dim]
 
    Example Output:
    [

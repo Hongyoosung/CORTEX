@@ -74,6 +74,11 @@ public:
 	virtual bool IsAlive_Implementation() const { return true; }
 
 
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Combat Stats")
+	float Heal(float HealAmount);
+	virtual float Heal_Implementation(float HealAmount) { return 0.0f; }
+
+
 	//--------------------------------------------------------------------------
 	// WEAPON & COMBAT STATE
 	//--------------------------------------------------------------------------
@@ -93,4 +98,14 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Combat Stats")
 	bool CanFireWeapon() const;
 	virtual bool CanFireWeapon_Implementation() const { return true; }
+
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Combat Stats")
+	int32 AddAmmo(int32 AmmoAmount);
+	virtual int32 AddAmmo_Implementation(int32 AmmoAmount) { return 0; }
+
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Combat Stats")
+	float GetAmmoPercentage() const;
+	virtual float GetAmmoPercentage_Implementation() const { return 0.0f; }
 };

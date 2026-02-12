@@ -7,6 +7,8 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/Character.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 
 ACapturePoint::ACapturePoint()
 {
@@ -37,6 +39,12 @@ ACapturePoint::ACapturePoint()
 	DebugText->SetWorldSize(50.0f);
 	DebugText->SetHorizontalAlignment(EHTA_Center);
 	DebugText->SetVerticalAlignment(EVRTA_TextCenter);
+
+	// Create Niagara VFX component
+	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
+	TeamColorVFX->SetupAttachment(RootComponent);
+	TeamColorVFX->SetRelativeLocation(FVector(0.0f, 0.0f, 100.0f));
+	TeamColorVFX->bAutoActivate = true;
 }
 
 void ACapturePoint::BeginPlay()
@@ -56,8 +64,16 @@ void ACapturePoint::BeginPlay()
 		DynamicMaterial = PointMesh->CreateAndSetMaterialInstanceDynamic(0);
 	}
 
+	// Setup Niagara VFX
+	if (TeamColorVFX && TeamColorVFXAsset)
+	{
+		TeamColorVFX->SetAsset(TeamColorVFXAsset);
+		TeamColorVFX->Activate();
+	}
+
 	// Update initial visuals
 	UpdateVisuals();
+	UpdateNiagaraColor();
 }
 
 void ACapturePoint::Tick(float DeltaTime)
@@ -234,6 +250,9 @@ void ACapturePoint::CompleteCaptureSequence()
 	// Broadcast capture event
 	OnPointCaptured.Broadcast(PointID, PreviousOwner, NewOwner);
 
+	// Update Niagara color for new owner
+	UpdateNiagaraColor();
+
 	UE_LOG(LogTemp, Log, TEXT("CapturePoint %s captured! %s -> %s"),
 		*UEnum::GetValueAsString(PointID),
 		*UEnum::GetValueAsString(PreviousOwner),
@@ -273,6 +292,35 @@ void ACapturePoint::UpdateVisuals()
 	DynamicMaterial->SetScalarParameterValue(FName("IsContested"), IsContested() ? 1.0f : 0.0f);
 }
 
+void ACapturePoint::UpdateNiagaraColor()
+{
+	if (!TeamColorVFX)
+	{
+		return;
+	}
+
+	// Determine color based on current ownership
+	FLinearColor TeamColor;
+	switch (CurrentOwner)
+	{
+	case ECapturePointOwnership::RedTeam:
+		TeamColor = FLinearColor::Red;
+		break;
+	case ECapturePointOwnership::BlueTeam:
+		TeamColor = FLinearColor::Blue;
+		break;
+	default:
+		TeamColor = FLinearColor::Gray;
+		break;
+	}
+
+	// Update Niagara color parameter
+	TeamColorVFX->SetVariableLinearColor(VFXColorParameterName, TeamColor);
+
+	UE_LOG(LogTemp, Verbose, TEXT("CapturePoint %s VFX color updated to: R=%.2f, G=%.2f, B=%.2f"),
+		*UEnum::GetValueAsString(PointID), TeamColor.R, TeamColor.G, TeamColor.B);
+}
+
 bool ACapturePoint::IsContested() const
 {
 	return RedTeamAgents.Num() > 0 && BlueTeamAgents.Num() > 0;
@@ -302,6 +350,7 @@ void ACapturePoint::ResetPoint()
 	RedTeamAgents.Empty();
 	BlueTeamAgents.Empty();
 	UpdateVisuals();
+	UpdateNiagaraColor();
 }
 
 void ACapturePoint::SetOwnership(ECapturePointOwnership NewOwner)
@@ -311,6 +360,7 @@ void ACapturePoint::SetOwnership(ECapturePointOwnership NewOwner)
 	CaptureProgress = 0.0f;
 	OnPointCaptured.Broadcast(PointID, PreviousOwner, NewOwner);
 	UpdateVisuals();
+	UpdateNiagaraColor();
 }
 
 TArray<AActor*> ACapturePoint::GetAgentsInZone() const
@@ -372,22 +422,11 @@ int32 ACapturePoint::GetAgentTeamID(AActor* Agent) const
 		return -1;
 	}
 
-	// Try to get team ID from actor tags
-	// Expected format: "Team_0" or "Team_1"
-	for (const FName& Tag : Agent->Tags)
+	// Use team interface if available
+	if (Agent->Implements<UMocTeamInterface>())
 	{
-		FString TagStr = Tag.ToString();
-		if (TagStr.StartsWith(TEXT("Team_")))
-		{
-			FString TeamIDStr = TagStr.RightChop(5); // Remove "Team_"
-			int32 TeamID = FCString::Atoi(*TeamIDStr);
-			return TeamID;
-		}
+		return IMocTeamInterface::Execute_GetTeamID(Agent);
 	}
-
-	// Alternative: Check AIController's TeamId
-	// This would require casting to AIController and checking GenericTeamId
-	// For now, return -1 if no tag found
 
 	return -1;
 }

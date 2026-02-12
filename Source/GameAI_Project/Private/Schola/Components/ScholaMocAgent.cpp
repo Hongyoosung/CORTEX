@@ -61,3 +61,20 @@ void UScholaMocAgent::UpdateCommandedStrategy(EStrategyType NewStrategy)
         // Policy will use it to condition EQS weight output
     }
 }
+
+void UScholaMocAgent::ResetAgent()
+{
+    // Reset commanded strategy to default
+    CommandedStrategy = EStrategyType::Assault;
+
+    // Note: Schola's internal state (observation buffers, action history, etc.)
+    // is managed by the parent UInferenceComponent and ScholaEnvironment.
+    // We only need to reset MOC-specific state here.
+
+    AMocCharacter* OwnerCharacter = Cast<AMocCharacter>(GetOwner());
+    if (OwnerCharacter)
+    {
+        UE_LOG(LogTemp, Verbose, TEXT("[ScholaMocAgent] Agent %d reset - strategy set to Assault"),
+            OwnerCharacter->AgentID);
+    }
+}

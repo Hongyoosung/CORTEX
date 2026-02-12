@@ -93,6 +93,14 @@ public:
     }
 
     //========================================
+    // Episode Management
+    //========================================
+
+    /** Reset agent state for new episode */
+    UFUNCTION(BlueprintCallable, Category = "MOC|Episode")
+    void ResetAgent();
+
+    //========================================
     // Mode Management
     //========================================
 

@@ -208,7 +208,6 @@ def benchmark_inference(onnx_path: str, num_runs: int = 1000):
         'AllyProximity',
         'CombatRange',
         'PickupProximity',
-        'HeightAdvantage'
     ]
     for name, value in zip(weight_names, eqs_weights):
         print(f"    {name}: {value:.3f}")

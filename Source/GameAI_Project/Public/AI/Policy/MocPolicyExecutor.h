@@ -33,7 +33,7 @@ struct FObservation;
  * 1. Squad Commander issues commanded strategy (Assault/Defend/Support)
  * 2. Executor calls: InferWeights(CommandedStrategy, LocalObservation)
  * 3. Policy selects appropriate head based on command
- * 4. Generates 8-dim EQS weights adapted to local state
+ * 4. Generates 7-dim EQS weights adapted to local state
  * 5. EQS uses weights for spatial reasoning
  */
 UCLASS(ClassGroup=(AI), meta=(BlueprintSpawnableComponent))
@@ -59,7 +59,7 @@ public:
 	 *
 	 * @param CommandedStrategy Strategy assigned by Squad Commander (Assault/Defend/Support)
 	 * @param LocalObservation Agent's current local state (52-dim: health, position, allies, enemies, etc.)
-	 * @return EQS weight parameters (8-dim) adapted to local conditions
+	 * @return EQS weight parameters (7-dim) adapted to local conditions
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Policy")
 	FEQSWeightParameters InferWeights(
@@ -153,11 +153,11 @@ private:
 	 * 1. Encode local observation → 52-dim tensor
 	 * 2. Select policy head based on commanded strategy
 	 * 3. Run head-specific inference
-	 * 4. Return 8-dim EQS weights
+	 * 4. Return 7-dim EQS weights
 	 *
 	 * @param Strategy Commanded strategy (selects head)
 	 * @param LocalObs Local state observation
-	 * @return Output weights [8]
+	 * @return Output weights [7]
 	 */
 	TArray<float> RunMultiHeadInference(
 		EStrategyType Strategy,
@@ -166,7 +166,7 @@ private:
 
 	/**
 	 * Validate ONNX model input/output shapes
-	 * Expected: Input [BatchSize, 52], Output [BatchSize, 8]
+	 * Expected: Input [BatchSize, 52], Output [BatchSize, 7]
 	 */
 	bool ValidateModelSchema();
 

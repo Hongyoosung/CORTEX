@@ -138,6 +138,15 @@ void AScholaEnvironment::ResetEnvironment()
 		return;
 	}
 
+	// PROPER DELEGATION: Let GameMode orchestrate all game-level resets
+	if (GameMode)
+	{
+		GameMode->ResetMatch();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] GameMode is null! Cannot reset game state."));
+	}
 
 	OnScholaEnvironmentInitialized_Delegate.Broadcast();
 

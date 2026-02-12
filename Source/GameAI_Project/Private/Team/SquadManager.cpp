@@ -145,6 +145,42 @@ bool ASquadManager::ShouldReplan() const
 	return false;
 }
 
+//========================================
+// Episode Management
+//========================================
+
+void ASquadManager::Reset()
+{
+	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Resetting squad commander for Team %d"), TeamID);
+
+	// Reset planning state
+	TimeSinceLastPlan = 0.0f;
+	PlanConfidence = 0.0f;
+	PlanningCycleCount = 0;
+	EventDrivenReplanCount = 0;
+
+	// Reset to default tactical play
+	ActiveTacticalPlay = ETacticalPlay::StandardComp;
+
+	// Reset role assignments to default (Assault)
+	CurrentRoleAssignments.Empty();
+	CurrentRoleAssignments.Init(EStrategyType::Assault, 5);
+
+	// Reset previous state tracking (for data collection)
+	bHasPreviousState = false;
+	PreviousTeamState = FTeamWorldState();
+	PreviousTacticalPlay = ETacticalPlay::StandardComp;
+
+	// Note: Don't reset TeamMCTSPlanner or DataCollector as they maintain their own state
+	// and will be reset by their own systems if needed
+
+	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Reset complete - default assignments restored"));
+}
+
+//========================================
+// Centralized Planning
+//========================================
+
 void ASquadManager::PerformTacticalPlanning()
 {
 	if (!TeamManager)
@@ -154,7 +190,7 @@ void ASquadManager::PerformTacticalPlanning()
 	}
 
 	// 1. Collect global team state
-	FTeamState GlobalState = CollectTeamState();
+	FTeamWorldState GlobalState = CollectTeamState();
 
 	// Record transition from previous planning cycle (v10.2 Week 2 - Data Collection)
 	if (bHasPreviousState && DataCollector && DataCollector->bIsRecording)
@@ -259,9 +295,9 @@ void ASquadManager::ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AAct
 	TimeSinceLastPlan = 0.0f; // Reset timer to avoid double-planning
 }
 
-FTeamState ASquadManager::CollectTeamState() const
+FTeamWorldState ASquadManager::CollectTeamState() const
 {
-	FTeamState State;
+	FTeamWorldState State;
 
 	if (!TeamManager)
 	{
@@ -307,7 +343,7 @@ FTeamState ASquadManager::CollectTeamState() const
 	return State;
 }
 
-FTeamState ASquadManager::GetGlobalTeamState() const
+FTeamWorldState ASquadManager::GetGlobalTeamState() const
 {
 	return CollectTeamState();
 }
@@ -540,7 +576,7 @@ void ASquadManager::DrawDebugVisualization() const
 	);
 }
 
-FCompositeReward ASquadManager::CalculateTeamReward(const FTeamState& OldState, const FTeamState& NewState) const
+FCompositeReward ASquadManager::CalculateTeamReward(const FTeamWorldState& OldState, const FTeamWorldState& NewState) const
 {
 	FCompositeReward Reward;
 
@@ -625,7 +661,7 @@ FCompositeReward ASquadManager::CalculateTeamReward(const FTeamState& OldState, 
 	return Reward;
 }
 
-ETacticalPlay ASquadManager::SelectEpsilonGreedyAction(const FTeamState& TeamState) const
+ETacticalPlay ASquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& TeamState) const
 {
 	// ε-greedy policy for data collection
 	// Provides diverse exploration without MCTS overhead

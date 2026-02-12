@@ -10,6 +10,7 @@
 class USphereComponent;
 class UStaticMeshComponent;
 class UTextRenderComponent;
+class UNiagaraComponent;
 
 /**
  * Team ownership state for capture points
@@ -162,6 +163,9 @@ protected:
 	/** Update visual representation (colors, progress indicator) */
 	void UpdateVisuals();
 
+	/** Update Niagara VFX color based on ownership */
+	void UpdateNiagaraColor();
+
 	/** Get team ID from agent actor */
 	int32 GetAgentTeamID(AActor* Agent) const;
 
@@ -185,6 +189,10 @@ public:
 	/** Debug text renderer showing capture state */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UTextRenderComponent* DebugText;
+
+	/** Niagara VFX for team color identification */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UNiagaraComponent* TeamColorVFX;
 
 	//========================================
 	// Configuration
@@ -221,6 +229,14 @@ public:
 	/** Show debug visualization */
 	UPROPERTY(EditAnywhere, Category = "CapturePoint|Debug")
 	bool bShowDebugInfo = true;
+
+	/** Niagara system asset for team identification VFX */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CapturePoint|VFX")
+	class UNiagaraSystem* TeamColorVFXAsset;
+
+	/** VFX color parameter name */
+	UPROPERTY(EditAnywhere, Category = "CapturePoint|VFX")
+	FName VFXColorParameterName = FName("TeamColor");
 
 	//========================================
 	// Events

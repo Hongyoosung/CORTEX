@@ -10,9 +10,6 @@ AFogOfWarManager::AFogOfWarManager()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickGroup = TG_PrePhysics;
-
-	// Set default name
-	SetActorLabel(TEXT("FogOfWarManager"));
 }
 
 void AFogOfWarManager::BeginPlay()
@@ -292,6 +289,32 @@ TArray<FExploredResource>& AFogOfWarManager::GetResourceList(int32 TeamID)
 const TArray<FExploredResource>& AFogOfWarManager::GetResourceList(int32 TeamID) const
 {
 	return TeamID == 0 ? RedTeamKnownResources : BlueTeamKnownResources;
+}
+
+//========================================
+// Episode Management
+//========================================
+
+void AFogOfWarManager::Reset()
+{
+	UE_LOG(LogTemp, Log, TEXT("[FogOfWarManager] Resetting fog of war state for new episode"));
+
+	// Clear all enemy memory (dynamic objects)
+	RedTeamEnemyTimestamps.Empty();
+	RedTeamEnemyPositions.Empty();
+	BlueTeamEnemyTimestamps.Empty();
+	BlueTeamEnemyPositions.Empty();
+
+	// Clear all resource memory (static objects)
+	RedTeamKnownResources.Empty();
+	BlueTeamKnownResources.Empty();
+
+	// Reset decay timer
+	TimeSinceDecayCheck = 0.0f;
+
+	// Note: Render targets don't need to be cleared as they'll be updated by UpdateVision()
+
+	UE_LOG(LogTemp, Log, TEXT("[FogOfWarManager] Reset complete - all team knowledge cleared"));
 }
 
 //========================================

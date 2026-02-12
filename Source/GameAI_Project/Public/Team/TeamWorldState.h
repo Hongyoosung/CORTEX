@@ -249,7 +249,7 @@ struct GAMEAI_PROJECT_API FTeamWorldState
 	/**
 	 * Default constructor - initializes arrays
 	 */
-	FTeamState()
+	FTeamWorldState()
 	{
 		// Initialize with 5 agents
 		FriendlyPositions.Init(FVector::ZeroVector, 5);

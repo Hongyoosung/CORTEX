@@ -50,11 +50,11 @@ void AMocGameMode::BeginPlay()
 
 	UE_LOG(LogTemp, Log, TEXT("[MocGameMode] BeginPlay - Initializing MOC v10.1 match"));
 
-	// Spawn all entities
-	SpawnTeamManager();
-	SpawnCapturePoints();
-	SpawnHealthPacks();
-	SpawnAmmoCrates();
+	// Initialize all entities (find existing or spawn new)
+	InitializeTeamManager();
+	InitializeCapturePoints();
+	InitializeHealthPacks();
+	InitializeAmmoCrates();
 
 	// Subscribe to events
 	SubscribeToEvents();
@@ -181,6 +181,55 @@ void AMocGameMode::EndMatch(EMocMatchState WinnerState)
 	UE_LOG(LogTemp, Log, TEXT("[MocGameMode] %s"), *WinnerMessage);
 }
 
+void AMocGameMode::ResetMatch()
+{
+	UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Resetting match for new episode"));
+
+	// 1. Reset match state (GameMode's responsibility)
+	MatchTimer = 0.0f;
+	PassiveIncomeAccumulator = 0.0f;
+	bMatchEnded = false;
+	CurrentMatchState = EMocMatchState::InProgress;
+
+	// 2. Delegate to TeamManager (team-level reset)
+	if (TeamManager)
+	{
+		TeamManager->ResetTeams();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("[MocGameMode] Cannot reset - TeamManager is null"));
+	}
+
+	// 3. Reset capture points
+	for (auto& Pair : CapturePointsMap)
+	{
+		if (ACapturePoint* Point = Pair.Value)
+		{
+			Point->ResetPoint();
+		}
+	}
+
+	// 4. Reset pickups
+	for (APickupBase* Pickup : HealthPacks)
+	{
+		if (Pickup)
+		{
+			Pickup->Reset();
+		}
+	}
+	for (APickupBase* Pickup : AmmoCrates)
+	{
+		if (Pickup)
+		{
+			Pickup->Reset();
+		}
+	}
+
+
+	UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Match reset complete"));
+}
+
 //========================================
 // Scoring System
 //========================================
@@ -241,8 +290,28 @@ TArray<ACapturePoint*> AMocGameMode::GetAllCapturePoints() const
 // Initialization
 //========================================
 
-void AMocGameMode::SpawnTeamManager()
+void AMocGameMode::InitializeTeamManager()
 {
+	// First, try to find existing TeamManager in the level
+	if (bUsePlacedActors)
+	{
+		TArray<AActor*> FoundActors;
+		UGameplayStatics::GetAllActorsOfClass(GetWorld(), ATeamManager::StaticClass(), FoundActors);
+
+		if (FoundActors.Num() > 0)
+		{
+			TeamManager = Cast<ATeamManager>(FoundActors[0]);
+			if (TeamManager)
+			{
+				UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Found existing TeamManager in level"));
+				return;
+			}
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[MocGameMode] No TeamManager found in level, spawning new one"));
+	}
+
+	// Spawn new TeamManager if not found or bUsePlacedActors is false
 	if (!TeamManagerClass)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[MocGameMode] TeamManagerClass is not set"));
@@ -265,15 +334,32 @@ void AMocGameMode::SpawnTeamManager()
 	}
 }
 
-void AMocGameMode::SpawnCapturePoints()
+void AMocGameMode::InitializeCapturePoints()
 {
+	// First, try to find existing capture points in the level
+	if (bUsePlacedActors)
+	{
+		FindPlacedCapturePoints();
+
+		// If we found all 5 points, we're done
+		if (CapturePointsMap.Num() == 5)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Using %d pre-placed capture points from level"), CapturePointsMap.Num());
+			return;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[MocGameMode] Only found %d capture points in level (need 5), spawning missing points"), CapturePointsMap.Num());
+	}
+
+	// Spawn missing capture points or all if bUsePlacedActors is false
 	if (!CapturePointClass)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[MocGameMode] CapturePointClass is not set"));
 		return;
 	}
 
-	// Spawn Point A (Red Base)
+	// Spawn Point A (Red Base) if not found
+	if (!CapturePointsMap.Contains(ECapturePointID::PointA))
 	{
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Name = FName(TEXT("CapturePoint_A"));
@@ -287,7 +373,8 @@ void AMocGameMode::SpawnCapturePoints()
 		}
 	}
 
-	// Spawn Point B (North Outpost)
+	// Spawn Point B (North Outpost) if not found
+	if (!CapturePointsMap.Contains(ECapturePointID::PointB))
 	{
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Name = FName(TEXT("CapturePoint_B"));
@@ -300,7 +387,8 @@ void AMocGameMode::SpawnCapturePoints()
 		}
 	}
 
-	// Spawn Point C (Center Plaza)
+	// Spawn Point C (Center Plaza) if not found
+	if (!CapturePointsMap.Contains(ECapturePointID::PointC))
 	{
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Name = FName(TEXT("CapturePoint_C"));
@@ -313,7 +401,8 @@ void AMocGameMode::SpawnCapturePoints()
 		}
 	}
 
-	// Spawn Point D (South Outpost)
+	// Spawn Point D (South Outpost) if not found
+	if (!CapturePointsMap.Contains(ECapturePointID::PointD))
 	{
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Name = FName(TEXT("CapturePoint_D"));
@@ -326,7 +415,8 @@ void AMocGameMode::SpawnCapturePoints()
 		}
 	}
 
-	// Spawn Point E (Blue Base)
+	// Spawn Point E (Blue Base) if not found
+	if (!CapturePointsMap.Contains(ECapturePointID::PointE))
 	{
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Name = FName(TEXT("CapturePoint_E"));
@@ -340,11 +430,27 @@ void AMocGameMode::SpawnCapturePoints()
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Spawned %d capture points"), CapturePointsMap.Num());
+	UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Initialized %d capture points (placed + spawned)"), CapturePointsMap.Num());
 }
 
-void AMocGameMode::SpawnHealthPacks()
+void AMocGameMode::InitializeHealthPacks()
 {
+	// First, try to find existing health packs in the level
+	if (bUsePlacedActors)
+	{
+		FindPlacedHealthPacks();
+
+		// If we found health packs, use them
+		if (HealthPacks.Num() > 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Using %d pre-placed health packs from level"), HealthPacks.Num());
+			return;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[MocGameMode] No health packs found in level, spawning default set"));
+	}
+
+	// Spawn health packs if not found or bUsePlacedActors is false
 	if (!HealthPackClass)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[MocGameMode] HealthPackClass is not set"));
@@ -367,8 +473,24 @@ void AMocGameMode::SpawnHealthPacks()
 	UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Spawned %d health packs"), HealthPacks.Num());
 }
 
-void AMocGameMode::SpawnAmmoCrates()
+void AMocGameMode::InitializeAmmoCrates()
 {
+	// First, try to find existing ammo crates in the level
+	if (bUsePlacedActors)
+	{
+		FindPlacedAmmoCrates();
+
+		// If we found ammo crates, use them
+		if (AmmoCrates.Num() > 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Using %d pre-placed ammo crates from level"), AmmoCrates.Num());
+			return;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[MocGameMode] No ammo crates found in level, spawning default set"));
+	}
+
+	// Spawn ammo crates if not found or bUsePlacedActors is false
 	if (!AmmoCrateClass)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[MocGameMode] AmmoCrateClass is not set"));
@@ -447,10 +569,6 @@ void AMocGameMode::OnPointCaptured(ECapturePointID PointID, ECapturePointOwnersh
 	{
 		AddTeamScore(1, CaptureReward, TEXT("Point Capture"));
 	}
-
-	// Subtract points from previous owner (if not neutral)
-
-
 }
 
 void AMocGameMode::OnAgentKilled(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim)
@@ -547,6 +665,109 @@ void AMocGameMode::CountOwnedPoints(int32& OutRedOwned, int32& OutBlueOwned) con
 			else if (Ownership == ECapturePointOwnership::BlueTeam)
 			{
 				OutBlueOwned++;
+			}
+		}
+	}
+}
+
+//========================================
+// Helper Functions
+//========================================
+
+void AMocGameMode::FindPlacedCapturePoints()
+{
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACapturePoint::StaticClass(), FoundActors);
+
+	for (AActor* Actor : FoundActors)
+	{
+		ACapturePoint* Point = Cast<ACapturePoint>(Actor);
+		if (Point && !CapturePointsMap.Contains(Point->PointID))
+		{
+			// Register the capture point
+			CapturePointsMap.Add(Point->PointID, Point);
+
+			// Set initial ownership if specified in the level
+			if (Point->InitialOwner != ECapturePointOwnership::Neutral)
+			{
+				Point->SetOwnership(Point->InitialOwner);
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Found placed capture point: %s (ID: %d)"),
+				*Point->GetName(), static_cast<int32>(Point->PointID));
+		}
+	}
+}
+
+void AMocGameMode::FindPlacedHealthPacks()
+{
+	// Try to find actors based on HealthPackClass if set
+	if (HealthPackClass)
+	{
+		TArray<AActor*> FoundActors;
+		UGameplayStatics::GetAllActorsOfClass(GetWorld(), HealthPackClass, FoundActors);
+
+		for (AActor* Actor : FoundActors)
+		{
+			APickupBase* HealthPack = Cast<APickupBase>(Actor);
+			if (HealthPack && HealthPack->GetPickupType() == EPickupType::Health)
+			{
+				HealthPacks.Add(HealthPack);
+				UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Found placed health pack: %s"), *HealthPack->GetName());
+			}
+		}
+	}
+
+	// If HealthPackClass is not set or no instances found, try searching by base class
+	if (HealthPacks.Num() == 0)
+	{
+		TArray<AActor*> FoundActors;
+		UGameplayStatics::GetAllActorsOfClass(GetWorld(), APickupBase::StaticClass(), FoundActors);
+
+		for (AActor* Actor : FoundActors)
+		{
+			APickupBase* Pickup = Cast<APickupBase>(Actor);
+			if (Pickup && Pickup->GetPickupType() == EPickupType::Health)
+			{
+				HealthPacks.Add(Pickup);
+				UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Found placed health pack: %s"), *Pickup->GetName());
+			}
+		}
+	}
+}
+
+void AMocGameMode::FindPlacedAmmoCrates()
+{
+	// Try to find actors based on AmmoCrateClass if set
+	if (AmmoCrateClass)
+	{
+		TArray<AActor*> FoundActors;
+		UGameplayStatics::GetAllActorsOfClass(GetWorld(), AmmoCrateClass, FoundActors);
+
+		for (AActor* Actor : FoundActors)
+		{
+			APickupBase* AmmoCrate = Cast<APickupBase>(Actor);
+			if (AmmoCrate && AmmoCrate->GetPickupType() == EPickupType::Ammo)
+			{
+				AmmoCrates.Add(AmmoCrate);
+				UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Found placed ammo crate: %s"), *AmmoCrate->GetName());
+			}
+		}
+	}
+
+	// If AmmoCrateClass is not set or no instances found, try searching by base class
+	if (AmmoCrates.Num() == 0)
+	{
+		TArray<AActor*> FoundActors;
+		UGameplayStatics::GetAllActorsOfClass(GetWorld(), APickupBase::StaticClass(), FoundActors);
+
+		for (AActor* Actor : FoundActors)
+		{
+			APickupBase* Pickup = Cast<APickupBase>(Actor);
+			if (Pickup && Pickup->GetPickupType() == EPickupType::Ammo)
+			{
+				AmmoCrates.Add(Pickup);
+				UE_LOG(LogTemp, Log, TEXT("[MocGameMode] Found placed ammo crate: %s"), *Pickup->GetName());
 			}
 		}
 	}

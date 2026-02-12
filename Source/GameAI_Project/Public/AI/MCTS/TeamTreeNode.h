@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Types/MocTypes.h"
-#include "Team/TeamState.h"
+#include "Team/TeamWorldState.h"
 #include "Templates/SharedPointer.h"
 
 class FTeamTreeNode;
@@ -44,7 +44,7 @@ public:
 	void Initialize(
 		TWeakPtr<FTeamTreeNode> InParent,
 		ETacticalPlay InAction,
-		const FTeamState& InState,
+		const FTeamWorldState& InState,
 		float InConfidence
 	);
 
@@ -79,7 +79,7 @@ public:
 	 *
 	 * @param NextStates - Array of (TacticalPlay, NextState, Confidence) tuples
 	 */
-	void Expand(const TArray<TTuple<ETacticalPlay, FTeamState, float>>& NextStates);
+	void Expand(const TArray<TTuple<ETacticalPlay, FTeamWorldState, float>>& NextStates);
 
 	/**
 	 * Backpropagate value up the tree
@@ -123,7 +123,7 @@ public:
 	ETacticalPlay ActionFromParent;
 
 	/** Team state at this node (60-dim global state) */
-	FTeamState State;
+	FTeamWorldState State;
 
 	// ===== MCTS Statistics =====
 	/** Cumulative value (W) */

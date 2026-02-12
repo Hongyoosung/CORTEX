@@ -193,7 +193,7 @@ python run_data_collection.py \
     "health": 0.85,
     "position": [45.0, 23.0, 1.0]
   },
-  "action": [0.2, -0.5, 0.8, ...],  // 8-dim EQS weights
+  "action": [0.2, -0.5, 0.8, ...],  // 7-dim EQS weights
   "next_state": {
     "observation": [0.52, -0.28, ...],
     "health": 0.80,

@@ -8,7 +8,7 @@
 
 ```
 ❌ OLD (v8.0): 4-dim [0,1] → Abstract Parameters → Manual EQS mapping
-✅ NEW (v10.2): 8-dim [-1,1] → Direct EQS Weights → Automatic application
+✅ NEW (v10.2): 7-dim [-1,1] → Direct EQS Weights → Automatic application
 ```
 
 ---
@@ -21,9 +21,9 @@
 ✅ Private/Schola/Actuators/TacticalParameterActuator_v10_2.cpp
 ```
 
-**Action Space:** `Box([-1, 1]^8)`
+**Action Space:** `Box([-1, 1]^7)`
 
-**8 Dimensions:**
+**7 Dimensions:**
 1. EnemyObjectiveProximity
 2. AllyObjectiveProximity
 3. CoverDensity
@@ -31,7 +31,6 @@
 5. AllyProximity
 6. CombatRange
 7. PickupProximity
-8. HeightAdvantage
 
 ### 2. Python Training Script
 ```
@@ -62,7 +61,7 @@ from phase1_policy_training_v10_2 import MultiHeadRLPolicy_v10_2
 policy = MultiHeadRLPolicy_v10_2(
     obs_dim=52,           # Local observation
     num_strategies=3,     # Assault/Defend/Support
-    eqs_dim=8            # 8-dim EQS weights
+    eqs_dim=7            # 7-dim EQS weights
 )
 
 # 2. Inference (single step)
@@ -70,7 +69,7 @@ obs = torch.randn(1, 52)                   # Your observation
 strategy = torch.tensor([0])               # 0=Assault, 1=Defend, 2=Support
 
 with torch.no_grad():
-    eqs_weights = policy(obs, strategy)    # Output: (1, 8) in [-1, 1]
+    eqs_weights = policy(obs, strategy)    # Output: (1, 7) in [-1, 1]
     action = eqs_weights.numpy()[0]        # Convert to numpy
 
 # 3. Send to UE5
@@ -98,7 +97,7 @@ Settings:
 ```cpp
 // In ScholaMocAgent or Schola plugin
 FBoxSpace ActionSpace = Actuator->GetActionSpace();
-check(ActionSpace.Dimensions.Num() == 8);
+check(ActionSpace.Dimensions.Num() == 7);
 check(ActionSpace.Dimensions[0].Min == -1.0f);
 check(ActionSpace.Dimensions[0].Max == 1.0f);
 ```
@@ -121,7 +120,7 @@ Before sending actions to UE5:
 
 ```python
 # ✓ Shape check
-assert action.shape == (8,), f"Expected (8,), got {action.shape}"
+assert action.shape == (7,), f"Expected (7,), got {action.shape}"
 
 # ✓ Range check
 assert (action >= -1.0).all(), f"Min value: {action.min()}"
@@ -141,11 +140,11 @@ assert action.dtype == np.float32, f"Expected float32, got {action.dtype}"
 ### Issue: "Action dimension mismatch"
 ```python
 # ❌ Wrong
-action = policy(obs, strategy).numpy()  # Shape: (1, 8)
+action = policy(obs, strategy).numpy()  # Shape: (1, 7)
 env.step(action)
 
 # ✅ Correct
-action = policy(obs, strategy).numpy()[0]  # Shape: (8,)
+action = policy(obs, strategy).numpy()[0]  # Shape: (7,)
 env.step(action)
 ```
 
@@ -212,9 +211,9 @@ print(policy.assault_head[-1])  # Should print: Tanh()
 
 ### Policy Output (Python)
 ```python
-array([ 0.82, -0.31,  0.64,  0.39,  0.18, -0.05, -0.52,  0.71], dtype=float32)
-       │      │       │      │      │      │       │       │
-       │      │       │      │      │      │       │       └─ HeightAdvantage: +0.71 (seek high ground)
+array([ 0.82, -0.31,  0.64,  0.39,  0.18, -0.05, -0.52], dtype=float32)
+       │      │       │      │      │      │       │       
+       │      │       │      │      │      │       │       
        │      │       │      │      │      │       └─ PickupProximity: -0.52 (ignore pickups)
        │      │       │      │      │      └─ CombatRange: -0.05 (neutral)
        │      │       │      │      └─ AllyProximity: +0.18 (loose formation)
@@ -269,7 +268,7 @@ Before starting training:
 - [ ] Blueprint has TacticalParameterActuator_v10_2 component
 - [ ] Python script imports successfully
 - [ ] Policy initializes without errors
-- [ ] Action space is Box([-1, 1]^8)
+- [ ] Action space is Box([-1, 1]^7)
 - [ ] Observation includes `commanded_strategy`
 - [ ] Test inference produces valid actions
 - [ ] Debug logging enabled for initial test

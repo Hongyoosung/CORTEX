@@ -19,7 +19,7 @@ void UTeamMCTS::Setup(UTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& 
 		Config.TimeBudgetSeconds * 1000.0f, Config.BatchSize);
 }
 
-ETacticalPlay UTeamMCTS::FindBestTacticalPlay(const FTeamState& CurrentState)
+ETacticalPlay UTeamMCTS::FindBestTacticalPlay(const FTeamWorldState& CurrentState)
 {
 	if (!TeamWorldModel)
 	{
@@ -128,7 +128,7 @@ TSharedPtr<FTeamTreeNode> UTeamMCTS::SelectNode(TSharedPtr<FTeamTreeNode> Node)
 	return Node;
 }
 
-TArray<ETacticalPlay> UTeamMCTS::GenerateTacticalPlays(const FTeamState& State)
+TArray<ETacticalPlay> UTeamMCTS::GenerateTacticalPlays(const FTeamWorldState& State)
 {
 	TArray<ETacticalPlay> Plays;
 
@@ -200,7 +200,7 @@ void UTeamMCTS::ProcessBatch(TArray<TPair<TSharedPtr<FTeamTreeNode>, ETacticalPl
 		TSharedPtr<FTeamTreeNode> ParentNode = NodesToExpand[i].Key;
 		ETacticalPlay Play = NodesToExpand[i].Value;
 
-		FTeamState NextState = BatchOutput.PredictedStates[i];
+		FTeamWorldState NextState = BatchOutput.PredictedStates[i];
 		FCompositeReward Reward = BatchOutput.Rewards[i];
 		float Confidence = BatchOutput.Confidences[i];
 

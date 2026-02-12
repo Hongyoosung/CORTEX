@@ -77,7 +77,7 @@ World Outliner
 │ EnemyObj: 0.85 | AllyObj: -0.23    │
 │ Cover: 0.45 | Visibility: 0.67      │
 │ AllyProx: -0.12 | Range: 0.34       │
-│ Pickup: 0.11 | Height: 0.56         │
+│ Pickup: 0.11        │
 └─────────────────────────────────────┘
          ↓ (Cyan text)
       Agent Character

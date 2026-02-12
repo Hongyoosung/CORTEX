@@ -149,8 +149,8 @@ void UMocTransitionLogger::WriteToCSV(const TArray<FMocTransition>& Transitions)
 
 		CSVContent += TEXT("OptionType,TargetX,TargetY,TargetZ,OptionDuration,");
 
-		// EQS weights (8-dim)
-		for (int32 i = 0; i < 8; ++i)
+		// EQS weights (7-dim)
+		for (int32 i = 0; i < 7; ++i)
 		{
 			CSVContent += FString::Printf(TEXT("EQSWeight_%d,"), i);
 		}

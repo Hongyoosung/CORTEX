@@ -34,11 +34,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnScholaEnvironmentInitialized);
  *
  * [Layer 2] Executor Agents (AMocCharacter × 5):
  *   - Receive role assignments from commander
- *   - RL Policy → EQS Weights (8-dim spatial reasoning)
+ *   - RL Policy → EQS Weights (7-dim spatial reasoning)
  *   - No local MCTS (removed in v10.2)
  *
  * [Layer 3] EQS Spatial Reasoning:
- *   - Query 48 samples, 8 weighted tests
+ *   - Query 48 samples, 7 weighted tests
  *   - Output: Best tactical location
  *
  * Component Architecture:

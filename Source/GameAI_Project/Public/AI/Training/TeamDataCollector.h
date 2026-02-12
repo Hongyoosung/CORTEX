@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Team/TeamState.h"
+#include "Team/TeamWorldState.h"
 #include "Types/StrategyTypes.h"
 #include "Types/RewardTypes.h"
 #include "TeamDataCollector.generated.h"
@@ -20,7 +20,7 @@ struct GAMEAI_PROJECT_API FTeamTransitionSample
 
 	/** Current team state (60-dim) */
 	UPROPERTY(BlueprintReadWrite)
-	FTeamState CurrentState;
+	FTeamWorldState CurrentState;
 
 	/** Tactical play executed (action) */
 	UPROPERTY(BlueprintReadWrite)
@@ -28,7 +28,7 @@ struct GAMEAI_PROJECT_API FTeamTransitionSample
 
 	/** Next team state after 0.5s (60-dim) */
 	UPROPERTY(BlueprintReadWrite)
-	FTeamState NextState;
+	FTeamWorldState NextState;
 
 	/** Observed multi-objective reward */
 	UPROPERTY(BlueprintReadWrite)
@@ -99,9 +99,9 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Training")
 	void RecordTransition(
-		const FTeamState& CurrentState,
+		const FTeamWorldState& CurrentState,
 		ETacticalPlay TacticalPlay,
-		const FTeamState& NextState,
+		const FTeamWorldState& NextState,
 		const FCompositeReward& Reward
 	);
 
@@ -196,7 +196,7 @@ private:
 	bool SaveToBinary(const FString& Filepath);
 
 	/** Convert FTeamState to CSV row */
-	FString TeamStateToCSV(const FTeamState& State) const;
+	FString TeamStateToCSV(const FTeamWorldState& State) const;
 
 	/** Convert FCompositeReward to CSV row */
 	FString RewardToCSV(const FCompositeReward& Reward) const;

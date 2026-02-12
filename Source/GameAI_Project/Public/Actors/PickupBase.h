@@ -8,7 +8,7 @@
 
 class USphereComponent;
 class UStaticMeshComponent;
-class UParticleSystemComponent;
+class UNiagaraComponent;
 
 /**
  * Pickup type enumeration
@@ -71,6 +71,10 @@ public:
 	/** Force respawn immediately */
 	UFUNCTION(BlueprintCallable, Category = "Pickup")
 	void ForceRespawn();
+
+	/** Reset pickup state for episode reset */
+	UFUNCTION(BlueprintCallable, Category = "Pickup|Episode")
+	void Reset();
 
 	/** Get pickup type */
 	UFUNCTION(BlueprintPure, Category = "Pickup")
@@ -141,7 +145,7 @@ public:
 
 	/** Visual effect (glow, hologram, etc.) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UParticleSystemComponent* VisualEffect;
+	UNiagaraComponent* VisualEffect;
 
 	//========================================
 	// Configuration

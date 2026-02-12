@@ -184,7 +184,7 @@ docker-compose --profile v10.2 build --no-cache
 - **Target:** 100,000 transitions
 - **Win Rate:** >40% vs baseline
 - **Stability:** No divergence (loss should decrease)
-- **Output:** 8-dim EQS weights in range [-1, 1]
+- **Output:** 7-dim EQS weights in range [-1, 1]
 
 ---
 
@@ -202,7 +202,7 @@ UE5 (Windows Host)              Docker Container (Linux)
 │                 │  :50051    │  │ 3 Strategy     │  │
 │ 52-dim Obs      │            │  │ Heads          │  │
 │     ↓           │            │  └────────────────┘  │
-│ 8-dim EQS ←─────┤            │         ↓            │
+│ 7-dim EQS ←─────┤            │         ↓            │
 │ Weights         │            │  ONNX Export         │
 └─────────────────┘            └──────────────────────┘
 ```

@@ -4,7 +4,7 @@
 #include "Types/StrategyTypes.h"
 #include "AI/Models/TeamWorldModelTypes.h"
 #include "Types/RewardTypes.h"
-#include "Team/TeamState.h"
+#include "Team/TeamWorldState.h"
 #include "AI/MCTS/TeamTreeNode.h"
 #include "TeamMCTS.generated.h"
 
@@ -74,7 +74,7 @@ public:
 	 *
 	 * Performance: ~15ms (configurable via FTeamMCTSConfig)
 	 */
-	ETacticalPlay FindBestTacticalPlay(const FTeamState& CurrentState);
+	ETacticalPlay FindBestTacticalPlay(const FTeamWorldState& CurrentState);
 
 	/**
 	 * Get statistics from last planning cycle
@@ -114,7 +114,7 @@ private:
 	 * @param State - Current team state for context
 	 * @return Array of tactical plays to consider
 	 */
-	TArray<ETacticalPlay> GenerateTacticalPlays(const FTeamState& State);
+	TArray<ETacticalPlay> GenerateTacticalPlays(const FTeamWorldState& State);
 
 	/**
 	 * Batch Inference & Expansion Phase

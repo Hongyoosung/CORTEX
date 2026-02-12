@@ -1,5 +1,5 @@
 // TacticalParameterActuator.h - v10.2 Schola actuator for EQS weight outputs
-// Box actuator outputting 8-dimensional EQS weights for spatial reasoning
+// Box actuator outputting 7-dimensional EQS weights for spatial reasoning
 
 #pragma once
 
@@ -16,7 +16,7 @@ class AMocCharacter;
 /** //============================================================
  * v10.2 Schola actuator for EQS weight generation in Commander-Executor architecture.
  *
- * Action Space: Box([-1, 1]^8)
+ * Action Space: Box([-1, 1]^7)
  * - [0]: EnemyObjectiveProximity - Approach enemy base (-1=avoid, +1=approach)
  * - [1]: AllyObjectiveProximity  - Defend friendly base (-1=avoid, +1=defend)
  * - [2]: CoverDensity           - Prioritize cover (-1=ignore, +1=prioritize)
@@ -24,7 +24,6 @@ class AMocCharacter;
  * - [4]: AllyProximity          - Stay near teammates (-1=solo, +1=group)
  * - [5]: CombatRange            - Preferred engagement distance (normalized)
  * - [6]: PickupProximity        - Collect health/ammo (-1=ignore, +1=prioritize)
- * - [7]: HeightAdvantage        - Seek elevated positions (-1=low, +1=high)
  *
  * Integration with v10.2 Architecture:
  * - Receives commanded strategy (Assault/Defend/Support) from Squad Commander
@@ -33,7 +32,7 @@ class AMocCharacter;
  * - Works with UMocEQSExecutor for tactical positioning
  *
  * Key Changes from v8.0:
- * - 4-dim → 8-dim outputs (direct EQS weights vs abstract parameters)
+ * - 4-dim → 7-dim outputs (direct EQS weights vs abstract parameters)
  * - [0,1] → [-1,1] range (allows negative preferences)
  * - Strategy context integration (commanded role awareness)
  * - Removed local planning (centralized commander handles this)
@@ -120,7 +119,7 @@ protected:
 private:
 	/**
 	 * Convert Box action to EQS weight parameters.
-	 * Maps 8-dim Box([-1,1]) to FEQSWeightParameters struct.
+	 * Maps 7-dim Box([-1,1]) to FEQSWeightParameters struct.
 	 */
 	FEQSWeightParameters ActionToEQSWeights(const FBoxPoint& Action) const;
 

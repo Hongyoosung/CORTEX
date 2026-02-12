@@ -36,56 +36,7 @@ services:
     profiles:
       - v10.2-demo
 
-  # =============================================================================
-  # LEGACY TRAINING SERVICES (v8.0/v10.1)
-  # =============================================================================
 
-  # Single-worker training (NUM_WORKERS=0, runs in main process)
-  training-single:
-    build:
-      context: ..
-      dockerfile: MOC_Training/Dockerfile
-    container_name: cortex_training_single
-    volumes:
-      - ./training_results:/app/training_results
-      - ./models:/app/models
-    environment:
-      - NUM_WORKERS=0
-      - NUM_ITERATIONS=100
-      - HOST=host.docker.internal  # Connect to UE on host machine
-      - PORT=50051
-      - IS_DOCKER=true  # Enable Docker-specific gRPC settings
-    # Note: network_mode: "host" doesn't work on Windows/macOS Docker Desktop
-    # Using default bridge network with host.docker.internal instead
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Ensure host.docker.internal works
-    command: python train_rllib.py --iterations 100 --host host.docker.internal --port 50051
-    profiles:
-      - single
-      - legacy
-
-  # Multi-worker training (NUM_WORKERS=4, parallel environments)
-  # Requires 4 UE instances running on ports 50051-50054
-  training-multi:
-    build:
-      context: ..
-      dockerfile: MOC_Training/Dockerfile
-    container_name: cortex_training_multi
-    volumes:
-      - ./training_results:/app/training_results
-      - ./models:/app/models
-    environment:
-      - NUM_WORKERS=4
-      - NUM_ITERATIONS=100
-      - HOST=host.docker.internal
-      - PORT=50051  # Base port, workers use 50051-50054
-      - IS_DOCKER=true  # Enable Docker-specific gRPC settings
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    command: python train_rllib.py --iterations 100 --host host.docker.internal --port 50051
-    profiles:
-      - multi
-      - legacy
 
   # =============================================================================
   # MONITORING SERVICES

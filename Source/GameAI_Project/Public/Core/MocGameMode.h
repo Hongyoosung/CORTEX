@@ -82,6 +82,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GameMode")
 	void EndMatch(EMocMatchState WinnerState);
 
+	/** Reset match for new episode (called by ScholaEnvironment) */
+	UFUNCTION(BlueprintCallable, Category = "GameMode|Episode")
+	void ResetMatch();
+
 	/** Get current match state */
 	UFUNCTION(BlueprintPure, Category = "GameMode")
 	EMocMatchState GetMatchState() const { return CurrentMatchState; }
@@ -127,20 +131,33 @@ protected:
 	// Initialization
 	//========================================
 
-	/** Spawn TeamManager at origin */
-	void SpawnTeamManager();
+	/** Initialize TeamManager (find existing or spawn new) */
+	void InitializeTeamManager();
 
-	/** Spawn 5 capture points */
-	void SpawnCapturePoints();
+	/** Initialize capture points (find existing or spawn new) */
+	void InitializeCapturePoints();
 
-	/** Spawn 12 health packs */
-	void SpawnHealthPacks();
+	/** Initialize health packs (find existing or spawn new) */
+	void InitializeHealthPacks();
 
-	/** Spawn 8 ammo crates */
-	void SpawnAmmoCrates();
+	/** Initialize ammo crates (find existing or spawn new) */
+	void InitializeAmmoCrates();
 
 	/** Subscribe to all game events */
 	void SubscribeToEvents();
+
+	//========================================
+	// Helper Functions
+	//========================================
+
+	/** Find all placed capture points in the level */
+	void FindPlacedCapturePoints();
+
+	/** Find all placed health packs in the level */
+	void FindPlacedHealthPacks();
+
+	/** Find all placed ammo crates in the level */
+	void FindPlacedAmmoCrates();
 
 	//========================================
 	// Event Handlers
@@ -219,6 +236,10 @@ public:
 	/** Auto-start match on BeginPlay */
 	UPROPERTY(EditAnywhere, Category = "GameMode|Match")
 	bool bAutoStartMatch = true;
+
+	/** Use pre-placed actors in level instead of spawning (if available) */
+	UPROPERTY(EditAnywhere, Category = "GameMode|Match")
+	bool bUsePlacedActors = false;
 
 	//========================================
 	// Configuration - Capture Point Locations

@@ -83,7 +83,7 @@ FEQSWeightParameters InferWeights(
 │      • Support Head → Team-focused weights                 │
 │   3. Run head-specific inference with local adaptation      │
 │                                                              │
-│ OUTPUT: EQS Weights (8-dim)                                 │
+│ OUTPUT: EQS Weights (7-dim)                                 │
 │   • EnemyObjectiveProximity                                 │
 │   • AllyObjectiveProximity                                  │
 │   • CoverDensity                                            │
@@ -91,9 +91,8 @@ FEQSWeightParameters InferWeights(
 │   • AllyProximity                                           │
 │   • CombatRange                                             │
 │   • PickupProximity                                         │
-│   • HeightAdvantage                                         │
 └────────────────────┬────────────────────────────────────────┘
-                     │ EQS Weights (8-dim)
+                     │ EQS Weights (7-dim)
                      ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ EQS Spatial Reasoning                                        │
@@ -152,7 +151,6 @@ EnemyVisibility = 0.8f           // Maintain line of sight
 ```cpp
 AllyObjectiveProximity = 0.9f    // Protect friendly base
 CoverDensity = 0.8f              // High cover priority
-HeightAdvantage = 0.7f           // Seek elevated positions
 ```
 
 ---

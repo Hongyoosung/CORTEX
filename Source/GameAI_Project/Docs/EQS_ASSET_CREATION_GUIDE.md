@@ -5,16 +5,16 @@
 
 ## 1. Overview
 
-Environmental Query System (EQS) is UE5's spatial reasoning system. In MOC v10.2, EQS translates 8-dimensional tactical parameters from the RL policy into actual navigation positions.
+Environmental Query System (EQS) is UE5's spatial reasoning system. In MOC v10.2, EQS translates 7-dimensional tactical parameters from the RL policy into actual navigation positions.
 
 **Architecture Position:**
 ```
-RL Policy → 8-dim EQS Weights → EQS Query → 48 Sample Points → Best Position → Navigation
+RL Policy → 7-dim EQS Weights → EQS Query → 48 Sample Points → Best Position → Navigation
 ```
 
 ---
 
-## 2. The 8 EQS Weights (v10.2 Reference)
+## 2. The 7 EQS Weights (v10.2 Reference)
 
 **CRITICAL:** These weight names are defined in `FEQSWeightParameters` (EQSTypes.h) and must match exactly:
 
@@ -27,7 +27,6 @@ RL Policy → 8-dim EQS Weights → EQS Query → 48 Sample Points → Best Posi
 | **[4]** | **AllyProximity** | Distance to teammates | [-1, 1] | +1.0 = group up, -1.0 = solo |
 | **[5]** | **CombatRange** | Engagement distance preference | [-1, 1] | +1.0 = long range, -1.0 = melee |
 | **[6]** | **PickupProximity** | Distance to health/ammo | [-1, 1] | +1.0 = collect, -1.0 = ignore |
-| **[7]** | **HeightAdvantage** | Elevation preference | [-1, 1] | +1.0 = high ground, -1.0 = low ground |
 
 **Source Files:**
 - Struct Definition: `Public/Types/EQSTypes.h` (FEQSWeightParameters)
@@ -43,7 +42,7 @@ EQS Contexts provide spatial information for tests. MOC v10.2 includes these con
 | Context Class | What It Provides | Used By Weights |
 |---------------|------------------|-----------------|
 | **EnvQueryContext_MocQuerier** | Agent's own position | All tests (as origin) |
-| **EnvQueryContext_MocEnemies** | Visible enemy positions (via fog of war) | [3] EnemyVisibility, [5] CombatRange, [7] HeightAdvantage |
+| **EnvQueryContext_MocEnemies** | Visible enemy positions (via fog of war) | [3] EnemyVisibility, [5] CombatRange|
 | **EnvQueryContext_MocAllies** | Teammate positions | [4] AllyProximity |
 | **EnvQueryContext_MocEnemyObjective** | Enemy team's base (PointA/PointE) | [0] EnemyObjectiveProximity |
 | **EnvQueryContext_MocAllyObjective** | Friendly team's base (PointA/PointE) | [1] AllyObjectiveProximity |
@@ -161,13 +160,6 @@ Each test scores the 48 candidate positions. The RL policy provides dynamic weig
 - **Weight Source:** EQS Weight [6] - **PickupProximity**
 - **Example:** +1.0 = "collect resources", -1.0 = "ignore pickups"
 
-### Test 8: Height Advantage
-**Purpose:** Seek elevated tactical positions
-- **Test Type:** Height Difference
-- **Height Compared To:** **EnvQueryContext_MocEnemies** (Average enemy height)
-- **Scoring:** Linear (higher elevation = better when weight > 0)
-- **Weight Source:** EQS Weight [7] - **HeightAdvantage**
-- **Example:** +1.0 = "high ground", -1.0 = "low ground"
 
 ---
 
@@ -206,14 +198,14 @@ Each test should have a **Weight** parameter. In v10.2, these are **dynamically 
 1. Set default weights in Blueprint:
    ```cpp
    // Example: Aggressive Assault loadout
-   // [EnemyObjProx, AllyObjProx, CoverDensity, EnemyVis, AllyProx, CombatRange, PickupProx, HeightAdv]
-   EQS Weights: [0.8, -0.3, 0.2, 0.6, 0.1, 0.5, -0.2, 0.7]
+   // [EnemyObjProx, AllyObjProx, CoverDensity, EnemyVis, AllyProx, CombatRange, PickupProx]
+   EQS Weights: [0.8, -0.3, 0.2, 0.6, 0.1, 0.5, -0.2]
 
    // Example: Defensive Support loadout
-   EQS Weights: [-0.5, 0.9, 0.8, -0.2, 0.7, -0.3, 0.5, 0.4]
+   EQS Weights: [-0.5, 0.9, 0.8, -0.2, 0.7, -0.3, 0.5]
 
    // Example: Balanced loadout
-   EQS Weights: [0.3, 0.3, 0.5, 0.4, 0.4, 0.0, 0.2, 0.5]
+   EQS Weights: [0.3, 0.3, 0.5, 0.4, 0.4, 0.0, 0.2]
    ```
 2. Run simulation and observe positioning behavior
 3. Adjust individual weights to see impact
@@ -224,10 +216,10 @@ Each test should have a **Weight** parameter. In v10.2, these are **dynamically 
 
 ### C++ Side (TacticalParameterActuator):
 ```cpp
-// Actuator receives 8-dim vector from Python RL policy
+// Actuator receives 7-dim vector from Python RL policy
 void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 {
-    // Action.Values = [-1.0, 1.0]^8
+    // Action.Values = [-1.0, 1.0]^7
     // Dimension mapping:
     // [0] EnemyObjectiveProximity
     // [1] AllyObjectiveProximity
@@ -236,7 +228,6 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
     // [4] AllyProximity
     // [5] CombatRange
     // [6] PickupProximity
-    // [7] HeightAdvantage
 
     FEQSWeightParameters Weights = ActionToEQSWeights(Action);
     AIController->UpdateBlackboardWeights(Weights);

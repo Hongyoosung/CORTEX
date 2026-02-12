@@ -3,7 +3,8 @@
 #include "Actors/PickupBase.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "Particles/ParticleSystemComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "TimerManager.h"
 #include "DrawDebugHelpers.h"
@@ -37,7 +38,7 @@ APickupBase::APickupBase()
 	CollectionSphere->SetGenerateOverlapEvents(true);
 
 	// Create visual effect
-	VisualEffect = CreateDefaultSubobject<UParticleSystemComponent>(TEXT("VisualEffect"));
+	VisualEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("VisualEffect"));
 	VisualEffect->SetupAttachment(RootComponent);
 	VisualEffect->bAutoActivate = true;
 }
@@ -195,6 +196,25 @@ void APickupBase::ForceRespawn()
 
 	// Respawn immediately
 	OnRespawnTimerComplete();
+}
+
+void APickupBase::Reset()
+{
+	// Clear any active respawn timer
+	if (RespawnTimerHandle.IsValid())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(RespawnTimerHandle);
+		RespawnTimerHandle.Invalidate();
+	}
+
+	// Reset to available state
+	bIsAvailable = true;
+	RespawnCompleteTime = 0.0f;
+
+	// Update visuals
+	UpdateVisuals();
+
+	UE_LOG(LogTemp, Verbose, TEXT("[PickupBase] %s reset to available"), *GetName());
 }
 
 void APickupBase::UpdateVisuals()

@@ -28,7 +28,7 @@ Prerequisites:
     3. Ensure UE5 is configured for v10.2:
        - Squad Commander assigns strategies (Assault/Defend/Support)
        - Agents receive 52-dim local observations
-       - Action space accepts 8-dim EQS weights in [-1, 1]
+       - Action space accepts 7-dim EQS weights in [-1, 1]
 """
 
 import sys
@@ -69,7 +69,7 @@ if __name__ == '__main__':
     ║                                                                          ║
     ║  Architecture: Command-Driven Executor                                  ║
     ║  Input: 52-dim local obs + 3 strategy commands                          ║
-    ║  Output: 8-dim EQS weights in [-1, 1]                                   ║
+    ║  Output: 7-dim EQS weights in [-1, 1]                                   ║
     ║                                                                          ║
     ╚══════════════════════════════════════════════════════════════════════════╝
     """)

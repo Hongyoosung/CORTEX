@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Team/TeamState.h"
+#include "Team/TeamWorldState.h"
 #include "Types/StrategyTypes.h"
 #include "Types/RewardTypes.h"
 #include "TeamWorldModelTypes.generated.h"
@@ -24,7 +24,7 @@ struct GAMEAI_PROJECT_API FTeamBatchInput
 	 * Shape: [BatchSize, 60-dim]
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "WorldModel")
-	TArray<FTeamState> CurrentStates;
+	TArray<FTeamWorldState> CurrentStates;
 
 	/**
 	 * Selected tactical plays for each simulation
@@ -59,7 +59,7 @@ struct GAMEAI_PROJECT_API FTeamBatchOutput
 	 * Shape: [BatchSize, 60-dim]
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "WorldModel")
-	TArray<FTeamState> PredictedStates;
+	TArray<FTeamWorldState> PredictedStates;
 
 	/**
 	 * Multi-objective rewards for team-level outcomes
@@ -162,7 +162,7 @@ struct GAMEAI_PROJECT_API FTeamStatePrediction
 
 	/** Predicted next team state after action */
 	UPROPERTY(BlueprintReadWrite, Category = "TeamPrediction")
-	FTeamState NextState;
+	FTeamWorldState NextState;
 
 	/** Aggregated team-level reward */
 	UPROPERTY(BlueprintReadWrite, Category = "TeamPrediction")

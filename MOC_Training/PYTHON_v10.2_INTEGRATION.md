@@ -26,14 +26,14 @@ This guide shows how to integrate the v10.2 TacticalParameterActuator with Pytho
 │ Python: Training Script (v10.2)                     │
 │ • Receives: commanded_strategy (0/1/2)              │
 │ • Receives: local_observation (52-dim)              │
-│ • Runs: policy(obs, strategy) → eqs_weights (8-dim) │
+│ • Runs: policy(obs, strategy) → eqs_weights (7-dim) │
 │ • Sends: eqs_weights to UE5 via Schola              │
 └─────────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────────┐
 │ UE5: TacticalParameterActuator_v10_2                │
 │ • TakeAction(eqs_weights)                           │
-│ • Validates: 8-dim, range [-1, 1]                   │
+│ • Validates: 7-dim, range [-1, 1]                   │
 │ • Applies: AIController->UpdateBlackboardWeights()  │
 └─────────────────────────────────────────────────────┘
                     ↓
@@ -57,7 +57,7 @@ from phase1_policy_training_v10_2 import MultiHeadRLPolicy_v10_2, PPOTrainer_v10
 policy = MultiHeadRLPolicy_v10_2(
     obs_dim=52,           # Local observation only
     num_strategies=3,     # Assault, Defend, Support
-    eqs_dim=8,           # 8-dimensional EQS weights
+    eqs_dim=7,           # 7-dimensional EQS weights
     hidden_dims=[256, 256]
 )
 
@@ -95,11 +95,11 @@ while not done:
 
     # Inference
     with torch.no_grad():
-        eqs_weights = policy(obs_tensor, strategy_tensor)  # Output: (1, 8) in [-1, 1]
+        eqs_weights = policy(obs_tensor, strategy_tensor)  # Output: (1, 7) in [-1, 1]
         eqs_weights = eqs_weights.squeeze(0).cpu().numpy()  # Convert to numpy
 
     # Send action to UE5
-    # The actuator will receive this as FBoxPoint(8-dim) and convert to FEQSWeightParameters
+    # The actuator will receive this as FBoxPoint(7-dim) and convert to FEQSWeightParameters
     next_obs, reward, done, info = env.step(action=eqs_weights)
 
     # Store transition for training
@@ -112,7 +112,7 @@ while not done:
 
 ## Action Space Specification
 
-### v10.2 Action Space: Box([-1, 1]^8)
+### v10.2 Action Space: Box([-1, 1]^7)
 
 ```python
 import numpy as np
@@ -126,11 +126,11 @@ action = np.array([
     0.2,   # [4] AllyProximity (loose formation)
     0.0,   # [5] CombatRange (neutral)
     -0.5,  # [6] PickupProximity (ignore pickups)
-    0.7,   # [7] HeightAdvantage (seek high ground)
+
 ], dtype=np.float32)
 
 # Validate range
-assert action.shape == (8,), "Action must be 8-dimensional"
+assert action.shape == (7,), "Action must be 7-dimensional"
 assert (action >= -1.0).all() and (action <= 1.0).all(), "Action must be in [-1, 1]"
 ```
 
@@ -145,7 +145,6 @@ assert (action >= -1.0).all() and (action <= 1.0).all(), "Action must be in [-1,
 | 4 | AllyProximity | Solo play | Neutral | Group with teammates |
 | 5 | CombatRange | Close range | Medium | Long range |
 | 6 | PickupProximity | Ignore pickups | Neutral | Prioritize health/ammo |
-| 7 | HeightAdvantage | Low ground | Neutral | High ground |
 
 ---
 
@@ -212,11 +211,11 @@ Shared Encoder: [256 → 256] ReLU + LayerNorm
 ┌────────────┬────────────┬────────────┐
 │  Assault   │   Defend   │  Support   │
 │   Head     │    Head    │    Head    │
-│  64 → 8    │  64 → 8    │  64 → 8    │
+│  64 → 7    │  64 → 7    │  64 → 7    │
 │   Tanh     │   Tanh     │   Tanh     │
 └────────────┴────────────┴────────────┘
     ↓
-Output: 8-dim EQS weights in [-1, 1]
+Output: 7-dim EQS weights in [-1, 1]
 ```
 
 ### Strategy-Specific Heads
@@ -301,7 +300,7 @@ bool UMocPolicyExecutor::LoadModel(const FString& ModelPath)
     // - strategy_index: (1,) int64
 
     // Expected output:
-    // - eqs_weights: (1, 8) float32 in [-1, 1]
+    // - eqs_weights: (1, 7) float32 in [-1, 1]
 
     bModelLoaded = true;
     return true;
@@ -353,7 +352,7 @@ with torch.no_grad():
     support_weights = policy(obs, torch.tensor([2])).numpy()[0]
 
 # Plot
-labels = ['E_Obj', 'A_Obj', 'Cover', 'Vis', 'Ally', 'Rng', 'Pick', 'H_Adv']
+labels = ['E_Obj', 'A_Obj', 'Cover', 'Vis', 'Ally', 'Rng', 'Pick']
 x = np.arange(len(labels))
 
 plt.figure(figsize=(12, 6))
@@ -395,7 +394,7 @@ for step in range(num_steps):
     writer.add_scalar('strategy/support', dist[2], step)
 
     # Log EQS weight ranges (per dimension)
-    for i in range(8):
+    for i in range(7):
         writer.add_histogram(f'eqs_weights/dim_{i}', eqs_weights[:, i], step)
 
 writer.close()
@@ -419,11 +418,11 @@ class MocEnvironment_v10_2(gym.Env):
     def __init__(self, host='localhost', port=50051):
         self.client = ScholaClient(host, port)
 
-        # v10.2: Action space is 8-dim EQS weights in [-1, 1]
+        # v10.2: Action space is 7-dim EQS weights in [-1, 1]
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(8,),
+            shape=(7,),
             dtype=np.float32
         )
 
@@ -450,7 +449,7 @@ class MocEnvironment_v10_2(gym.Env):
     def step(self, action):
         """Execute action and get next state."""
         # Validate action
-        assert action.shape == (8,), "Action must be 8-dimensional"
+        assert action.shape == (7,), "Action must be 7-dimensional"
         assert (action >= -1.0).all() and (action <= 1.0).all(), "Action out of range"
 
         # Send to UE5
@@ -474,7 +473,7 @@ class MocEnvironment_v10_2(gym.Env):
 
 | Aspect | v8.0 | v10.2 |
 |--------|------|-------|
-| **Action Dim** | 5 (4 tactical + 1 combat) | 8 (EQS weights) |
+| **Action Dim** | 5 (4 tactical + 1 combat) | 7 (EQS weights) |
 | **Action Range** | [0, 1] | [-1, 1] |
 | **Input** | 56-dim (52 + 4 strategy) | 55-dim (52 + 3 strategy) |
 | **Strategy Context** | 4 strategies + Retreat | 3 strategies (Assault/Defend/Support) |
@@ -497,7 +496,7 @@ class MocEnvironment_v10_2(gym.Env):
 self.assault_head = nn.Sequential(
     nn.Linear(256, 64),
     nn.ReLU(),
-    nn.Linear(64, 8),
+    nn.Linear(64, 7),
     nn.Tanh()  # ← Must have this!
 )
 ```

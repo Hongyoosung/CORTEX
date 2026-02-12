@@ -50,7 +50,7 @@ public:
 
 	/** Only allow collection if ammo is below this percentage */
 	UPROPERTY(EditAnywhere, Category = "AmmoCrate")
-	float MaxAmmoPercentForCollection = 0.99f;
+	int32 MaxAmmoPercentForCollection = 0.99f;
 
 	/** Play sound on collection? */
 	UPROPERTY(EditAnywhere, Category = "AmmoCrate|Audio")

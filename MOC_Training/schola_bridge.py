@@ -121,7 +121,7 @@ class MocEnvironment:
             option_type: Strategy type (0=Assault, 1=Defend, 2=Support, 3=Scout, 4=Retreat)
             target_position: [x, y, z] target coordinates
             option_duration: Expected strategy duration (seconds)
-            eqs_weights: 8-dim EQS weight parameters
+            eqs_weights: 7-dim EQS weight parameters
 
         Returns:
             observation: Next state (52-dim)
@@ -357,7 +357,7 @@ if __name__ == '__main__':
                 0.0
             ]
             duration = np.random.uniform(5.0, 20.0)
-            weights = np.random.uniform(-1, 1, size=8).tolist()
+            weights = np.random.uniform(-1, 1, size=7).tolist()
 
             obs, reward, done, info = env.step(option_type, target, duration, weights)
             print(f"Step {step}: Reward={reward:.2f}, Done={done}")

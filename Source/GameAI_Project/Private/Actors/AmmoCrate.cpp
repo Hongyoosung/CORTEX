@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actors/AmmoCrate.h"
-#include "Combat/Components/WeaponComponent.h"
+#include "Combat/CombatStatsInterface.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 
@@ -31,38 +31,27 @@ void AAmmoCrate::ApplyPickupEffect_Implementation(AActor* Collector)
 		return;
 	}
 
-	// Try to find WeaponComponent
-	UWeaponComponent* WeaponComp = Collector->FindComponentByClass<UWeaponComponent>();
-	if (WeaponComp)
+	if (Collector->Implements<UCombatStatsInterface>())
 	{
-		// Apply ammo refill
-		int32 CurrentAmmo = WeaponComp->GetCurrentAmmo();
-		int32 MaxAmmo = WeaponComp->GetMaxAmmo();
+		float ActualAdded = ICombatStatsInterface::Execute_AddAmmo(Collector, AmmoAmount);
 
-		WeaponComp->AddAmmo(AmmoAmount);
-
-		int32 NewAmmo = WeaponComp->GetCurrentAmmo();
-		int32 ActualAmmoAdded = NewAmmo - CurrentAmmo;
-
-		UE_LOG(LogTemp, Log, TEXT("AmmoCrate: Refilled %s with %d ammo (%d -> %d)"),
-			*Collector->GetName(), ActualAmmoAdded, CurrentAmmo, NewAmmo);
+		if (ActualAdded > 0.0f)
+		{
+			UE_LOG(LogTemp, Log, TEXT("AmmoCrate: Added %s via Interface for %.1f Ammo"),
+				*Collector->GetName(), ActualAdded);
+		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("AmmoCrate: No WeaponComponent found on %s"), *Collector->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("AmmoCrate: Collector %s does not implement CombatStatsInterface"), *Collector->GetName());
 	}
 
 	// Play collection sound
 	if (bPlayCollectionSound && CollectionSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(
-			this,
-			CollectionSound,
-			GetActorLocation(),
-			1.0f,
-			1.0f
-		);
+		UGameplayStatics::PlaySoundAtLocation(this, CollectionSound, GetActorLocation(), 1.0f, 1.0f );
 	}
+
 
 	// Call parent implementation
 	Super::ApplyPickupEffect_Implementation(Collector);
@@ -70,25 +59,15 @@ void AAmmoCrate::ApplyPickupEffect_Implementation(AActor* Collector)
 
 bool AAmmoCrate::CanCollect_Implementation(AActor* Collector) const
 {
-	if (!Collector)
+	if (!Collector) { return false; }
+
+	if (Collector->Implements<UCombatStatsInterface>())
 	{
-		return false;
+		float CurrentAmmo = ICombatStatsInterface::Execute_GetAmmoPercentage(Collector);
+
+		return CurrentAmmo < MaxAmmoPercentForCollection;
 	}
 
-	// Check if collector needs ammo
-	UWeaponComponent* WeaponComp = Collector->FindComponentByClass<UWeaponComponent>();
-	if (WeaponComp)
-	{
-		// Only allow collection if using ammo system
-		if (!WeaponComp->bUseAmmo)
-		{
-			return false;
-		}
-
-		// Check if ammo is below threshold
-		float AmmoPercent = WeaponComp->GetAmmoPercentage();
-		return AmmoPercent < MaxAmmoPercentForCollection;
-	}
 
 	// If no weapon component, don't allow collection
 	return false;

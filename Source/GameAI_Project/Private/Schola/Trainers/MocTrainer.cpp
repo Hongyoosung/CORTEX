@@ -187,7 +187,7 @@ void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
     Weights.AllyProximity           = FMath::Clamp(ActionValues[4], -1.0f, 1.0f);
     Weights.CombatRange             = FMath::Clamp(ActionValues[5], -1.0f, 1.0f);
     Weights.PickupProximity         = FMath::Clamp(ActionValues[6], -1.0f, 1.0f);
-    Weights.HeightAdvantage         = FMath::Clamp(ActionValues[7], -1.0f, 1.0f);
+
 
     // 가중치 유효성 검사
     if (!ValidateEQSWeights(Weights))
@@ -653,7 +653,7 @@ void AMocTrainer::ApplyEQSWeightsToCharacter(const FEQSWeightParameters& Weights
     QueryRequest.SetFloatParam(TEXT("AllyProximityWeight"), Weights.AllyProximity * 2.0f);
     QueryRequest.SetFloatParam(TEXT("CombatRangeWeight"), Weights.CombatRange * 2.0f);
     QueryRequest.SetFloatParam(TEXT("PickupWeight"), Weights.PickupProximity * 2.0f);
-    QueryRequest.SetFloatParam(TEXT("HeightWeight"), Weights.HeightAdvantage * 2.0f);
+
 
     // 검색 반경 설정
     QueryRequest.SetFloatParam(TEXT("SearchRadius"), EQSSearchRadius);
@@ -754,7 +754,7 @@ void AMocTrainer::DrawTrainingDebug()
         TEXT("EnemyObj: %.2f | AllyObj: %.2f\n")
         TEXT("Cover: %.2f | Visibility: %.2f\n")
         TEXT("AllyProx: %.2f | Range: %.2f\n")
-        TEXT("Pickup: %.2f | Height: %.2f"),
+        TEXT("Pickup: %.2f"),
         *StrategyInfo,
         CurrentObservation.Health * 100.0f,
         CurrentEpisodeSteps,
@@ -767,8 +767,7 @@ void AMocTrainer::DrawTrainingDebug()
         LastAction.EnemyVisibility,
         LastAction.AllyProximity,
         LastAction.CombatRange,
-        LastAction.PickupProximity,
-        LastAction.HeightAdvantage
+        LastAction.PickupProximity
     );
 
     DrawDebugString(
@@ -1028,7 +1027,7 @@ bool AMocTrainer::ValidateEQSWeights(const FEQSWeightParameters& Weights) const
     CheckRange(Weights.AllyProximity, TEXT("AllyProximity"));
     CheckRange(Weights.CombatRange, TEXT("CombatRange"));
     CheckRange(Weights.PickupProximity, TEXT("PickupProximity"));
-    CheckRange(Weights.HeightAdvantage, TEXT("HeightAdvantage"));
+
 
     return bValid;
 }

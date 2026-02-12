@@ -37,7 +37,7 @@ class AMocTrainer;
  * 1. Add to AMocTrainer.Observers array (Blueprint or C++)
  * 2. Schola automatically calls CollectObservations() during training
  * 3. Observation sent to Python (RLlib) via gRPC
- * 4. Policy returns EQS weights (8-dim) for spatial reasoning
+ * 4. Policy returns EQS weights (7-dim) for spatial reasoning
  *
  * Integration:
  * - Owner: AMocTrainer (Schola trainer)

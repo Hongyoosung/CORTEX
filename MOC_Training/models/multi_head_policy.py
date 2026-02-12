@@ -7,7 +7,7 @@ from low-level navigation.
 
 Architecture:
 - Input: 61-dim (State=52, OptionOneHot=5, Target=3, Duration=1)
-- Output: 8-dim EQS weights (range [-1, 1])
+- Output: 7-dim EQS weights (range [-1, 1])
 - Five heads: Assault, Defend, Support, Scout, Retreat
 
 See v10.0Architecture.md Section 2 for full specification.
@@ -33,7 +33,7 @@ class MultiHeadRLPolicy(nn.Module):
         duration_dim: int = 1,
         backbone_dim: int = 256,
         option_embed_dim: int = 16,
-        eqs_weight_dim: int = 8
+        eqs_weight_dim: int = 7
     ):
         super().__init__()
 
@@ -85,7 +85,7 @@ class MultiHeadRLPolicy(nn.Module):
         Each head:
         - Input: 289-dim (combined features)
         - Hidden: 128-dim with ReLU + Dropout
-        - Output: 8-dim with Tanh (range [-1, 1])
+        - Output: 7-dim with Tanh (range [-1, 1])
         """
         return nn.Sequential(
             nn.Linear(input_dim, 128),
@@ -121,7 +121,7 @@ class MultiHeadRLPolicy(nn.Module):
             duration: (B, 1) - Option duration in seconds
 
         Returns:
-            eqs_weights: (B, 8) - EQS weight parameters from selected head
+            eqs_weights: (B, 7) - EQS weight parameters from selected head
         """
         batch_size = state.size(0)
 
@@ -168,7 +168,7 @@ class MultiHeadRLPolicy(nn.Module):
             duration: (B, 1)
 
         Returns:
-            eqs_weights: (B, 8)
+            eqs_weights: (B, 7)
         """
         # Map strategy name to option index
         option_idx = torch.tensor(
@@ -218,7 +218,7 @@ class MultiHeadRLPolicy(nn.Module):
         print(f"✅ Model exported to ONNX: {filepath}")
         print(f"   Input shapes: state=[{batch_size}, 52], option_idx=[{batch_size}], "
               f"target=[{batch_size}, 3], duration=[{batch_size}, 1]")
-        print(f"   Output shape: eqs_weights=[{batch_size}, 8]")
+        print(f"   Output shape: eqs_weights=[{batch_size}, 7]")
 
     def get_num_parameters(self) -> int:
         """Get total number of trainable parameters."""

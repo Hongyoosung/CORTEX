@@ -40,12 +40,12 @@ The system consists of two layers: centralized planning and decentralized execut
 2. **Layer 2: Executor Agents (Decentralized Execution)** (Mid-Level)
 * Actor: AMocCharacter (×5) receive role assignments
 * Input: Commanded Strategy (Assault/Defend/Support)
-* Process: RL Policy → EQS Weights (8-dim)
+* Process: RL Policy → EQS Weights (7-dim)
 * Output: Spatial reasoning via EQS → Navigation
 * No Local MCTS: Removed to reduce computational load
 
 3. **Layer 3: EQS Spatial Reasoning** (Low-Level, unchanged from v10.1)
-* Input: 8-dim EQS Weights
+* Input: 7-dim EQS Weights
 * Process: Query 48 samples, 8 weighted tests
 * Output: Best tactical location → UE5 Navigation
 

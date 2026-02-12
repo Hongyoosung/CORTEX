@@ -72,9 +72,9 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "AI|WorldModel")
 	void PredictSingle(
-		const FTeamState& CurrentState,
+		const FTeamWorldState& CurrentState,
 		ETacticalPlay TacticalPlay,
-		FTeamState& OutNextState,
+		FTeamWorldState& OutNextState,
 		FCompositeReward& OutReward,
 		float& OutConfidence
 	);
@@ -141,7 +141,7 @@ private:
 	 * @param StartIndex Starting index in tensor to read from
 	 * @return Reconstructed FTeamState
 	 */
-	FTeamState ParseTensorToTeamState(const TArray<float>& Tensor, int32 StartIndex) const;
+	FTeamWorldState ParseTensorToTeamState(const TArray<float>& Tensor, int32 StartIndex) const;
 
 	/**
 	 * Update performance metrics

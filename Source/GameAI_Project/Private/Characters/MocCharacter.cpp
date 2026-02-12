@@ -17,6 +17,9 @@
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "BrainComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
+
 
 AMocCharacter::AMocCharacter()
 	: Super()
@@ -27,6 +30,7 @@ AMocCharacter::AMocCharacter()
 	, BehaviorTree(nullptr)
 	, VisionRange(3000.0f)
 	, AgentID(0)
+	, TeamID(-1)
 	, bIsAlive(true)
 	, CommandedStrategy(EStrategyType::Assault)
 	, SquadCommander(nullptr)
@@ -41,6 +45,12 @@ AMocCharacter::AMocCharacter()
 	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 	ScholaAgent = CreateDefaultSubobject<UScholaMocAgent>(TEXT("ScholaAgent"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
+
+	// Create Niagara VFX component
+	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
+	TeamColorVFX->SetupAttachment(RootComponent);
+	TeamColorVFX->SetRelativeLocation(FVector(0.0f, 0.0f, 100.0f));
+	TeamColorVFX->bAutoActivate = true;
 
 	// Configure HealthComponent
 	if (HealthComponent)
@@ -129,8 +139,15 @@ void AMocCharacter::BeginPlay()
 		UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetWorld"));
 	}
 
+	// Setup Niagara VFX
+	if (TeamColorVFX && TeamColorVFXAsset)
+	{
+		TeamColorVFX->SetAsset(TeamColorVFXAsset);
+		TeamColorVFX->Activate();
+	}
 
-	
+	// Update team color VFX
+	UpdateTeamColorVFX();
 }
 
 void AMocCharacter::Tick(float DeltaTime)
@@ -157,10 +174,7 @@ void AMocCharacter::Tick(float DeltaTime)
 
 int32 AMocCharacter::GetTeamID_Implementation() const
 {
-	// Check tags set by TeamManager
-	
-	TeamInfo
-	return 
+	return TeamID;
 }
 
 bool AMocCharacter::IsAlive_Implementation() const
@@ -225,28 +239,32 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 
 void AMocCharacter::ResetCharacter()
 {
-	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s respawning"), *GetName());
+	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s resetting for new episode"), *GetName());
 
-	// Reset health and ammo
+	// 1. Reset health and combat components
 	if (HealthComponent)
 	{
 		HealthComponent->ResetHealth();
 	}
 
+	if (WeaponComponent)
+	{
+		WeaponComponent->RefillAmmo();
+	}
 
-	// Re-enable movement
+	// 2. Re-enable movement
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
 		MovementComp->SetMovementMode(MOVE_Walking);
 	}
 
-	// Re-enable collision
+	// 3. Re-enable collision
 	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
 	{
 		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	}
 
-	// Disable ragdoll physics
+	// 4. Disable ragdoll physics
 	if (USkeletalMeshComponent* InMesh = GetMesh())
 	{
 		InMesh->SetSimulatePhysics(false);
@@ -260,7 +278,7 @@ void AMocCharacter::ResetCharacter()
 		InMesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 	}
 
-	// Restart AI
+	// 5. Restart AI
 	if (AAIController* AI = Cast<AAIController>(GetController()))
 	{
 		if (BehaviorTree)
@@ -269,13 +287,16 @@ void AMocCharacter::ResetCharacter()
 		}
 	}
 
-	if (WeaponComponent)
+	// 6. Delegate to RL component
+	if (ScholaAgent)
 	{
-		WeaponComponent->RefillAmmo();
+		ScholaAgent->ResetAgent();
 	}
 
-	// Clear dead flag
+	// 7. Clear dead flag
 	bIsAlive = true;
+
+	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] %s reset complete"), *GetName());
 }
 
 //========================================
@@ -321,6 +342,16 @@ float AMocCharacter::GetHealthPercentage_Implementation() const
 	return 1.0f;
 }
 
+float AMocCharacter::Heal_Implementation(float HealAmount)
+{
+	if (HealthComponent)
+	{
+		return HealthComponent->Heal(HealAmount);
+	}
+
+	return 0.0f;
+}
+
 float AMocCharacter::GetWeaponCooldown_Implementation() const
 {
 	if (WeaponComponent)
@@ -330,6 +361,26 @@ float AMocCharacter::GetWeaponCooldown_Implementation() const
 	return 0.0f;
 }
 
+int32 AMocCharacter::AddAmmo_Implementation(int32 AmmoAmount)
+{
+	if (WeaponComponent)
+	{
+		WeaponComponent->AddAmmo(AmmoAmount);
+	}
+	
+	return WeaponComponent->GetCurrentAmmo();;
+}
+
+float AMocCharacter::GetAmmoPercentage_Implementation() const
+{
+	if (WeaponComponent)
+	{
+		return WeaponComponent->GetAmmoPercentage();
+	}
+
+	return 0;
+}
+
 bool AMocCharacter::CanFireWeapon_Implementation() const
 {
 	if (WeaponComponent)
@@ -337,4 +388,26 @@ bool AMocCharacter::CanFireWeapon_Implementation() const
 		return WeaponComponent->CanFire();
 	}
 	return false;
+}
+
+//========================================
+// Team Color VFX
+//========================================
+
+void AMocCharacter::UpdateTeamColorVFX()
+{
+	if (!TeamColorVFX || !TM)
+	{
+		return;
+	}
+
+	// Get team color from TeamManager configuration
+	FTeamConfiguration TeamConfig = TM->GetTeamConfiguration(TeamID);
+	FLinearColor TeamColor = TeamConfig.TeamColor;
+
+	// Update Niagara color parameter
+	TeamColorVFX->SetVariableLinearColor(VFXColorParameterName, TeamColor);
+
+	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] Agent %s (Team %d) VFX color updated to: R=%.2f, G=%.2f, B=%.2f"),
+		*GetName(), TeamID, TeamColor.R, TeamColor.G, TeamColor.B);
 }

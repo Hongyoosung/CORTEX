@@ -41,7 +41,6 @@ public:
         Weights.AllyProximity = BB->GetValueAsFloat(TEXT("Weight_AllyProx"));
         Weights.CombatRange = BB->GetValueAsFloat(TEXT("Weight_Range"));
         Weights.PickupProximity = BB->GetValueAsFloat(TEXT("Weight_Pickup"));
-        Weights.HeightAdvantage = BB->GetValueAsFloat(TEXT("Weight_Height"));
 
         // 2. EQS Query 생성 (consolidated method)
         FEnvQueryRequest QueryRequest = AIController->CreateDynamicEQSQuery(Weights);

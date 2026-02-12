@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actors/HealthPack.h"
-#include "Combat/Components/HealthComponent.h"
+#include "Combat/CombatStatsInterface.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 
@@ -32,65 +32,39 @@ void AHealthPack::ApplyPickupEffect_Implementation(AActor* Collector)
 		return;
 	}
 
-	// Try to find HealthComponent
-	UHealthComponent* HealthComp = Collector->FindComponentByClass<UHealthComponent>();
-	if (HealthComp)
+	if (Collector->Implements<UCombatStatsInterface>())
 	{
-		// Apply healing
-		float CurrentHealth = HealthComp->GetCurrentHealth();
-		
-		float MaxHealth = HealthComp->GetMaxHealth();
-		float NewHealth = FMath::Min(CurrentHealth + HealAmount, MaxHealth);
-		float ActualHealing = NewHealth - CurrentHealth;
+		float ActualHealed = ICombatStatsInterface::Execute_Heal(Collector, HealAmount);
 
-		HealthComp->SetHealth(NewHealth);
-
-		UE_LOG(LogTemp, Log, TEXT("HealthPack: Healed %s for %.1f HP (%.1f -> %.1f)"),
-			*Collector->GetName(), ActualHealing, CurrentHealth, NewHealth);
+		if (ActualHealed > 0.0f)
+		{
+			UE_LOG(LogTemp, Log, TEXT("HealthPack: Healed %s via Interface for %.1f HP"),
+				*Collector->GetName(), ActualHealed);
+		}
 	}
 	else
 	{
-		// Fallback: Try to cast to Character and access Health directly
-		ACharacter* Character = Cast<ACharacter>(Collector);
-		if (Character)
-		{
-			// Note: This requires Character class to have Health property
-			// For now, just log warning
-			UE_LOG(LogTemp, Warning, TEXT("HealthPack: No HealthComponent found on %s"), *Collector->GetName());
-		}
+		UE_LOG(LogTemp, Warning, TEXT("HealthPack: Collector %s does not implement CombatStatsInterface"), *Collector->GetName());
 	}
 
-	// Play collection sound
 	if (bPlayCollectionSound && CollectionSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(
-			this,
-			CollectionSound,
-			GetActorLocation(),
-			1.0f,
-			1.0f
-		);
+		UGameplayStatics::PlaySoundAtLocation(this, CollectionSound, GetActorLocation(), 1.0f, 1.0f);
 	}
 
-	// Call parent implementation
 	Super::ApplyPickupEffect_Implementation(Collector);
 }
 
 bool AHealthPack::CanCollect_Implementation(AActor* Collector) const
 {
-	if (!Collector)
-	{
-		return false;
-	}
+	if (!Collector) return false;
 
-	// Check if collector needs health
-	UHealthComponent* HealthComp = Collector->FindComponentByClass<UHealthComponent>();
-	if (HealthComp)
+	if (Collector->Implements<UCombatStatsInterface>())
 	{
-		float HealthPercent = HealthComp->GetHealthPercentage();
+		float HealthPercent = ICombatStatsInterface::Execute_GetHealthPercentage(Collector);
+
 		return HealthPercent < MaxHealthPercentForCollection;
 	}
 
-	// If no health component, allow collection (fail-safe)
-	return true;
+	return false;
 }

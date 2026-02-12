@@ -167,6 +167,14 @@ public:
 	UTextureRenderTarget2D* GetFogTexture(int32 TeamID) const;
 
 	//========================================
+	// Episode Management
+	//========================================
+
+	/** Reset all fog of war state for new episode */
+	UFUNCTION(BlueprintCallable, Category = "FogOfWar|Episode")
+	void Reset();
+
+	//========================================
 	// Debug Visualization
 	//========================================
 

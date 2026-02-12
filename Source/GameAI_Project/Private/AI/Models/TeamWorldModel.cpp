@@ -137,7 +137,7 @@ bool UTeamWorldModel::InitModel(const FString& ModelPath)
 
 	// 8. 더미 배치로 워밍업
 	FTeamBatchInput DummyInput;
-	DummyInput.CurrentStates.Add(FTeamState());
+	DummyInput.CurrentStates.Add(FTeamWorldState());
 	DummyInput.TacticalPlays.Add(ETacticalPlay::StandardComp);
 
 	UE_LOG(LogTemp, Log,
@@ -256,9 +256,9 @@ FTeamBatchOutput UTeamWorldModel::PredictBatch(const FTeamBatchInput& BatchInput
 }
 
 void UTeamWorldModel::PredictSingle(
-	const FTeamState& CurrentState,
+	const FTeamWorldState& CurrentState,
 	ETacticalPlay TacticalPlay,
-	FTeamState& OutNextState,
+	FTeamWorldState& OutNextState,
 	FCompositeReward& OutReward,
 	float& OutConfidence)
 {
@@ -278,7 +278,7 @@ void UTeamWorldModel::PredictSingle(
 	else
 	{
 		// Return default values on failure
-		OutNextState = FTeamState();
+		OutNextState = FTeamWorldState();
 		OutReward = FCompositeReward();
 		OutConfidence = 0.0f;
 	}
@@ -360,7 +360,7 @@ FTeamBatchOutput UTeamWorldModel::PostprocessBatch(const TArray<float>& RawOutpu
 		// Return default values on error
 		for (int32 i = 0; i < BatchSize; ++i)
 		{
-			Output.PredictedStates.Add(FTeamState());
+			Output.PredictedStates.Add(FTeamWorldState());
 			Output.Rewards.Add(FCompositeReward());
 			Output.Confidences.Add(0.0f);
 		}
@@ -373,7 +373,7 @@ FTeamBatchOutput UTeamWorldModel::PostprocessBatch(const TArray<float>& RawOutpu
 		const int32 BaseIndex = i * OutputDimPerSample;
 
 		// 1. Parse predicted next state (60-dim)
-		FTeamState NextState = ParseTensorToTeamState(RawOutput, BaseIndex);
+		FTeamWorldState NextState = ParseTensorToTeamState(RawOutput, BaseIndex);
 		Output.PredictedStates.Add(NextState);
 
 		// 2. Parse reward (3-dim at offset 60)
@@ -403,9 +403,9 @@ void UTeamWorldModel::UpdateLatencyStats(float LatencyMs)
 	AverageLatencyMs = (AverageLatencyMs * (1.0f - Alpha)) + (LatencyMs * Alpha);
 }
 
-FTeamState UTeamWorldModel::ParseTensorToTeamState(const TArray<float>& Tensor, int32 StartIndex) const
+FTeamWorldState UTeamWorldModel::ParseTensorToTeamState(const TArray<float>& Tensor, int32 StartIndex) const
 {
-	FTeamState State;
+	FTeamWorldState State;
 	int32 Idx = StartIndex;
 
 	// 1. Friendly positions (15-dim: 5 agents × 3D)

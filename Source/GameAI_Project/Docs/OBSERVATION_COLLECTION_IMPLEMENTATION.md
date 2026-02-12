@@ -133,7 +133,7 @@ void AMocAIController::Tick(float DeltaTime)
 │   3. Run inference (or use fallback defaults)               │
 │   4. Adapt weights to local conditions                      │
 └────────────────────┬────────────────────────────────────────┘
-                     │ FEQSWeightParameters (8-dim)
+                     │ FEQSWeightParameters (7-dim)
                      ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ EQS Spatial Reasoning                                        │

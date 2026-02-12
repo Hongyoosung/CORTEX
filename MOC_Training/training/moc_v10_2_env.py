@@ -3,7 +3,7 @@ MOC v10.2 Synchronous Multi-Agent Environment
 
 - 3 strategies (Assault, Defend, Support)
 - 52-dim base observation + 3-dim strategy one-hot = 55-dim total
-- Action space: Box([-1, 1]^8) for EQS weights
+- Action space: Box([-1, 1]^7) for EQS weights
 - Commanders assign strategies; executors output EQS weights
 
 Architecture:
@@ -40,7 +40,7 @@ class MOCv10_2Config:
     OBSERVATION_BASE_SIZE = 52  # Local observation
     NUM_STRATEGIES = 3  # Assault, Defend, Support
     OBSERVATION_SIZE = 55  # 52 + 3 strategy one-hot
-    NUM_EQS_WEIGHTS = 8  # EQS weight outputs
+    NUM_EQS_WEIGHTS = 7  # EQS weight outputs
 
 
 if SCHOLA_AVAILABLE:
@@ -51,7 +51,7 @@ if SCHOLA_AVAILABLE:
 
         Design:
             - Receives commanded strategy from UE5 Squad Commander
-            - Agents output 8-dim EQS weights in range [-1, 1]
+            - Agents output 7-dim EQS weights in range [-1, 1]
             - Synchronous: step() blocks until UE5 responds
             - Clean episode boundaries with terminal state detection
         """
@@ -67,7 +67,7 @@ if SCHOLA_AVAILABLE:
             print(f"[MOC v10.2] Connecting to {host}:{port}...")
             print(f"[MOC v10.2] Multi-environment: {self.num_envs} parallel UE5 envs")
             print(f"[MOC v10.2] Architecture: Command-Driven Executor (3 strategies)")
-            print(f"[MOC v10.2] Action Space: Box([-1, 1]^8) EQS weights")
+            print(f"[MOC v10.2] Action Space: Box([-1, 1]^7) EQS weights")
 
             # Connect to UE5
             try:
@@ -107,7 +107,7 @@ if SCHOLA_AVAILABLE:
                 shape=(MOCv10_2Config.OBSERVATION_SIZE,),
                 dtype=np.float32
             )
-            # v10.2: 8-dim output (EQS weights in [-1, 1])
+            # v10.2: 7-dim output (EQS weights in [-1, 1])
             self._action_space = spaces.Box(
                 low=-1.0, high=1.0,
                 shape=(MOCv10_2Config.NUM_EQS_WEIGHTS,),
@@ -293,8 +293,8 @@ if SCHOLA_AVAILABLE:
                         dummy_actions[env_idx] = {}
                     agent_keys = allactionkeys.get((env_idx, agent_idx), [])
                     if agent_keys:
-                        # v10.2: 8-dim EQS weights in [-1, 1]
-                        dummy_action = np.zeros(8, dtype=np.float32)
+                        # v10.2: 7-dim EQS weights in [-1, 1]
+                        dummy_action = np.zeros(7, dtype=np.float32)
                         dummy_actions[env_idx][agent_idx] = {key: dummy_action for key in agent_keys}
 
                 # Blocking send + poll
@@ -311,7 +311,7 @@ if SCHOLA_AVAILABLE:
             Execute one environment step.
 
             Args:
-                actiondict: {agent_id: eqs_weights (8-dim array in [-1, 1])}
+                actiondict: {agent_id: eqs_weights (7-dim array in [-1, 1])}
 
             Returns:
                 obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
@@ -330,11 +330,11 @@ if SCHOLA_AVAILABLE:
                     if envidx not in formattedactions:
                         formattedactions[envidx] = {}
 
-                    # v10.2: Expect 8-dim EQS weights in [-1, 1]
-                    if isinstance(action, np.ndarray) and action.shape[0] == 8:
+                    # v10.2: Expect 7-dim EQS weights in [-1, 1]
+                    if isinstance(action, np.ndarray) and action.shape[0] == 7:
                         actionarray = np.clip(action, -1.0, 1.0).astype(np.float32)
                     else:
-                        actionarray = np.zeros(8, dtype=np.float32)
+                        actionarray = np.zeros(7, dtype=np.float32)
 
                     agentkeys = allactionkeys.get((envidx, agentidx), [])
                     if agentkeys:

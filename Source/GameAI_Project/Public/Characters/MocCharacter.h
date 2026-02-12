@@ -21,11 +21,12 @@ class ASquadManager;
 class AMocGameMode;
 class ATeamManager;
 class AFogOfWarManager;
+class UNiagaraComponent;
 struct FDeathEventData;
 struct FMocTeamInfo;
 
 /**
- * AMocCharacter - MOC v10.1 Component-Based Agent Character
+ * AMocCharacter - MOC v10.2 Component-Based Agent Character
  *
  * Component Architecture:
  * - UHealthComponent: Damage, death, respawn
@@ -34,8 +35,8 @@ struct FMocTeamInfo;
  * - UAIPerceptionStimuliSourceComponent: AI visibility
  *
  * Team Identification:
- * - Uses Actor Tags: "Team_0" (Red), "Team_1" (Blue)
- * - Set by TeamManager on spawn
+ * - TeamID property: 0 (Red), 1 (Blue)
+ * - Assigned by TeamManager on spawn
  *
  * Death/Respawn Flow:
  * 1. HealthComponent broadcasts OnDeath
@@ -54,7 +55,7 @@ struct FMocTeamInfo;
  *
  * Usage:
  * 1. Set AIControllerClass and BehaviorTree in Blueprint
- * 2. TeamManager spawns with team tag
+ * 2. TeamManager spawns and assigns TeamID
  * 3. AI takes over automatically
  */
 UCLASS()
@@ -79,9 +80,14 @@ public:
 	// Combat Interfaces Implementions
 	//========================================
 	virtual float	GetHealthPercentage_Implementation() const override;
+	virtual float	Heal_Implementation(float HealAmount) override;
 	virtual bool	IsAlive_Implementation() const override;
 	virtual float	GetWeaponCooldown_Implementation() const override;
 	virtual bool	CanFireWeapon_Implementation() const override;
+	virtual int32	AddAmmo_Implementation(int32 AmmoAmount) override;
+	virtual float	GetAmmoPercentage_Implementation() const override;
+	
+	
 
 
 	//========================================
@@ -109,6 +115,10 @@ public:
 	/** Reset character state (called by TeamManager on respawn) */
 	UFUNCTION(BlueprintCallable, Category = "Character|Respawn")
 	void ResetCharacter();
+
+	/** Update Niagara VFX color based on team */
+	UFUNCTION(BlueprintCallable, Category = "Character|VFX")
+	void UpdateTeamColorVFX();
 
 
 protected:
@@ -141,6 +151,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UAIPerceptionStimuliSourceComponent* StimuliSource;
 
+	/** Niagara VFX for team color identification */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UNiagaraComponent* TeamColorVFX;
+
 	//========================================
 	// Configuration
 	//========================================
@@ -152,6 +166,14 @@ public:
 	/** Vision range for fog-of-war updates (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Vision")
 	float VisionRange; // 30 meters
+
+	/** Niagara system asset for team identification VFX */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|VFX")
+	class UNiagaraSystem* TeamColorVFXAsset;
+
+	/** VFX color parameter name */
+	UPROPERTY(EditAnywhere, Category = "Character|VFX")
+	FName VFXColorParameterName = FName("TeamColor");
 
 	//========================================
 	// v10.2 Command Interface
@@ -176,7 +198,11 @@ public:
 public:
 	/** Agent Info for team coordination */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
-	FMocTeamState TeamInfo;
+	int32 AgentID;
+
+	/** Team ID (0 = Red, 1 = Blue) - Assigned by TeamManager on spawn */
+	UPROPERTY(BlueprintReadOnly, Category = "AI|Identity")
+	int32 TeamID;
 
 
 

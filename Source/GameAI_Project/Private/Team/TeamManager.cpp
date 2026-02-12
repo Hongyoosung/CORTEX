@@ -15,13 +15,25 @@ ATeamManager::ATeamManager()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Initialize team states
+	// Initialize Red Team configuration
+	RedTeamConfig.TeamName = TEXT("Red Team");
+	RedTeamConfig.TeamColor = FLinearColor::Red;
+	RedTeamConfig.AgentSkeletalMesh = nullptr;
+	RedTeamConfig.AgentMaterial = nullptr;
+
+	// Initialize Blue Team configuration
+	BlueTeamConfig.TeamName = TEXT("Blue Team");
+	BlueTeamConfig.TeamColor = FLinearColor::Blue;
+	BlueTeamConfig.AgentSkeletalMesh = nullptr;
+	BlueTeamConfig.AgentMaterial = nullptr;
+
+	// Initialize team states (colors will be synced in BeginPlay)
 	RedTeamState.TeamID = 0;
-	RedTeamState.TeamColor = FLinearColor::Red;
+	RedTeamState.TeamColor = RedTeamConfig.TeamColor;
 	RedTeamState.Score = 0;
 
 	BlueTeamState.TeamID = 1;
-	BlueTeamState.TeamColor = FLinearColor::Blue;
+	BlueTeamState.TeamColor = BlueTeamConfig.TeamColor;
 	BlueTeamState.Score = 0;
 }
 
@@ -29,38 +41,32 @@ void ATeamManager::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Sync team colors from configurations to team state
+	RedTeamState.TeamColor = RedTeamConfig.TeamColor;
+	BlueTeamState.TeamColor = BlueTeamConfig.TeamColor;
+
+	UE_LOG(LogTemp, Log, TEXT("TeamManager: Red Team Color = (R:%.2f, G:%.2f, B:%.2f)"),
+		RedTeamConfig.TeamColor.R, RedTeamConfig.TeamColor.G, RedTeamConfig.TeamColor.B);
+	UE_LOG(LogTemp, Log, TEXT("TeamManager: Blue Team Color = (R:%.2f, G:%.2f, B:%.2f)"),
+		BlueTeamConfig.TeamColor.R, BlueTeamConfig.TeamColor.G, BlueTeamConfig.TeamColor.B);
+
 	// Find or spawn FogOfWarManager
-	if (!FogOfWarManager)
-	{
-		// Try to find existing manager in level
-		TArray<AActor*> FoundActors;
-		UGameplayStatics::GetAllActorsOfClass(GetWorld(), AFogOfWarManager::StaticClass(), FoundActors);
-
-		if (FoundActors.Num() > 0)
-		{
-			FogOfWarManager = Cast<AFogOfWarManager>(FoundActors[0]);
-			UE_LOG(LogTemp, Log, TEXT("TeamManager: Found existing FogOfWarManager"));
-		}
-		else
-		{
-			// Spawn new manager
-			FActorSpawnParameters SpawnParams;
-			SpawnParams.Name = FName("FogOfWarManager");
-			FogOfWarManager = GetWorld()->SpawnActor<AFogOfWarManager>(
-				AFogOfWarManager::StaticClass(),
-				FVector::ZeroVector,
-				FRotator::ZeroRotator,
-				SpawnParams
-			);
-
-			UE_LOG(LogTemp, Log, TEXT("TeamManager: Spawned new FogOfWarManager"));
-		}
-	}
-
 	if (!FogOfWarManager)
 	{
 		UE_LOG(LogTemp, Error, TEXT("TeamManager: Failed to create FogOfWarManager!"));
 	}
+
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	// Spawn FogOfWarManager
+	FogOfWarManager = GetWorld()->SpawnActor<AFogOfWarManager>(
+		FogOfWarManagerClass,
+		SpawnParams
+
+	);
+
 }
 
 void ATeamManager::Tick(float DeltaTime)
@@ -165,9 +171,30 @@ AMocCharacter* ATeamManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 
 	if (Agent)
 	{
-		// Set team ID via actor tag
-		FName TeamTag = FName(*FString::Printf(TEXT("Team_%d"), TeamID));
-		Agent->Tags.Add(TeamTag);
+		// Set team ID directly
+		Agent->TeamID = TeamID;
+
+		// Get team configuration
+		FTeamConfiguration TeamConfig = GetTeamConfiguration(TeamID);
+
+		// Apply skeletal mesh if specified
+		if (TeamConfig.AgentSkeletalMesh && Agent->GetMesh())
+		{
+			Agent->GetMesh()->SetSkeletalMesh(TeamConfig.AgentSkeletalMesh);
+			UE_LOG(LogTemp, Log, TEXT("TeamManager: Applied skeletal mesh to %s"),
+				TeamID == 0 ? TEXT("Red") : TEXT("Blue"));
+		}
+
+		// Apply material if specified
+		if (TeamConfig.AgentMaterial && Agent->GetMesh())
+		{
+			Agent->GetMesh()->SetMaterial(0, TeamConfig.AgentMaterial);
+			UE_LOG(LogTemp, Log, TEXT("TeamManager: Applied material to %s"),
+				TeamID == 0 ? TEXT("Red") : TEXT("Blue"));
+		}
+
+		// Update team color VFX
+		Agent->UpdateTeamColorVFX();
 
 		// Set agent name
 		FString AgentName = FString::Printf(TEXT("%s_Agent_%d"),
@@ -180,35 +207,68 @@ AMocCharacter* ATeamManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	return Agent;
 }
 
-void ATeamManager::ResetAllAgents()
+void ATeamManager::ResetTeams()
 {
-	// Reset team scores
+	UE_LOG(LogTemp, Log, TEXT("[TeamManager] Resetting teams for new episode"));
+
+	// 1. Reset team-level state (TeamManager's responsibility)
 	RedTeamState.Score = 0;
 	BlueTeamState.Score = 0;
-
-	// Clear respawn queues
 	RedTeamState.RespawnQueue.Empty();
 	BlueTeamState.RespawnQueue.Empty();
 	RespawnTimers.Empty();
 
-	// Reset all agents
+	// Ensure all agents are in ActiveAgents (not in respawn queue)
+	RedTeamState.ActiveAgents.Empty();
+	BlueTeamState.ActiveAgents.Empty();
+
 	for (AMocCharacter* Agent : AllAgents)
 	{
 		if (Agent)
 		{
-			// Respawn agent at team location
-			int32 TeamID = Agent->Tags.Contains(FName("Team_0")) ? 0 : 1;
-			FVector SpawnLocation = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
-			Agent->SetActorLocation(SpawnLocation);
-
-			// Reset health and state
-			// TODO: Call Reset() method on character
+			int32 TeamID = Agent->TeamID;
+			if (TeamID == 0)
+			{
+				RedTeamState.ActiveAgents.Add(Agent);
+			}
+			else if (TeamID == 1)
+			{
+				BlueTeamState.ActiveAgents.Add(Agent);
+			}
 		}
 	}
 
-	// Note: FogOfWarManager handles its own state clearing if needed
+	// 2. Delegate agent resets (don't manipulate agent internals)
+	for (AMocCharacter* Agent : AllAgents)
+	{
+		if (Agent)
+		{
+			// Each agent resets its own state
+			Agent->ResetCharacter();
 
-	UE_LOG(LogTemp, Log, TEXT("TeamManager: All agents reset"));
+			// Reposition agent at team spawn location
+			int32 TeamID = Agent->TeamID;
+			FVector SpawnLocation = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
+			Agent->SetActorLocation(SpawnLocation);
+		}
+	}
+
+	if (FogOfWarManager)
+	{
+		FogOfWarManager->Reset();
+	}
+
+	// 3. Reset Squad Commanders (v10.2)
+	if (RedTeamCommander)
+	{
+		RedTeamCommander->Reset();
+	}
+	if (BlueTeamCommander)
+	{
+		BlueTeamCommander->Reset();
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[TeamManager] Team reset complete - %d active agents"), AllAgents.Num());
 }
 
 void ATeamManager::DestroyAllAgents()
@@ -279,7 +339,7 @@ void ATeamManager::ProcessRespawnQueue(float DeltaTime)
 		}
 
 		// Get team ID
-		int32 TeamID = Agent->Tags.Contains(FName("Team_0")) ? 0 : 1;
+		int32 TeamID = Agent->TeamID;
 
 		// Remove from respawn queue
 		if (TeamID == 0)
@@ -324,9 +384,14 @@ FVector ATeamManager::GetRandomSpawnPoint(FVector BaseLocation, float Radius) co
 	return BaseLocation + RandomOffset;
 }
 
-FMocTeamState ATeamManager::GetTeamState(int32 TeamID) const
+FTeamState ATeamManager::GetTeamState(int32 TeamID) const
 {
 	return TeamID == 0 ? RedTeamState : BlueTeamState;
+}
+
+FTeamConfiguration ATeamManager::GetTeamConfiguration(int32 TeamID) const
+{
+	return TeamID == 0 ? RedTeamConfig : BlueTeamConfig;
 }
 
 TArray<AMocCharacter*> ATeamManager::GetTeamAgents(int32 TeamID) const

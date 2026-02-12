@@ -252,7 +252,6 @@ FEQSWeightParameters UMocPolicyExecutor::GetDefaultWeights(EStrategyType Strateg
 		Weights.AllyProximity = 0.4f;
 		Weights.CombatRange = 0.6f;
 		Weights.PickupProximity = -0.5f;
-		Weights.HeightAdvantage = 0.5f;
 		break;
 
 	case EStrategyType::Defend:
@@ -263,7 +262,6 @@ FEQSWeightParameters UMocPolicyExecutor::GetDefaultWeights(EStrategyType Strateg
 		Weights.AllyProximity = 0.7f;
 		Weights.CombatRange = -0.4f;
 		Weights.PickupProximity = 0.2f;
-		Weights.HeightAdvantage = 0.7f;
 		break;
 
 	case EStrategyType::Support:
@@ -274,7 +272,6 @@ FEQSWeightParameters UMocPolicyExecutor::GetDefaultWeights(EStrategyType Strateg
 		Weights.AllyProximity = 0.9f; // Stay close to allies
 		Weights.CombatRange = 0.0f;
 		Weights.PickupProximity = 0.6f; // Collect resources for team
-		Weights.HeightAdvantage = 0.3f;
 		break;
 
 	default:

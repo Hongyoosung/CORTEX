@@ -14,7 +14,7 @@ FTeamTreeNode::FTeamTreeNode()
 void FTeamTreeNode::Initialize(
 	TWeakPtr<FTeamTreeNode> InParent,
 	ETacticalPlay InAction,
-	const FTeamState& InState,
+	const FTeamWorldState& InState,
 	float InConfidence
 )
 {
@@ -76,7 +76,7 @@ TSharedPtr<FTeamTreeNode> FTeamTreeNode::SelectBestChild() const
 	return BestChild;
 }
 
-void FTeamTreeNode::Expand(const TArray<TTuple<ETacticalPlay, FTeamState, float>>& NextStates)
+void FTeamTreeNode::Expand(const TArray<TTuple<ETacticalPlay, FTeamWorldState, float>>& NextStates)
 {
 	FScopeLock Lock(&NodeMutex);
 
@@ -89,7 +89,7 @@ void FTeamTreeNode::Expand(const TArray<TTuple<ETacticalPlay, FTeamState, float>
 	for (const auto& Tuple : NextStates)
 	{
 		ETacticalPlay Play = Tuple.Get<0>();
-		const FTeamState& NextState = Tuple.Get<1>();
+		const FTeamWorldState& NextState = Tuple.Get<1>();
 		float Confidence = Tuple.Get<2>();
 
 		TSharedPtr<FTeamTreeNode> NewChild = MakeShared<FTeamTreeNode>();

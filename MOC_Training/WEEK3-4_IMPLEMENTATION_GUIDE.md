@@ -41,7 +41,7 @@ This implementation completes Week 3-4 objectives from `v10.0Architecture.md`:
 
 #### `Public/AI/Policy/MultiHeadRLPolicy.h`
 Defines core data structures:
-- **`FEQSWeightParameters`**: 8-dim EQS weight output structure
+- **`FEQSWeightParameters`**: 7-dim EQS weight output structure
 - **`FRLObservation`**: 61-dim input observation (State + Option + Target + Duration)
 - **`UMultiHeadPolicyExecutor`**: ONNX inference component
 

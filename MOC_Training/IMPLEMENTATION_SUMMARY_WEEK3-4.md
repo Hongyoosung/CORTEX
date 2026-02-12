@@ -38,7 +38,7 @@ launch_headless_training.bat --map MOC_Arena --duration 12
 - `Private/AI/Policy/MultiHeadPolicyExecutor.cpp` (381 lines)
 
 **Components:**
-1. **FEQSWeightParameters** - 8-dim EQS weight structure
+1. **FEQSWeightParameters** - 7-dim EQS weight structure
    - EnemyObjectiveProximity
    - AllyObjectiveProximity
    - CoverDensity
@@ -46,7 +46,6 @@ launch_headless_training.bat --map MOC_Arena --duration 12
    - AllyProximity
    - CombatRange
    - PickupProximity
-   - HeightAdvantage
 
 2. **FRLObservation** - 61-dim input observation
    - BaseState (52-dim)
@@ -90,13 +89,13 @@ Shared Encoder:
 Combined Features: 289-dim
   ↓
 Five Strategy Heads:
-  - Assault:  289 → 128 → 8 (Tanh)
-  - Defend:   289 → 128 → 8 (Tanh)
-  - Support:  289 → 128 → 8 (Tanh)
-  - Scout:    289 → 128 → 8 (Tanh)
-  - Retreat:  289 → 128 → 8 (Tanh)
+  - Assault:  289 → 128 → 7 (Tanh)
+  - Defend:   289 → 128 → 7 (Tanh)
+  - Support:  289 → 128 → 7 (Tanh)
+  - Scout:    289 → 128 → 7 (Tanh)
+  - Retreat:  289 → 128 → 7 (Tanh)
   ↓
-Output: 8-dim EQS Weights [-1, 1]
+Output: 7-dim EQS Weights [-1, 1]
 ```
 
 **Training Features:**
@@ -156,7 +155,7 @@ python tools/export_to_onnx.py \
 **Validation Checks:**
 - ✅ ONNX model validity (onnx.checker)
 - ✅ Input shape: [batch, 61] ✓
-- ✅ Output shape: [batch, 8] ✓
+- ✅ Output shape: [batch, 7] ✓
 - ✅ Inference latency: <2ms target
 - ✅ Consistency: PyTorch vs ONNX <1e-4 error
 
@@ -331,7 +330,7 @@ python tools/validate_training.py \
 
 **TODO:**
 - Implement true batch ONNX inference
-- Target: 14x throughput improvement (batch=8 vs sequential)
+- Target: 14x throughput improvement (batch=7 vs sequential)
 - Expected: ~1.8ms for 8 agents (currently ~12ms)
 
 ---

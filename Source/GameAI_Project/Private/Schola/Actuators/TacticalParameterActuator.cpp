@@ -26,7 +26,6 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 	// [4]: AllyProximity
 	// [5]: CombatRange
 	// [6]: PickupProximity
-	// [7]: HeightAdvantage
 
 	FBoxSpace Space;
 	for (int32 i = 0; i < 8; ++i)
@@ -150,10 +149,10 @@ void UTacticalParameterActuator::SetCommandedStrategy(EStrategyType CommandedStr
 
 FEQSWeightParameters UTacticalParameterActuator::ActionToEQSWeights(const FBoxPoint& Action) const
 {
-	// Direct mapping from 8-dim Box action to FEQSWeightParameters
-	// Box action space is [-1, 1]^8, matching the weight range
+	// Direct mapping from 7-dim Box action to FEQSWeightParameters
+	// Box action space is [-1, 1]^7, matching the weight range
 
-	check(Action.Values.Num() == 8);
+	check(Action.Values.Num() == 7);
 
 	FEQSWeightParameters Weights;
 	Weights.EnemyObjectiveProximity = Action.Values[0];
@@ -163,7 +162,6 @@ FEQSWeightParameters UTacticalParameterActuator::ActionToEQSWeights(const FBoxPo
 	Weights.AllyProximity = Action.Values[4];
 	Weights.CombatRange = Action.Values[5];
 	Weights.PickupProximity = Action.Values[6];
-	Weights.HeightAdvantage = Action.Values[7];
 
 	return Weights;
 }

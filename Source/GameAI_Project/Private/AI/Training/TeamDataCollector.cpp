@@ -82,9 +82,9 @@ int32 UTeamDataCollector::EndRecording(bool bSaveImmediately)
 }
 
 void UTeamDataCollector::RecordTransition(
-	const FTeamState& CurrentState,
+	const FTeamWorldState& CurrentState,
 	ETacticalPlay TacticalPlay,
-	const FTeamState& NextState,
+	const FTeamWorldState& NextState,
 	const FCompositeReward& Reward)
 {
 	if (!bIsRecording)
@@ -263,7 +263,7 @@ bool UTeamDataCollector::SaveToBinary(const FString& Filepath)
 	return FFileHelper::SaveArrayToFile(Archive, *Filepath);
 }
 
-FString UTeamDataCollector::TeamStateToCSV(const FTeamState& State) const
+FString UTeamDataCollector::TeamStateToCSV(const FTeamWorldState& State) const
 {
 	TArray<float> Tensor = State.ToTensor();
 	FString CSV;

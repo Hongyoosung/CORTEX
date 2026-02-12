@@ -29,7 +29,7 @@ EBTNodeResult::Type UBTTask_RunDynamicEQS::ExecuteTask(
     Weights.AllyProximity = BB->GetValueAsFloat(TEXT("Weight_AllyProx"));
     Weights.CombatRange = BB->GetValueAsFloat(TEXT("Weight_Range"));
     Weights.PickupProximity = BB->GetValueAsFloat(TEXT("Weight_Pickup"));
-    Weights.HeightAdvantage = BB->GetValueAsFloat(TEXT("Weight_Height"));
+
     
     // EQS 쿼리 생성
     FEnvQueryRequest QueryRequest = AIController->CreateDynamicEQSQuery(Weights);

@@ -14,6 +14,31 @@ class AFogOfWarManager;
 class ASquadManager;
 
 /**
+ * Team configuration for customization
+ */
+USTRUCT(BlueprintType)
+struct FTeamConfiguration
+{
+	GENERATED_BODY()
+
+	/** Team display name */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
+	FString TeamName = TEXT("Team");
+
+	/** Team color for visual identification */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
+	FLinearColor TeamColor = FLinearColor::Red;
+
+	/** Skeletal mesh for agents on this team */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
+	USkeletalMesh* AgentSkeletalMesh = nullptr;
+
+	/** Material for agent mesh (optional override) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
+	UMaterialInterface* AgentMaterial = nullptr;
+};
+
+/**
  * Team state tracking for shared knowledge
  */
 USTRUCT(BlueprintType)
@@ -88,9 +113,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TeamManager")
 	void SpawnTeam(int32 TeamID, int32 AgentCount);
 
-	/** Reset all agents (for episode reset) */
-	UFUNCTION(BlueprintCallable, Category = "TeamManager")
-	void ResetAllAgents();
+	/** Reset team state for new episode */
+	UFUNCTION(BlueprintCallable, Category = "TeamManager|Episode")
+	void ResetTeams();
 
 	/** Destroy all agents (for cleanup) */
 	UFUNCTION(BlueprintCallable, Category = "TeamManager")
@@ -114,7 +139,11 @@ public:
 
 	/** Get team state (for observation collection) */
 	UFUNCTION(BlueprintPure, Category = "TeamManager")
-	FMocTeamState GetTeamState(int32 TeamID) const;
+	FTeamState GetTeamState(int32 TeamID) const;
+
+	/** Get team configuration */
+	UFUNCTION(BlueprintPure, Category = "TeamManager")
+	FTeamConfiguration GetTeamConfiguration(int32 TeamID) const;
 
 	/** Get all agents on team */
 	UFUNCTION(BlueprintPure, Category = "TeamManager")
@@ -207,6 +236,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager")
 	TSubclassOf<AMocCharacter> CharacterClass;
 
+	/** Red team configuration */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Teams")
+	FTeamConfiguration RedTeamConfig;
+
+	/** Blue team configuration */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Teams")
+	FTeamConfiguration BlueTeamConfig;
+
+	/** Fog of War Manager reference (set in level or spawned in BeginPlay) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|References")
+	TSubclassOf<AFogOfWarManager> FogOfWarManagerClass;
+
 	/** Number of agents per team */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager")
 	int32 AgentsPerTeam = 5;
@@ -226,10 +267,7 @@ public:
 	/** Respawn delay after death (seconds) */
 	UPROPERTY(EditAnywhere, Category = "TeamManager|Respawn")
 	float RespawnDelay = 5.0f;
-
-	/** Fog of War Manager reference (set in level or spawned in BeginPlay) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|References")
-	AFogOfWarManager* FogOfWarManager = nullptr;
+	
 
 	/** Show debug visualization */
 	UPROPERTY(EditAnywhere, Category = "TeamManager|Debug")
@@ -253,13 +291,15 @@ protected:
 	// Runtime State
 	//========================================
 
+	TObjectPtr<AFogOfWarManager> FogOfWarManager;
+
 	/** Red team state */
 	UPROPERTY(BlueprintReadOnly, Category = "TeamManager|State")
-	FMocTeamState RedTeamState;
+	FTeamState RedTeamState;
 
 	/** Blue team state */
 	UPROPERTY(BlueprintReadOnly, Category = "TeamManager|State")
-	FMocTeamState BlueTeamState;
+	FTeamState BlueTeamState;
 
 	/** Respawn timer tracking */
 	TMap<AMocCharacter*, float> RespawnTimers;

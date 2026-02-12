@@ -14,7 +14,7 @@ class AMocCharacter;
 /**
  * Executes EQS queries with dynamic RL-generated weights.
  *
- * Pipeline: RL Policy → 8-dim Weights → EQS Query → Best Location → Navigation
+ * Pipeline: RL Policy → 7-dim Weights → EQS Query → Best Location → Navigation
  *
  * Key Features:
  * - Applies strategy-specific weights to EQS tests
@@ -36,7 +36,7 @@ public:
 	/**
 	 * Execute tactical movement query with RL weights
 	 *
-	 * @param Weights - 8-dimensional weights from RL policy output
+	 * @param Weights - 7-dimensional weights from RL policy output
 	 * @param OnComplete - Callback with best location (FVector::ZeroVector if failed)
 	 */
 	void ExecuteTacticalQuery(

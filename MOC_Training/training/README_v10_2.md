@@ -7,7 +7,7 @@ This directory contains the training infrastructure for MOC v10.2 Command-Driven
 **MOC v10.2** implements a hierarchical command-driven architecture:
 
 - **Layer 1 (Strategic):** Squad Commander assigns strategies (Assault/Defend/Support) via MCTS
-- **Layer 2 (Tactical):** Executors receive commands and output 8-dim EQS weights via RL policy
+- **Layer 2 (Tactical):** Executors receive commands and output 7-dim EQS weights via RL policy
 - **Layer 3 (Spatial):** EQS system performs spatial reasoning using the weights
 
 ## Files
@@ -95,7 +95,7 @@ pip install ray[rllib] torch schola gymnasium numpy
 3. Configure for v10.2:
    - Squad Commander should assign strategies (0=Assault, 1=Defend, 2=Support)
    - Agents should output 52-dim local observations
-   - Action space should accept 8-dim EQS weights in range [-1, 1]
+   - Action space should accept 7-dim EQS weights in range [-1, 1]
 4. Play in Editor (PIE)
 
 #### 3. Start Training
@@ -154,15 +154,15 @@ GRAD_CLIP = 0.5
 ### Network
 - **Shared Encoder:** [55 → 256 → 256] with LayerNorm
 - **Strategy-Specific Heads:**
-  - Assault Head: [256 → 64 → 8] + Tanh
-  - Defend Head: [256 → 64 → 8] + Tanh
-  - Support Head: [256 → 64 → 8] + Tanh
+  - Assault Head: [256 → 64 → 7] + Tanh
+  - Defend Head: [256 → 64 → 7] + Tanh
+  - Support Head: [256 → 64 → 7] + Tanh
 - **Value Heads (per strategy):**
   - Assault Value: [256 → 64 → 1]
   - Defend Value: [256 → 64 → 1]
   - Support Value: [256 → 64 → 1]
 
-### Output (8-dim, range [-1, 1])
+### Output (7-dim, range [-1, 1])
 1. EnemyObjectiveProximity
 2. AllyObjectiveProximity
 3. CoverDensity
@@ -170,7 +170,6 @@ GRAD_CLIP = 0.5
 5. AllyProximity
 6. CombatRange
 7. PickupProximity
-8. HeightAdvantage
 
 ## Output
 
@@ -231,10 +230,10 @@ ScholaAgent->SendObservation(FullObs);
 
 ### Python → UE5 (Action)
 
-Python sends 8-dim EQS weights:
+Python sends 7-dim EQS weights:
 ```python
 # In Python: policy outputs actions
-eqs_weights = policy(obs, strategy_idx)  # Shape: (8,), Range: [-1, 1]
+eqs_weights = policy(obs, strategy_idx)  # Shape: (7,), Range: [-1, 1]
 env.step({agent_id: eqs_weights})
 ```
 
@@ -243,7 +242,7 @@ env.step({agent_id: eqs_weights})
 UE5 receives and applies EQS weights:
 ```cpp
 // In C++: AMocCharacter::OnActionReceived()
-TArray<float> EQSWeights = Action;  // 8-dim in [-1, 1]
+TArray<float> EQSWeights = Action;  // 7-dim in [-1, 1]
 TacticalParameterActuator->ApplyEQSWeights(EQSWeights);
 ```
 
@@ -270,11 +269,11 @@ TacticalParameterActuator->ApplyEQSWeights(EQSWeights);
 
 ### Action Size Mismatch
 
-**Error:** `Expected 8-dim action, got ...`
+**Error:** `Expected 7-dim action, got ...`
 
 **Solution:**
 1. Check action space configuration in UE5
-2. Verify `TacticalParameterActuator_v10_2` expects 8 inputs
+2. Verify `TacticalParameterActuator_v10_2` expects 7 inputs
 3. Ensure action clamping is correct ([-1, 1] range)
 
 ### Training Instability

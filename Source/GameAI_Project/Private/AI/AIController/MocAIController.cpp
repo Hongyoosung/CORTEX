@@ -101,7 +101,7 @@ void AMocAIController::OnPossess(APawn* InPawn)
     DefaultWeights.AllyProximity = 0.7f;
     DefaultWeights.CombatRange = -0.4f;
     DefaultWeights.PickupProximity = 0.2f;
-    DefaultWeights.HeightAdvantage = 0.7f;
+
 
     // 초기 전략 및 가중치 설정
     if (BlackboardComp)
@@ -126,7 +126,7 @@ FObservation AMocAIController::BuildObservationFromPerception()
     // Self State (10-dim)
     // ========================================
     Obs.Position = MyChar->GetActorLocation();
-    Obs.Health = MyChar->GetHealthPercentage();
+    Obs.Health = MyChar->GetHealthPercentage_Implementation();
     Obs.Velocity = MyChar->GetVelocity();
     Obs.WeaponCooldown = MyChar->GetWeaponCooldown_Implementation();
     Obs.CurrentStrategy = MyChar->GetCommandedStrategy();
@@ -295,8 +295,6 @@ void AMocAIController::UpdateBlackboardWeights(const FEQSWeightParameters& Weigh
         Weights.CombatRange);
     BlackboardComp->SetValueAsFloat(TEXT("Weight_Pickup"),
         Weights.PickupProximity);
-    BlackboardComp->SetValueAsFloat(TEXT("Weight_Height"),
-        Weights.HeightAdvantage);
 }
 
 FEnvQueryRequest AMocAIController::CreateDynamicEQSQuery(const FEQSWeightParameters& Weights) const
@@ -330,8 +328,6 @@ FEnvQueryRequest AMocAIController::CreateDynamicEQSQuery(const FEQSWeightParamet
         Normalize(Weights.CombatRange));
     QueryRequest.SetFloatParam(TEXT("PickupWeight"),
         Normalize(Weights.PickupProximity));
-    QueryRequest.SetFloatParam(TEXT("HeightWeight"),
-        Normalize(Weights.HeightAdvantage));
 
     return QueryRequest;
 }

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Team/TeamState.h"
+#include "Team/TeamWorldState.h"
 #include "Types/StrategyTypes.h"
 #include "Types/EventTypes.h"
 #include "Types/RewardTypes.h"
@@ -80,7 +80,7 @@ public:
 	 * Collects positions, health, strategies from all 5 agents
 	 */
 	UFUNCTION(BlueprintPure, Category = "SquadManager")
-	FTeamState GetGlobalTeamState() const;
+	FTeamWorldState GetGlobalTeamState() const;
 
 	/**
 	 * Get assigned strategy for specific agent
@@ -116,6 +116,14 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "SquadManager")
 	bool ShouldReplan() const;
+
+	//========================================
+	// Episode Management
+	//========================================
+
+	/** Reset squad commander state for new episode */
+	UFUNCTION(BlueprintCallable, Category = "SquadManager|Episode")
+	void Reset();
 
 	//========================================
 	// Configuration
@@ -170,7 +178,7 @@ protected:
 	 * Construct FTeamState from live agents
 	 * Queries TeamManager for friendly/enemy positions, health, etc.
 	 */
-	FTeamState CollectTeamState() const;
+	FTeamWorldState CollectTeamState() const;
 
 	/**
 	 * Convert MCTS result (ETacticalPlay) to role distribution
@@ -260,7 +268,7 @@ protected:
 	//========================================
 
 	/** Previous team state (for transition recording) */
-	FTeamState PreviousTeamState;
+	FTeamWorldState PreviousTeamState;
 
 	/** Previous tactical play executed */
 	ETacticalPlay PreviousTacticalPlay;
@@ -275,7 +283,7 @@ private:
 	 * @param NewState - Current team state
 	 * @return Multi-objective reward
 	 */
-	FCompositeReward CalculateTeamReward(const FTeamState& OldState, const FTeamState& NewState) const;
+	FCompositeReward CalculateTeamReward(const FTeamWorldState& OldState, const FTeamWorldState& NewState) const;
 
 	/**
 	 * Select tactical play using ε-greedy policy (for data collection)
@@ -288,5 +296,5 @@ private:
 	 * @param TeamState - Current team state for heuristic selection
 	 * @return Selected tactical play
 	 */
-	ETacticalPlay SelectEpsilonGreedyAction(const FTeamState& TeamState) const;
+	ETacticalPlay SelectEpsilonGreedyAction(const FTeamWorldState& TeamState) const;
 };
