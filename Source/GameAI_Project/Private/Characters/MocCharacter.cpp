@@ -4,6 +4,12 @@
 #include "Combat/Components/HealthComponent.h"
 #include "Combat/Components/WeaponComponent.h"
 #include "Schola/Components/ScholaMocAgent.h"
+#include "Schola/Actuators/TacticalParameterActuator.h"
+#include "Agent/AgentComponents/ActuatorComponent.h"
+#include "EnvironmentQuery/EnvQueryManager.h"
+#include "EnvironmentQuery/EnvQuery.h"
+#include "EnvironmentQuery/EnvQueryTypes.h"
+#include "Navigation/PathFollowingComponent.h"
 #include "Core/MocGameMode.h"
 #include "Team/TeamManager.h"
 #include "Team/SquadManager.h"
@@ -45,6 +51,8 @@ AMocCharacter::AMocCharacter()
 	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 	ScholaAgent = CreateDefaultSubobject<UScholaMocAgent>(TEXT("ScholaAgent"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
+
+
 
 	// Create Niagara VFX component
 	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
@@ -327,6 +335,75 @@ void AMocCharacter::ResetCharacter()
 	}
 
 	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] %s reset complete"), *GetName());
+}
+
+//========================================
+// v10.2 EQS Weight Storage & Execution
+//========================================
+
+void AMocCharacter::UpdateTacticalWeights(const FEQSWeightParameters& NewWeights)
+{
+	CurrentEQSWeights = NewWeights;
+}
+
+void AMocCharacter::PerformTacticalAction()
+{
+	if (!TacticalEQS)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: TacticalEQS not set, cannot perform action"), *GetName());
+		return;
+	}
+
+	// Determine mode: Runtime (has AIController with Blackboard) vs Training
+	AAIController* AICtrl = Cast<AAIController>(GetController());
+	UBlackboardComponent* BB = AICtrl ? AICtrl->GetBlackboardComponent() : nullptr;
+
+	if (AICtrl && BB)
+	{
+		// ===== RUNTIME MODE: Sync weights to Blackboard, let BT handle EQS =====
+		BB->SetValueAsFloat(TEXT("Weight_EnemyObj"), CurrentEQSWeights.EnemyObjectiveProximity);
+		BB->SetValueAsFloat(TEXT("Weight_AllyObj"), CurrentEQSWeights.AllyObjectiveProximity);
+		BB->SetValueAsFloat(TEXT("Weight_Cover"), CurrentEQSWeights.CoverDensity);
+		BB->SetValueAsFloat(TEXT("Weight_EnemyVis"), CurrentEQSWeights.EnemyVisibility);
+		BB->SetValueAsFloat(TEXT("Weight_AllyProx"), CurrentEQSWeights.AllyProximity);
+		BB->SetValueAsFloat(TEXT("Weight_Range"), CurrentEQSWeights.CombatRange);
+		BB->SetValueAsFloat(TEXT("Weight_Pickup"), CurrentEQSWeights.PickupProximity);
+		return;
+	}
+
+	// ===== TRAINING MODE: Synchronous EQS execution =====
+	UEnvQueryManager* EQSManager = UEnvQueryManager::GetCurrent(GetWorld());
+	if (!EQSManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: EQS Manager not available"), *GetName());
+		return;
+	}
+
+	// Build query request with current weights
+	FEnvQueryRequest QueryRequest(TacticalEQS, this);
+	QueryRequest.SetFloatParam(TEXT("EnemyObjectiveWeight"), CurrentEQSWeights.EnemyObjectiveProximity * 2.0f);
+	QueryRequest.SetFloatParam(TEXT("AllyObjectiveWeight"), CurrentEQSWeights.AllyObjectiveProximity * 2.0f);
+	QueryRequest.SetFloatParam(TEXT("CoverDensityWeight"), CurrentEQSWeights.CoverDensity * 2.0f);
+	QueryRequest.SetFloatParam(TEXT("EnemyVisibilityWeight"), CurrentEQSWeights.EnemyVisibility * 2.0f);
+	QueryRequest.SetFloatParam(TEXT("AllyProximityWeight"), CurrentEQSWeights.AllyProximity * 2.0f);
+	QueryRequest.SetFloatParam(TEXT("CombatRangeWeight"), CurrentEQSWeights.CombatRange * 2.0f);
+	QueryRequest.SetFloatParam(TEXT("PickupWeight"), CurrentEQSWeights.PickupProximity * 2.0f);
+	QueryRequest.SetFloatParam(TEXT("SearchRadius"), EQSSearchRadius);
+
+	// Run EQS SYNCHRONOUSLY (instant query) for training
+	TSharedPtr<FEnvQueryResult> Result = EQSManager->RunInstantQuery(QueryRequest, EEnvQueryRunMode::SingleResult);
+
+	if (!Result.IsValid() || !Result->IsSuccessful() || Result->Items.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: Synchronous EQS query failed or returned no results"), *GetName());
+		return;
+	}
+
+	FVector TargetLocation = Result->GetItemAsLocation(0);
+	LastEQSTargetLocation = TargetLocation;
+
+	// Move character directly to the best tactical position
+	SetActorLocation(TargetLocation);
 }
 
 //========================================

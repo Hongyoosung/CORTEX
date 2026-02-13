@@ -63,7 +63,7 @@ struct FEQSWeightParameters
 	/** Create from flat array (from ONNX output) */
 	static FEQSWeightParameters FromArray(const TArray<float>& Weights)
 	{
-		check(Weights.Num() == 8);
+		check(Weights.Num() == 7);
 
 		FEQSWeightParameters Params;
 		Params.EnemyObjectiveProximity = Weights[0];

@@ -14,28 +14,22 @@ class AMocCharacter;
 
 
 /** //============================================================
- * v10.2 Schola actuator for EQS weight generation in Commander-Executor architecture.
+ * v10.2 Schola actuator - Pure action-to-weight translator.
  *
  * Action Space: Box([-1, 1]^7)
- * - [0]: EnemyObjectiveProximity - Approach enemy base (-1=avoid, +1=approach)
- * - [1]: AllyObjectiveProximity  - Defend friendly base (-1=avoid, +1=defend)
- * - [2]: CoverDensity           - Prioritize cover (-1=ignore, +1=prioritize)
- * - [3]: EnemyVisibility        - Maintain line-of-sight (-1=hide, +1=expose)
- * - [4]: AllyProximity          - Stay near teammates (-1=solo, +1=group)
- * - [5]: CombatRange            - Preferred engagement distance (normalized)
- * - [6]: PickupProximity        - Collect health/ammo (-1=ignore, +1=prioritize)
+ * - [0]: EnemyObjectiveProximity  (-1=avoid, +1=approach)
+ * - [1]: AllyObjectiveProximity   (-1=avoid, +1=defend)
+ * - [2]: CoverDensity             (-1=ignore, +1=prioritize)
+ * - [3]: EnemyVisibility          (-1=hide, +1=expose)
+ * - [4]: AllyProximity            (-1=solo, +1=group)
+ * - [5]: CombatRange              (normalized engagement distance)
+ * - [6]: PickupProximity          (-1=ignore, +1=prioritize)
  *
- * Integration with v10.2 Architecture:
- * - Receives commanded strategy (Assault/Defend/Support) from Squad Commander
- * - Outputs EQS weights that modulate spatial reasoning tests
- * - No local MCTS - execution only layer in hierarchical system
- * - Works with UMocEQSExecutor for tactical positioning
- *
- * Key Changes from v8.0:
- * - 4-dim → 7-dim outputs (direct EQS weights vs abstract parameters)
- * - [0,1] → [-1,1] range (allows negative preferences)
- * - Strategy context integration (commanded role awareness)
- * - Removed local planning (centralized commander handles this)
+ * Responsibility:
+ * - Receives Box action from Schola framework
+ * - Converts to FEQSWeightParameters
+ * - Writes weights to MocCharacter via UpdateTacticalWeights()
+ * - Does NOT trigger execution (MocTrainer or BT handles that)
  */ //============================================================
 UCLASS(BlueprintType, meta = (DisplayName = "v10.2 Tactical Parameter Actuator"))
 class GAMEAI_PROJECT_API UTacticalParameterActuator : public UBoxActuator

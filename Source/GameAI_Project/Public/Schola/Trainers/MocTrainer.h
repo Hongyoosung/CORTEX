@@ -15,7 +15,6 @@
 class UScholaMocAgent;
 class UScholaTransitionLogger;
 class AMocCharacter;
-class UEnvQuery;
 
 
 /**
@@ -57,13 +56,6 @@ public:
 
     // ==================== Schola Interface ====================
 
-    /**
-     * Python에서 받은 Action 적용
-     * @param ActionValues - [7-dim] EQS Weights:
-     *   [EnemyObjProx, AllyObjProx, Cover, Visibility, AllyProx, Range, Pickup]
-     */
-    virtual void ApplyAction(const TArray<float>& ActionValues);
-    
     /**
      * 현재 Observation 반환 (Python으로 전송)
      * @return 52-dim vector: Agent state (commanded strategy는 Character에서 이미 설정됨)
@@ -110,24 +102,8 @@ protected:
                       bool bDone);
 
 
-    /** EQS 가중치를 Character의 이동에 실제 적용 */
-    void ApplyEQSWeightsToCharacter(const FEQSWeightParameters& Weights);
-
-
 public:
     // ==================== Training Configuration ====================
-
-    /** EQS Query Template for tactical positioning */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
-    UEnvQuery* EQSQueryTemplate;
-
-    /** EQS 실행 반경 */
-    UPROPERTY(EditAnywhere, Category = "AI|EQS")
-    float EQSSearchRadius = 2000.0f;
-
-    /** EQS 결과 수용 거리 */
-    UPROPERTY(EditAnywhere, Category = "AI|EQS")
-    float EQSAcceptanceRadius = 50.0f;
 
     /** Episode 최대 길이 */
     UPROPERTY(EditAnywhere, Category="Training")
@@ -211,9 +187,6 @@ protected:
 
     /** 평균 에피소드 길이 */
     float AverageEpisodeLength;
-
-    /** 마지막 EQS 쿼리 결과 위치 (디버깅용) */
-    FVector LastEQSTargetLocation;
 
     /** 현재 commanded strategy 캐시 */
     EStrategyType CachedCommandedStrategy;

@@ -7,13 +7,9 @@
 #include "Characters/MocCharacter.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
-#include "EnvironmentQuery/EnvQueryManager.h"
-#include "EnvironmentQuery/EnvQueryTypes.h"
-#include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
 #include "Types/RewardTypes.h"
 #include "AIController.h"
-#include "Navigation/PathFollowingComponent.h"
 #include "Training/StateStructs/TrainerState.h"
 #include "Team/TeamManager.h"
 #include "Team/FogOfWarManager.h"
@@ -41,7 +37,6 @@ AMocTrainer::AMocTrainer()
 
     // Default strategy
     CachedCommandedStrategy = EStrategyType::Assault;
-    LastEQSTargetLocation = FVector::ZeroVector;
 }
 
 void AMocTrainer::InitializeMocTrainer(UScholaMocAgent* InAgent)
@@ -59,12 +54,6 @@ void AMocTrainer::InitializeMocTrainer(UScholaMocAgent* InAgent)
     {
         UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Agent owner is not AMocCharacter! Initialization failed."));
         return;
-    }
-
-    // EQS Query Template 검증
-    if (!EQSQueryTemplate)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS Query Template not set! EQS execution will be disabled."));
     }
 
     // Transition Logger 초기화
@@ -108,13 +97,10 @@ void AMocTrainer::Tick(float DeltaTime)
 
     if (!ControlledCharacter || !ControlledCharacter->IsAlive_Implementation())
     {
-        return; // Skip tick if character is invalid or dead
+        return;
     }
 
-    // v10.2 FIX: Step counter moved to ApplyAction() to match Schola decision rate (2 Hz)
-    // instead of frame rate (60 Hz). Steps should increment per decision, not per frame.
-
-    // v10.2: Update commanded strategy cache (may change from Squad Commander)
+    // Update commanded strategy cache (may change from Squad Commander)
     EStrategyType NewStrategy = ControlledCharacter->GetCommandedStrategy();
     if (NewStrategy != CachedCommandedStrategy)
     {
@@ -141,8 +127,34 @@ void AMocTrainer::Tick(float DeltaTime)
 
 TArray<float> AMocTrainer::GetObservation()
 {
-    // v10.2: 52-dim agent state only
-    // Commanded strategy is already set in Character by Squad Commander
+    // v10.2: Execute the tactical action IMMEDIATELY before gathering observation.
+    // This ensures the observation reflects the post-action state (State t+1),
+    // maintaining proper MDP: State(t) -> Action(t) -> State(t+1).
+    // The Actuator has already written weights to the Character via UpdateTacticalWeights().
+    if (ControlledCharacter)
+    {
+        LastAction = ControlledCharacter->GetEQSWeights();
+        CurrentEpisodeSteps++;
+
+        ControlledCharacter->PerformTacticalAction();
+
+        if (CurrentEpisodeSteps <= 10 || CurrentEpisodeSteps % 100 == 0)
+        {
+            UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Step %d - Agent: %s, Strategy: %s, Weights: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f]"),
+                CurrentEpisodeSteps,
+                *GetName(),
+                *UEnum::GetValueAsString(CachedCommandedStrategy),
+                LastAction.EnemyObjectiveProximity,
+                LastAction.AllyObjectiveProximity,
+                LastAction.CoverDensity,
+                LastAction.EnemyVisibility,
+                LastAction.AllyProximity,
+                LastAction.CombatRange,
+                LastAction.PickupProximity);
+        }
+    }
+
+    // Now gather the POST-action state
     CurrentObservation = GatherStateObservation();
 
     // Observation 유효성 검사
@@ -162,76 +174,6 @@ TArray<float> AMocTrainer::GetObservation()
     }
 
     return Observation;
-}
-
-void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
-{
-    // v10.2 FIX: Validate references before applying action
-    if (!MocAgent || !IsValid(MocAgent) || !ControlledCharacter || !IsValid(ControlledCharacter))
-    {
-        UE_LOG(LogTemp, Error, TEXT("[MocTrainer VALIDATION FAILED] Cannot apply action - invalid agent or character (MocAgent=%s, Character=%s, Step=%d)"),
-            MocAgent ? TEXT("Valid") : TEXT("NULL"),
-            ControlledCharacter ? TEXT("Valid") : TEXT("NULL"),
-            CurrentEpisodeSteps);
-        return;
-    }
-
-    // v10.2 FIX: Increment step counter when action is applied (Schola decision rate)
-    // This ensures steps track actual RL decisions (2 Hz), not frame updates (60 Hz)
-    CurrentEpisodeSteps++;
-
-    // v10.2: Action space is 7-dim EQS weights (not 8!)
-    // [0]: EnemyObjectiveProximity
-    // [1]: AllyObjectiveProximity
-    // [2]: CoverDensity
-    // [3]: EnemyVisibility
-    // [4]: AllyProximity
-    // [5]: CombatRange
-    // [6]: PickupProximity
-    if (ActionValues.Num() != 7)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[MocTrainer DIMENSION ERROR] Invalid action size: %d (expected 7 for v10.2), Step=%d"),
-            ActionValues.Num(), CurrentEpisodeSteps);
-        return;
-    }
-
-    // FEQSWeightParameters 구조체로 변환 및 클램핑
-    FEQSWeightParameters Weights;
-    Weights.EnemyObjectiveProximity = FMath::Clamp(ActionValues[0], -1.0f, 1.0f);
-    Weights.AllyObjectiveProximity  = FMath::Clamp(ActionValues[1], -1.0f, 1.0f);
-    Weights.CoverDensity            = FMath::Clamp(ActionValues[2], -1.0f, 1.0f);
-    Weights.EnemyVisibility         = FMath::Clamp(ActionValues[3], -1.0f, 1.0f);
-    Weights.AllyProximity           = FMath::Clamp(ActionValues[4], -1.0f, 1.0f);
-    Weights.CombatRange             = FMath::Clamp(ActionValues[5], -1.0f, 1.0f);
-    Weights.PickupProximity         = FMath::Clamp(ActionValues[6], -1.0f, 1.0f);
-
-    // 가중치 유효성 검사
-    if (!ValidateEQSWeights(Weights))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS weights validation failed, using defaults"));
-        return;
-    }
-
-    LastAction = Weights;
-
-    // EQS 가중치를 Character의 이동 시스템에 적용
-    ApplyEQSWeightsToCharacter(Weights);
-
-    // v10.2 FIX: Log EVERY action for first 10 steps to diagnose agent inactivity
-    if (CurrentEpisodeSteps <= 10 || CurrentEpisodeSteps % 100 == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer ACTION] Step %d - Agent: %s, Strategy: %s, Weights: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f]"),
-            CurrentEpisodeSteps,
-            *GetName(),
-            *UEnum::GetValueAsString(CachedCommandedStrategy),
-            Weights.EnemyObjectiveProximity,
-            Weights.AllyObjectiveProximity,
-            Weights.CoverDensity,
-            Weights.EnemyVisibility,
-            Weights.AllyProximity,
-            Weights.CombatRange,
-            Weights.PickupProximity);
-    }
 }
 
 float AMocTrainer::ComputeReward()
@@ -332,9 +274,6 @@ void AMocTrainer::ResetEpisode()
     // 상태 초기화
     PreviousObservation = FObservation();
     CurrentObservation = GatherStateObservation();
-
-    // EQS 타겟 초기화
-    LastEQSTargetLocation = FVector::ZeroVector;
 }
 
 // ==================== Helper Functions ====================
@@ -663,82 +602,6 @@ float AMocTrainer::ComputeCommandedStrategyReward(
     return Reward;
 }
 
-void AMocTrainer::ApplyEQSWeightsToCharacter(const FEQSWeightParameters& Weights)
-{
-    if (!ControlledCharacter)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot apply EQS weights - invalid character"));
-        return;
-    }
-
-    // Training Mode: EQS를 직접 실행하여 이동 위치 결정
-    UEnvQueryManager* EQSManager = UEnvQueryManager::GetCurrent(GetWorld());
-    if (!EQSManager)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS Manager not available"));
-        return;
-    }
-
-    if (!EQSQueryTemplate)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS Query Template not set"));
-        return;
-    }
-
-    // 가중치 적용하여 Query 생성
-    FEnvQueryRequest QueryRequest(EQSQueryTemplate, ControlledCharacter);
-
-    // Named Parameters로 가중치 전달 (스케일링하여 적용)
-    QueryRequest.SetFloatParam(TEXT("EnemyObjectiveWeight"), Weights.EnemyObjectiveProximity * 2.0f);
-    QueryRequest.SetFloatParam(TEXT("AllyObjectiveWeight"), Weights.AllyObjectiveProximity * 2.0f);
-    QueryRequest.SetFloatParam(TEXT("CoverDensityWeight"), Weights.CoverDensity * 2.0f);
-    QueryRequest.SetFloatParam(TEXT("EnemyVisibilityWeight"), Weights.EnemyVisibility * 2.0f);
-    QueryRequest.SetFloatParam(TEXT("AllyProximityWeight"), Weights.AllyProximity * 2.0f);
-    QueryRequest.SetFloatParam(TEXT("CombatRangeWeight"), Weights.CombatRange * 2.0f);
-    QueryRequest.SetFloatParam(TEXT("PickupWeight"), Weights.PickupProximity * 2.0f);
-
-
-    // 검색 반경 설정
-    QueryRequest.SetFloatParam(TEXT("SearchRadius"), EQSSearchRadius);
-
-    // 비동기 실행
-    FQueryFinishedSignature Delegate;
-    Delegate.BindLambda([this](TSharedPtr<FEnvQueryResult> Result)
-    {
-        if (!Result.IsValid() || !Result->IsSuccessful())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] EQS query failed"));
-            return;
-        }
-
-        if (!ControlledCharacter)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Character destroyed during EQS execution"));
-            return;
-        }
-
-        FVector TargetLocation = Result->GetItemAsLocation(0);
-        LastEQSTargetLocation = TargetLocation;
-
-        AAIController* AIC = Cast<AAIController>(ControlledCharacter->GetController());
-        if (AIC)
-        {
-
-            EPathFollowingRequestResult::Type MoveResult = AIC->MoveToLocation(TargetLocation, EQSAcceptanceRadius);
-            if (MoveResult != EPathFollowingRequestResult::RequestSuccessful)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Movement request failed"));
-            }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Character has no AI controller"));
-        }
-    });
-
-    QueryRequest.Execute(EEnvQueryRunMode::SingleResult, Delegate);
-}
-
 void AMocTrainer::LogTransition(
     const FObservation& InState,
     EStrategyType CommandedStrategy,
@@ -825,6 +688,7 @@ void AMocTrainer::DrawTrainingDebug()
     );
 
     // === EQS Target Location ===
+    FVector LastEQSTargetLocation = ControlledCharacter->GetLastEQSTargetLocation();
     if (!LastEQSTargetLocation.IsZero())
     {
         DrawDebugSphere(
@@ -1027,11 +891,12 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
             ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f));
         Info.Add(TEXT("IsAlive"), ControlledCharacter->IsAlive_Implementation() ? TEXT("true") : TEXT("false"));
 
-        if (!LastEQSTargetLocation.IsZero())
+        FVector EQSTarget = ControlledCharacter->GetLastEQSTargetLocation();
+        if (!EQSTarget.IsZero())
         {
             float DistToTarget = FVector::Dist(
                 ControlledCharacter->GetActorLocation(),
-                LastEQSTargetLocation
+                EQSTarget
             );
             Info.Add(TEXT("DistanceToTarget"), FString::Printf(TEXT("%.0f"), DistToTarget));
         }
@@ -1135,8 +1000,6 @@ void AMocTrainer::ResetTrainer()
         UE_LOG(LogTemp, Error, TEXT("[MocTrainer] v10.2 Trainer reset for episode %d - NO VALID CHARACTER!"), TotalEpisodes + 1);
     }
 
-    // Reset EQS target
-    LastEQSTargetLocation = FVector::ZeroVector;
 }
 
 void AMocTrainer::OnCompletion()

@@ -7,6 +7,7 @@
 #include "Team/MocTeamInterface.h"
 #include "Types/StrategyTypes.h"
 #include "Types/GameStateTypes.h"
+#include "Types/EQSTypes.h"
 #include "Combat/CombatStatsInterface.h"
 #include "MocCharacter.generated.h"
 
@@ -16,7 +17,9 @@ class UHealthComponent;
 class UWeaponComponent;
 class UScholaMocAgent;
 class UAIPerceptionStimuliSourceComponent;
+class UActuatorComponent;
 class UBehaviorTree;
+class UEnvQuery;
 class ASquadManager;
 class AMocGameMode;
 class ATeamManager;
@@ -147,6 +150,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UScholaMocAgent* ScholaAgent;
 
+	/** Schola actuator component (wraps TacticalParameterActuator) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UActuatorComponent* TacticalActuatorComponent;
+
 	/** AI perception registration */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UAIPerceptionStimuliSourceComponent* StimuliSource;
@@ -166,6 +173,22 @@ public:
 	/** Vision range for fog-of-war updates (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Vision")
 	float VisionRange; // 30 meters
+
+	//========================================
+	// EQS Configuration
+	//========================================
+
+	/** EQS Query Template for tactical positioning */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
+	UEnvQuery* TacticalEQS;
+
+	/** EQS search radius (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
+	float EQSSearchRadius = 2000.0f;
+
+	/** EQS result acceptance radius for movement (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
+	float EQSAcceptanceRadius = 50.0f;
 
 	/** Niagara system asset for team identification VFX */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|VFX")
@@ -195,6 +218,44 @@ public:
 	EStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
 
 
+	//========================================
+	// v10.2 EQS Weight Storage & Execution
+	//========================================
+
+	/**
+	 * Update EQS weights from Actuator.
+	 * Stores weights on Character (single source of truth).
+	 * Does NOT trigger execution - call PerformTacticalAction() separately.
+	 *
+	 * @param NewWeights - 7-dim EQS weights from RL policy or ONNX inference
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
+	void UpdateTacticalWeights(const FEQSWeightParameters& NewWeights);
+
+	/** Get current EQS weights (read by EQS queries, Trainer, BT tasks) */
+	UFUNCTION(BlueprintPure, Category = "Character|EQS")
+	FEQSWeightParameters GetEQSWeights() const { return CurrentEQSWeights; }
+
+	/**
+	 * Execute tactical action based on current EQS weights.
+	 *
+	 * Training Mode (no AIController/BT):
+	 *   Runs EQS query SYNCHRONOUSLY using RunInstantQuery(),
+	 *   then moves character to best location immediately.
+	 *   Returns after movement is initiated, ensuring post-action state
+	 *   is available for the next GetObservation() call.
+	 *
+	 * Runtime Mode (AIController with BT):
+	 *   Syncs weights to Blackboard. Behavior Tree handles EQS asynchronously.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
+	void PerformTacticalAction();
+
+	/** Get the last EQS target location (for debugging) */
+	UFUNCTION(BlueprintPure, Category = "Character|EQS")
+	FVector GetLastEQSTargetLocation() const { return LastEQSTargetLocation; }
+
+
 public:
 	/** Agent Info for team coordination */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
@@ -218,6 +279,14 @@ protected:
 	/** Current strategy assigned by Squad Commander (v10.2) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
 	EStrategyType CommandedStrategy;
+
+	/** Current EQS weights (set by Actuator, read by EQS/Trainer/BT) */
+	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
+	FEQSWeightParameters CurrentEQSWeights;
+
+	/** Last EQS target location (for debugging) */
+	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
+	FVector LastEQSTargetLocation = FVector::ZeroVector;
 
 	/** Reference to Squad Commander (set on spawn) */
 	TObjectPtr<ASquadManager> SquadCommander;
