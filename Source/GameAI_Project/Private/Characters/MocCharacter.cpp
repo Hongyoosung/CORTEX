@@ -192,8 +192,28 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 {
 	bIsAlive = false;
 
-	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s died - Killer: %s"),
-		*GetName(), DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("None"));
+	// v10.2 FIX: Enhanced death logging to diagnose immediate death after spawn
+	float TimeSinceSpawn = GetWorld() ? (GetWorld()->GetTimeSeconds() - SpawnTime) : -1.0f;
+	float CurrentHealth = HealthComponent ? HealthComponent->GetHealthPercentage() : 0.0f;
+
+	UE_LOG(LogTemp, Error, TEXT("[MocCharacter DEATH] %s died %.2fs after spawn - Health=%.1f%%, Killer=%s, Location=%s"),
+		*GetName(),
+		TimeSinceSpawn,
+		CurrentHealth * 100.0f,
+		DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("None"),
+		*GetActorLocation().ToString());
+
+	if (TimeSinceSpawn < 1.0f)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[MocCharacter DEATH] ⚠️ PREMATURE DEATH - Agent died less than 1s after spawn! Possible initialization bug."));
+	}
+	float InTimeSinceSpawn = GetWorld() ? GetWorld()->GetTimeSeconds() - SpawnTime : -1.0f;
+	UE_LOG(LogTemp, Error, TEXT("[MocCharacter DEATH] %s died %.2fs after spawn - Killer: %s, Health: %.1f, Location: %s"),
+		*GetName(),
+		InTimeSinceSpawn,
+		DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("UNKNOWN"),
+		GetHealthPercentage_Implementation(),
+		*GetActorLocation().ToString());
 
 	// Disable character movement
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
@@ -282,6 +302,14 @@ void AMocCharacter::ResetCharacter()
 	// v10.2 FIX: Must be set before ResetAgent() and RunBehaviorTree()
 	// so that ComputeStatus() sees an alive character if evaluated during reset chain
 	bIsAlive = true;
+
+	// v10.2 FIX: Track spawn time for death diagnostics
+	SpawnTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	// v10.2 DEBUG: Log character state after reset
+	float CurrentHealth = HealthComponent ? HealthComponent->GetHealthPercentage() : 0.0f;
+	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s reset complete - bIsAlive=%d, Health=%.1f%%, Location=%s"),
+		*GetName(), bIsAlive, CurrentHealth * 100.0f, *GetActorLocation().ToString());
 
 	// 6. Restart AI
 	if (AAIController* AI = Cast<AAIController>(GetController()))

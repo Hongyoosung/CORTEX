@@ -75,6 +75,12 @@ private:
 	/** Environment ID assigned by Schola */
 	int32 EnvironmentID = -1;
 
-	/** Minimum time between resets (seconds) to prevent duplicates */
-	static constexpr double DUPLICATE_RESET_THRESHOLD = 0.5;
+	/**
+	 * Minimum time between resets (seconds) to prevent duplicates
+	 * v10.2 FIX: Increased from 0.5s to 1.0s
+	 * - Previous value (0.5s) matched the Schola decision interval exactly
+	 * - This allowed resets at 0.5s intervals because (0.5 - 0.0) < 0.5 is FALSE
+	 * - New value (1.0s) is 2× the decision interval, properly blocking rapid resets
+	 */
+	static constexpr double DUPLICATE_RESET_THRESHOLD = 1.0;
 };

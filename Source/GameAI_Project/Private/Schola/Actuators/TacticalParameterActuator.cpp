@@ -15,8 +15,8 @@ UTacticalParameterActuator::UTacticalParameterActuator()
 
 FBoxSpace UTacticalParameterActuator::GetActionSpace()
 {
-	// v10.2 Action Space: Box([-1, 1]^8)
-	// 8 continuous values representing EQS weights
+	// v10.2 Action Space: Box([-1, 1]^7)
+	// 7 continuous values representing EQS weights
 	//
 	// Dimension mapping:
 	// [0]: EnemyObjectiveProximity
@@ -28,7 +28,7 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 	// [6]: PickupProximity
 
 	FBoxSpace Space;
-	for (int32 i = 0; i < 8; ++i)
+	for (int32 i = 0; i < 7; ++i)  // v10.2: 7 dimensions (was 8 in error)
 	{
 		Space.Add(-1.0f, 1.0f);  // All weights in range [-1, 1]
 	}
@@ -38,10 +38,14 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 
 void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 {
+	// v10.2: TacticalParameterActuator is for RUNTIME GAMEPLAY only, not training
+	// During training, MocTrainer::ApplyAction() handles action application directly
+	// This actuator should only be used when MocAIController is present
+
 	// Validate action dimensions
-	if (Action.Values.Num() != 8)
+	if (Action.Values.Num() != 7)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalParameterActuator] Invalid action dimension: %d (expected 8)"),
+		UE_LOG(LogTemp, Error, TEXT("[TacticalParameterActuator] Invalid action dimension: %d (expected 7)"),
 			Action.Values.Num());
 		return;
 	}
@@ -66,48 +70,70 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 	LastEQSWeights = Weights;
 	ActionCount++;
 
-	// Apply weights to AIController
-	if (MocAgent)
+	// Check if we have a valid MocAgent
+	if (!MocAgent)
 	{
-		AMocAIController* AIController = Cast<AMocAIController>(MocAgent->GetController());
-		if (AIController)
+		// This is expected during training mode - MocTrainer handles actions directly
+		if (bDebugLogging)
 		{
-			AIController->UpdateBlackboardWeights(Weights);
-
-			if (bDebugLogging)
-			{
-				UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Agent=%s, Strategy=%d, Action=%d: %s"),
-					*MocAgent->GetName(),
-					static_cast<int32>(CurrentCommandedStrategy),
-					ActionCount,
-					*Weights.ToString());
-			}
+			UE_LOG(LogTemp, Verbose, TEXT("[TacticalParameterActuator] No MocAgent - likely in training mode (MocTrainer handles actions)"));
 		}
-		else
+		return;
+	}
+
+	// Apply weights to AIController (runtime gameplay mode)
+	AMocAIController* AIController = Cast<AMocAIController>(MocAgent->GetController());
+	if (AIController)
+	{
+		AIController->UpdateBlackboardWeights(Weights);
+
+		if (bDebugLogging)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] AIController not found for %s"),
-				*MocAgent->GetName());
+			UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Agent=%s, Strategy=%d, Action=%d: %s"),
+				*MocAgent->GetName(),
+				static_cast<int32>(CurrentCommandedStrategy),
+				ActionCount,
+				*Weights.ToString());
 		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] MocAgent not found"));
+		// This is expected during training - MocTrainer is the controller, not MocAIController
+		if (bDebugLogging)
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[TacticalParameterActuator] No MocAIController found - likely in training mode (MocTrainer is controller)"));
+		}
 	}
 }
 
 void UTacticalParameterActuator::InitializeActuator()
 {
+	// v10.2: This actuator is for RUNTIME GAMEPLAY with MocAIController
+	// During training, MocTrainer handles action application directly
+	// It's safe for this actuator to fail initialization in training mode
+
 	// Auto-find MocCharacter owner
 	if (bAutoFindMoc)
 	{
 		MocAgent = GetTypedOuter<AMocCharacter>();
 		if (MocAgent)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Initialized for %s"), *MocAgent->GetName());
+			// Check if we're in training mode (has MocTrainer controller)
+			AController* Controller = MocAgent->GetController();
+			if (Controller && Controller->GetClass()->GetName().Contains(TEXT("MocTrainer")))
+			{
+				UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] MocCharacter is in TRAINING mode - this actuator will be inactive (MocTrainer handles actions)"));
+				UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Initialized for %s (Training Mode - Inactive)"), *MocAgent->GetName());
+			}
+			else
+			{
+				UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Initialized for %s (Runtime Mode - Active)"), *MocAgent->GetName());
+			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] Owner is not AMocCharacter"));
+			// This warning is only relevant for runtime mode
+			UE_LOG(LogTemp, Verbose, TEXT("[TacticalParameterActuator] Owner is not AMocCharacter - actuator will be inactive"));
 		}
 	}
 

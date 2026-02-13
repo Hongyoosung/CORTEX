@@ -293,13 +293,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config|FireRate", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AttackRandomCycle = 0.15f;
 
-	/** Burst count (for burst mode) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config|FireRate", meta = (EditCondition = "FireMode == EWeaponFireMode::Burst", ClampMin = "2", ClampMax = "10"))
-	int32 BurstCount = 3;
-
-	/** Delay between burst shots (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config|FireRate", meta = (EditCondition = "FireMode == EWeaponFireMode::Burst", ClampMin = "0.01"))
-	float BurstDelay = 0.1f;
 
 	//--------------------------------------------------------------------------
 	// CONFIGURATION - PROJECTILE

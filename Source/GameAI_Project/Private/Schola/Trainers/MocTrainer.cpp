@@ -111,7 +111,8 @@ void AMocTrainer::Tick(float DeltaTime)
         return; // Skip tick if character is invalid or dead
     }
 
-    CurrentEpisodeSteps++;
+    // v10.2 FIX: Step counter moved to ApplyAction() to match Schola decision rate (2 Hz)
+    // instead of frame rate (60 Hz). Steps should increment per decision, not per frame.
 
     // v10.2: Update commanded strategy cache (may change from Squad Commander)
     EStrategyType NewStrategy = ControlledCharacter->GetCommandedStrategy();
@@ -168,11 +169,16 @@ void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
     // v10.2 FIX: Validate references before applying action
     if (!MocAgent || !IsValid(MocAgent) || !ControlledCharacter || !IsValid(ControlledCharacter))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot apply action - invalid agent or character (MocAgent=%s, Character=%s)"),
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer VALIDATION FAILED] Cannot apply action - invalid agent or character (MocAgent=%s, Character=%s, Step=%d)"),
             MocAgent ? TEXT("Valid") : TEXT("NULL"),
-            ControlledCharacter ? TEXT("Valid") : TEXT("NULL"));
+            ControlledCharacter ? TEXT("Valid") : TEXT("NULL"),
+            CurrentEpisodeSteps);
         return;
     }
+
+    // v10.2 FIX: Increment step counter when action is applied (Schola decision rate)
+    // This ensures steps track actual RL decisions (2 Hz), not frame updates (60 Hz)
+    CurrentEpisodeSteps++;
 
     // v10.2: Action space is 7-dim EQS weights (not 8!)
     // [0]: EnemyObjectiveProximity
@@ -184,7 +190,8 @@ void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
     // [6]: PickupProximity
     if (ActionValues.Num() != 7)
     {
-        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Invalid action size: %d (expected 7 for v10.2)"), ActionValues.Num());
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer DIMENSION ERROR] Invalid action size: %d (expected 7 for v10.2), Step=%d"),
+            ActionValues.Num(), CurrentEpisodeSteps);
         return;
     }
 
@@ -210,11 +217,13 @@ void AMocTrainer::ApplyAction(const TArray<float>& ActionValues)
     // EQS 가중치를 Character의 이동 시스템에 적용
     ApplyEQSWeightsToCharacter(Weights);
 
-    // v10.2 DEBUG: Log applied action periodically
-    if (CurrentEpisodeSteps % 100 == 0)
+    // v10.2 FIX: Log EVERY action for first 10 steps to diagnose agent inactivity
+    if (CurrentEpisodeSteps <= 10 || CurrentEpisodeSteps % 100 == 0)
     {
-        UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Action applied at step %d: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f]"),
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer ACTION] Step %d - Agent: %s, Strategy: %s, Weights: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f]"),
             CurrentEpisodeSteps,
+            *GetName(),
+            *UEnum::GetValueAsString(CachedCommandedStrategy),
             Weights.EnemyObjectiveProximity,
             Weights.AllyObjectiveProximity,
             Weights.CoverDensity,
@@ -937,9 +946,13 @@ void AMocTrainer::DrawTrainingDebug()
 
 EAgentTrainingStatus AMocTrainer::ComputeStatus()
 {
+    // v10.2 FIX: Added detailed logging to track episode completion causes
+
     // Check termination conditions
     if (CurrentEpisodeSteps >= MaxEpisodeSteps)
     {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Episode TRUNCATED - MaxSteps reached (Step %d/%d) - Agent: %s"),
+            CurrentEpisodeSteps, MaxEpisodeSteps, *GetName());
         return EAgentTrainingStatus::Truncated; // Episode truncated due to max steps
     }
 
@@ -952,9 +965,42 @@ EAgentTrainingStatus AMocTrainer::ComputeStatus()
         return EAgentTrainingStatus::Running; // Don't trigger completion for uninitialized state
     }
 
+    // v10.2 FIX: Grace period to prevent false death detection during initialization
+    // Don't check death status until we've taken at least a few actions
+    const int32 InitializationGracePeriod = 3; // Wait for 3 steps before checking death
+
+    if (CurrentEpisodeSteps < InitializationGracePeriod)
+    {
+        // During initialization, only return Running unless character is explicitly invalid
+        UE_LOG(LogTemp, Verbose, TEXT("[MocTrainer] In grace period (Step %d/%d) - skipping death check"),
+            CurrentEpisodeSteps, InitializationGracePeriod);
+        return EAgentTrainingStatus::Running;
+    }
+
+    // After grace period, check if agent actually died
     if (!ControlledCharacter->IsAlive_Implementation())
     {
-        return EAgentTrainingStatus::Completed; // Episode complete (agent died)
+        float currentHealth = ControlledCharacter->GetHealthPercentage_Implementation();
+
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Episode COMPLETED - Agent died (Step %d/%d, Health=%.1f%%) - Agent: %s, Strategy: %s"),
+            CurrentEpisodeSteps,
+            MaxEpisodeSteps,
+            currentHealth * 100.0f,
+            *GetName(),
+            *UEnum::GetValueAsString(CachedCommandedStrategy));
+
+        // Additional validation: Only mark as dead if health is actually 0
+        // This prevents false positives from uninitialized health values
+        if (currentHealth <= 0.0f)
+        {
+            return EAgentTrainingStatus::Completed; // Episode complete (agent died)
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[MocTrainer] IsAlive() returned false but Health=%.1f%% > 0! Possible bug in IsAlive_Implementation(). Continuing episode."),
+                currentHealth * 100.0f);
+            return EAgentTrainingStatus::Running;
+        }
     }
 
     // Check game mode for victory/defeat conditions

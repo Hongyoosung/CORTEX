@@ -222,6 +222,9 @@ protected:
 	/** Reference to Squad Commander (set on spawn) */
 	TObjectPtr<ASquadManager> SquadCommander;
 
+	/** Time when character was last spawned/reset (for death diagnostics) */
+	float SpawnTime = 0.0f;
+
 	TObjectPtr<AMocGameMode> GameMode;
 
 	TObjectPtr<ATeamManager> TM;
