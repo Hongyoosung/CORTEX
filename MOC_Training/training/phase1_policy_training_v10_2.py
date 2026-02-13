@@ -189,6 +189,9 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
                 eqs_weights[i] = self.defend_head(features[i:i+1]).squeeze(0)
             else:  # Support
                 eqs_weights[i] = self.support_head(features[i:i+1]).squeeze(0)
+            
+            if i == 0: 
+                print(f"[DEBUG] Strategy: {strat}, EQS Weights: {eqs_weights[i].detach().cpu().numpy()}")
 
         return eqs_weights
 
@@ -645,6 +648,8 @@ if RLLIB_AVAILABLE:
 
             # Concatenate means and log_stds
             output = torch.cat([eqs_weights, log_stds], dim=-1)  # (B, 16)
+
+            
 
             return output, state
 

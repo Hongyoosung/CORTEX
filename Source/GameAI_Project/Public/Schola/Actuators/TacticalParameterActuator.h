@@ -11,6 +11,7 @@
 
 
 class AMocCharacter;
+class AAbstractTrainer;
 
 
 /** //============================================================
@@ -75,6 +76,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Actuator|v10.2")
 	FEQSWeightParameters GetLastEQSWeights() const { return LastEQSWeights; }
 
+	/** Explicitly set the owning MocCharacter (preferred over GetTypedOuter) */
+	UFUNCTION(BlueprintCallable, Category = "Actuator")
+	void SetOwnerCharacter(AMocCharacter * InCharacter);
+
 
 	//============================================================
 	// Configuration
@@ -111,6 +116,14 @@ protected:
 	int32 ActionCount = 0;
 
 private:
+	/**
+	 * Find the owning MocCharacter through all possible outer chains:
+	 * 1. Direct outer (MocCharacter)
+	 * 2. ActuatorComponent on MocCharacter
+	 * 3. Trainer (AIController) → possessed pawn
+	 */
+	AMocCharacter* FindMocCharacter() const;
+
 	/**
 	 * Convert Box action to EQS weight parameters.
 	 * Maps 7-dim Box([-1,1]) to FEQSWeightParameters struct.

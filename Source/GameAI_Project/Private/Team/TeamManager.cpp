@@ -6,34 +6,26 @@
 #include "Characters/MocCharacter.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Actors/PickupBase.h"
+#include "Data/TeamData.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/GameplayStatics.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
+
 
 ATeamManager::ATeamManager()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Initialize Red Team configuration
-	RedTeamConfig.TeamName = TEXT("Red Team");
-	RedTeamConfig.TeamColor = FLinearColor::Red;
-	RedTeamConfig.AgentSkeletalMesh = nullptr;
-	RedTeamConfig.AgentMaterial = nullptr;
-
-	// Initialize Blue Team configuration
-	BlueTeamConfig.TeamName = TEXT("Blue Team");
-	BlueTeamConfig.TeamColor = FLinearColor::Blue;
-	BlueTeamConfig.AgentSkeletalMesh = nullptr;
-	BlueTeamConfig.AgentMaterial = nullptr;
-
 	// Initialize team states (colors will be synced in BeginPlay)
 	RedTeamState.TeamID = 0;
-	RedTeamState.TeamColor = RedTeamConfig.TeamColor;
+	RedTeamState.TeamColor = FLinearColor::Red; // Updated in BeginPlay from config
 	RedTeamState.Score = 0;
 
 	BlueTeamState.TeamID = 1;
-	BlueTeamState.TeamColor = BlueTeamConfig.TeamColor;
+	BlueTeamState.TeamColor = FLinearColor::Blue; // Updated in BeginPlay from config
 	BlueTeamState.Score = 0;
 }
 
@@ -41,14 +33,6 @@ void ATeamManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Sync team colors from configurations to team state
-	RedTeamState.TeamColor = RedTeamConfig.TeamColor;
-	BlueTeamState.TeamColor = BlueTeamConfig.TeamColor;
-
-	UE_LOG(LogTemp, Log, TEXT("TeamManager: Red Team Color = (R:%.2f, G:%.2f, B:%.2f)"),
-		RedTeamConfig.TeamColor.R, RedTeamConfig.TeamColor.G, RedTeamConfig.TeamColor.B);
-	UE_LOG(LogTemp, Log, TEXT("TeamManager: Blue Team Color = (R:%.2f, G:%.2f, B:%.2f)"),
-		BlueTeamConfig.TeamColor.R, BlueTeamConfig.TeamColor.G, BlueTeamConfig.TeamColor.B);
 
 	// Find or spawn FogOfWarManager
 	if (!FogOfWarManager)
@@ -62,10 +46,6 @@ void ATeamManager::BeginPlay()
 			SpawnParams
 		);
 	}
-
-
-	
-
 }
 
 void ATeamManager::Tick(float DeltaTime)
@@ -176,28 +156,34 @@ AMocCharacter* ATeamManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 		// Get team configuration
 		FTeamConfiguration TeamConfig = GetTeamConfiguration(TeamID);
 
-		// Apply skeletal mesh if specified
-		if (TeamConfig.AgentSkeletalMesh && Agent->GetMesh())
+		// v10.2: Apply Team from TeamData (preferred) or legacy config (fallback)
+		UTeamData* TeamData = TeamConfig.TeamData;
+
+		if (TeamData && Agent->GetMesh())
 		{
-			Agent->GetMesh()->SetSkeletalMesh(TeamConfig.AgentSkeletalMesh);
-			UE_LOG(LogTemp, Log, TEXT("TeamManager: Applied skeletal mesh to %s"),
-				TeamID == 0 ? TEXT("Red") : TEXT("Blue"));
+			// Apply skeletal mesh
+			if (TeamData->SkeletalMesh)
+			{
+				Agent->GetMesh()->SetSkeletalMesh(TeamData->SkeletalMesh);
+				UE_LOG(LogTemp, Log, TEXT("TeamManager: Applied skeletal mesh '%s' to Team %d"),
+					*TeamData->SkeletalMesh->GetName(), TeamID);
+			}
+
+			// Apply animation blueprint
+			if (TeamData->AnimationBlueprint)
+			{
+				Agent->GetMesh()->SetAnimInstanceClass(TeamData->AnimationBlueprint);
+				UE_LOG(LogTemp, Log, TEXT("TeamManager: Applied animation blueprint '%s' to Team %d"),
+					*TeamData->AnimationBlueprint->GetName(), TeamID);
+			}
 		}
 
-		// Apply material if specified
-		if (TeamConfig.AgentMaterial && Agent->GetMesh())
-		{
-			Agent->GetMesh()->SetMaterial(0, TeamConfig.AgentMaterial);
-			UE_LOG(LogTemp, Log, TEXT("TeamManager: Applied material to %s"),
-				TeamID == 0 ? TEXT("Red") : TEXT("Blue"));
-		}
-
-		// Update team color VFX
+		// Update team color VFX (uses TeamState.TeamColor)
 		Agent->UpdateTeamColorVFX();
 
 		// Set agent name
-		FString AgentName = FString::Printf(TEXT("%s_Agent_%d"),
-			TeamID == 0 ? TEXT("Red") : TEXT("Blue"), AgentIndex);
+		FString TeamName = TeamData ? TeamData->TeamName : (TeamID == 0 ? TEXT("Red") : TEXT("Blue"));
+		FString AgentName = FString::Printf(TEXT("%s_Agent_%d"), *TeamName, AgentIndex);
 		Agent->SetActorLabel(AgentName);
 
 		UE_LOG(LogTemp, Log, TEXT("TeamManager: Spawned %s at %s"), *AgentName, *SpawnLocation.ToString());
@@ -521,4 +507,9 @@ void ATeamManager::SetSquadCommander(int32 TeamID, ASquadManager* Commander)
 		BlueTeamCommander = Commander;
 		UE_LOG(LogTemp, Log, TEXT("TeamManager: Blue Team Commander set"));
 	}
+}
+
+FLinearColor FTeamConfiguration::GetTeamColor() const
+{
+	return TeamData.Get()->TeamColor;
 }

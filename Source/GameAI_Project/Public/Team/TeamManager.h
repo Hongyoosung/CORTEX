@@ -12,30 +12,26 @@ class ACapturePoint;
 class APickupBase;
 class AFogOfWarManager;
 class ASquadManager;
+class UTeamData;
 
 /**
- * Team configuration for customization
+ * Team configuration for customization (v10.2: Now data-driven)
+ *
+ * Previously stored individual properties (mesh, materials, colors).
+ * Now uses UTeamData for centralized, reusable configuration.
+ *
+ * Migration: Set AppearanceData asset instead of individual properties.
  */
 USTRUCT(BlueprintType)
 struct FTeamConfiguration
 {
 	GENERATED_BODY()
 
-	/** Team display name */
+	/** Agent appearance data asset (contains mesh, materials, animations, team identity) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
-	FString TeamName = TEXT("Team");
+	TObjectPtr<UTeamData> TeamData = nullptr;
 
-	/** Team color for visual identification */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
-	FLinearColor TeamColor = FLinearColor::Red;
-
-	/** Skeletal mesh for agents on this team */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
-	USkeletalMesh* AgentSkeletalMesh = nullptr;
-
-	/** Material for agent mesh (optional override) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Team")
-	UMaterialInterface* AgentMaterial = nullptr;
+	FLinearColor GetTeamColor() const;
 };
 
 /**

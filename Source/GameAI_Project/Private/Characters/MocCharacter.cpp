@@ -5,7 +5,6 @@
 #include "Combat/Components/WeaponComponent.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Schola/Actuators/TacticalParameterActuator.h"
-#include "Agent/AgentComponents/ActuatorComponent.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
@@ -52,8 +51,6 @@ AMocCharacter::AMocCharacter()
 	ScholaAgent = CreateDefaultSubobject<UScholaMocAgent>(TEXT("ScholaAgent"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 
-
-
 	// Create Niagara VFX component
 	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
 	TeamColorVFX->SetupAttachment(RootComponent);
@@ -84,7 +81,11 @@ AMocCharacter::AMocCharacter()
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
 		MovementComp->MaxWalkSpeed = 600.0f; // 6 m/s
+		MovementComp->bOrientRotationToMovement = true;
 	}
+
+	// Let movement component handle rotation, not controller
+	bUseControllerRotationYaw = false;
 
 	// Auto-possession by AI
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -344,6 +345,10 @@ void AMocCharacter::ResetCharacter()
 void AMocCharacter::UpdateTacticalWeights(const FEQSWeightParameters& NewWeights)
 {
 	CurrentEQSWeights = NewWeights;
+	bWeightsDirty = true;
+
+	// ===== DIAGNOSTIC LOG: Weights stored =====
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-CHARACTER] %s stored new weights, bWeightsDirty=true"), *GetName());
 }
 
 void AMocCharacter::PerformTacticalAction()
@@ -354,13 +359,24 @@ void AMocCharacter::PerformTacticalAction()
 		return;
 	}
 
-	// Determine mode: Runtime (has AIController with Blackboard) vs Training
+	// Get AIController (needed for both training and runtime)
 	AAIController* AICtrl = Cast<AAIController>(GetController());
-	UBlackboardComponent* BB = AICtrl ? AICtrl->GetBlackboardComponent() : nullptr;
-
-	if (AICtrl && BB)
+	if (!AICtrl)
 	{
-		// ===== RUNTIME MODE: Sync weights to Blackboard, let BT handle EQS =====
+		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: No AIController found, cannot perform tactical action"), *GetName());
+		return;
+	}
+
+	UBlackboardComponent* BB = AICtrl->GetBlackboardComponent();
+
+	// In Training mode, skip the BB/BT path and run synchronous EQS directly.
+	// The BB may exist (BT started in BeginPlay) but during training the BT
+	// doesn't drive EQS — the Trainer's Tick does.
+	bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EAgentMode::Training;
+
+	if (BB && !bIsTraining)
+	{
+		// ===== INFERENCE MODE: Sync weights to Blackboard, let BT handle EQS =====
 		BB->SetValueAsFloat(TEXT("Weight_EnemyObj"), CurrentEQSWeights.EnemyObjectiveProximity);
 		BB->SetValueAsFloat(TEXT("Weight_AllyObj"), CurrentEQSWeights.AllyObjectiveProximity);
 		BB->SetValueAsFloat(TEXT("Weight_Cover"), CurrentEQSWeights.CoverDensity);
@@ -371,13 +387,18 @@ void AMocCharacter::PerformTacticalAction()
 		return;
 	}
 
-	// ===== TRAINING MODE: Synchronous EQS execution =====
+	// ===== TRAINING MODE: Run EQS and move with AI navigation =====
 	UEnvQueryManager* EQSManager = UEnvQueryManager::GetCurrent(GetWorld());
 	if (!EQSManager)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: EQS Manager not available"), *GetName());
 		return;
 	}
+
+	// ===== DIAGNOSTIC LOG: EQS query setup =====
+	FVector MyLocation = GetActorLocation();
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS] %s starting EQS query from position: %s"), *GetName(), *MyLocation.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]   SearchRadius: %.0f"), EQSSearchRadius);
 
 	// Build query request with current weights
 	FEnvQueryRequest QueryRequest(TacticalEQS, this);
@@ -390,20 +411,55 @@ void AMocCharacter::PerformTacticalAction()
 	QueryRequest.SetFloatParam(TEXT("PickupWeight"), CurrentEQSWeights.PickupProximity * 2.0f);
 	QueryRequest.SetFloatParam(TEXT("SearchRadius"), EQSSearchRadius);
 
+	// ===== DIAGNOSTIC LOG: Scaled weights =====
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]   Scaled Weights (x2.0):"));
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]     EnemyObjectiveWeight: %.3f"), CurrentEQSWeights.EnemyObjectiveProximity * 2.0f);
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]     AllyObjectiveWeight: %.3f"), CurrentEQSWeights.AllyObjectiveProximity * 2.0f);
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]     CoverDensityWeight: %.3f"), CurrentEQSWeights.CoverDensity * 2.0f);
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]     EnemyVisibilityWeight: %.3f"), CurrentEQSWeights.EnemyVisibility * 2.0f);
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]     AllyProximityWeight: %.3f"), CurrentEQSWeights.AllyProximity * 2.0f);
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]     CombatRangeWeight: %.3f"), CurrentEQSWeights.CombatRange * 2.0f);
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]     PickupWeight: %.3f"), CurrentEQSWeights.PickupProximity * 2.0f);
+
 	// Run EQS SYNCHRONOUSLY (instant query) for training
-	TSharedPtr<FEnvQueryResult> Result = EQSManager->RunInstantQuery(QueryRequest, EEnvQueryRunMode::SingleResult);
+	TSharedPtr<FEnvQueryResult> Result = EQSManager->RunInstantQuery(QueryRequest, EEnvQueryRunMode::AllMatching);
 
 	if (!Result.IsValid() || !Result->IsSuccessful() || Result->Items.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: Synchronous EQS query failed or returned no results"), *GetName());
+		UE_LOG(LogTemp, Error, TEXT("[DIAG-EQS] %s: EQS query FAILED - Result valid=%d, successful=%d, items=%d"),
+			*GetName(), Result.IsValid(), Result.IsValid() && Result->IsSuccessful(), Result.IsValid() ? Result->Items.Num() : 0);
 		return;
+	}
+
+	// ===== DIAGNOSTIC LOG: All candidate positions and scores =====
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS] %s: EQS returned %d candidates"), *GetName(), Result->Items.Num());
+
+	// Log top 5 candidates (or all if less than 5)
+	int32 NumToLog = FMath::Min(10, Result->Items.Num());
+	for (int32 i = 0; i < NumToLog; i++)
+	{
+		FVector CandidatePos = Result->GetItemAsLocation(i);
+		float Score = Result->Items[i].Score;
+		FVector Delta = CandidatePos - MyLocation;
+
+		UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS]   Candidate #%d: Pos=%s, Score=%.3f, Delta=(X:%.0f, Y:%.0f, Z:%.0f), Dist=%.0f"),
+			i, *CandidatePos.ToString(), Score, Delta.X, Delta.Y, Delta.Z, Delta.Size());
 	}
 
 	FVector TargetLocation = Result->GetItemAsLocation(0);
 	LastEQSTargetLocation = TargetLocation;
+	FVector DeltaToTarget = TargetLocation - MyLocation;
 
-	// Move character directly to the best tactical position
-	SetActorLocation(TargetLocation);
+	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS] %s: SELECTED Target: %s (Delta: X=%.0f, Y=%.0f, Z=%.0f, Dist=%.0f)"),
+		*GetName(), *TargetLocation.ToString(), DeltaToTarget.X, DeltaToTarget.Y, DeltaToTarget.Z, DeltaToTarget.Size());
+
+	// Use AI movement to navigate to target (respects MaxWalkSpeed and physics)
+	//AICtrl->MoveToLocation(TargetLocation, EQSAcceptanceRadius, true, true, false, true);
+
+	FAIMoveRequest MoveReq(TargetLocation);
+	MoveReq.SetAcceptanceRadius(EQSAcceptanceRadius);
+	MoveReq.SetUsePathfinding(true);
+	AICtrl->MoveTo(MoveReq);
 }
 
 //========================================
@@ -510,7 +566,7 @@ void AMocCharacter::UpdateTeamColorVFX()
 
 	// Get team color from TeamManager configuration
 	FTeamConfiguration TeamConfig = TM->GetTeamConfiguration(TeamID);
-	FLinearColor TeamColor = TeamConfig.TeamColor;
+	FLinearColor TeamColor = TeamConfig.GetTeamColor();
 
 	// Update Niagara color parameter
 	TeamColorVFX->SetVariableLinearColor(VFXColorParameterName, TeamColor);

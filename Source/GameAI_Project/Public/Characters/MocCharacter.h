@@ -17,7 +17,6 @@ class UHealthComponent;
 class UWeaponComponent;
 class UScholaMocAgent;
 class UAIPerceptionStimuliSourceComponent;
-class UActuatorComponent;
 class UBehaviorTree;
 class UEnvQuery;
 class ASquadManager;
@@ -150,10 +149,6 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UScholaMocAgent* ScholaAgent;
 
-	/** Schola actuator component (wraps TacticalParameterActuator) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UActuatorComponent* TacticalActuatorComponent;
-
 	/** AI perception registration */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UAIPerceptionStimuliSourceComponent* StimuliSource;
@@ -236,16 +231,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|EQS")
 	FEQSWeightParameters GetEQSWeights() const { return CurrentEQSWeights; }
 
+	/** Returns true if weights were updated since last consume, then clears the flag */
+	bool ConsumeNewWeights() { bool b = bWeightsDirty; bWeightsDirty = false; return b; }
+
 	/**
 	 * Execute tactical action based on current EQS weights.
 	 *
-	 * Training Mode (no AIController/BT):
+	 * Training Mode (AIController without Blackboard):
 	 *   Runs EQS query SYNCHRONOUSLY using RunInstantQuery(),
-	 *   then moves character to best location immediately.
-	 *   Returns after movement is initiated, ensuring post-action state
-	 *   is available for the next GetObservation() call.
+	 *   then commands AIController->MoveToLocation() to navigate to best position.
+	 *   Movement respects MaxWalkSpeed (600 cm/s) and physics.
+	 *   Agent walks to target using pathfinding (NOT teleportation).
 	 *
-	 * Runtime Mode (AIController with BT):
+	 * Runtime Mode (AIController with Blackboard/BT):
 	 *   Syncs weights to Blackboard. Behavior Tree handles EQS asynchronously.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
@@ -265,8 +263,6 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Identity")
 	int32 TeamID;
 
-
-
 protected:
 	//========================================
 	// Runtime State
@@ -280,9 +276,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
 	EStrategyType CommandedStrategy;
 
+	
+
 	/** Current EQS weights (set by Actuator, read by EQS/Trainer/BT) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FEQSWeightParameters CurrentEQSWeights;
+
+	/** True when Actuator wrote new weights that haven't been consumed yet */
+	bool bWeightsDirty = false;
 
 	/** Last EQS target location (for debugging) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")

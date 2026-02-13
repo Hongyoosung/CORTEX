@@ -110,6 +110,26 @@ void AMocTrainer::Tick(float DeltaTime)
         CachedCommandedStrategy = NewStrategy;
     }
 
+    // Execute tactical action ONLY when the actuator has written NEW weights.
+    // ConsumeNewWeights() returns true once per Schola Act() step, preventing
+    // redundant EQS queries on every tick (60Hz).
+    if (ControlledCharacter->ConsumeNewWeights())
+    {
+        LastAction = ControlledCharacter->GetEQSWeights();
+        CurrentEpisodeSteps++;
+
+        // ===== DIAGNOSTIC LOG: About to execute tactical action =====
+        UE_LOG(LogTemp, Warning, TEXT("[DIAG-TRAINER] %s executing tactical action at step %d"),
+            *ControlledCharacter->GetName(), CurrentEpisodeSteps);
+        UE_LOG(LogTemp, Warning, TEXT("[DIAG-TRAINER]   Strategy: %s"), *UEnum::GetValueAsString(CachedCommandedStrategy));
+
+        ControlledCharacter->PerformTacticalAction();
+
+        // Update observation state for reward computation
+        PreviousObservation = CurrentObservation;
+        CurrentObservation = GatherStateObservation();
+    }
+
     // Detect enemies and report to Fog of War (replaces BT service)
     DetectAndReportEnemies();
 
@@ -127,34 +147,10 @@ void AMocTrainer::Tick(float DeltaTime)
 
 TArray<float> AMocTrainer::GetObservation()
 {
-    // v10.2: Execute the tactical action IMMEDIATELY before gathering observation.
-    // This ensures the observation reflects the post-action state (State t+1),
-    // maintaining proper MDP: State(t) -> Action(t) -> State(t+1).
-    // The Actuator has already written weights to the Character via UpdateTacticalWeights().
-    if (ControlledCharacter)
-    {
-        LastAction = ControlledCharacter->GetEQSWeights();
-        CurrentEpisodeSteps++;
+    // NOTE: This method is NOT called by Schola (Schola uses MocTacticalObserver::CollectObservations).
+    // It exists as a legacy/utility interface. Tactical execution happens in Tick().
 
-        ControlledCharacter->PerformTacticalAction();
-
-        if (CurrentEpisodeSteps <= 10 || CurrentEpisodeSteps % 100 == 0)
-        {
-            UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Step %d - Agent: %s, Strategy: %s, Weights: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f]"),
-                CurrentEpisodeSteps,
-                *GetName(),
-                *UEnum::GetValueAsString(CachedCommandedStrategy),
-                LastAction.EnemyObjectiveProximity,
-                LastAction.AllyObjectiveProximity,
-                LastAction.CoverDensity,
-                LastAction.EnemyVisibility,
-                LastAction.AllyProximity,
-                LastAction.CombatRange,
-                LastAction.PickupProximity);
-        }
-    }
-
-    // Now gather the POST-action state
+    // Gather current state
     CurrentObservation = GatherStateObservation();
 
     // Observation 유효성 검사

@@ -1,9 +1,11 @@
 // TacticalParameterActuator.cpp - Implementation
 
 #include "Schola/Actuators/TacticalParameterActuator.h"
+#include "Agent/AgentComponents/ActuatorComponent.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
 #include "Characters/MocCharacter.h"
+#include "Training/AbstractTrainer.h"
 
 
 UTacticalParameterActuator::UTacticalParameterActuator()
@@ -56,16 +58,30 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 
 	if (!MocAgent)
 	{
-		MocAgent = GetTypedOuter<AMocCharacter>();
+		MocAgent = FindMocCharacter();
 	}
 
 	if (MocAgent)
 	{
 		MocAgent->UpdateTacticalWeights(Weights);
+
+		// ===== DIAGNOSTIC LOG: Action received =====
+		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR] %s received action #%d"), *MocAgent->GetName(), ActionCount);
+		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   Raw Action: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]"),
+			Action.Values[0], Action.Values[1], Action.Values[2], Action.Values[3],
+			Action.Values[4], Action.Values[5], Action.Values[6]);
+		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   EQS Weights: EnemyObj=%.3f, AllyObj=%.3f, Cover=%.3f, EnemyVis=%.3f, AllyProx=%.3f, Range=%.3f, Pickup=%.3f"),
+			Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity, Weights.CoverDensity,
+			Weights.EnemyVisibility, Weights.AllyProximity, Weights.CombatRange, Weights.PickupProximity);
+		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   Position: %s"), *MocAgent->GetActorLocation().ToString());
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] No MocCharacter owner found"));
+		UObject* MyOuter = GetOuter();
+		FString OuterName = MyOuter ? MyOuter->GetName() : TEXT("NULL");
+		FString OuterClass = MyOuter ? MyOuter->GetClass()->GetName() : TEXT("NULL");
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] Outer is not MocCharacter. Outer: %s (%s)"), *OuterName, *OuterClass);
 		return;
 	}
 
@@ -78,17 +94,18 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 
 void UTacticalParameterActuator::InitializeActuator()
 {
-	if (bAutoFindMoc)
+	if (!MocAgent && bAutoFindMoc)
 	{
-		MocAgent = GetTypedOuter<AMocCharacter>();
-		if (MocAgent)
-		{
-			UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Initialized for %s"), *MocAgent->GetName());
-		}
-		else
-		{
-			UE_LOG(LogTemp, Verbose, TEXT("[TacticalParameterActuator] Owner is not AMocCharacter"));
-		}
+		MocAgent = FindMocCharacter();
+	}
+
+	if (MocAgent)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Initialized for %s"), *MocAgent->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] No MocCharacter found. Call SetOwnerCharacter() explicitly."));
 	}
 
 	CurrentCommandedStrategy = EStrategyType::Assault;
@@ -123,6 +140,44 @@ void UTacticalParameterActuator::SetCommandedStrategy(EStrategyType CommandedStr
 				MocAgent ? *MocAgent->GetName() : TEXT("NULL"),
 				static_cast<int32>(CommandedStrategy));
 		}
+	}
+}
+
+AMocCharacter* UTacticalParameterActuator::FindMocCharacter() const
+{
+	// Path 1: Direct outer is MocCharacter
+	if (AMocCharacter* Direct = GetTypedOuter<AMocCharacter>())
+	{
+		return Direct;
+	}
+
+	// Path 2: Outer is ActuatorComponent on MocCharacter
+	if (UActuatorComponent* OwnerComp = Cast<UActuatorComponent>(GetOuter()))
+	{
+		if (AMocCharacter* FromComp = Cast<AMocCharacter>(OwnerComp->GetOwner()))
+		{
+			return FromComp;
+		}
+	}
+
+	// Path 3: Outer is Trainer (standard Schola path) → get possessed pawn
+	if (AAbstractTrainer* Trainer = GetTypedOuter<AAbstractTrainer>())
+	{
+		if (AMocCharacter* FromPawn = Cast<AMocCharacter>(Trainer->GetPawn()))
+		{
+			return FromPawn;
+		}
+	}
+
+	return nullptr;
+}
+
+void UTacticalParameterActuator::SetOwnerCharacter(AMocCharacter* InCharacter)
+{
+	MocAgent = InCharacter;
+	if (bDebugLogging && MocAgent)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Owner set to %s"), *MocAgent->GetName());
 	}
 }
 

@@ -76,20 +76,26 @@ EQS Contexts provide spatial information for tests. MOC v10.2 includes these con
 
 ## 5. Core Components
 
-### 5.1 Generator: Points in Cone
-This generates candidate positions around the agent.
+### 5.1 Generator: Points Around (360° Coverage)
+This generates candidate positions in a full circle around the agent.
+
+**⚠️ IMPORTANT:** Use a circular generator (not cone) to prevent agents from getting stuck in corners.
 
 **Setup:**
-1. Right-click Root → Add Generator → **Points in Cone**
+1. Right-click Root → Add Generator → **Points: Donut** (or **Points: Circle**)
 2. Configure:
-   - **Aligned Points Per Ring:** 8 (circular distribution)
    - **Number of Rings:** 6 (layered depth)
+   - **Points Per Ring:** 8 (circular distribution)
    - **Ring Distance:** 500.0 (units between rings)
-   - **Cone Direction:** Forward Vector
-   - **Cone Angle:** 180.0 (half-sphere in front)
+   - **Inner Radius:** 0.0 (use full circle, not donut hole)
+   - **Outer Radius:** 3000.0 (maximum search range)
    - **Total Points:** 48 samples (8 × 6)
 
-**Result:** Generates 48 candidate positions in a cone ahead of the agent.
+**Result:** Generates 48 candidate positions in 360° around the agent.
+
+**Why Circular vs Cone?**
+- **Cone (180° forward):** Fails in corners when all forward samples hit walls → agent stuck
+- **Circle (360° coverage):** Always finds escape routes behind/sideways → robust navigation
 
 ---
 
