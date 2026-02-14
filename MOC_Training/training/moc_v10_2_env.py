@@ -392,56 +392,45 @@ if SCHOLA_AVAILABLE:
                     self._sync_max_episode_steps_from_ue5(info_dict)
 
                 # 5. Update episode tracking
+                # v10.2: Individual agent termination is suppressed in _parse_step_result_full().
+                # Only the force timeout below ends episodes (all agents simultaneously).
                 for env_idx in range(self.num_envs):
                     env_agents = self._get_agents_for_env(env_idx)
                     if not env_agents:
                         continue
 
-                    # Increment steps if not done
-                    if not self._env_done_flags.get(env_idx, False):
-                        self._env_episode_steps[env_idx] += 1
+                    # Clear done flag from previous episode (new episode starting)
+                    if self._env_done_flags.get(env_idx, False):
+                        self._env_done_flags[env_idx] = False
+
+                    # Increment steps
+                    self._env_episode_steps[env_idx] += 1
 
                     # Accumulate rewards
                     for aid in env_agents:
                         if aid in reward_dict:
                             self._agent_episode_rewards[aid] = self._agent_episode_rewards.get(aid, 0.0) + reward_dict[aid]
 
-                    # Check if environment finished
-                    all_done = all(
-                        terminated_dict.get(aid, False) or truncated_dict.get(aid, False)
-                        for aid in env_agents
-                    )
-
-                    if all_done and not self._env_done_flags.get(env_idx, False):
-                        # Episode just completed!
+                    # Force timeout: THE primary mechanism for episode boundaries.
+                    # Individual agent termination from UE5 is suppressed to prevent
+                    # mixed-trajectory batches in RLlib's postprocessing.
+                    if self._force_timeout_enabled and self._env_episode_steps[env_idx] >= self._max_episode_steps:
+                        print(f"[STEP] Episode end: Env {env_idx} completed {self._max_episode_steps} steps")
+                        for aid in env_agents:
+                            truncated_dict[aid] = True
                         self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
                         self._env_done_flags[env_idx] = True
-
-                        # Reset tracking for next episode
                         self._env_episodes_completed[env_idx] += 1
                         self._env_episode_steps[env_idx] = 0
                         self._env_episode_start_time[env_idx] = time.time()
                         for aid in env_agents:
                             self._agent_episode_rewards[aid] = 0.0
 
-                    # Detect auto-reset (done -> not done transition)
-                    elif not all_done and self._env_done_flags.get(env_idx, False):
-                        print(f"[STEP] Auto-reset detected for Env {env_idx} (Episode {self._env_episodes_completed[env_idx]})")
-                        self._env_done_flags[env_idx] = False
-
-                    # Backup force timeout
-                    if self._force_timeout_enabled and self._env_episode_steps[env_idx] >= self._max_episode_steps:
-                        if not self._env_done_flags.get(env_idx, False):
-                            print(f"[STEP] ⚠️ FORCE TIMEOUT: Env {env_idx} reached {self._max_episode_steps} steps")
-                            for aid in env_agents:
-                                truncated_dict[aid] = True
-                            self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
-                            self._env_done_flags[env_idx] = True
-                            self._env_episodes_completed[env_idx] += 1
-                            self._env_episode_steps[env_idx] = 0
-                            self._env_episode_start_time[env_idx] = time.time()
-                            for aid in env_agents:
-                                self._agent_episode_rewards[aid] = 0.0
+                # Set __all__ after processing all environments
+                all_envs_done = all(self._env_done_flags.get(i, False) for i in range(self.num_envs))
+                if all_envs_done:
+                    terminated_dict['__all__'] = True
+                    truncated_dict['__all__'] = True
 
                 # 6. Periodic logging
                 should_log = any(
@@ -578,30 +567,43 @@ if SCHOLA_AVAILABLE:
                 else:
                     info_dict[flat_id] = {"env_id": env_idx}
 
-            # Check if ANY environment completed this step.
-            # RLlib requires clean episode boundaries - all agents must terminate together
-            # to prevent mixed-trajectory batches in postprocessing.
-            any_env_done = any(self._env_done_flags.get(i, False) for i in range(self.num_envs))
+            # v10.2 FIX: Suppress individual agent termination signals from UE5.
+            # With AutoResetType.SAME_STEP, individual agent deaths trigger auto-reset
+            # within the same step, creating new sub-episodes that mix trajectories.
+            # RLlib's postprocessing then receives batches with multiple eps_id values,
+            # causing "Batches must only contain steps from a single trajectory" error.
+            # Solution: Only Python's force timeout (in step()) ends episodes,
+            # ensuring all agents terminate simultaneously with clean boundaries.
+            for flat_id in list(terminated_dict.keys()):
+                if flat_id != '__all__':
+                    terminated_dict[flat_id] = False
+                    truncated_dict[flat_id] = False
+            terminated_dict['__all__'] = False
+            truncated_dict['__all__'] = False
 
-            if any_env_done:
-                # Force all agents to terminate so RLlib sees a clean episode boundary
-                for aid in self._agent_ids:
-                    if not terminated_dict.get(aid, False) and not truncated_dict.get(aid, False):
-                        truncated_dict[aid] = True
-                # Mark all environments as done
-                for env_idx in range(self.num_envs):
-                    if not self._env_done_flags.get(env_idx, False):
-                        env_agents = self._get_agents_for_env(env_idx)
-                        self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
-                        self._env_done_flags[env_idx] = True
-                        self._env_episodes_completed[env_idx] += 1
-                        self._env_episode_steps[env_idx] = 0
-                        self._env_episode_start_time[env_idx] = time.time()
-                        for aid in env_agents:
-                            self._agent_episode_rewards[aid] = 0.0
+            # Debug: Log reward structure on first step to diagnose 0-reward issue
+            if not hasattr(self, '_reward_debug_done') or not self._reward_debug_done:
+                self._reward_debug_done = True
+                print(f"[REWARD DEBUG] rew_nested type={type(rew_nested)}")
+                if isinstance(rew_nested, dict):
+                    for ek in list(rew_nested.keys())[:1]:
+                        env_rew = rew_nested[ek]
+                        print(f"[REWARD DEBUG] Env {ek}: type={type(env_rew)}")
+                        if isinstance(env_rew, dict):
+                            for ak in list(env_rew.keys())[:3]:
+                                print(f"[REWARD DEBUG]   Agent {ak} (type={type(ak)}): value={env_rew[ak]} (type={type(env_rew[ak])})")
+                sample_flat_id = next(iter(self._agent_ids))
+                sample_env_idx, sample_agent_idx = self.agent_map[sample_flat_id]
+                print(f"[REWARD DEBUG] Our key types: env_idx={type(sample_env_idx)}({sample_env_idx}), agent_idx={type(sample_agent_idx)}({sample_agent_idx})")
 
-            terminated_dict['__all__'] = any_env_done
-            truncated_dict['__all__'] = any_env_done
+            # Log first non-zero reward occurrence
+            if not hasattr(self, '_first_nonzero_reward_logged'):
+                self._first_nonzero_reward_logged = False
+            if not self._first_nonzero_reward_logged:
+                nonzero = {k: v for k, v in reward_dict.items() if abs(v) > 1e-6}
+                if nonzero:
+                    print(f"[REWARD] First non-zero rewards: {dict(list(nonzero.items())[:3])}")
+                    self._first_nonzero_reward_logged = True
 
             return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 

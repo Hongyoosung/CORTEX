@@ -110,38 +110,14 @@ void AMocTrainer::Tick(float DeltaTime)
         CachedCommandedStrategy = NewStrategy;
     }
 
-    // Execute tactical action ONLY when the actuator has written NEW weights.
-    // ConsumeNewWeights() returns true once per Schola Act() step, preventing
-    // redundant EQS queries on every tick (60Hz).
     if (ControlledCharacter->ConsumeNewWeights())
     {
+        // Actuator가 설정한 최신 가중치 가져오기
         LastAction = ControlledCharacter->GetEQSWeights();
         CurrentEpisodeSteps++;
 
-        // ===== DIAGNOSTIC LOG: About to execute tactical action =====
-        UE_LOG(LogTemp, Warning, TEXT("[DIAG-TRAINER] %s executing tactical action at step %d"),
-            *ControlledCharacter->GetName(), CurrentEpisodeSteps);
-        UE_LOG(LogTemp, Warning, TEXT("[DIAG-TRAINER]   Strategy: %s"), *UEnum::GetValueAsString(CachedCommandedStrategy));
-
+        // 물리/로직적 행동 실행
         ControlledCharacter->PerformTacticalAction();
-
-        // Update observation state for reward computation
-        PreviousObservation = CurrentObservation;
-        CurrentObservation = GatherStateObservation();
-
-        // Pre-compute reward for this action step.
-        // ComputeReward() is called every tick by Schola's Think(), but the
-        // meaningful state diff only exists right after a new action is applied.
-        // Cache the reward here so ComputeReward() returns the correct value
-        // on every subsequent tick until the next action arrives.
-        EStrategyType CommandedStrategy = ControlledCharacter->GetCommandedStrategy();
-        CachedStepReward = ComputeCommandedStrategyReward(
-            CommandedStrategy,
-            PreviousObservation,
-            CurrentObservation,
-            LastAction
-        );
-        bHasNewReward = true;
     }
 
     // Detect enemies and report to Fog of War (replaces BT service)
@@ -188,10 +164,10 @@ TArray<float> AMocTrainer::GetObservation()
 
 float AMocTrainer::ComputeReward()
 {
-    // v10.2 FIX: ComputeReward() is called every tick by Schola's Think() loop,
-    // but meaningful state changes only occur when a new action is applied (ConsumeNewWeights).
-    // Use cached reward to ensure Python receives the correct per-action reward,
-    // not the near-zero diff between identical consecutive-tick observations.
+    // v10.2 CRITICAL FIX: Return ACCUMULATED reward and reset for next cycle.
+    // Schola calls this method periodically (not necessarily aligned with actions).
+    // We accumulate rewards in CachedStepReward during Tick(), then return the total
+    // when Schola queries. This ensures Python receives all rewards regardless of timing.
 
     if (!MocAgent || !IsValid(MocAgent))
     {
@@ -203,36 +179,44 @@ float AMocTrainer::ComputeReward()
         return 0.0f;
     }
 
-    // Return cached reward from the last action step.
-    // bHasNewReward is set in Tick() when ConsumeNewWeights() triggers.
-    // On the first call after a new action, return the real reward and log.
-    // On subsequent ticks (before next action), return 0 to avoid double-counting.
-    if (bHasNewReward)
+    // 1. 현재 상태를 새로 수집 (가장 최신 상태 보장)
+    FObservation LatestObservation = GatherStateObservation();
+
+    // 2. 현재 상태 업데이트 (멤버 변수 동기화)
+    CurrentObservation = LatestObservation;
+
+    // 3. 이전 상태(PreviousObservation)와 현재 상태(CurrentObservation)를 비교하여 보상 계산
+    // LastAction은 Tick에서 업데이트된 가장 최근 값을 사용
+    float RewardToReturn = ComputeCommandedStrategyReward(
+        CachedCommandedStrategy,
+        PreviousObservation,
+        CurrentObservation,
+        LastAction
+    );
+
+    // 4. 로깅 (Transition)
+    if (bLogTransitions && TransitionLogger)
     {
-        bHasNewReward = false;
-
-        float StepReward = CachedStepReward;
-        EpisodeReward += StepReward;
-
-        // Transition 로깅 (World Model 학습용)
-        if (bLogTransitions && TransitionLogger)
-        {
-            EStrategyType CommandedStrategy = ControlledCharacter->GetCommandedStrategy();
-            LogTransition(
-                PreviousObservation,
-                CommandedStrategy,
-                LastAction,
-                StepReward,
-                CurrentObservation,
-                IsEpisodeDone()
-            );
-        }
-
-        return StepReward;
+        LogTransition(
+            PreviousObservation,
+            CachedCommandedStrategy,
+            LastAction,
+            RewardToReturn,
+            CurrentObservation,
+            IsEpisodeDone()
+        );
     }
 
-    // No new action since last reward computation - return 0
-    return 0.0f;
+    // 5. 다음 스텝을 위해 "현재 상태"를 "이전 상태"로 저장
+    PreviousObservation = CurrentObservation;
+
+    // 6. 에피소드 총 보상 누적
+    EpisodeReward += RewardToReturn;
+
+    // 디버그 로그: 만약 0.0이 계속 나온다면 로직 문제, 하지만 이제 TimePenalty라도 나와야 함
+    // UE_LOG(LogTemp, Verbose, TEXT("[MocTrainer] Computed Reward: %.4f"), RewardToReturn);
+
+    return RewardToReturn;
 }
 
 bool AMocTrainer::IsEpisodeDone()
