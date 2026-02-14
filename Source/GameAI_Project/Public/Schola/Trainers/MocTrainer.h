@@ -177,6 +177,14 @@ protected:
     float CachedStepReward = 0.0f;
     bool bHasNewReward = false;
 
+    /**
+     * Monotonically increasing lifetime reward counter.
+     * NEVER reset — Python computes per-step rewards as deltas.
+     * This bypasses Schola's reward channel which consumes ComputeReward()
+     * return values before they reach Python via gRPC.
+     */
+    float CumulativeLifetimeReward = 0.0f;
+
     /** Transition 로거 */
     UPROPERTY()
     UScholaTransitionLogger* TransitionLogger;

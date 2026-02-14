@@ -581,29 +581,51 @@ if SCHOLA_AVAILABLE:
             terminated_dict['__all__'] = False
             truncated_dict['__all__'] = False
 
-            # Debug: Log reward structure on first step to diagnose 0-reward issue
-            if not hasattr(self, '_reward_debug_done') or not self._reward_debug_done:
-                self._reward_debug_done = True
-                print(f"[REWARD DEBUG] rew_nested type={type(rew_nested)}")
-                if isinstance(rew_nested, dict):
-                    for ek in list(rew_nested.keys())[:1]:
-                        env_rew = rew_nested[ek]
-                        print(f"[REWARD DEBUG] Env {ek}: type={type(env_rew)}")
-                        if isinstance(env_rew, dict):
-                            for ak in list(env_rew.keys())[:3]:
-                                print(f"[REWARD DEBUG]   Agent {ak} (type={type(ak)}): value={env_rew[ak]} (type={type(env_rew[ak])})")
-                sample_flat_id = next(iter(self._agent_ids))
-                sample_env_idx, sample_agent_idx = self.agent_map[sample_flat_id]
-                print(f"[REWARD DEBUG] Our key types: env_idx={type(sample_env_idx)}({sample_env_idx}), agent_idx={type(sample_agent_idx)}({sample_agent_idx})")
+            # v10.2 REWARD FIX: Use CumulativeLifetimeReward from info as fallback.
+            # Schola calls ComputeReward() multiple times per step; only the last call's
+            # return value is sent to Python. With idempotent ComputeReward(), all calls
+            # now return the same cached value. But as a safety net, we also extract
+            # rewards from the info channel using a monotonic cumulative counter.
+            if not hasattr(self, '_prev_cumulative_rewards'):
+                self._prev_cumulative_rewards = {}
 
-            # Log first non-zero reward occurrence
-            if not hasattr(self, '_first_nonzero_reward_logged'):
-                self._first_nonzero_reward_logged = False
-            if not self._first_nonzero_reward_logged:
-                nonzero = {k: v for k, v in reward_dict.items() if abs(v) > 1e-6}
-                if nonzero:
-                    print(f"[REWARD] First non-zero rewards: {dict(list(nonzero.items())[:3])}")
-                    self._first_nonzero_reward_logged = True
+            info_reward_used = False
+            for flat_id in list(reward_dict.keys()):
+                info = info_dict.get(flat_id, {})
+                if 'CumulativeLifetimeReward' in info:
+                    try:
+                        curr_cumulative = float(info['CumulativeLifetimeReward'])
+                        prev_cumulative = self._prev_cumulative_rewards.get(flat_id, 0.0)
+                        info_step_reward = curr_cumulative - prev_cumulative
+                        self._prev_cumulative_rewards[flat_id] = curr_cumulative
+
+                        schola_reward = reward_dict[flat_id]
+                        # Use info reward if Schola reward looks wrong (near-zero when info shows real reward)
+                        if abs(schola_reward) < 1e-4 and abs(info_step_reward) > 1e-4:
+                            reward_dict[flat_id] = info_step_reward
+                            if not info_reward_used:
+                                info_reward_used = True
+                        elif abs(info_step_reward) > 1e-4:
+                            # Both have values - prefer info channel (more reliable)
+                            reward_dict[flat_id] = info_step_reward
+                    except (ValueError, TypeError):
+                        pass  # Keep Schola reward
+
+            # Debug logging (first few steps)
+            if not hasattr(self, '_reward_debug_count'):
+                self._reward_debug_count = 0
+            self._reward_debug_count += 1
+            if self._reward_debug_count <= 3:
+                sample_id = next(iter(reward_dict.keys()))
+                sample_info = info_dict.get(sample_id, {})
+                print(f"[REWARD DEBUG] Step {self._reward_debug_count}:")
+                print(f"  Schola raw: {rew_nested.get(0, {})}")
+                print(f"  reward_dict[{sample_id}] = {reward_dict[sample_id]:.6f}")
+                print(f"  Info CumulativeLifetimeReward: {sample_info.get('CumulativeLifetimeReward', 'N/A')}")
+                print(f"  Info LastStepReward: {sample_info.get('LastStepReward', 'N/A')}")
+                print(f"  Info EpisodeReward: {sample_info.get('EpisodeReward', 'N/A')}")
+            if info_reward_used and self._reward_debug_count == 1:
+                print(f"[REWARD] Using info-channel rewards (CumulativeLifetimeReward delta) instead of Schola rewards")
 
             return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 

@@ -116,8 +116,15 @@ void AMocTrainer::Tick(float DeltaTime)
         LastAction = ControlledCharacter->GetEQSWeights();
         CurrentEpisodeSteps++;
 
+        // Capture state BEFORE executing action (for reward computation)
+        PreviousObservation = CurrentObservation;
+
         // 물리/로직적 행동 실행
         ControlledCharacter->PerformTacticalAction();
+
+        // Signal that a new reward needs to be computed
+        // ComputeReward() will compute and cache the reward on first call
+        bHasNewReward = true;
     }
 
     // Detect enemies and report to Fog of War (replaces BT service)
@@ -164,59 +171,56 @@ TArray<float> AMocTrainer::GetObservation()
 
 float AMocTrainer::ComputeReward()
 {
-    // v10.2 CRITICAL FIX: Return ACCUMULATED reward and reset for next cycle.
-    // Schola calls this method periodically (not necessarily aligned with actions).
-    // We accumulate rewards in CachedStepReward during Tick(), then return the total
-    // when Schola queries. This ensures Python receives all rewards regardless of timing.
-
-    if (!MocAgent || !IsValid(MocAgent))
-    {
-        return 0.0f;
-    }
+    // v10.2 FIX: IDEMPOTENT reward computation.
+    // Schola calls ComputeReward() MULTIPLE TIMES per Python step (once per game tick).
+    // Without idempotency, the first call computes the real reward and updates state,
+    // then subsequent calls see no state change and return ~0 (just TimePenalty).
+    // EpisodeReward accumulated all calls (correct total), but Python received only
+    // the LAST call's near-zero value.
+    //
+    // Fix: Compute reward ONCE when bHasNewReward is set (by Tick's ConsumeNewWeights),
+    // cache it, and return the cached value on all subsequent calls.
 
     if (!ControlledCharacter || !IsValid(ControlledCharacter))
     {
         return 0.0f;
     }
 
-    // 1. 현재 상태를 새로 수집 (가장 최신 상태 보장)
-    FObservation LatestObservation = GatherStateObservation();
-
-    // 2. 현재 상태 업데이트 (멤버 변수 동기화)
-    CurrentObservation = LatestObservation;
-
-    // 3. 이전 상태(PreviousObservation)와 현재 상태(CurrentObservation)를 비교하여 보상 계산
-    // LastAction은 Tick에서 업데이트된 가장 최근 값을 사용
-    float RewardToReturn = ComputeCommandedStrategyReward(
-        CachedCommandedStrategy,
-        PreviousObservation,
-        CurrentObservation,
-        LastAction
-    );
-
-    // 4. 로깅 (Transition)
-    if (bLogTransitions && TransitionLogger)
+    if (bHasNewReward)
     {
-        LogTransition(
-            PreviousObservation,
+        // Gather LATEST observation (state after action effects have propagated)
+        CurrentObservation = GatherStateObservation();
+
+        // Compute reward from state transition (PreviousObs → CurrentObs)
+        CachedStepReward = ComputeCommandedStrategyReward(
             CachedCommandedStrategy,
-            LastAction,
-            RewardToReturn,
+            PreviousObservation,
             CurrentObservation,
-            IsEpisodeDone()
+            LastAction
         );
+
+        // Accumulate ONCE per action
+        EpisodeReward += CachedStepReward;
+        CumulativeLifetimeReward += CachedStepReward;
+
+        // Log transition
+        if (bLogTransitions && TransitionLogger)
+        {
+            LogTransition(
+                PreviousObservation,
+                CachedCommandedStrategy,
+                LastAction,
+                CachedStepReward,
+                CurrentObservation,
+                IsEpisodeDone()
+            );
+        }
+
+        // Mark as consumed — subsequent calls return the same cached value
+        bHasNewReward = false;
     }
 
-    // 5. 다음 스텝을 위해 "현재 상태"를 "이전 상태"로 저장
-    PreviousObservation = CurrentObservation;
-
-    // 6. 에피소드 총 보상 누적
-    EpisodeReward += RewardToReturn;
-
-    // 디버그 로그: 만약 0.0이 계속 나온다면 로직 문제, 하지만 이제 TimePenalty라도 나와야 함
-    // UE_LOG(LogTemp, Verbose, TEXT("[MocTrainer] Computed Reward: %.4f"), RewardToReturn);
-
-    return RewardToReturn;
+    return CachedStepReward;
 }
 
 bool AMocTrainer::IsEpisodeDone()
@@ -863,6 +867,8 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
     Info.Add(TEXT("CurrentSteps"), FString::FromInt(CurrentEpisodeSteps));
     Info.Add(TEXT("MaxSteps"), FString::FromInt(MaxEpisodeSteps));
     Info.Add(TEXT("EpisodeReward"), FString::Printf(TEXT("%.3f"), EpisodeReward));
+    Info.Add(TEXT("CumulativeLifetimeReward"), FString::Printf(TEXT("%.6f"), CumulativeLifetimeReward));
+    Info.Add(TEXT("LastStepReward"), FString::Printf(TEXT("%.6f"), CachedStepReward));
     Info.Add(TEXT("AverageReward"), FString::Printf(TEXT("%.3f"),
         TotalEpisodes > 0 ? CumulativeReward / TotalEpisodes : 0.0f));
     Info.Add(TEXT("AverageLength"), FString::Printf(TEXT("%.1f"), AverageEpisodeLength));
