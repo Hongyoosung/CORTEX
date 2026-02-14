@@ -128,6 +128,20 @@ void AMocTrainer::Tick(float DeltaTime)
         // Update observation state for reward computation
         PreviousObservation = CurrentObservation;
         CurrentObservation = GatherStateObservation();
+
+        // Pre-compute reward for this action step.
+        // ComputeReward() is called every tick by Schola's Think(), but the
+        // meaningful state diff only exists right after a new action is applied.
+        // Cache the reward here so ComputeReward() returns the correct value
+        // on every subsequent tick until the next action arrives.
+        EStrategyType CommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+        CachedStepReward = ComputeCommandedStrategyReward(
+            CommandedStrategy,
+            PreviousObservation,
+            CurrentObservation,
+            LastAction
+        );
+        bHasNewReward = true;
     }
 
     // Detect enemies and report to Fog of War (replaces BT service)
@@ -139,7 +153,7 @@ void AMocTrainer::Tick(float DeltaTime)
     // Debug visualization
     if (bEnableDebugVisualization)
     {
-        DrawTrainingDebug();
+        DrawTrainingDebug(DeltaTime);
     }
 }
 
@@ -174,53 +188,51 @@ TArray<float> AMocTrainer::GetObservation()
 
 float AMocTrainer::ComputeReward()
 {
-    // v10.2 FIX: Improved validation and error reporting
+    // v10.2 FIX: ComputeReward() is called every tick by Schola's Think() loop,
+    // but meaningful state changes only occur when a new action is applied (ConsumeNewWeights).
+    // Use cached reward to ensure Python receives the correct per-action reward,
+    // not the near-zero diff between identical consecutive-tick observations.
+
     if (!MocAgent || !IsValid(MocAgent))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot compute reward - MocAgent is %s (Step: %d)"),
-            MocAgent ? TEXT("INVALID") : TEXT("NULL"),
-            CurrentEpisodeSteps);
         return 0.0f;
     }
 
     if (!ControlledCharacter || !IsValid(ControlledCharacter))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Cannot compute reward - ControlledCharacter is %s (Step: %d)"),
-            ControlledCharacter ? TEXT("INVALID") : TEXT("NULL"),
-            CurrentEpisodeSteps);
         return 0.0f;
     }
 
-    // v10.2: Get commanded strategy from Character (set by Squad Commander)
-    EStrategyType CommandedStrategy = ControlledCharacter->GetCommandedStrategy();
-
-    // 현재 상태와 이전 상태 비교하여 보상 계산
-    float StepReward = ComputeCommandedStrategyReward(
-        CommandedStrategy,
-        PreviousObservation,
-        CurrentObservation,
-        LastAction
-    );
-
-    EpisodeReward += StepReward;
-
-    // Transition 로깅 (World Model 학습용)
-    if (bLogTransitions && TransitionLogger)
+    // Return cached reward from the last action step.
+    // bHasNewReward is set in Tick() when ConsumeNewWeights() triggers.
+    // On the first call after a new action, return the real reward and log.
+    // On subsequent ticks (before next action), return 0 to avoid double-counting.
+    if (bHasNewReward)
     {
-        LogTransition(
-            PreviousObservation,
-            CommandedStrategy,
-            LastAction,
-            StepReward,
-            CurrentObservation,
-            IsEpisodeDone()
-        );
+        bHasNewReward = false;
+
+        float StepReward = CachedStepReward;
+        EpisodeReward += StepReward;
+
+        // Transition 로깅 (World Model 학습용)
+        if (bLogTransitions && TransitionLogger)
+        {
+            EStrategyType CommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+            LogTransition(
+                PreviousObservation,
+                CommandedStrategy,
+                LastAction,
+                StepReward,
+                CurrentObservation,
+                IsEpisodeDone()
+            );
+        }
+
+        return StepReward;
     }
 
-    // 이전 상태 업데이트
-    PreviousObservation = CurrentObservation;
-
-    return StepReward;
+    // No new action since last reward computation - return 0
+    return 0.0f;
 }
 
 bool AMocTrainer::IsEpisodeDone()
@@ -632,9 +644,11 @@ void AMocTrainer::LogTransition(
     TransitionLogger->RecordTransition(StateBefore, Option, CompositeReward, StateAfter, bDone);
 }
 
-void AMocTrainer::DrawTrainingDebug()
+void AMocTrainer::DrawTrainingDebug(float DeltaTime)
 {
     if (!ControlledCharacter || !GetWorld()) return;
+
+    float DrawDuration = DeltaTime * 1.2f;
 
     FVector CharLocation = ControlledCharacter->GetActorLocation();
 
@@ -674,13 +688,12 @@ void AMocTrainer::DrawTrainingDebug()
 
     DrawDebugString(
         GetWorld(),
-        CharLocation + FVector(0, 0, 250),
+        CharLocation + FVector(0, 0, 300),
         DebugText,
         nullptr,
         FColor::Cyan,
-        0.0f,
-        true,
-        1.2f
+        DrawDuration,
+        true
     );
 
     // === EQS Target Location ===
@@ -694,9 +707,7 @@ void AMocTrainer::DrawTrainingDebug()
             16,
             FColor::Yellow,
             false,
-            0.0f,
-            0,
-            5.0f
+            DrawDuration
         );
 
         DrawDebugLine(
@@ -705,9 +716,7 @@ void AMocTrainer::DrawTrainingDebug()
             LastEQSTargetLocation,
             FColor::Yellow,
             false,
-            0.0f,
-            0,
-            2.0f
+            DrawDuration
         );
 
         float DistToTarget = FVector::Dist(CharLocation, LastEQSTargetLocation);
@@ -717,7 +726,7 @@ void AMocTrainer::DrawTrainingDebug()
             FString::Printf(TEXT("Target\nDist: %.0f"), DistToTarget),
             nullptr,
             FColor::Yellow,
-            0.0f,
+            DrawDuration,
             true
         );
     }
@@ -734,9 +743,7 @@ void AMocTrainer::DrawTrainingDebug()
                 12,
                 FColor::Green,
                 false,
-                0.0f,
-                0,
-                2.0f
+                DrawDuration
             );
         }
     }
@@ -753,9 +760,7 @@ void AMocTrainer::DrawTrainingDebug()
                 12,
                 FColor::Red,
                 false,
-                0.0f,
-                0,
-                2.0f
+                DrawDuration
             );
 
             DrawDebugLine(
@@ -764,9 +769,7 @@ void AMocTrainer::DrawTrainingDebug()
                 CurrentObservation.EnemyPositions[i] + FVector(0, 0, 90),
                 FColor::Red,
                 false,
-                0.0f,
-                0,
-                1.0f
+                DrawDuration
             );
         }
     }
@@ -796,7 +799,7 @@ void AMocTrainer::DrawTrainingDebug()
         8,
         StrategyColor,
         false,
-        0.0f,
+        DrawDuration,
         0,
         3.0f
     );
@@ -914,18 +917,16 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
 
 void AMocTrainer::ResetTrainer()
 {
-    // v10.2 FIX: Update training statistics on episode boundary.
-    // The Schola framework calls ResetTrainer() at the start of each new episode.
-    // OnCompletion() may not be called if the environment is marked completed
-    // through a path that bypasses Think()'s transition detection.
-    if (CurrentEpisodeSteps > 0)
-    {
-        UpdateTrainingStatistics();
-    }
+    // Note: UpdateTrainingStatistics() is called in OnCompletion().
+    // Do NOT call it here to avoid double-counting episodes and rewards.
+    // If OnCompletion() is not called for some code path, the statistics
+    // for that episode will be lost, which is preferable to double-counting.
 
     // Reset per-episode state
     CurrentEpisodeSteps = 0;
     EpisodeReward = 0.0f;
+    CachedStepReward = 0.0f;
+    bHasNewReward = false;
 
     // v10.2 FIX: Re-validate agent and character references after reset
     // References may become stale if characters were destroyed/recreated during reset

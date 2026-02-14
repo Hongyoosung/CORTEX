@@ -123,8 +123,9 @@ if SCHOLA_AVAILABLE:
             self._env_done_flags = {i: False for i in range(self.num_envs)}
             self._agent_episode_rewards = {}  # Cumulative rewards per agent per episode
 
-            # Episode timeout (backup mechanism)
-            self._max_episode_steps = 6000  # 60s at 100Hz
+            # Episode timeout (backup mechanism - will sync from UE5)
+            self._max_episode_steps = 6000  # Default fallback, synced from UE5 on first step
+            self._max_episode_steps_synced = False
             self._force_timeout_enabled = True
 
             # Performance metrics
@@ -165,6 +166,37 @@ if SCHOLA_AVAILABLE:
         def _get_agents_for_env(self, physical_env_idx):
             """Get all agent IDs belonging to a physical Schola environment."""
             return [aid for aid in self._agent_ids if aid.startswith(f"agent_{physical_env_idx}_")]
+
+        def _sync_max_episode_steps_from_ue5(self, info_dict):
+            """
+            Sync max_episode_steps from UE5 trainer info.
+
+            UE5 MocTrainer includes 'MaxSteps' in GetInfo().
+            This ensures Python uses the same timeout as UE5.
+            """
+            # Debug: Show first agent's info to verify data flow
+            if info_dict:
+                first_agent = next(iter(info_dict.keys()))
+                first_info = info_dict[first_agent]
+                print(f"[DEBUG] First agent info keys: {list(first_info.keys()) if isinstance(first_info, dict) else 'not a dict'}")
+
+            for flat_id, info in info_dict.items():
+                if isinstance(info, dict) and 'MaxSteps' in info:
+                    try:
+                        ue5_max_steps = int(info['MaxSteps'])
+                        if ue5_max_steps > 0:
+                            self._max_episode_steps = ue5_max_steps
+                            self._max_episode_steps_synced = True
+                            print(f"[MOC v10.2] ✅ Synced max_episode_steps from UE5: {self._max_episode_steps}")
+                            return
+                    except (ValueError, TypeError) as e:
+                        print(f"[DEBUG] Error parsing MaxSteps: {e}")
+
+            # If not synced, use default and warn
+            if not self._max_episode_steps_synced:
+                print(f"[MOC v10.2] ⚠️ Could not sync max_episode_steps from UE5, using default: {self._max_episode_steps}")
+                print(f"[DEBUG] Checked {len(info_dict)} agents, none had 'MaxSteps' in info")
+                self._max_episode_steps_synced = True
 
         def _get_all_action_keys(self):
             """Extract action keys from Schola action definitions."""
@@ -355,6 +387,10 @@ if SCHOLA_AVAILABLE:
                 # 4. Parse step result
                 obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict = self._parse_step_result_full(step_result)
 
+                # 4.1 Sync max_episode_steps from UE5 on first step
+                if not self._max_episode_steps_synced:
+                    self._sync_max_episode_steps_from_ue5(info_dict)
+
                 # 5. Update episode tracking
                 for env_idx in range(self.num_envs):
                     env_agents = self._get_agents_for_env(env_idx)
@@ -435,11 +471,12 @@ if SCHOLA_AVAILABLE:
         def _parse_step_result(self, step_result):
             """Parse step result into observations and info (for reset)."""
             if len(step_result) == 5:
-                obs_nested, _, _, _, _ = step_result
+                obs_nested, _, _, _, info_nested = step_result
             elif len(step_result) == 4:
-                obs_nested, _, _, _ = step_result
+                obs_nested, _, _, info_nested = step_result
             else:
                 obs_nested = step_result[0] if step_result else {}
+                info_nested = {}
 
             obs_dict = {}
             info_dict = {}
@@ -470,7 +507,13 @@ if SCHOLA_AVAILABLE:
                 # Cache strategy for this agent
                 self._agent_strategies[flat_id] = strategy_idx
                 obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
-                info_dict[flat_id] = {"env_id": env_idx}
+
+                # Info (extract from UE5's GetInfo())
+                ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
+                if isinstance(ue5_info, dict):
+                    info_dict[flat_id] = {"env_id": env_idx, **ue5_info}
+                else:
+                    info_dict[flat_id] = {"env_id": env_idx}
 
             return obs_dict, info_dict
 
@@ -528,24 +571,52 @@ if SCHOLA_AVAILABLE:
                 terminated_dict[flat_id] = is_term
                 truncated_dict[flat_id] = is_trunc
 
-                # Info
-                info_dict[flat_id] = {"env_id": env_idx}
+                # Info (extract from UE5's GetInfo())
+                ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
+                if isinstance(ue5_info, dict):
+                    info_dict[flat_id] = {"env_id": env_idx, **ue5_info}
+                else:
+                    info_dict[flat_id] = {"env_id": env_idx}
 
-            # Check if all agents done
-            all_agents_done = all(
-                terminated_dict.get(aid, False) or truncated_dict.get(aid, False)
-                for aid in self._agent_ids
-            )
-            terminated_dict['__all__'] = all_agents_done
-            truncated_dict['__all__'] = all_agents_done
+            # Check if ANY environment completed this step.
+            # RLlib requires clean episode boundaries - all agents must terminate together
+            # to prevent mixed-trajectory batches in postprocessing.
+            any_env_done = any(self._env_done_flags.get(i, False) for i in range(self.num_envs))
+
+            if any_env_done:
+                # Force all agents to terminate so RLlib sees a clean episode boundary
+                for aid in self._agent_ids:
+                    if not terminated_dict.get(aid, False) and not truncated_dict.get(aid, False):
+                        truncated_dict[aid] = True
+                # Mark all environments as done
+                for env_idx in range(self.num_envs):
+                    if not self._env_done_flags.get(env_idx, False):
+                        env_agents = self._get_agents_for_env(env_idx)
+                        self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
+                        self._env_done_flags[env_idx] = True
+                        self._env_episodes_completed[env_idx] += 1
+                        self._env_episode_steps[env_idx] = 0
+                        self._env_episode_start_time[env_idx] = time.time()
+                        for aid in env_agents:
+                            self._agent_episode_rewards[aid] = 0.0
+
+            terminated_dict['__all__'] = any_env_done
+            truncated_dict['__all__'] = any_env_done
 
             return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 
         def _process_obs(self, raw_data):
             """Process observation from reset."""
             obs_nested = raw_data
+            info_nested = {}
+
             if isinstance(raw_data, tuple):
-                obs_nested = raw_data[0]
+                if len(raw_data) >= 5:
+                    obs_nested, _, _, _, info_nested = raw_data
+                elif len(raw_data) >= 4:
+                    obs_nested, _, _, info_nested = raw_data
+                else:
+                    obs_nested = raw_data[0]
 
             obs_dict = {}
             info_dict = {}
@@ -575,7 +646,13 @@ if SCHOLA_AVAILABLE:
                 # Cache strategy for this agent
                 self._agent_strategies[flat_id] = strategy_idx
                 obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
-                info_dict[flat_id] = {"env_id": env_idx}
+
+                # Info (extract from UE5's GetInfo())
+                ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
+                if isinstance(ue5_info, dict):
+                    info_dict[flat_id] = {"env_id": env_idx, **ue5_info}
+                else:
+                    info_dict[flat_id] = {"env_id": env_idx}
 
             return obs_dict, info_dict
 

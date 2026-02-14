@@ -173,6 +173,10 @@ protected:
     /** 마지막 Action */
     FEQSWeightParameters LastAction;
 
+    /** Cached reward from last action step (prevents re-computation on every tick) */
+    float CachedStepReward = 0.0f;
+    bool bHasNewReward = false;
+
     /** Transition 로거 */
     UPROPERTY()
     UScholaTransitionLogger* TransitionLogger;
@@ -206,7 +210,7 @@ public:
 
     /** 비주얼 디버깅 그리기 */
     UFUNCTION(BlueprintCallable, Category="Debug")
-    void DrawTrainingDebug();
+    void DrawTrainingDebug(float DeltaTime);
 
     /** EQS 가중치 유효성 검사 */
     bool ValidateEQSWeights(const FEQSWeightParameters& Weights) const;

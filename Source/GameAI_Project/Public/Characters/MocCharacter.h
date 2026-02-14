@@ -19,6 +19,7 @@ class UScholaMocAgent;
 class UAIPerceptionStimuliSourceComponent;
 class UBehaviorTree;
 class UEnvQuery;
+class UMocEQSExecutor;
 class ASquadManager;
 class AMocGameMode;
 class ATeamManager;
@@ -173,13 +174,9 @@ public:
 	// EQS Configuration
 	//========================================
 
-	/** EQS Query Template for tactical positioning */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
-	UEnvQuery* TacticalEQS;
-
-	/** EQS search radius (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
-	float EQSSearchRadius = 2000.0f;
+	/** EQS Executor component - handles query execution with correct parameter names */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UMocEQSExecutor* EQSExecutor;
 
 	/** EQS result acceptance radius for movement (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")

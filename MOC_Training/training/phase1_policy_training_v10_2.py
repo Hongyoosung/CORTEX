@@ -190,9 +190,6 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
             else:  # Support
                 eqs_weights[i] = self.support_head(features[i:i+1]).squeeze(0)
             
-            if i == 0: 
-                print(f"[DEBUG] Strategy: {strat}, EQS Weights: {eqs_weights[i].detach().cpu().numpy()}")
-
         return eqs_weights
 
     def get_value(

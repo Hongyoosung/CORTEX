@@ -84,15 +84,6 @@ void UEnvQueryContext_MocEnemies::ProvideContext(FEnvQueryInstance& QueryInstanc
 		}
 	}
 
-	// ===== DIAGNOSTIC LOG: Enemy positions =====
-	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT] %s: Found %d visible enemies"), *MocChar->GetName(), EnemyPositions.Num());
-	for (int32 i = 0; i < FMath::Min(3, EnemyPositions.Num()); i++)
-	{
-		FVector Delta = EnemyPositions[i] - MocChar->GetActorLocation();
-		UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT]   Enemy #%d at: %s (Delta: X=%.0f, Y=%.0f)"),
-			i, *EnemyPositions[i].ToString(), Delta.X, Delta.Y);
-	}
-
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, EnemyPositions);
 }
 
@@ -149,15 +140,6 @@ void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance
 		{
 			AllyPositions.Add(Ally->GetActorLocation());
 		}
-	}
-
-	// ===== DIAGNOSTIC LOG: Ally positions =====
-	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT] %s: Found %d allies"), *MocChar->GetName(), AllyPositions.Num());
-	for (int32 i = 0; i < FMath::Min(3, AllyPositions.Num()); i++)
-	{
-		FVector Delta = AllyPositions[i] - MocChar->GetActorLocation();
-		UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT]   Ally #%d at: %s (Delta: X=%.0f, Y=%.0f)"),
-			i, *AllyPositions[i].ToString(), Delta.X, Delta.Y);
 	}
 
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, AllyPositions);
@@ -220,9 +202,6 @@ void UEnvQueryContext_MocPickups::ProvideContext(FEnvQueryInstance& QueryInstanc
 		}
 	}
 
-	// ===== DIAGNOSTIC LOG: Pickups =====
-	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT] Pickups: Found %d pickup items"), PickupPositions.Num());
-
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, PickupPositions);
 }
 
@@ -264,11 +243,6 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 	// Red team base = PointA, Blue team base = PointE
 	ECapturePointID EnemyBaseID = (EnemyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
 
-	// ===== DIAGNOSTIC LOG: Enemy objective determination =====
-	FVector CharPos = MocChar->GetActorLocation();
-	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT] %s (at %s) requesting EnemyObjective: MyTeam=%d, EnemyTeam=%d, TargetPoint=%d"),
-		*MocChar->GetName(), *CharPos.ToString(), MyTeamID, EnemyTeamID, static_cast<int32>(EnemyBaseID));
-
 	// Find the specific capture point
 	TArray<AActor*> AllCapturePoints;
 	UGameplayStatics::GetAllActorsOfClass(World, ACapturePoint::StaticClass(), AllCapturePoints);
@@ -278,17 +252,13 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 		ACapturePoint* CapturePoint = Cast<ACapturePoint>(Actor);
 		if (CapturePoint && CapturePoint->PointID == EnemyBaseID)
 		{
-			FVector ObjectiveLocation = CapturePoint->GetActorLocation();
-			FVector Delta = ObjectiveLocation - MocChar->GetActorLocation();
-			UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT]   ✓ EnemyObjective found at: %s (Delta: X=%.0f, Y=%.0f, Dist=%.0f)"),
-				*ObjectiveLocation.ToString(), Delta.X, Delta.Y, Delta.Size2D());
-			UEnvQueryItemType_Point::SetContextHelper(ContextData, ObjectiveLocation);
+			UEnvQueryItemType_Point::SetContextHelper(ContextData, CapturePoint->GetActorLocation());
 			return;
 		}
 	}
 
-	// If not found, log warning
-	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Enemy objective (Point %d) NOT FOUND for team %d"),
+	// If not found, log warning - THIS IS LIKELY THE BUG: context returns empty, test scores all 0
+	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Enemy objective not found (Point %d) for team %d"),
 		static_cast<int32>(EnemyBaseID), MyTeamID);
 }
 
@@ -329,11 +299,6 @@ void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryI
 	// Red team base = PointA, Blue team base = PointE
 	ECapturePointID AllyBaseID = (MyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
 
-	// ===== DIAGNOSTIC LOG: Ally objective determination =====
-	FVector CharPos = MocChar->GetActorLocation();
-	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT] %s (at %s) requesting AllyObjective: MyTeam=%d, TargetPoint=%d"),
-		*MocChar->GetName(), *CharPos.ToString(), MyTeamID, static_cast<int32>(AllyBaseID));
-
 	// Find the specific capture point
 	TArray<AActor*> AllCapturePoints;
 	UGameplayStatics::GetAllActorsOfClass(World, ACapturePoint::StaticClass(), AllCapturePoints);
@@ -343,17 +308,13 @@ void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryI
 		ACapturePoint* CapturePoint = Cast<ACapturePoint>(Actor);
 		if (CapturePoint && CapturePoint->PointID == AllyBaseID)
 		{
-			FVector ObjectiveLocation = CapturePoint->GetActorLocation();
-			FVector Delta = ObjectiveLocation - MocChar->GetActorLocation();
-			UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT]   ✓ AllyObjective found at: %s (Delta: X=%.0f, Y=%.0f, Dist=%.0f)"),
-				*ObjectiveLocation.ToString(), Delta.X, Delta.Y, Delta.Size2D());
-			UEnvQueryItemType_Point::SetContextHelper(ContextData, ObjectiveLocation);
+			UEnvQueryItemType_Point::SetContextHelper(ContextData, CapturePoint->GetActorLocation());
 			return;
 		}
 	}
 
 	// If not found, log warning
-	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Ally objective (Point %d) NOT FOUND for team %d"),
+	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Ally objective not found (Point %d) for team %d"),
 		static_cast<int32>(AllyBaseID), MyTeamID);
 }
 
@@ -391,9 +352,6 @@ void UEnvQueryContext_MocCoverPoints::ProvideContext(FEnvQueryInstance& QueryIns
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[MocEQSContext] No cover points found with 'Cover' tag. Place cover actors in level."));
 	}
-
-	// ===== DIAGNOSTIC LOG: Cover points =====
-	UE_LOG(LogTemp, Warning, TEXT("[DIAG-EQS-CONTEXT] CoverPoints: Found %d cover points"), CoverPositions.Num());
 
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, CoverPositions);
 }

@@ -1,10 +1,9 @@
 
 
-
 #include "AI/EQS/MocEQSExecutor.h"
 #include "Characters/MocCharacter.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
-#include "AIController.h"
+#include "Misc/Optional.h"
 
 
 UMocEQSExecutor::UMocEQSExecutor()
@@ -33,90 +32,85 @@ void UMocEQSExecutor::SetQueryTemplate(UEnvQuery* NewTemplate)
 	TacticalMovementQuery = NewTemplate;
 }
 
+void UMocEQSExecutor::ApplyWeightsToRequest(FEnvQueryRequest& Request, const FEQSWeightParameters& Weights)
+{
+	Request.SetFloatParam(TEXT("EnemyObjectiveProximity"), Weights.EnemyObjectiveProximity * WeightScale);
+	Request.SetFloatParam(TEXT("AllyObjectiveProximity"), Weights.AllyObjectiveProximity * WeightScale);
+	Request.SetFloatParam(TEXT("CoverDensity"), Weights.CoverDensity * WeightScale);
+	Request.SetFloatParam(TEXT("EnemyVisibility"), Weights.EnemyVisibility * WeightScale);
+	Request.SetFloatParam(TEXT("AllyProximity"), Weights.AllyProximity * WeightScale);
+	Request.SetFloatParam(TEXT("CombatRange"), Weights.CombatRange * WeightScale);
+	Request.SetFloatParam(TEXT("PickupProximity"), Weights.PickupProximity * WeightScale);
+	Request.SetFloatParam(TEXT("SearchRadius"), SearchRadius);
+}
+
+TOptional<FVector> UMocEQSExecutor::ExtractBestLocation(TSharedPtr<FEnvQueryResult> Result)
+{
+	if (!Result.IsValid() || !Result->IsSuccessful() || Result->Items.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query failed or returned no items"));
+		return {};
+	}
+
+	LastBestLocation = Result->GetItemAsLocation(0);
+
+	UE_LOG(LogTemp, Verbose, TEXT("MocEQSExecutor: Best location: %s (%d candidates)"),
+		*LastBestLocation.ToString(), Result->Items.Num());
+
+	return LastBestLocation;
+}
+
+TOptional<FVector> UMocEQSExecutor::ExecuteSynchronousQuery(const FEQSWeightParameters& Weights)
+{
+	if (!TacticalMovementQuery || !OwnerCharacter)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Cannot execute query - missing template or owner"));
+		return {};
+	}
+
+	UEnvQueryManager* EQSManager = UEnvQueryManager::GetCurrent(GetWorld());
+	if (!EQSManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: EQS Manager not available"));
+		return {};
+	}
+
+	FEnvQueryRequest QueryRequest(TacticalMovementQuery, OwnerCharacter);
+	ApplyWeightsToRequest(QueryRequest, Weights);
+
+	double StartTime = FPlatformTime::Seconds();
+	TSharedPtr<FEnvQueryResult> Result = EQSManager->RunInstantQuery(QueryRequest, EEnvQueryRunMode::AllMatching);
+	LastQueryDuration = static_cast<float>((FPlatformTime::Seconds() - StartTime) * 1000.0);
+
+	return ExtractBestLocation(Result);
+}
+
 void UMocEQSExecutor::ExecuteTacticalQuery(
 	const FEQSWeightParameters& Weights,
-	FQueryFinishedSignature OnComplete)
+	FOnEQSQueryComplete OnComplete)
 {
-	if (!TacticalMovementQuery)
+	if (!TacticalMovementQuery || !OwnerCharacter)
 	{
-		UE_LOG(LogTemp, Error, TEXT("MocEQSExecutor: No query template assigned!"));
-		OnComplete.ExecuteIfBound(nullptr);
+		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Cannot execute query - missing template or owner"));
+		OnComplete.ExecuteIfBound({});
 		return;
 	}
 
-	if (!OwnerCharacter)
-	{
-		UE_LOG(LogTemp, Error, TEXT("MocEQSExecutor: No owner character!"));
-		OnComplete.ExecuteIfBound(nullptr);
-		return;
-	}
+	PendingCallback = OnComplete;
 
-	AAIController* AIController = Cast<AAIController>(OwnerCharacter->GetController());
-	if (!AIController)
-	{
-		UE_LOG(LogTemp, Error, TEXT("MocEQSExecutor: Owner has no AI controller!"));
-		OnComplete.ExecuteIfBound(nullptr);
-		return;
-	}
-
-
-	// Create query request
 	FEnvQueryRequest QueryRequest(TacticalMovementQuery, OwnerCharacter);
+	ApplyWeightsToRequest(QueryRequest, Weights);
 
-	// Execute query asynchronously
 	double StartTime = FPlatformTime::Seconds();
-
-	CurrentQueryID = QueryRequest.Execute(
+	QueryRequest.Execute(
 		EEnvQueryRunMode::AllMatching,
 		FQueryFinishedSignature::CreateUObject(this, &UMocEQSExecutor::OnQueryFinished)
 	);
-
 	LastQueryDuration = static_cast<float>((FPlatformTime::Seconds() - StartTime) * 1000.0);
-
-	UE_LOG(LogTemp, Verbose, TEXT("MocEQSExecutor: Query started (ID: %d) with weights: %s"),
-		CurrentQueryID, *Weights.ToString());
 }
-
 
 void UMocEQSExecutor::OnQueryFinished(TSharedPtr<FEnvQueryResult> Result)
 {
-	if (!Result.IsValid())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query result is invalid"));
-		return;
-	}
-
-	if (!Result->IsSuccessful())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query execution failed"));
-		return;
-	}
-
-	// Get best location
-	if (Result->Items.Num() > 0)
-	{
-		LastBestLocation = Result->GetItemAsLocation(0);
-
-		UE_LOG(LogTemp, Log, TEXT("MocEQSExecutor: Query completed - Best location: %s (%.2fms, %d candidates)"),
-			*LastBestLocation.ToString(), LastQueryDuration, Result->Items.Num());
-
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MocEQSExecutor: Query returned no items"));
-	}
-}
-
-void UMocEQSExecutor::ApplyWeightsToQuery(FEnvQueryInstance& QueryInstance, const FEQSWeightParameters& Weights)
-{
-	// NOTE: This function demonstrates the concept but requires EQS query structure access
-	// In practice, weights should be applied through named parameters in the query template
-	// or by using a custom EQS generator/test that reads from a data asset
-
-	// Actual implementation would use:
-	// QueryInstance.NamedParams.Add("EnemyObjWeight", Weights.EnemyObjectiveProximity);
-	// QueryInstance.NamedParams.Add("AllyObjWeight", Weights.AllyObjectiveProximity);
-	// ... etc for all 8 weights
-
-	UE_LOG(LogTemp, Verbose, TEXT("ApplyWeightsToQuery: Weights applied - %s"), *Weights.ToString());
+	TOptional<FVector> Location = ExtractBestLocation(Result);
+	PendingCallback.ExecuteIfBound(Location);
 }

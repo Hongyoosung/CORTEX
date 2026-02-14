@@ -10,6 +10,10 @@
 
 class UEnvQuery;
 class AMocCharacter;
+struct FEnvQueryRequest;
+
+
+DECLARE_DELEGATE_OneParam(FOnEQSQueryComplete, TOptional<FVector>);
 
 /**
  * Executes EQS queries with dynamic RL-generated weights.
@@ -17,9 +21,9 @@ class AMocCharacter;
  * Pipeline: RL Policy → 7-dim Weights → EQS Query → Best Location → Navigation
  *
  * Key Features:
- * - Applies strategy-specific weights to EQS tests
+ * - Applies strategy-specific weights to EQS tests via named parameters
  * - Guarantees navigable results via NavMesh integration
- * - 48-sample circular generation (1500 unit radius)
+ * - 48-sample circular generation
  */
 UCLASS(ClassGroup=(MOC), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UMocEQSExecutor : public UActorComponent
@@ -34,16 +38,23 @@ protected:
 
 public:
 	/**
-	 * Execute tactical movement query with RL weights
+	 * Execute tactical movement query asynchronously (for BT/inference mode)
 	 *
 	 * @param Weights - 7-dimensional weights from RL policy output
-	 * @param OnComplete - Callback with best location (FVector::ZeroVector if failed)
+	 * @param OnComplete - Callback with best location result
 	 */
 	void ExecuteTacticalQuery(
 		const FEQSWeightParameters& Weights,
-		FQueryFinishedSignature OnComplete
+		FOnEQSQueryComplete OnComplete
 	);
 
+	/**
+	 * Execute tactical movement query synchronously (for training mode)
+	 *
+	 * @param Weights - 7-dimensional weights from RL policy output
+	 * @return Best tactical location, or empty if query failed
+	 */
+	TOptional<FVector> ExecuteSynchronousQuery(const FEQSWeightParameters& Weights);
 
 	/**
 	 * Set the EQS query template to use
@@ -51,19 +62,18 @@ public:
 	 */
 	void SetQueryTemplate(UEnvQuery* NewTemplate);
 
-
-
-protected:
 	/** EQS Query Template - configured in editor */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EQS")
 	UEnvQuery* TacticalMovementQuery;
 
+	/** EQS search radius (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EQS")
+	float SearchRadius = 2000.0f;
+
+protected:
 	/** Cached owner character */
 	UPROPERTY()
 	AMocCharacter* OwnerCharacter;
-
-	/** Current query ID for tracking async queries */
-	int32 CurrentQueryID = INDEX_NONE;
 
 	/** Last computed best location (for debugging) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Debug")
@@ -74,14 +84,18 @@ protected:
 	float LastQueryDuration = 0.0f;
 
 private:
-	/**
-	 * Apply weights to query instance dynamically
-	 * This modifies the test weights at runtime based on RL output
-	 */
-	void ApplyWeightsToQuery(FEnvQueryInstance& QueryInstance, const FEQSWeightParameters& Weights);
+	/** Weight scale factor applied to RL outputs */
+	static constexpr float WeightScale = 2.0f;
 
-	/**
-	 * Callback for async query completion
-	 */
+	/** Apply weight parameters to a query request */
+	void ApplyWeightsToRequest(FEnvQueryRequest& Request, const FEQSWeightParameters& Weights);
+
+	/** Extract best location from query result */
+	TOptional<FVector> ExtractBestLocation(TSharedPtr<FEnvQueryResult> Result);
+
+	/** Stored callback for async query */
+	FOnEQSQueryComplete PendingCallback;
+
+	/** Callback for async query completion */
 	void OnQueryFinished(TSharedPtr<FEnvQueryResult> Result);
 };
