@@ -66,14 +66,14 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 		MocAgent->UpdateTacticalWeights(Weights);
 
 		// ===== DIAGNOSTIC LOG: Action received =====
-		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR] %s received action #%d"), *MocAgent->GetName(), ActionCount);
+		/*UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR] %s received action #%d"), *MocAgent->GetName(), ActionCount);
 		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   Raw Action: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]"),
 			Action.Values[0], Action.Values[1], Action.Values[2], Action.Values[3],
 			Action.Values[4], Action.Values[5], Action.Values[6]);
 		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   EQS Weights: EnemyObj=%.3f, AllyObj=%.3f, Cover=%.3f, EnemyVis=%.3f, AllyProx=%.3f, Range=%.3f, Pickup=%.3f"),
 			Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity, Weights.CoverDensity,
 			Weights.EnemyVisibility, Weights.AllyProximity, Weights.CombatRange, Weights.PickupProximity);
-		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   Position: %s"), *MocAgent->GetActorLocation().ToString());
+		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   Position: %s"), *MocAgent->GetActorLocation().ToString());*/
 	}
 	else
 	{

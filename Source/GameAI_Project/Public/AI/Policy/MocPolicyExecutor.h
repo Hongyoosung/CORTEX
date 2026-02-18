@@ -12,6 +12,11 @@
 struct FEQSWeightParameters;
 struct FObservation;
 
+namespace UE::NNE
+{
+	class IModelInstanceCPU;
+}
+
 /**
  * MOC v10.2 Multi-Head Policy Executor
  *
@@ -183,7 +188,10 @@ private:
 	// Runtime State
 	//========================================
 
-	/** ONNX Runtime inference session (multi-head model) */
+	/** NNE Model Instance for ONNX inference */
+	TSharedPtr<UE::NNE::IModelInstanceCPU> ModelInstance;
+
+	/** Legacy ONNX session pointer (unused, kept for API compat) */
 	void* ONNXSession = nullptr;
 
 	/** Model loaded flag */

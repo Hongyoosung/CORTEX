@@ -3,19 +3,20 @@
 #include "Schola/Observers/MocTacticalObserver.h"
 #include "Schola/Trainers/MocTrainer.h"
 #include "Characters/MocCharacter.h"
+#include "Core/MocGameMode.h"
+#include "Actors/CapturePoint.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
 #include "Kismet/GameplayStatics.h"
 
 UMocTacticalObserver::UMocTacticalObserver()
 {
-	// Build observation space (55 continuous features)
+	// Build observation space (60 continuous features: 57 base + 3 strategy one-hot)
 	TArray<FBoxSpaceDimension> Dimensions;
-	Dimensions.Reserve(55);
+	Dimensions.Reserve(60);
 
-	// 52 base features: normalized to [-1, 1] or [0, 1]
-	// Most features are position/velocity-based, normalized for neural network
-	for (int32 i = 0; i < 52; ++i)
+	// 57 base features: normalized to [-1, 1] or [0, 1]
+	for (int32 i = 0; i < 57; ++i)
 	{
 		FBoxSpaceDimension Dim;
 		Dim.Low = -1.0f;
@@ -70,8 +71,8 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 {
 	ObservationCallCount++;
 
-	// Initialize output with correct size (55-dim)
-	OutObservations.Values.SetNum(55);
+	// Initialize output with correct size (60-dim: 57 base + 3 strategy one-hot)
+	OutObservations.Values.SetNum(60);
 
 	// Safety check: Verify trainer and character are valid
 	AMocCharacter* Character = GetControlledCharacter();
@@ -82,31 +83,29 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			UE_LOG(LogTemp, Warning, TEXT("[MocTacticalObserver] Character invalid at observation #%d - returning zeros"), ObservationCallCount);
 		}
 
-		// Return zero observation if character not available
-		for (int32 i = 0; i < 55; ++i)
+		for (int32 i = 0; i < 60; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
 		return;
 	}
 
-	// 1. Gather 52-dim base observation
+	// 1. Gather 57-dim base observation
 	FObservation BaseObs = GatherBaseObservation();
 	TArray<float> BaseFeatures = BaseObs.ToArray();
 
-	// Validate base observation size
-	if (BaseFeatures.Num() != 52)
+	if (BaseFeatures.Num() != 57)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Base observation size mismatch! Expected 52, got %d"), BaseFeatures.Num());
-		for (int32 i = 0; i < 55; ++i)
+		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Base observation size mismatch! Expected 57, got %d"), BaseFeatures.Num());
+		for (int32 i = 0; i < 60; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
 		return;
 	}
 
-	// Copy base features (52-dim)
-	for (int32 i = 0; i < 52; ++i)
+	// Copy base features (57-dim)
+	for (int32 i = 0; i < 57; ++i)
 	{
 		OutObservations.Values[i] = BaseFeatures[i];
 	}
@@ -117,7 +116,7 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 
 	for (int32 i = 0; i < 3; ++i)
 	{
-		OutObservations.Values[52 + i] = StrategyOneHot[i];
+		OutObservations.Values[57 + i] = StrategyOneHot[i];
 	}
 
 	// Validate final observation
@@ -234,10 +233,61 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 		}
 	}
 
-	// Map state (2-dim)
-	// TODO: Implement capture point balance calculation from game mode
-	Obs.CapturePointBalance = 0;
-	Obs.TimeRemaining = 1.0f;
+	// Map state: query game mode for capture point ownership and time remaining
+	AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(Character->GetWorld()));
+	if (GameMode)
+	{
+		// Normalized time remaining [0, 1]
+		const float MaxDuration = GameMode->MaxMatchDuration;
+		Obs.TimeRemaining = MaxDuration > 0.0f
+			? FMath::Clamp(GameMode->GetTimeRemaining() / MaxDuration, 0.0f, 1.0f)
+			: 1.0f;
+
+		// Per-point ownership relative to this agent's team (5-dim)
+		// Order matches ECapturePointID: PointA=0, PointB=1, PointC=2, PointD=3, PointE=4
+		static const ECapturePointID PointOrder[] = {
+			ECapturePointID::PointA,
+			ECapturePointID::PointB,
+			ECapturePointID::PointC,
+			ECapturePointID::PointD,
+			ECapturePointID::PointE
+		};
+
+		int32 FriendlyOwned = 0;
+		int32 EnemyOwned = 0;
+
+		for (int32 i = 0; i < 5; ++i)
+		{
+			const ACapturePoint* Point = GameMode->GetCapturePoint(PointOrder[i]);
+			if (Point)
+			{
+				const int32 PointOwner = Point->GetOwningTeamID(); // 0=Red, 1=Blue, -1=Neutral
+				if (PointOwner == MyTeamID)
+				{
+					Obs.CapturePointStatuses[i] = 1.0f;
+					FriendlyOwned++;
+				}
+				else if (PointOwner == -1)
+				{
+					Obs.CapturePointStatuses[i] = 0.0f;
+				}
+				else
+				{
+					Obs.CapturePointStatuses[i] = -1.0f;
+					EnemyOwned++;
+				}
+			}
+		}
+
+		// Balance: friendly owned minus enemy owned, normalized to [-1, 1]
+		Obs.CapturePointBalance = FriendlyOwned - EnemyOwned;
+	}
+	else
+	{
+		Obs.TimeRemaining = 1.0f;
+		Obs.CapturePointBalance = 0;
+		// CapturePointStatuses stays all 0.0 (neutral) from default constructor
+	}
 
 	return Obs;
 }
@@ -269,9 +319,9 @@ TArray<float> UMocTacticalObserver::EncodeStrategyOneHot(EStrategyType Strategy)
 
 bool UMocTacticalObserver::ValidateObservation(const TArray<float>& Observation) const
 {
-	if (Observation.Num() != 55)
+	if (Observation.Num() != 60)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Invalid observation size: %d (expected 55)"), Observation.Num());
+		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Invalid observation size: %d (expected 60)"), Observation.Num());
 		return false;
 	}
 

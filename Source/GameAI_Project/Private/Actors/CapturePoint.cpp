@@ -111,14 +111,37 @@ void ACapturePoint::Tick(float DeltaTime)
 
 		DebugText->SetText(FText::FromString(StatusStr));
 
-		// Draw capture zone
+		// Draw capture zone — color reflects owning team when idle, active team when capturing
+		FColor CylinderColor;
+		if (IsContested())
+		{
+			CylinderColor = FColor::Yellow;
+		}
+		else if (CapturingTeam == 0)
+		{
+			CylinderColor = FColor::Red;
+		}
+		else if (CapturingTeam == 1)
+		{
+			CylinderColor = FColor::Blue;
+		}
+		else
+		{
+			switch (CurrentOwner)
+			{
+			case ECapturePointOwnership::RedTeam:  CylinderColor = FColor::Red;   break;
+			case ECapturePointOwnership::BlueTeam: CylinderColor = FColor::Blue;  break;
+			default:                               CylinderColor = FColor::White; break;
+			}
+		}
+
 		DrawDebugCylinder(
 			GetWorld(),
 			GetActorLocation() - FVector(0, 0, CaptureHeight / 2),
 			GetActorLocation() + FVector(0, 0, CaptureHeight / 2),
 			CaptureRadius,
 			32,
-			IsContested() ? FColor::Yellow : (CapturingTeam == 0 ? FColor::Red : (CapturingTeam == 1 ? FColor::Blue : FColor::White)),
+			CylinderColor,
 			false,
 			-1.0f,
 			0,
@@ -142,54 +165,114 @@ int32 ACapturePoint::GetTeamID_Implementation() const
 
 void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 {
-	// Store previous progress
 	PreviousProgress = CaptureProgress;
 
-	// Determine which team has majority
-	DetermineMajorityTeam();
+	const int32 RedCount = RedTeamAgents.Num();
+	const int32 BlueCount = BlueTeamAgents.Num();
+	const int32 OwnerTeamID = GetOwningTeamID();
 
-	// Check if contested (both teams present)
-	if (IsContested())
+	// Both teams present: pause all progress
+	if (RedCount > 0 && BlueCount > 0)
 	{
-		// Contestation: Pause progress, no decay
 		CapturingTeam = -1;
 		return;
 	}
 
-	// No one capturing
-	if (CapturingTeam == -1)
+	// Red team only in zone
+	if (RedCount > 0)
 	{
-		// Progress decay when capturing team withdraws
-		if (CaptureProgress > 0.0f)
+		if (OwnerTeamID == 0)
 		{
-			CaptureProgress = FMath::Max(0.0f, CaptureProgress - (DecayRate * DeltaTime));
+			// Red owns it — no action needed
+			CapturingTeam = -1;
+			return;
+		}
+
+		CapturingTeam = 0;
+		const float Rate = (1.0f / CaptureTime) * static_cast<float>(RedCount);
+
+		if (OwnerTeamID == 1)
+		{
+			// Blue owns it — Red erodes ownership proportional to agent count
+			CaptureProgress = FMath::Max(0.0f, CaptureProgress - Rate * DeltaTime);
+			if (CaptureProgress <= 0.0f)
+			{
+				const ECapturePointOwnership PreviousOwner = CurrentOwner;
+				CurrentOwner = ECapturePointOwnership::Neutral;
+				OnPointCaptured.Broadcast(PointID, PreviousOwner, ECapturePointOwnership::Neutral);
+				UpdateNiagaraColor();
+			}
+		}
+		else
+		{
+			// Neutral — Red captures, rate proportional to agent count
+			CaptureProgress = FMath::Min(1.0f, CaptureProgress + Rate * DeltaTime);
+			if (CaptureProgress >= 1.0f)
+			{
+				CompleteCaptureSequence();
+			}
+		}
+
+		if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
+		{
+			OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
 		}
 		return;
 	}
 
-	// Check if capturing team is trying to capture enemy/neutral point
-	int32 OwnerTeamID = GetOwningTeamID();
-	if (CapturingTeam == OwnerTeamID)
+	// Blue team only in zone
+	if (BlueCount > 0)
 	{
-		// Same team, no capture needed
-		CaptureProgress = 0.0f;
+		if (OwnerTeamID == 1)
+		{
+			// Blue owns it — no action needed
+			CapturingTeam = -1;
+			return;
+		}
+
+		CapturingTeam = 1;
+		const float Rate = (1.0f / CaptureTime) * static_cast<float>(BlueCount);
+
+		if (OwnerTeamID == 0)
+		{
+			// Red owns it — Blue erodes ownership proportional to agent count
+			CaptureProgress = FMath::Max(0.0f, CaptureProgress - Rate * DeltaTime);
+			if (CaptureProgress <= 0.0f)
+			{
+				const ECapturePointOwnership PreviousOwner = CurrentOwner;
+				CurrentOwner = ECapturePointOwnership::Neutral;
+				OnPointCaptured.Broadcast(PointID, PreviousOwner, ECapturePointOwnership::Neutral);
+				UpdateNiagaraColor();
+			}
+		}
+		else
+		{
+			// Neutral — Blue captures, rate proportional to agent count
+			CaptureProgress = FMath::Min(1.0f, CaptureProgress + Rate * DeltaTime);
+			if (CaptureProgress >= 1.0f)
+			{
+				CompleteCaptureSequence();
+			}
+		}
+
+		if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
+		{
+			OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
+		}
 		return;
 	}
 
-	// Capture in progress
-	float ProgressRate = 1.0f / CaptureTime; // Progress per second
-	CaptureProgress = FMath::Clamp(CaptureProgress + (ProgressRate * DeltaTime), 0.0f, 1.0f);
+	// No one in zone
+	CapturingTeam = -1;
 
-	// Check if capture completed
-	if (CaptureProgress >= 1.0f)
+	// Decay partial capture progress only on neutral points (owned points hold at 1.0)
+	if (CaptureProgress > 0.0f && OwnerTeamID == -1)
 	{
-		CompleteCaptureSequence();
-	}
-
-	// Broadcast progress change if significant
-	if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
-	{
-		OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
+		CaptureProgress = FMath::Max(0.0f, CaptureProgress - DecayRate * DeltaTime);
+		if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
+		{
+			OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
+		}
 	}
 }
 
@@ -242,9 +325,9 @@ void ACapturePoint::CompleteCaptureSequence()
 		return; // Should not happen
 	}
 
-	// Update ownership
+	// Update ownership — keep progress at 1.0 so visuals stay at full capture
 	CurrentOwner = NewOwner;
-	CaptureProgress = 0.0f;
+	CaptureProgress = 1.0f;
 	bJustCaptured = true;
 
 	// Broadcast capture event

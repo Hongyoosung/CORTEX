@@ -21,12 +21,12 @@ class AMocTrainer;
  * - Layer 1 (Squad Commander): Uses FTeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
- * Observation Space (55-dim):
- * - Base State (52-dim): Agent's local observation (FObservation)
+ * Observation Space (60-dim):
+ * - Base State (57-dim): Agent's local observation (FObservation)
  *   • Self (10): Position(3), Health(1), Velocity(3), Cooldown(1), Strategy(1), Alive(1)
  *   • Allies (20): 4 agents × [Position(3), Health(1), Strategy(1)]
  *   • Enemies (20): 5 agents × [Position(3), Visible(1)]
- *   • Map (2): CapturePointBalance(1), TimeRemaining(1)
+ *   • Map (7): CapturePointBalance(1), TimeRemaining(1), PointStatus×5 (+1=friendly/0=neutral/-1=enemy)
  *
  * - Commanded Strategy (3-dim): One-hot encoding of EStrategyType
  *   • [1,0,0] = Assault

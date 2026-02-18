@@ -8,6 +8,7 @@
 #include "Types/StrategyTypes.h"
 #include "Types/EventTypes.h"
 #include "Types/RewardTypes.h"
+#include "Actors/CapturePoint.h"
 #include "SquadManager.generated.h"
 
 
@@ -15,6 +16,7 @@ class UTeamMCTS;
 class AMocCharacter;
 class ATeamManager;
 class UTeamDataCollector;
+class ACapturePoint;
 
 /**
  * ASquadManager - MOC v10.2 Centralized Tactical Commander
@@ -276,6 +278,15 @@ protected:
 	/** Flag to track if we have a valid previous state */
 	bool bHasPreviousState;
 
+	/** Health critical state tracking (prevents repeated triggers) */
+	bool bHealthCriticalTriggered = false;
+
+	/** Last planning cycle duration in ms */
+	float LastPlanningDurationMs = 0.0f;
+
+	/** Validation tick accumulator */
+	float ValidationTickCounter = 0.0f;
+
 private:
 	/**
 	 * Calculate reward based on team state transition
@@ -297,4 +308,14 @@ private:
 	 * @return Selected tactical play
 	 */
 	ETacticalPlay SelectEpsilonGreedyAction(const FTeamWorldState& TeamState) const;
+
+	//========================================
+	// Critical Event Handlers (v10.2)
+	//========================================
+
+	UFUNCTION()
+	void OnAgentKilledHandler(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim);
+
+	UFUNCTION()
+	void OnPointCapturedHandler(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner);
 };

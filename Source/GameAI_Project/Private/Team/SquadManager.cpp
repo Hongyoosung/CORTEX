@@ -7,7 +7,15 @@
 #include "AI/Models/TeamWorldModel.h"
 #include "AI/Training/TeamDataCollector.h"
 #include "Types/RewardTypes.h"
+#include "Core/MocGameMode.h"
+#include "Actors/CapturePoint.h"
+#include "Actors/PickupBase.h"
 #include "DrawDebugHelpers.h"
+#include "Kismet/GameplayStatics.h"
+#include "HAL/IConsoleManager.h"
+
+// Static reference for console commands (one per team, use Team 0 by default)
+static TWeakObjectPtr<ASquadManager> GDebugSquadManager;
 
 ASquadManager::ASquadManager()
 {
@@ -22,6 +30,7 @@ ASquadManager::ASquadManager()
 	PlanningCycleCount = 0;
 	EventDrivenReplanCount = 0;
 	bHasPreviousState = false;
+	bHealthCriticalTriggered = false;
 
 	// Initialize role assignments (default: standard comp)
 	CurrentRoleAssignments = {
@@ -31,6 +40,113 @@ ASquadManager::ASquadManager()
 		EStrategyType::Defend,
 		EStrategyType::Support
 	};
+
+	// Debug console commands
+	static FAutoConsoleCommand CmdSquadState(
+		TEXT("moc.debug.squadstate"),
+		TEXT("Print current tactical play, role assignments, confidence, and MCTS stats"),
+		FConsoleCommandDelegate::CreateLambda([]()
+		{
+			if (ASquadManager* SM = GDebugSquadManager.Get())
+			{
+				UE_LOG(LogTemp, Display, TEXT("=== Squad Commander State (Team %d) ==="), SM->TeamID);
+				UE_LOG(LogTemp, Display, TEXT("  Tactical Play: %s"), *UEnum::GetValueAsString(SM->ActiveTacticalPlay));
+				UE_LOG(LogTemp, Display, TEXT("  Confidence: %.2f"), SM->PlanConfidence);
+				UE_LOG(LogTemp, Display, TEXT("  Planning Cycles: %d (Event Replans: %d)"), SM->PlanningCycleCount, SM->EventDrivenReplanCount);
+				UE_LOG(LogTemp, Display, TEXT("  Data Collection Mode: %s"), SM->bDataCollectionMode ? TEXT("Yes") : TEXT("No"));
+				for (int32 i = 0; i < SM->CurrentRoleAssignments.Num(); ++i)
+				{
+					UE_LOG(LogTemp, Display, TEXT("  Agent %d: %s"), i, *UEnum::GetValueAsString(SM->CurrentRoleAssignments[i]));
+				}
+				if (SM->TeamMCTSPlanner)
+				{
+					UE_LOG(LogTemp, Display, TEXT("  MCTS Last Iterations: %d"), SM->TeamMCTSPlanner->GetLastIterationCount());
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("No SquadManager available for debug"));
+			}
+		})
+	);
+
+	static FAutoConsoleCommand CmdForceReplan(
+		TEXT("moc.debug.forcereplan"),
+		TEXT("Trigger immediate tactical replanning"),
+		FConsoleCommandDelegate::CreateLambda([]()
+		{
+			if (ASquadManager* SM = GDebugSquadManager.Get())
+			{
+				UE_LOG(LogTemp, Display, TEXT("Forcing replan for Team %d"), SM->TeamID);
+				SM->PerformTacticalPlanning();
+				SM->TimeSinceLastPlan = 0.0f;
+			}
+		})
+	);
+
+	static FAutoConsoleCommand CmdToggleViz(
+		TEXT("moc.debug.toggleviz"),
+		TEXT("Toggle 3D debug visualization"),
+		FConsoleCommandDelegate::CreateLambda([]()
+		{
+			if (ASquadManager* SM = GDebugSquadManager.Get())
+			{
+				SM->bShowDebugInfo = !SM->bShowDebugInfo;
+				SM->bDrawRoleAssignments = SM->bShowDebugInfo;
+				UE_LOG(LogTemp, Display, TEXT("Debug visualization: %s"), SM->bShowDebugInfo ? TEXT("ON") : TEXT("OFF"));
+			}
+		})
+	);
+
+	static FAutoConsoleCommand CmdObserver(
+		TEXT("moc.debug.observer"),
+		TEXT("Print current 60-dim observation tensor"),
+		FConsoleCommandDelegate::CreateLambda([]()
+		{
+			if (ASquadManager* SM = GDebugSquadManager.Get())
+			{
+				FTeamWorldState State = SM->CollectTeamState();
+				TArray<float> Tensor = State.ToTensor();
+				UE_LOG(LogTemp, Display, TEXT("=== Team State Tensor (%d dims) ==="), Tensor.Num());
+				FString TensorStr;
+				for (int32 i = 0; i < Tensor.Num(); ++i)
+				{
+					TensorStr += FString::Printf(TEXT("%.3f "), Tensor[i]);
+					if ((i + 1) % 10 == 0)
+					{
+						UE_LOG(LogTemp, Display, TEXT("  [%d-%d]: %s"), i - 9, i, *TensorStr);
+						TensorStr.Empty();
+					}
+				}
+				if (!TensorStr.IsEmpty())
+				{
+					UE_LOG(LogTemp, Display, TEXT("  [%d+]: %s"), Tensor.Num() - (Tensor.Num() % 10), *TensorStr);
+				}
+			}
+		})
+	);
+
+	static FAutoConsoleCommand CmdTiming(
+		TEXT("moc.debug.timing"),
+		TEXT("Print MCTS duration and world model latency"),
+		FConsoleCommandDelegate::CreateLambda([]()
+		{
+			if (ASquadManager* SM = GDebugSquadManager.Get())
+			{
+				UE_LOG(LogTemp, Display, TEXT("=== Timing Stats (Team %d) ==="), SM->TeamID);
+				UE_LOG(LogTemp, Display, TEXT("  MCTS Time Budget: %.1f ms"), SM->MCTSTimeBudget * 1000.0f);
+				if (SM->TeamWorldModel)
+				{
+					UE_LOG(LogTemp, Display, TEXT("  World Model Avg Latency: %.2f ms"), SM->TeamWorldModel->GetAverageLatency());
+				}
+				else
+				{
+					UE_LOG(LogTemp, Display, TEXT("  World Model: Not initialized"));
+				}
+				UE_LOG(LogTemp, Display, TEXT("  Last Planning Duration: %.2f ms"), SM->LastPlanningDurationMs);
+			}
+		})
+	);
 }
 
 void ASquadManager::BeginPlay()
@@ -51,6 +167,50 @@ void ASquadManager::Tick(float DeltaTime)
 	{
 		PerformTacticalPlanning();
 		TimeSinceLastPlan = 0.0f;
+	}
+
+	// Health-critical event detection
+	if (TeamManager)
+	{
+		FTeamWorldState CurrentState = CollectTeamState();
+		bool bIsCritical = CurrentState.IsTeamHealthCritical();
+
+		if (bIsCritical && !bHealthCriticalTriggered)
+		{
+			bHealthCriticalTriggered = true;
+			ReplanMCTSOnCriticalEvent(ECriticalEventType::HealthCritical, nullptr);
+		}
+		else if (!bIsCritical)
+		{
+			bHealthCriticalTriggered = false;
+		}
+	}
+
+	// End-to-end validation logging (behind debug flag)
+	if (bShowDebugInfo)
+	{
+		ValidationTickCounter += DeltaTime;
+		if (ValidationTickCounter >= 2.0f) // Log every 2 seconds
+		{
+			ValidationTickCounter = 0.0f;
+
+			// Verify observer output dimensionality
+			FTeamWorldState ValidationState = CollectTeamState();
+			TArray<float> Tensor = ValidationState.ToTensor();
+			UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: Observer tensor dims=%d (expected ~60)"), TeamID, Tensor.Num());
+
+			// Verify all 5 agents have role assignments
+			int32 AssignedCount = CurrentRoleAssignments.Num();
+			if (AssignedCount != 5)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Validation] Team %d: Role assignments=%d (expected 5)"), TeamID, AssignedCount);
+			}
+
+			// Log timing
+			UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: LastPlanning=%.2fms, WorldModel=%.2fms"),
+				TeamID, LastPlanningDurationMs,
+				TeamWorldModel ? TeamWorldModel->GetAverageLatency() : 0.0f);
+		}
 	}
 
 	// Draw debug visualization
@@ -126,6 +286,34 @@ void ASquadManager::Initialize(int32 InTeamID, ATeamManager* InTeamManager)
 		bDataCollectionMode = true;
 		UE_LOG(LogTemp, Display, TEXT("Team %d: Auto-enabled data collection mode (no world model available)"), TeamID);
 	}
+
+	// Wire critical event delegates (v10.2 - Event-driven replanning)
+	if (TeamManager)
+	{
+		// Kill events
+		TeamManager->OnAgentKilled.AddDynamic(this, &ASquadManager::OnAgentKilledHandler);
+		UE_LOG(LogTemp, Log, TEXT("Team %d: Bound OnAgentKilled delegate"), TeamID);
+
+		// Capture point events - bind to all capture points via GameMode
+		if (UWorld* World = GetWorld())
+		{
+			if (AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
+			{
+				TArray<ACapturePoint*> CapturePoints = GameMode->GetAllCapturePoints();
+				for (ACapturePoint* Point : CapturePoints)
+				{
+					if (Point)
+					{
+						Point->OnPointCaptured.AddDynamic(this, &ASquadManager::OnPointCapturedHandler);
+					}
+				}
+				UE_LOG(LogTemp, Log, TEXT("Team %d: Bound OnPointCaptured to %d capture points"), TeamID, CapturePoints.Num());
+			}
+		}
+	}
+
+	// Register as debug target
+	GDebugSquadManager = this;
 
 	UE_LOG(LogTemp, Log, TEXT("Squad Commander initialized for Team %d (MCTS=%s, DataCollection=%s)"),
 		TeamID,
@@ -276,7 +464,10 @@ void ASquadManager::PerformTacticalPlanning()
 	PreviousTacticalPlay = BestPlay;
 	bHasPreviousState = true;
 
-	// 7. Log for analytics
+	// 7. Track overall planning duration
+	LastPlanningDurationMs = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
+
+	// 8. Log for analytics
 	LogPlanningDecision(BestPlay, PlanConfidence);
 }
 
@@ -336,9 +527,59 @@ FTeamWorldState ASquadManager::CollectTeamState() const
 		}
 	}
 
-	// TODO: Collect capture point ownership
-	// TODO: Collect pickup availability
-	// TODO: Get match time remaining
+	// Collect capture point ownership
+	if (UWorld* World = GetWorld())
+	{
+		if (AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
+		{
+			// Capture points: -1 = enemy, 0 = neutral, +1 = friendly
+			TArray<ACapturePoint*> CapturePoints = GameMode->GetAllCapturePoints();
+			for (int32 i = 0; i < FMath::Min(5, CapturePoints.Num()); ++i)
+			{
+				if (CapturePoints[i])
+				{
+					ECapturePointOwnership Ownership = CapturePoints[i]->GetOwnership();
+					if (Ownership == ECapturePointOwnership::Neutral)
+					{
+						State.CapturePointOwnership[i] = 0;
+					}
+					else
+					{
+						// Map team ownership relative to this squad's team
+						int32 OwningTeamID = CapturePoints[i]->GetOwningTeamID();
+						State.CapturePointOwnership[i] = (OwningTeamID == TeamID) ? 1 : -1;
+					}
+				}
+			}
+
+			// Pickup availability bitmask
+			int32 PickupBitmask = 0;
+			int32 BitIndex = 0;
+
+			// Query all pickup actors in the world
+			TArray<AActor*> PickupActors;
+			UGameplayStatics::GetAllActorsOfClass(World, APickupBase::StaticClass(), PickupActors);
+			for (int32 i = 0; i < FMath::Min(32, PickupActors.Num()); ++i)
+			{
+				if (APickupBase* Pickup = Cast<APickupBase>(PickupActors[i]))
+				{
+					if (Pickup->IsAvailable())
+					{
+						PickupBitmask |= (1 << BitIndex);
+					}
+					BitIndex++;
+				}
+			}
+			State.PickupAvailability = PickupBitmask;
+
+			// Time remaining (normalized 0-1)
+			float MaxDuration = GameMode->MaxMatchDuration;
+			if (MaxDuration > 0.0f)
+			{
+				State.TimeRemaining = FMath::Clamp(GameMode->GetTimeRemaining() / MaxDuration, 0.0f, 1.0f);
+			}
+		}
+	}
 
 	return State;
 }
@@ -733,5 +974,36 @@ ETacticalPlay ASquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& Te
 			default: return ETacticalPlay::StandardComp;
 			}
 		}
+	}
+}
+
+//========================================
+// Critical Event Handlers
+//========================================
+
+void ASquadManager::OnAgentKilledHandler(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim)
+{
+	if (VictimTeamID == TeamID)
+	{
+		ReplanMCTSOnCriticalEvent(ECriticalEventType::AllyKilled, Victim);
+	}
+	else
+	{
+		ReplanMCTSOnCriticalEvent(ECriticalEventType::EnemyKilled, Victim);
+	}
+}
+
+void ASquadManager::OnPointCapturedHandler(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
+{
+	// Determine if this is a gain or loss for our team
+	ECapturePointOwnership OurOwnership = (TeamID == 0) ? ECapturePointOwnership::RedTeam : ECapturePointOwnership::BlueTeam;
+
+	if (NewOwner == OurOwnership)
+	{
+		ReplanMCTSOnCriticalEvent(ECriticalEventType::ObjectiveCaptured, nullptr);
+	}
+	else if (PreviousOwner == OurOwnership)
+	{
+		ReplanMCTSOnCriticalEvent(ECriticalEventType::ObjectiveLost, nullptr);
 	}
 }

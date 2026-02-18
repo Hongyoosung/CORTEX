@@ -5,8 +5,14 @@
 #include "Types/EQSTypes.h"
 #include "Types/MocTypes.h"
 #include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
 #include "HAL/PlatformFileManager.h"
+#include "HAL/FileManager.h"
 #include "GenericPlatform/GenericPlatformFile.h"
+#include "NNE.h"
+#include "NNEModelData.h"
+#include "NNERuntimeCPU.h"
+#include "NNERuntime.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMocPolicy, Log, All);
 
@@ -30,69 +36,120 @@ void UMocPolicyExecutor::BeginPlay()
 
 bool UMocPolicyExecutor::LoadModel(const FString& ModelPath)
 {
+	using namespace UE::NNE;
+
+	bModelLoaded = false;
+	PolicyModelPath = ModelPath;
+
 	// Validate file exists
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.FileExists(*ModelPath))
+	if (!FPaths::FileExists(ModelPath))
 	{
 		UE_LOG(LogMocPolicy, Warning, TEXT("Policy model not found: %s"), *ModelPath);
 
 		if (bUseFallbackDefaults)
 		{
 			UE_LOG(LogMocPolicy, Log, TEXT("Fallback mode enabled. Will use strategy-specific defaults."));
-			return true; // Allow operation with fallbacks
+			return true;
 		}
 		return false;
 	}
 
-	// TODO: Replace with actual ONNX Runtime loading
-	// For now, this is a placeholder implementation
-	// Real implementation would use:
-	// - NNE (Neural Network Engine) in UE5.4+
-	// - Third-party ONNX Runtime plugin
-	// - Custom ONNX inference wrapper
-
-	UE_LOG(LogMocPolicy, Warning, TEXT("⚠️ ONNX Runtime not yet integrated. Using fallback defaults."));
-	UE_LOG(LogMocPolicy, Log, TEXT("Policy model path set: %s"), *ModelPath);
-
-	PolicyModelPath = ModelPath;
-
-	// Placeholder: Mark as not loaded, but allow fallback operation
-	bModelLoaded = false;
-
-	// TODO: Initialize ONNX session with multi-head model
-	// Expected architecture:
-	// - Input: [BatchSize, 52] (local state)
-	// - Shared backbone → 256-dim
-	// - 3 strategy heads (assault/defend/support)
-	// - Output: [BatchSize, 8] (EQS weights)
-	/*
-	ONNXSession = CreateONNXSession(ModelPath);
-	bModelLoaded = (ONNXSession != nullptr);
-	*/
-
-	if (!bModelLoaded && !bUseFallbackDefaults)
+	// Load model file data
+	TArray<uint8> FileData;
+	if (!FFileHelper::LoadFileToArray(FileData, *ModelPath))
 	{
-		UE_LOG(LogMocPolicy, Error, TEXT("Failed to load ONNX policy model and fallback is disabled."));
-		return false;
+		UE_LOG(LogMocPolicy, Error, TEXT("Failed to load model file: %s"), *ModelPath);
+		return bUseFallbackDefaults;
 	}
 
-	if (!bModelLoaded)
+	UE_LOG(LogMocPolicy, Log, TEXT("Loaded policy model data (%d bytes) from %s"), FileData.Num(), *ModelPath);
+
+	// Create UNNEModelData
+	UNNEModelData* ModelData = NewObject<UNNEModelData>(GetTransientPackage());
+	if (!ModelData)
 	{
-		UE_LOG(LogMocPolicy, Log, TEXT("Operating in fallback mode with strategy defaults."));
+		UE_LOG(LogMocPolicy, Error, TEXT("Failed to create UNNEModelData object"));
+		return bUseFallbackDefaults;
 	}
-	else
+
+	const FString FileExt = FPaths::GetExtension(ModelPath);
+	ModelData->Init(
+		FileExt,
+		TConstArrayView64<uint8>(FileData),
+		TMap<FString, TConstArrayView64<uint8>>()
+	);
+
+	// Get NNE Runtime (ONNX Runtime CPU backend)
+	TWeakInterfacePtr<INNERuntimeCPU> Runtime =
+		UE::NNE::GetRuntime<INNERuntimeCPU>(TEXT("NNERuntimeORTCpu"));
+
+	if (!Runtime.IsValid())
 	{
-		// Validate model schema
-		if (!ValidateModelSchema())
+		UE_LOG(LogMocPolicy, Error, TEXT("Failed to get NNE runtime 'NNERuntimeORTCpu'"));
+		if (bUseFallbackDefaults)
 		{
-			UE_LOG(LogMocPolicy, Error, TEXT("Model schema validation failed."));
-			bModelLoaded = false;
-			return false;
+			UE_LOG(LogMocPolicy, Log, TEXT("Operating in fallback mode with strategy defaults."));
+			return true;
 		}
-
-		UE_LOG(LogMocPolicy, Log, TEXT("✅ Multi-head policy model loaded successfully: %s"), *ModelPath);
+		return false;
 	}
 
+	// Create model
+	TSharedPtr<IModelCPU> Model = Runtime->CreateModelCPU(ModelData);
+	if (!Model.IsValid())
+	{
+		UE_LOG(LogMocPolicy, Error, TEXT("Failed to create NNE model from data"));
+		if (bUseFallbackDefaults)
+		{
+			UE_LOG(LogMocPolicy, Log, TEXT("Operating in fallback mode with strategy defaults."));
+			return true;
+		}
+		return false;
+	}
+
+	// Create model instance
+	ModelInstance = Model->CreateModelInstanceCPU();
+	if (!ModelInstance.IsValid())
+	{
+		UE_LOG(LogMocPolicy, Error, TEXT("Failed to create model instance"));
+		if (bUseFallbackDefaults)
+		{
+			UE_LOG(LogMocPolicy, Log, TEXT("Operating in fallback mode with strategy defaults."));
+			return true;
+		}
+		return false;
+	}
+
+	// Validate tensor descriptors
+	TConstArrayView<FTensorDesc> InputDescs = ModelInstance->GetInputTensorDescs();
+	TConstArrayView<FTensorDesc> OutputDescs = ModelInstance->GetOutputTensorDescs();
+
+	UE_LOG(LogMocPolicy, Log, TEXT("Policy model - Input tensors: %d, Output tensors: %d"),
+		InputDescs.Num(), OutputDescs.Num());
+
+	for (int32 i = 0; i < InputDescs.Num(); ++i)
+	{
+		UE_LOG(LogMocPolicy, Log, TEXT("  Input[%d] Name=%s, Rank=%d"),
+			i, *InputDescs[i].GetName(), InputDescs[i].GetShape().Rank());
+	}
+	for (int32 i = 0; i < OutputDescs.Num(); ++i)
+	{
+		UE_LOG(LogMocPolicy, Log, TEXT("  Output[%d] Name=%s, Rank=%d"),
+			i, *OutputDescs[i].GetName(), OutputDescs[i].GetShape().Rank());
+	}
+
+	bModelLoaded = true;
+
+	// Validate model schema
+	if (!ValidateModelSchema())
+	{
+		UE_LOG(LogMocPolicy, Error, TEXT("Model schema validation failed."));
+		bModelLoaded = false;
+		ModelInstance.Reset();
+		return bUseFallbackDefaults;
+	}
+
+	UE_LOG(LogMocPolicy, Log, TEXT("Multi-head policy model loaded successfully: %s"), *ModelPath);
 	return true;
 }
 
@@ -141,13 +198,9 @@ bool UMocPolicyExecutor::ReloadModel(const FString& NewModelPath)
 {
 	UE_LOG(LogMocPolicy, Log, TEXT("Hot-reloading policy model: %s"), *NewModelPath);
 
-	// TODO: Cleanup old session
-	if (ONNXSession != nullptr)
-	{
-		// CleanupONNXSession(ONNXSession);
-		ONNXSession = nullptr;
-	}
-
+	// Cleanup old model instance
+	ModelInstance.Reset();
+	ONNXSession = nullptr;
 	bModelLoaded = false;
 
 	return LoadModel(NewModelPath);
@@ -157,84 +210,104 @@ TArray<float> UMocPolicyExecutor::RunMultiHeadInference(
 	EStrategyType Strategy,
 	const FObservation& LocalObs)
 {
-	// TODO: Replace with actual ONNX Runtime call
-	// For now, return strategy-specific defaults
+	using namespace UE::NNE;
 
-	TArray<float> OutputTensor;
-	OutputTensor.SetNumZeroed(8);
+	// Build input tensor: 57-dim observation + 1-dim strategy index = 58-dim
+	TArray<float> ObsTensor = LocalObs.ToArray(); // 57-dim
+	const int32 StrategyIndex = static_cast<int32>(Strategy);
 
-	// Placeholder implementation (will be replaced with real ONNX call)
-	/*
-	// Real implementation would look like:
+	// Construct full input: obs (57) + strategy_index (1) = 58
+	constexpr int32 InputDim = 58;
+	TArray<float> InputData;
+	InputData.Reserve(InputDim);
+	InputData.Append(ObsTensor);
 
-	// 1. Encode local observation to 52-dim tensor
-	TArray<float> StateTensor = LocalObs.ToArray(); // 52-dim
-	check(StateTensor.Num() == 52);
-
-	// 2. Prepare ONNX input
-	Ort::MemoryInfo MemoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
-	std::vector<float> InputData(StateTensor.GetData(), StateTensor.GetData() + 52);
-	std::vector<int64_t> InputShape = {1, 52}; // Batch size = 1
-
-	Ort::Value InputOrtValue = Ort::Value::CreateTensor<float>(
-		MemoryInfo,
-		InputData.data(),
-		InputData.size(),
-		InputShape.data(),
-		InputShape.size()
-	);
-
-	// 3. Select output head based on strategy
-	const char* OutputName;
-	switch (Strategy)
+	// Pad or truncate obs to 57 dims
+	while (InputData.Num() < 57)
 	{
-	case EStrategyType::Assault:
-		OutputName = "assault_head_output";
-		break;
-	case EStrategyType::Defend:
-		OutputName = "defend_head_output";
-		break;
-	case EStrategyType::Support:
-		OutputName = "support_head_output";
-		break;
-	default:
-		OutputName = "assault_head_output"; // Default fallback
-		break;
+		InputData.Add(0.0f);
+	}
+	if (InputData.Num() > 57)
+	{
+		InputData.SetNum(57);
 	}
 
-	const char* InputNames[] = {"state_input"};
-	const char* OutputNames[] = {OutputName};
+	// Append strategy index (normalized to [0,1] range: 0=Assault, 1=Defend, 2=Support → 0.0, 0.5, 1.0)
+	InputData.Add(static_cast<float>(StrategyIndex) / 2.0f);
 
-	// 4. Run inference
-	auto OutputTensors = ONNXSession->Run(
-		Ort::RunOptions{nullptr},
-		InputNames,
-		&InputOrtValue,
-		1,
-		OutputNames,
-		1
-	);
+	// Output tensor: 8-dim (7 EQS weights + 1 confidence)
+	constexpr int32 OutputDim = 8;
+	TArray<float> OutputData;
+	OutputData.SetNumUninitialized(OutputDim);
 
-	// 5. Extract output weights [1, 8]
-	float* OutputData = OutputTensors[0].GetTensorMutableData<float>();
-	for (int i = 0; i < 8; ++i) {
-		OutputTensor[i] = OutputData[i];
+	if (!ModelInstance.IsValid())
+	{
+		UE_LOG(LogMocPolicy, Error, TEXT("Model instance invalid during inference"));
+		OutputData.Init(0.0f, OutputDim);
+		return OutputData;
 	}
-	*/
 
-	return OutputTensor;
+	// Set input tensor shape
+	FTensorShape InputShape = FTensorShape::Make({1, InputDim});
+	const auto SetShapeStatus = ModelInstance->SetInputTensorShapes({InputShape});
+	if (SetShapeStatus != IModelInstanceRunSync::ESetInputTensorShapesStatus::Ok)
+	{
+		UE_LOG(LogMocPolicy, Error, TEXT("Failed to set input tensor shape"));
+		OutputData.Init(0.0f, OutputDim);
+		return OutputData;
+	}
+
+	// Create tensor bindings
+	TArray<FTensorBindingCPU> InputBindings;
+	TArray<FTensorBindingCPU> OutputBindings;
+
+	InputBindings.Add(FTensorBindingCPU{InputData.GetData(), InputData.Num() * sizeof(float)});
+	OutputBindings.Add(FTensorBindingCPU{OutputData.GetData(), OutputData.Num() * sizeof(float)});
+
+	// Run inference
+	const auto RunResult = ModelInstance->RunSync(InputBindings, OutputBindings);
+	if (RunResult != IModelInstanceRunSync::ERunSyncStatus::Ok)
+	{
+		UE_LOG(LogMocPolicy, Error, TEXT("Policy inference failed with code %d"), static_cast<int32>(RunResult));
+		// Fallback to defaults
+		FEQSWeightParameters Defaults = GetDefaultWeights(Strategy);
+		OutputData[0] = Defaults.EnemyObjectiveProximity;
+		OutputData[1] = Defaults.AllyObjectiveProximity;
+		OutputData[2] = Defaults.CoverDensity;
+		OutputData[3] = Defaults.EnemyVisibility;
+		OutputData[4] = Defaults.AllyProximity;
+		OutputData[5] = Defaults.CombatRange;
+		OutputData[6] = Defaults.PickupProximity;
+		OutputData[7] = 0.0f; // Low confidence
+	}
+
+	return OutputData;
 }
 
 bool UMocPolicyExecutor::ValidateModelSchema()
 {
-	// TODO: Implement schema validation
-	// Expected:
-	// - Input: [BatchSize, 52] (local state)
-	// - Output: [BatchSize, 8] (EQS weights) from selected head
-	// - 3 output nodes: assault_head_output, defend_head_output, support_head_output
+	if (!ModelInstance.IsValid())
+	{
+		return false;
+	}
 
-	return true; // Placeholder
+	TConstArrayView<UE::NNE::FTensorDesc> InputDescs = ModelInstance->GetInputTensorDescs();
+	TConstArrayView<UE::NNE::FTensorDesc> OutputDescs = ModelInstance->GetOutputTensorDescs();
+
+	if (InputDescs.Num() == 0 || OutputDescs.Num() == 0)
+	{
+		UE_LOG(LogMocPolicy, Error, TEXT("Model has no input or output tensors"));
+		return false;
+	}
+
+	// Verify input rank is at least 2 (batch, features)
+	if (InputDescs[0].GetShape().Rank() < 2)
+	{
+		UE_LOG(LogMocPolicy, Warning, TEXT("Input tensor rank %d < 2, may be incompatible"),
+			InputDescs[0].GetShape().Rank());
+	}
+
+	return true;
 }
 
 FEQSWeightParameters UMocPolicyExecutor::GetDefaultWeights(EStrategyType Strategy)
@@ -291,6 +364,6 @@ void UMocPolicyExecutor::LogInferenceStats(float InferenceTimeMs)
 	// Warn if exceeding budget (2ms target for real-time operation)
 	if (InferenceTimeMs > 2.0f)
 	{
-		UE_LOG(LogMocPolicy, Warning, TEXT("⚠️ Policy inference exceeds 2ms budget: %.2f ms"), InferenceTimeMs);
+		UE_LOG(LogMocPolicy, Warning, TEXT("Policy inference exceeds 2ms budget: %.2f ms"), InferenceTimeMs);
 	}
 }

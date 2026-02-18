@@ -222,16 +222,21 @@ void APickupBase::UpdateVisuals()
 	// Update mesh visibility
 	PickupMesh->SetVisibility(bIsAvailable);
 
+	// Disable collection sphere when consumed so agents cannot overlap-trigger it
+	CollectionSphere->SetCollisionEnabled(bIsAvailable ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+
 	// Update particle effect
 	if (VisualEffect)
 	{
 		if (bIsAvailable)
 		{
+			VisualEffect->SetVisibility(true);
 			VisualEffect->Activate(true);
 		}
 		else
 		{
-			VisualEffect->Deactivate();
+			VisualEffect->DeactivateImmediate();
+			VisualEffect->SetVisibility(false);
 		}
 	}
 

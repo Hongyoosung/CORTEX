@@ -73,7 +73,7 @@ struct GAMEAI_PROJECT_API FObservation
 	TArray<bool> EnemyVisible;
 
 	//========================================
-	// Map State (2-dim)
+	// Map State (7-dim)
 	//========================================
 
 	/** Controlled capture points count [-5, +5] (1-dim) */
@@ -84,11 +84,17 @@ struct GAMEAI_PROJECT_API FObservation
 	UPROPERTY(BlueprintReadWrite, Category = "Observation|Map")
 	float TimeRemaining = 1.0f;
 
+	/** Per-point ownership relative to this agent's team (5-dim)
+	 *  +1.0 = owned by my team, 0.0 = neutral, -1.0 = owned by enemy
+	 *  Order: PointA, PointB, PointC, PointD, PointE */
+	UPROPERTY(BlueprintReadWrite, Category = "Observation|Map")
+	TArray<float> CapturePointStatuses;
+
 	//========================================
 	// Features Array
 	//========================================
 
-	/** Flattened feature array for neural network input (52-dim for agent, 56-dim for team) */
+	/** Flattened feature array for neural network input (57-dim for agent) */
 	UPROPERTY(BlueprintReadWrite, Category = "Observation")
 	TArray<float> Features;
 
@@ -96,11 +102,11 @@ struct GAMEAI_PROJECT_API FObservation
 	// Utility Methods
 	//========================================
 
-	/** Convert to flat float array for neural network input (52-dim) */
+	/** Convert to flat float array for neural network input (57-dim) */
 	TArray<float> ToArray() const
 	{
 		TArray<float> Result;
-		Result.Reserve(52);
+		Result.Reserve(57);
 
 		// Self state (10-dim)
 		Result.Add(Position.X / 10000.0f);
@@ -175,11 +181,17 @@ struct GAMEAI_PROJECT_API FObservation
 			}
 		}
 
-		// Map state (2-dim)
+		// Map state (7-dim)
 		Result.Add(static_cast<float>(CapturePointBalance) / 5.0f); // Normalize [-1, 1]
 		Result.Add(TimeRemaining);
 
-		ensure(Result.Num() == 52);
+		// Per-point ownership relative to agent's team (5-dim: A, B, C, D, E)
+		for (int32 i = 0; i < 5; ++i)
+		{
+			Result.Add(i < CapturePointStatuses.Num() ? CapturePointStatuses[i] : 0.0f);
+		}
+
+		ensure(Result.Num() == 57);
 		return Result;
 	}
 
@@ -191,5 +203,6 @@ struct GAMEAI_PROJECT_API FObservation
 		AllyStrategies.Init(EStrategyType::Assault, 4);
 		EnemyPositions.Init(FVector::ZeroVector, 5);
 		EnemyVisible.Init(false, 5);
+		CapturePointStatuses.Init(0.0f, 5); // All neutral by default
 	}
 };
