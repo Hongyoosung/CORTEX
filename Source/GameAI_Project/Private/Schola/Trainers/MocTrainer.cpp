@@ -1,6 +1,7 @@
 // File: Schola/Trainers/MocTrainer.cpp
 
 #include "Schola/Trainers/MocTrainer.h"
+#include "Actors/CapturePoint.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Schola/Logging/ScholaTransitionLogger.h"
 #include "Schola/Logging/MocTransitionLogger.h"
@@ -85,6 +86,9 @@ void AMocTrainer::BeginPlay()
 
     // v10.2: Strategy는 Squad Commander가 할당
     // Executor는 commanded strategy를 수행하는 데만 집중
+
+    // Cache capture point references once — they don't spawn/despawn during an episode
+    CacheCapturePoints();
 
     // Initialize observation state
     PreviousObservation = FObservation();
@@ -378,10 +382,33 @@ FObservation AMocTrainer::GatherStateObservation()
         EnemyIndex++;
     }
 
-    // Map state (capture points)
-    // TODO: Implement capture point balance calculation
-    Obs.CapturePointBalance = 0;
-    Obs.TimeRemaining = 1.0f; // TODO: Get from game mode
+    // Map state: per-point ownership relative to this agent's team
+    Obs.CapturePointStatuses.Init(0.0f, 5);
+    int32 FriendlyPoints = 0;
+    int32 EnemyPoints = 0;
+
+    for (ACapturePoint* CP : CachedCapturePoints)
+    {
+        if (!CP) continue;
+        int32 Idx = static_cast<int32>(CP->PointID);
+        if (Idx < 0 || Idx >= 5) continue;
+
+        int32 OwnerTeam = CP->GetOwningTeamID();
+        if (OwnerTeam == MyTeamID)
+        {
+            Obs.CapturePointStatuses[Idx] = 1.0f;
+            FriendlyPoints++;
+        }
+        else if (OwnerTeam != -1) // enemy-owned
+        {
+            Obs.CapturePointStatuses[Idx] = -1.0f;
+            EnemyPoints++;
+        }
+        // neutral → stays 0.0f
+    }
+
+    Obs.CapturePointBalance = FriendlyPoints - EnemyPoints;
+    Obs.TimeRemaining = 1.0f; // TODO: Get actual time from game mode
 
     return Obs;
 }
@@ -542,6 +569,43 @@ float AMocTrainer::ComputeCommandedStrategyReward(
             if (Current.WeaponCooldown < 0.5f)
             {
                 Reward += 0.5f;
+            }
+
+            // Objective shaping: close in on and occupy non-friendly capture points
+            if (ControlledCharacter && CachedCapturePoints.Num() > 0)
+            {
+                int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
+                float PrevNearestDist = FLT_MAX;
+                float CurrNearestDist = FLT_MAX;
+                bool bInZone = false;
+
+                for (ACapturePoint* CP : CachedCapturePoints)
+                {
+                    if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+
+                    float DistPrev = FVector::Dist(Prev.Position, CP->GetActorLocation());
+                    float DistCurr = FVector::Dist(Current.Position, CP->GetActorLocation());
+
+                    if (DistPrev < PrevNearestDist) PrevNearestDist = DistPrev;
+                    if (DistCurr < CurrNearestDist) CurrNearestDist = DistCurr;
+
+                    if (DistCurr <= CP->CaptureRadius)
+                    {
+                        bInZone = true;
+                    }
+                }
+
+                // Reward progress toward the nearest non-friendly point
+                if (PrevNearestDist < FLT_MAX && CurrNearestDist < FLT_MAX)
+                {
+                    Reward += AssaultObjectiveProgressReward * (PrevNearestDist - CurrNearestDist);
+                }
+
+                // Bonus per step spent inside a non-friendly capture zone
+                if (bInZone)
+                {
+                    Reward += AssaultZonePresenceBonus;
+                }
             }
         }
         break;
@@ -901,6 +965,7 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
         );
         Info.Add(TEXT("RewardPosition"), FString::Printf(TEXT("%.3f"), Breakdown.PositionComponent));
         Info.Add(TEXT("RewardHealth"), FString::Printf(TEXT("%.3f"), Breakdown.HealthComponent));
+        Info.Add(TEXT("RewardObjective"), FString::Printf(TEXT("%.3f"), Breakdown.ObjectiveComponent));
         Info.Add(TEXT("RewardDeath"), FString::Printf(TEXT("%.3f"), Breakdown.DeathPenaltyComponent));
     }
 }
@@ -1081,6 +1146,25 @@ void AMocTrainer::UpdateTrainingStatistics()
         TotalEpisodes, EpisodeReward, CurrentEpisodeSteps, AverageEpisodeLength);
 }
 
+void AMocTrainer::CacheCapturePoints()
+{
+    CachedCapturePoints.Empty();
+
+    TArray<AActor*> Found;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACapturePoint::StaticClass(), Found);
+
+    for (AActor* Actor : Found)
+    {
+        if (ACapturePoint* CP = Cast<ACapturePoint>(Actor))
+        {
+            CachedCapturePoints.Add(CP);
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Cached %d capture points for reward computation"),
+        CachedCapturePoints.Num());
+}
+
 AMocTrainer::FRewardBreakdown AMocTrainer::CalculateRewardBreakdown(
     EStrategyType Strategy,
     const FObservation& Prev,
@@ -1091,6 +1175,7 @@ AMocTrainer::FRewardBreakdown AMocTrainer::CalculateRewardBreakdown(
     Breakdown.StrategyReward = 0.0f;
     Breakdown.HealthComponent = 0.0f;
     Breakdown.PositionComponent = 0.0f;
+    Breakdown.ObjectiveComponent = 0.0f; // Note: not computed here (needs world access)
     Breakdown.DeathPenaltyComponent = 0.0f;
     Breakdown.TimePenaltyComponent = -TimePenalty;
 
@@ -1136,7 +1221,7 @@ AMocTrainer::FRewardBreakdown AMocTrainer::CalculateRewardBreakdown(
     }
 
     Breakdown.StrategyReward = Breakdown.PositionComponent + Breakdown.HealthComponent;
-    Breakdown.Total = Breakdown.StrategyReward + Breakdown.DeathPenaltyComponent + Breakdown.TimePenaltyComponent;
+    Breakdown.Total = Breakdown.StrategyReward + Breakdown.ObjectiveComponent + Breakdown.DeathPenaltyComponent + Breakdown.TimePenaltyComponent;
 
     return Breakdown;
 }

@@ -14,14 +14,24 @@ services:
       - ./training_results_v10_2:/app/training_results_v10_2
       - ./models:/app/models
     environment:
-      - NUM_WORKERS=0  # Single process for Windows compatibility
-      - NUM_ITERATIONS=100
-      - HOST=host.docker.internal  # Connect to UE5 on host machine
+      # Passed through from the host shell (or phase1_training.bat).
+      # Use the default values shown here when not set by the launcher.
+      - NUM_SCHOLA_ENVS=${NUM_SCHOLA_ENVS:-4}   # UE5 Schola env count
+      - NUM_WORKERS=${NUM_WORKERS:-0}             # Ray RLlib env-runners (0 = local)
+      - NUM_ITERATIONS=${NUM_ITERATIONS:-100}     # Training iterations
+      - HOST=host.docker.internal                 # Connect to UE5 on host machine
       - PORT=50051
-      - IS_DOCKER=true  # Enable Docker-specific gRPC settings
+      - IS_DOCKER=true                            # Enable Docker-specific gRPC settings
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: python training/phase1_policy_training_v10_2.py --mode rllib --iterations 100 --host host.docker.internal --port 50051
+    # $$VAR is expanded by the container shell (not by Compose),
+    # so the value comes from the environment section above.
+    command: >-
+      sh -c "python training/phase1_policy_training_v10_2.py
+      --mode rllib
+      --iterations $$NUM_ITERATIONS
+      --host host.docker.internal
+      --port 50051"
     profiles:
       - v10.2
       - v10.2-policy

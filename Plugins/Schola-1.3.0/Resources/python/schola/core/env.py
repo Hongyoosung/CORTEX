@@ -10,6 +10,7 @@ import schola.generated.GymConnector_pb2_grpc as gym_grpc
 import schola.generated.Definitions_pb2 as env_definitions
 import schola.generated.State_pb2 as state
 from schola.core.spaces import DictSpace
+import grpc
 import logging
 import numpy as np
 import atexit
@@ -274,8 +275,12 @@ class ScholaEnv:
                 )
         state_update.status = gym_communication.CommunicatorStatus.GOOD
         logging.debug(state_update)
-        # send it to Unreal
-        training_state = self.gym_stub.UpdateState(state_update)
+        # send it to Unreal (with timeout to prevent infinite blocking after idle periods)
+        try:
+            training_state = self.gym_stub.UpdateState(state_update, timeout=120)
+        except grpc.RpcError as e:
+            logging.error(f"UpdateState failed (step {self.steps}): {e.code()} - {e.details()}")
+            raise
         # convert proto to observations, reward, terminated, truncated and other info
         self.steps += 1
         logging.debug(training_state)

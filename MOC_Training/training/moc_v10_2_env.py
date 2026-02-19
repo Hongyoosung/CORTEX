@@ -275,6 +275,7 @@ if SCHOLA_AVAILABLE:
         def reset(self, *, seed=None, options=None):
             """Reset environment."""
             reset_start = time.time()
+            print(f"[RESET CALLED] time={time.strftime('%H:%M:%S')} first_done={self._first_reset_done}")
 
             is_first = not self._first_reset_done
 
@@ -372,11 +373,21 @@ if SCHOLA_AVAILABLE:
                     if agentkeys:
                         formattedactions[envidx][agentidx] = {key: actionarray for key in agentkeys}
 
-                # 2. Send actions (non-blocking)
+                # 2. Send actions (non-blocking - just stores in schola_env.next_action)
+                num_formatted = sum(len(agents) for agents in formattedactions.values())
                 self.schola_env.send_actions(formattedactions)
 
                 # 3. Poll for observations (BLOCKING - waits for UE5 response)
                 poll_start = time.time()
+                env_steps_summary = {i: self._env_episode_steps.get(i, 0) for i in range(self.num_envs)}
+                if not hasattr(self, '_total_step_count'):
+                    self._total_step_count = 0
+                self._total_step_count += 1
+                # Log every step for the first few, after episode boundaries, and periodically
+                steps_since_reset = self._env_episode_steps.get(0, 0)
+                if self._total_step_count <= 5 or self._total_step_count % 500 == 0 or steps_since_reset <= 2:
+                    print(f"[STEP {self._total_step_count}] Calling poll() with {num_formatted} agent actions, env_steps={env_steps_summary}")
+
                 step_result = self.schola_env.poll()
                 poll_duration = time.time() - poll_start
                 self.poll_durations.append(poll_duration)

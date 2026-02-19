@@ -4,6 +4,7 @@ Base Class for Unreal Connections
 """
 from typing import List, Optional, Tuple
 import grpc
+import os
 import socket
 
 
@@ -52,9 +53,27 @@ class BaseUnrealConnection:
         """
         Open the Connection to Unreal Engine.
         """
-        self.channel = grpc.secure_channel(
-            self.address, grpc.local_channel_credentials()
-        ).__enter__()
+        # Keepalive options to prevent channel death during long idle periods
+        # (e.g., between data collection and RL policy training updates)
+        channel_options = [
+            ('grpc.keepalive_time_ms', 10000),           # Send keepalive ping every 10s
+            ('grpc.keepalive_timeout_ms', 5000),          # Wait 5s for keepalive ack
+            ('grpc.keepalive_permit_without_calls', True), # Send pings even when no RPCs
+            ('grpc.http2.max_pings_without_data', 0),     # No limit on pings without data
+        ]
+
+        # UE5 Schola server uses InsecureServerCredentials().
+        # In Docker: must use insecure_channel (cross-network to host).
+        # Locally on Windows: local_channel_credentials() also works but
+        # insecure is correct since server is insecure.
+        if os.environ.get('IS_DOCKER', '').lower() in ('true', '1'):
+            self.channel = grpc.insecure_channel(
+                self.address, options=channel_options
+            ).__enter__()
+        else:
+            self.channel = grpc.secure_channel(
+                self.address, grpc.local_channel_credentials(), options=channel_options
+            ).__enter__()
 
     @property
     def address(self) -> str:

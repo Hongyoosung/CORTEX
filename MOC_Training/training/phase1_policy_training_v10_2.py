@@ -707,19 +707,27 @@ if RLLIB_AVAILABLE:
 # ============================================================================
 
 class MOCv10_2TrainingConfig:
-    """Training configuration for MOC v10.2."""
+    """Training configuration for MOC v10.2.
+
+    Core counts are read from environment variables so Docker Compose (or the
+    batch launcher) can override them without editing source:
+
+        NUM_SCHOLA_ENVS  – number of UE5 Schola environments  (default: 4)
+        NUM_WORKERS      – number of Ray RLlib env-runners      (default: 0)
+        NUM_ITERATIONS   – total training iterations            (default: 100)
+    """
 
     # Environment
     HOST = "localhost"
     PORT = 50051
-    NUM_UE5_ENVIRONMENTS = 4
+    NUM_UE5_ENVIRONMENTS = int(os.environ.get('NUM_SCHOLA_ENVS', 4))
 
     # Network architecture
     HIDDEN_DIMS = [256, 256]
 
     # PPO hyperparameters
     LEARNING_RATE = 3e-4
-    TRAIN_BATCH_SIZE = 10000   
+    TRAIN_BATCH_SIZE = 10000
     SGD_MINIBATCH_SIZE = 256  # ~11 minibatches per epoch (10000 ÷ 256)
     NUM_SGD_ITER = 10
     GAMMA = 0.99
@@ -731,9 +739,9 @@ class MOCv10_2TrainingConfig:
     VF_CLIP_PARAM = 10.0
 
     # Training
-    NUM_WORKERS = 0  # Windows: single process
+    NUM_WORKERS = int(os.environ.get('NUM_WORKERS', 0))
     NUM_ENVS_PER_WORKER = 1
-    NUM_ITERATIONS = 100
+    NUM_ITERATIONS = int(os.environ.get('NUM_ITERATIONS', 100))
     CHECKPOINT_FREQ = 10
 
     # Schedules
@@ -825,6 +833,20 @@ def create_ppo_config():
         rollout_fragment_length=300,  # Matches episode length for clean episode boundaries
         batch_mode="truncate_episodes",
     )
+
+    # On Windows, Ray's Learner actor hangs during inter-process weight sync.
+    # Force local learner on Windows; on Linux (Docker) both modes work.
+    import platform
+    if platform.system() == "Windows":
+        try:
+            config = config.learners(num_learners=0)
+            print("[v10.2] Windows: using num_learners=0 (local learner)")
+        except Exception:
+            config = config.api_stack(
+                enable_rl_module_and_learner=False,
+                enable_env_runner_and_connector_v2=False,
+            )
+            print("[v10.2] Windows fallback: using old API stack")
 
     # Multi-agent
     config = config.multi_agent(
@@ -1025,8 +1047,10 @@ def train_with_rllib(args):
 
     for i in range(args.iterations):
         iter_start = time.time()
+        print(f"\n[ITER {i+1}/{args.iterations}] Starting algo.train() at {time.strftime('%H:%M:%S')}")
 
         result = algo.train()
+        print(f"[ITER {i+1}/{args.iterations}] algo.train() returned at {time.strftime('%H:%M:%S')}")
 
         iter_time = time.time() - iter_start
 

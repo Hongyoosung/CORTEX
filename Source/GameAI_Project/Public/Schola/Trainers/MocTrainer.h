@@ -15,6 +15,7 @@
 class UScholaMocAgent;
 class UScholaTransitionLogger;
 class AMocCharacter;
+class ACapturePoint;
 
 
 /**
@@ -151,6 +152,14 @@ public:
     UPROPERTY(EditAnywhere, Category="Training|Rewards")
     float TimePenalty = 0.001f;
 
+    /** Assault: reward per cm of progress toward nearest non-friendly capture point */
+    UPROPERTY(EditAnywhere, Category="Training|Rewards")
+    float AssaultObjectiveProgressReward = 0.02f;
+
+    /** Assault: per-step bonus for standing inside a non-friendly capture zone */
+    UPROPERTY(EditAnywhere, Category="Training|Rewards")
+    float AssaultZonePresenceBonus = 3.0f;
+
 protected:
     // ==================== Internal State ====================
 
@@ -188,6 +197,13 @@ protected:
     /** Transition 로거 */
     UPROPERTY()
     UScholaTransitionLogger* TransitionLogger;
+
+    /** Cached capture point references (populated in BeginPlay, reused every step) */
+    UPROPERTY()
+    TArray<TObjectPtr<ACapturePoint>> CachedCapturePoints;
+
+    /** Populate CachedCapturePoints from world */
+    void CacheCapturePoints();
 
     // ==================== Training Statistics ====================
 
@@ -236,6 +252,7 @@ private:
         float StrategyReward;
         float HealthComponent;
         float PositionComponent;
+        float ObjectiveComponent;
         float DeathPenaltyComponent;
         float TimePenaltyComponent;
         float Total;
