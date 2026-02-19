@@ -50,6 +50,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 STRATEGY_NAMES = {0: "Assault", 1: "Defend", 2: "Support"}
 
+# UEnum::GetValueAsString returns 'EStrategyType::Assault' - maps suffix to index
+STRATEGY_STR_TO_IDX = {"Assault": 0, "Defend": 1, "Support": 2}
+
 
 @dataclass
 class Transition:
@@ -761,11 +764,23 @@ if RLLIB_AVAILABLE:
             episode.user_data["strategy_counts"] = {0: 0, 1: 0, 2: 0}
 
         def on_episode_step(self, *, episode, **kwargs):
-            obs = episode.last_observation_for()
-            if obs is not None and len(obs) >= 60:
-                strategy_onehot = obs[57:60]
-                strategy_idx = int(np.argmax(strategy_onehot))
-                reward = episode.last_reward_for()
+            # EpisodeV2 API: use get_agents() + last_info_for()
+            # Info dict contains 'Strategy' (UEnum string) and 'LastStepReward' directly
+            for agent_id in episode.get_agents():
+                info = episode.last_info_for(agent_id)
+                if not info:
+                    continue
+                raw_strategy = info.get('Strategy')
+                if raw_strategy is None:
+                    continue
+                # UEnum::GetValueAsString returns 'EStrategyType::Assault' - extract name after '::'
+                strategy_name = raw_strategy.split('::')[-1]
+                if strategy_name not in STRATEGY_STR_TO_IDX:
+                    raise ValueError(
+                        f"[on_episode_step] Unrecognized strategy value '{raw_strategy}'."
+                    )
+                strategy_idx = STRATEGY_STR_TO_IDX[strategy_name]
+                reward = float(info.get('LastStepReward', 0.0))
                 episode.user_data["strategy_rewards"][strategy_idx].append(reward)
                 episode.user_data["strategy_counts"][strategy_idx] += 1
 
@@ -892,47 +907,35 @@ def register_custom_model():
 
 def export_onnx(algo, output_dir):
     """Export trained policy to ONNX format for UE5."""
-    try:
-        policy = algo.get_policy("shared_policy")
-        if not policy:
-            print("ERROR: Could not get 'shared_policy'")
-            return False
+    policy = algo.get_policy("shared_policy")
+    if not policy:
+        print("\n[FATAL] export_onnx: Could not get 'shared_policy'")
+        sys.exit(1)
 
-        model = policy.model.policy  # Unwrap the RLlib wrapper
+    model = policy.model.policy  # Unwrap the RLlib wrapper
+    model.eval()
 
-        model.eval()
+    dummy_obs = torch.randn(1, 57)
+    dummy_strategy = torch.zeros(1, dtype=torch.long)
+    model_path = os.path.join(output_dir, "moc_policy_v10_2.onnx")
 
-        # Export with strategy conditioning
-        # UE5 will provide: [obs (57-dim), strategy_idx (scalar)]
-        dummy_obs = torch.randn(1, 57)
-        dummy_strategy = torch.zeros(1, dtype=torch.long)
+    torch.onnx.export(
+        model,
+        (dummy_obs, dummy_strategy),
+        model_path,
+        input_names=['observation', 'strategy_index'],
+        output_names=['eqs_weights'],
+        dynamic_axes={
+            'observation': {0: 'batch_size'},
+            'strategy_index': {0: 'batch_size'},
+            'eqs_weights': {0: 'batch_size'}
+        },
+        opset_version=14
+    )
 
-        model_path = os.path.join(output_dir, "moc_policy_v10_2.onnx")
-
-        torch.onnx.export(
-            model,
-            (dummy_obs, dummy_strategy),
-            model_path,
-            input_names=['observation', 'strategy_index'],
-            output_names=['eqs_weights'],
-            dynamic_axes={
-                'observation': {0: 'batch_size'},
-                'strategy_index': {0: 'batch_size'},
-                'eqs_weights': {0: 'batch_size'}
-            },
-            opset_version=14
-        )
-
-        print(f"[ONNX Export] Model saved to: {model_path}")
-        print(f"  Input: observation(B, 57), strategy_index(B)")
-        print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
-        return True
-
-    except Exception as e:
-        print(f"ONNX export failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    print(f"[ONNX Export] Model saved to: {model_path}")
+    print(f"  Input: observation(B, 57), strategy_index(B)")
+    print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
 
 
 def train_with_rllib(args):
@@ -980,8 +983,8 @@ def train_with_rllib(args):
         )
         print("Ray initialized successfully")
     except Exception as e:
-        print(f"Ray init failed: {e}, using local mode")
-        ray.init(local_mode=True, ignore_reinit_error=True)
+        print(f"\n[FATAL] Ray initialization failed: {e}")
+        sys.exit(1)
 
     register_env()
     register_custom_model()
@@ -1266,10 +1269,8 @@ def evaluate_checkpoint(checkpoint_path: str):
             policy = rllib_policy.model.policy
             print("Loaded from RLlib checkpoint")
         except Exception as e:
-            print(f"Failed to load RLlib checkpoint: {e}")
-            print("Attempting raw state_dict load...")
-            state_dict = torch.load(checkpoint_path, map_location="cpu")
-            policy.load_state_dict(state_dict)
+            print(f"\n[FATAL] Failed to load RLlib checkpoint: {e}")
+            sys.exit(1)
 
     policy.eval()
 
