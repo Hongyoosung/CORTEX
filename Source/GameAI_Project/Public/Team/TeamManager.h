@@ -297,8 +297,8 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "TeamManager|State")
 	FTeamState BlueTeamState;
 
-	/** Respawn timer tracking */
-	TMap<AMocCharacter*, float> RespawnTimers;
+	/** Per-team group respawn timers (-1 = inactive) */
+	float TeamRespawnTimers[2] = { -1.0f, -1.0f };
 
 	/** All spawned agents (for cleanup) */
 	UPROPERTY()

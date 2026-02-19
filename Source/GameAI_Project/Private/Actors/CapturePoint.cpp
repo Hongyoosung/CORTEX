@@ -265,10 +265,21 @@ void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 	// No one in zone
 	CapturingTeam = -1;
 
-	// Decay partial capture progress only on neutral points (owned points hold at 1.0)
-	if (CaptureProgress > 0.0f && OwnerTeamID == -1)
+	// Decay capture progress when no agents present (0.5% per second)
+	if (CaptureProgress > 0.0f)
 	{
+		// Owned points decay from 1.0 toward 0.0; neutral points also decay
 		CaptureProgress = FMath::Max(0.0f, CaptureProgress - DecayRate * DeltaTime);
+
+		// If an owned point's progress drops to 0, revert to neutral
+		if (CaptureProgress <= 0.0f && OwnerTeamID != -1)
+		{
+			const ECapturePointOwnership PreviousOwner = CurrentOwner;
+			CurrentOwner = ECapturePointOwnership::Neutral;
+			OnPointCaptured.Broadcast(PointID, PreviousOwner, ECapturePointOwnership::Neutral);
+			UpdateNiagaraColor();
+		}
+
 		if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
 		{
 			OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);

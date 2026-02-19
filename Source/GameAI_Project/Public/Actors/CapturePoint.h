@@ -212,7 +212,7 @@ public:
 
 	/** Progress decay rate when capturing team withdraws (percentage per second) */
 	UPROPERTY(EditAnywhere, Category = "CapturePoint|Balance")
-	float DecayRate = 0.5f;
+	float DecayRate = 0.005f;
 
 	/** Capture zone radius (cm) */
 	UPROPERTY(EditAnywhere, Category = "CapturePoint|Zone")

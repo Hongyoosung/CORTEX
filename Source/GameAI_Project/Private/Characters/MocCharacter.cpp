@@ -251,11 +251,8 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 			KillerTeamID = Killer->GetTeamID_Implementation();
 		}
 
-		// Register kill (TeamManager broadcasts OnAgentKilled)
+		// Register kill (TeamManager broadcasts OnAgentKilled and queues respawn)
 		TM->RegisterKill(KillerTeamID, GetTeamID_Implementation(), this);
-
-		// Queue respawn
-		TM->QueueRespawn(this, GetTeamID_Implementation());
 	}
 }
 
@@ -328,6 +325,40 @@ void AMocCharacter::ResetCharacter()
 		ScholaAgent->ResetAgent();
 	}
 
+	// 8. Initialize strategy-based default EQS weights so the first post-respawn
+	//    action uses meaningful values instead of all-zeros.
+	//    These will be overwritten once the RL actuator delivers its first action.
+	FEQSWeightParameters DefaultWeights;
+	switch (CommandedStrategy)
+	{
+	case EStrategyType::Assault:
+		DefaultWeights.EnemyObjectiveProximity = 0.8f;
+		DefaultWeights.EnemyVisibility = 0.5f;
+		DefaultWeights.CombatRange = 0.4f;
+		DefaultWeights.CoverDensity = 0.2f;
+		DefaultWeights.AllyProximity = 0.3f;
+		break;
+	case EStrategyType::Defend:
+		DefaultWeights.AllyObjectiveProximity = 0.8f;
+		DefaultWeights.CoverDensity = 0.7f;
+		DefaultWeights.EnemyVisibility = 0.4f;
+		DefaultWeights.AllyProximity = 0.5f;
+		DefaultWeights.CombatRange = 0.3f;
+		break;
+	case EStrategyType::Support:
+		DefaultWeights.AllyProximity = 0.7f;
+		DefaultWeights.AllyObjectiveProximity = 0.5f;
+		DefaultWeights.CoverDensity = 0.4f;
+		DefaultWeights.PickupProximity = 0.6f;
+		DefaultWeights.CombatRange = 0.2f;
+		break;
+	}
+	CurrentEQSWeights = DefaultWeights;
+	bWeightsDirty = true;
+
+	// 9. Trigger initial EQS action so the agent moves immediately after respawn
+	PerformTacticalAction();
+
 	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] %s reset complete"), *GetName());
 }
 
@@ -376,7 +407,24 @@ void AMocCharacter::PerformTacticalAction()
 	TOptional<FVector> Result = EQSExecutor->ExecuteSynchronousQuery(CurrentEQSWeights);
 	if (!Result.IsSet())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: EQS query returned no result"), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: EQS query returned no result - using fallback movement"), *GetName());
+
+		// Fallback: move to a random nearby point to unstick the agent
+		const FVector CurrentLocation = GetActorLocation();
+		const float FallbackRadius = 300.0f;
+		const float RandomAngle = FMath::FRandRange(0.0f, 2.0f * PI);
+		const FVector FallbackTarget = CurrentLocation + FVector(
+			FMath::Cos(RandomAngle) * FallbackRadius,
+			FMath::Sin(RandomAngle) * FallbackRadius,
+			0.0f
+		);
+
+		LastEQSTargetLocation = FallbackTarget;
+
+		FAIMoveRequest FallbackReq(FallbackTarget);
+		FallbackReq.SetAcceptanceRadius(EQSAcceptanceRadius);
+		FallbackReq.SetUsePathfinding(true);
+		AICtrl->MoveTo(FallbackReq);
 		return;
 	}
 

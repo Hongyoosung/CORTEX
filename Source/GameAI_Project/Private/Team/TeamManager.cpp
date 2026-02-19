@@ -201,7 +201,8 @@ void ATeamManager::ResetTeams()
 	BlueTeamState.Score = 0;
 	RedTeamState.RespawnQueue.Empty();
 	BlueTeamState.RespawnQueue.Empty();
-	RespawnTimers.Empty();
+	TeamRespawnTimers[0] = -1.0f;
+	TeamRespawnTimers[1] = -1.0f;
 
 	// Ensure all agents are in ActiveAgents (not in respawn queue)
 	RedTeamState.ActiveAgents.Empty();
@@ -282,75 +283,88 @@ void ATeamManager::QueueRespawn(AMocCharacter* Agent, int32 TeamID)
 		return;
 	}
 
-	// Remove from active agents
-	if (TeamID == 0)
-	{
-		RedTeamState.ActiveAgents.Remove(Agent);
-		RedTeamState.RespawnQueue.Add(Agent);
-	}
-	else if (TeamID == 1)
-	{
-		BlueTeamState.ActiveAgents.Remove(Agent);
-		BlueTeamState.RespawnQueue.Add(Agent);
-	}
+	// Remove from active agents and add to respawn queue
+	FTeamState& TeamState = (TeamID == 0) ? RedTeamState : BlueTeamState;
+	TeamState.ActiveAgents.Remove(Agent);
+	TeamState.RespawnQueue.Add(Agent);
 
-	// Start respawn timer
-	RespawnTimers.Add(Agent, RespawnDelay);
+	// Deactivate the dead agent (hide and stop ticking)
+	Agent->SetActorHiddenInGame(true);
+	Agent->SetActorEnableCollision(false);
+	Agent->SetActorTickEnabled(false);
 
-	UE_LOG(LogTemp, Log, TEXT("TeamManager: Agent %s queued for respawn (%.1fs delay)"),
-		*Agent->GetName(), RespawnDelay);
+	UE_LOG(LogTemp, Log, TEXT("TeamManager: Agent %s deactivated (Team %d, Active: %d, Queued: %d)"),
+		*Agent->GetName(), TeamID, TeamState.ActiveAgents.Num(), TeamState.RespawnQueue.Num());
+
+	// Only start respawn timer when ALL agents on the team are dead
+	if (TeamState.ActiveAgents.Num() == 0)
+	{
+		TeamRespawnTimers[TeamID] = RespawnDelay;
+		UE_LOG(LogTemp, Log, TEXT("TeamManager: Team %d fully eliminated! Group respawn in %.1fs (%d agents)"),
+			TeamID, RespawnDelay, TeamState.RespawnQueue.Num());
+	}
 }
 
 void ATeamManager::ProcessRespawnQueue(float DeltaTime)
 {
-	TArray<AMocCharacter*> ToRespawn;
-
-	// Update timers
-	for (auto& Pair : RespawnTimers)
+	// Process each team's group respawn timer
+	for (int32 TeamID = 0; TeamID < 2; ++TeamID)
 	{
-		Pair.Value -= DeltaTime;
-		if (Pair.Value <= 0.0f)
+		if (TeamRespawnTimers[TeamID] < 0.0f)
 		{
-			ToRespawn.Add(Pair.Key);
+			continue; // No pending respawn for this team
 		}
-	}
 
-	// Respawn agents
-	for (AMocCharacter* Agent : ToRespawn)
-	{
-		if (!Agent)
+		FTeamState& TeamState = (TeamID == 0) ? RedTeamState : BlueTeamState;
+		if (TeamState.RespawnQueue.Num() == 0)
 		{
+			TeamRespawnTimers[TeamID] = -1.0f;
 			continue;
 		}
 
-		// Get team ID
-		int32 TeamID = Agent->TeamID;
-
-		// Remove from respawn queue
-		if (TeamID == 0)
+		TeamRespawnTimers[TeamID] -= DeltaTime;
+		if (TeamRespawnTimers[TeamID] > 0.0f)
 		{
-			RedTeamState.RespawnQueue.Remove(Agent);
-			RedTeamState.ActiveAgents.Add(Agent);
-		}
-		else if (TeamID == 1)
-		{
-			BlueTeamState.RespawnQueue.Remove(Agent);
-			BlueTeamState.ActiveAgents.Add(Agent);
+			continue; // Still waiting
 		}
 
-		// Respawn at team location
-		FVector SpawnLocation = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
-		Agent->SetActorLocation(SpawnLocation);
+		// Timer expired — respawn ALL queued agents for this team as a group
+		TArray<AMocCharacter*> ToRespawn = TeamState.RespawnQueue;
+		TeamState.RespawnQueue.Empty();
+		TeamRespawnTimers[TeamID] = -1.0f;
 
-		// TODO: Reset agent health and state
+		UE_LOG(LogTemp, Log, TEXT("TeamManager: Group respawning %d agents for Team %d"), ToRespawn.Num(), TeamID);
 
-		// Remove timer
-		RespawnTimers.Remove(Agent);
+		for (AMocCharacter* Agent : ToRespawn)
+		{
+			if (!Agent)
+			{
+				continue;
+			}
 
-		// Broadcast event
-		OnAgentSpawned.Broadcast(TeamID, Agent);
+			TeamState.ActiveAgents.Add(Agent);
 
-		UE_LOG(LogTemp, Log, TEXT("TeamManager: Agent %s respawned"), *Agent->GetName());
+			// Reactivate the agent (undo deactivation from QueueRespawn)
+			Agent->SetActorHiddenInGame(false);
+			Agent->SetActorTickEnabled(true);
+
+			// Reset agent state (health, alive flag, collision, movement, AI)
+			Agent->ResetCharacter();
+
+			// Respawn at team location
+			FVector SpawnLoc = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
+			Agent->SetActorLocation(SpawnLoc);
+
+			// Broadcast event
+			OnAgentSpawned.Broadcast(TeamID, Agent);
+		}
+
+		// After group respawn, trigger immediate replanning so agents get strategy commands
+		ASquadManager* Commander = GetSquadCommander(TeamID);
+		if (Commander)
+		{
+			Commander->PerformTacticalPlanning();
+		}
 	}
 }
 
