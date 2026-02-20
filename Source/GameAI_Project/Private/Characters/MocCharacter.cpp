@@ -217,6 +217,12 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 		UE_LOG(LogTemp, Error, TEXT("[MocCharacter DEATH] PREMATURE DEATH - Agent died less than 1s after spawn! Possible initialization bug."));
 	}
 
+	// Stop weapon immediately (prevent invisible dead agents from firing)
+	if (WeaponComponent)
+	{
+		WeaponComponent->StopFiring();
+	}
+
 	// Disable character movement
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
@@ -259,6 +265,11 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 void AMocCharacter::ResetCharacter()
 {
 	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s resetting for new episode"), *GetName());
+
+	// 0. Undo deactivation from QueueRespawn() — ensure actor is fully visible and ticking
+	SetActorHiddenInGame(false);
+	SetActorEnableCollision(true);
+	SetActorTickEnabled(true);
 
 	// 1. Reset health and combat components
 	if (HealthComponent)
@@ -325,39 +336,18 @@ void AMocCharacter::ResetCharacter()
 		ScholaAgent->ResetAgent();
 	}
 
-	// 8. Initialize strategy-based default EQS weights so the first post-respawn
-	//    action uses meaningful values instead of all-zeros.
-	//    These will be overwritten once the RL actuator delivers its first action.
-	FEQSWeightParameters DefaultWeights;
-	switch (CommandedStrategy)
-	{
-	case EStrategyType::Assault:
-		DefaultWeights.EnemyObjectiveProximity = 0.8f;
-		DefaultWeights.EnemyVisibility = 0.5f;
-		DefaultWeights.CombatRange = 0.4f;
-		DefaultWeights.CoverDensity = 0.2f;
-		DefaultWeights.AllyProximity = 0.3f;
-		break;
-	case EStrategyType::Defend:
-		DefaultWeights.AllyObjectiveProximity = 0.8f;
-		DefaultWeights.CoverDensity = 0.7f;
-		DefaultWeights.EnemyVisibility = 0.4f;
-		DefaultWeights.AllyProximity = 0.5f;
-		DefaultWeights.CombatRange = 0.3f;
-		break;
-	case EStrategyType::Support:
-		DefaultWeights.AllyProximity = 0.7f;
-		DefaultWeights.AllyObjectiveProximity = 0.5f;
-		DefaultWeights.CoverDensity = 0.4f;
-		DefaultWeights.PickupProximity = 0.6f;
-		DefaultWeights.CombatRange = 0.2f;
-		break;
-	}
-	CurrentEQSWeights = DefaultWeights;
-	bWeightsDirty = true;
-
-	// 9. Trigger initial EQS action so the agent moves immediately after respawn
-	PerformTacticalAction();
+	// 8. DO NOT clear EQS weights or bWeightsDirty.
+	//    The RL actuator may have sent weights while the agent was dead.
+	//    Those weights are RL-generated (not hardcoded), so they don't corrupt training.
+	//    Leaving bWeightsDirty as-is lets the agent move immediately after respawn
+	//    using the last RL output, instead of freezing until the next RL step (~0.5s).
+	//    The RL policy will send updated weights within one decision interval.
+	//
+	//    Previously we zeroed weights + cleared bWeightsDirty here, which caused
+	//    post-respawn freeze: agents waited for RL but timing issues could cause
+	//    permanent stalls in the Schola action pipeline.
+	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s post-reset EQS state: bWeightsDirty=%d"),
+		*GetName(), bWeightsDirty);
 
 	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] %s reset complete"), *GetName());
 }
@@ -374,6 +364,12 @@ void AMocCharacter::UpdateTacticalWeights(const FEQSWeightParameters& NewWeights
 
 void AMocCharacter::PerformTacticalAction()
 {
+	// Dead agents must not act (Schola may still send actions while agent awaits group respawn)
+	if (!bIsAlive)
+	{
+		return;
+	}
+
 	if (!EQSExecutor)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[MocCharacter] %s: EQSExecutor not available"), *GetName());
@@ -404,6 +400,11 @@ void AMocCharacter::PerformTacticalAction()
 	}
 
 	// Training mode: run synchronous EQS via executor, then navigate
+	// Clear stale pathfinding state from death/respawn cycle.
+	// OnDeath calls StopMovementImmediately + Brain->StopLogic, which can leave the
+	// PathFollowingComponent in a state that silently rejects new MoveTo requests.
+	AICtrl->StopMovement();
+
 	TOptional<FVector> Result = EQSExecutor->ExecuteSynchronousQuery(CurrentEQSWeights);
 	if (!Result.IsSet())
 	{

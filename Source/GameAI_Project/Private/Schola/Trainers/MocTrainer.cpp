@@ -101,7 +101,17 @@ void AMocTrainer::Tick(float DeltaTime)
 
     if (!ControlledCharacter || !ControlledCharacter->IsAlive_Implementation())
     {
+        bWasDeadLastTick = true;
         return;
+    }
+
+    // Detect respawn: agent was dead last tick, now alive
+    if (bWasDeadLastTick)
+    {
+        bWasDeadLastTick = false;
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] %s RESPAWN DETECTED - awaiting RL action, Location=%s"),
+            *ControlledCharacter->GetName(),
+            *ControlledCharacter->GetActorLocation().ToString());
     }
 
     // Update commanded strategy cache (may change from Squad Commander)
@@ -554,45 +564,66 @@ float AMocTrainer::ComputeCommandedStrategyReward(
     {
     case EStrategyType::Assault:
         {
-            // Reward for aggressive positioning toward enemies
+            // Movement reward: encourage forward momentum, not idling
             float PositionChange = FVector::Dist(Prev.Position, Current.Position);
             Reward += AssaultMovementReward * PositionChange;
 
-            // Health management (aggressive but not reckless)
+            // Health penalty: only for catastrophic damage (>50% in one step)
+            // Mild damage is acceptable for Assault — closing distance means taking fire
             float HealthLoss = Prev.Health - Current.Health;
-            if (HealthLoss > 0.3f)
+            if (HealthLoss > 0.5f)
             {
                 Reward -= AssaultHealthPenalty * HealthLoss;
             }
 
-            // Reward for maintaining weapon readiness
-            if (Current.WeaponCooldown < 0.5f)
-            {
-                Reward += 0.5f;
-            }
+            // NO weapon readiness reward — it rewarded idling
 
-            // Objective shaping: close in on and occupy non-friendly capture points
+            // Objective shaping: close in on and occupy capture points
             if (ControlledCharacter && CachedCapturePoints.Num() > 0)
             {
                 int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
                 float PrevNearestDist = FLT_MAX;
                 float CurrNearestDist = FLT_MAX;
-                bool bInZone = false;
+                bool bInNonFriendlyZone = false;
+                int32 PrevFriendlyPoints = 0;
+                int32 CurrFriendlyPoints = 0;
 
                 for (ACapturePoint* CP : CachedCapturePoints)
                 {
-                    if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+                    if (!CP) continue;
 
-                    float DistPrev = FVector::Dist(Prev.Position, CP->GetActorLocation());
-                    float DistCurr = FVector::Dist(Current.Position, CP->GetActorLocation());
+                    bool bFriendly = (CP->GetOwningTeamID() == MyTeamID);
 
-                    if (DistPrev < PrevNearestDist) PrevNearestDist = DistPrev;
-                    if (DistCurr < CurrNearestDist) CurrNearestDist = DistCurr;
+                    // Count friendly points for capture delta reward
+                    if (bFriendly) CurrFriendlyPoints++;
 
-                    if (DistCurr <= CP->CaptureRadius)
+                    // Distance shaping targets non-friendly points only
+                    if (!bFriendly)
                     {
-                        bInZone = true;
+                        float DistPrev = FVector::Dist(Prev.Position, CP->GetActorLocation());
+                        float DistCurr = FVector::Dist(Current.Position, CP->GetActorLocation());
+
+                        if (DistPrev < PrevNearestDist) PrevNearestDist = DistPrev;
+                        if (DistCurr < CurrNearestDist) CurrNearestDist = DistCurr;
+
+                        if (DistCurr <= CP->CaptureRadius)
+                        {
+                            bInNonFriendlyZone = true;
+                        }
                     }
+                }
+
+                // Count previous friendly points for capture delta
+                for (int32 i = 0; i < Prev.CapturePointStatuses.Num(); ++i)
+                {
+                    if (Prev.CapturePointStatuses[i] > 0.5f) PrevFriendlyPoints++;
+                }
+
+                // Sparse capture reward: big bonus when a new point flips to friendly
+                int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
+                if (NewCaptures > 0)
+                {
+                    Reward += AssaultCaptureBonus * NewCaptures;
                 }
 
                 // Reward progress toward the nearest non-friendly point
@@ -602,9 +633,16 @@ float AMocTrainer::ComputeCommandedStrategyReward(
                 }
 
                 // Bonus per step spent inside a non-friendly capture zone
-                if (bInZone)
+                if (bInNonFriendlyZone)
                 {
                     Reward += AssaultZonePresenceBonus;
+                }
+
+                // Idle penalty: if all reachable points are friendly and agent isn't moving
+                if (PrevNearestDist == FLT_MAX && PositionChange < 50.0f)
+                {
+                    // All points captured, agent camping — penalize
+                    Reward -= AssaultIdlePenalty;
                 }
             }
         }
@@ -651,13 +689,28 @@ float AMocTrainer::ComputeCommandedStrategyReward(
         break;
     }
 
-    // Common penalties
-    if (!Current.bIsAlive)
+    // Death penalty — scaled by strategy role
+    // Assault agents should not fear death as much; their job is to push forward
+    bool bJustDied = Prev.bIsAlive && !Current.bIsAlive;
+    if (bJustDied)
     {
-        Reward -= DeathPenalty;
+        float StrategyDeathScale = 1.0f;
+        switch (CommandedStrategy)
+        {
+        case EStrategyType::Assault: StrategyDeathScale = AssaultDeathScale; break;
+        case EStrategyType::Defend:  StrategyDeathScale = 1.0f; break;
+        case EStrategyType::Support: StrategyDeathScale = 0.7f; break;
+        }
+        Reward -= DeathPenalty * StrategyDeathScale;
     }
 
-    Reward -= TimePenalty; // Encourage efficiency
+    // Time penalty — higher for Assault to discourage camping
+    float EffectiveTimePenalty = TimePenalty;
+    if (CommandedStrategy == EStrategyType::Assault)
+    {
+        EffectiveTimePenalty = AssaultTimePenalty;
+    }
+    Reward -= EffectiveTimePenalty;
 
     return Reward;
 }
@@ -892,30 +945,16 @@ EAgentTrainingStatus AMocTrainer::ComputeStatus()
         return EAgentTrainingStatus::Running;
     }
 
-    // After grace period, check if agent actually died
+    // Agent death does NOT end the episode.
+    // In v10.2 team-based architecture, agents stay dead until their entire team
+    // is eliminated, then the team respawns as a group via TeamManager::ProcessRespawnQueue().
+    // The episode only ends on match termination (time expired, score limit) or max steps.
+    // Returning Completed here would trigger ResetEnvironment() → ResetMatch() → ResetTeams(),
+    // which bypasses the group respawn system and causes ghost agents (invisible but active).
     if (!ControlledCharacter->IsAlive_Implementation())
     {
-        float currentHealth = ControlledCharacter->GetHealthPercentage_Implementation();
-
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Episode COMPLETED - Agent died (Step %d/%d, Health=%.1f%%) - Agent: %s, Strategy: %s"),
-            CurrentEpisodeSteps,
-            MaxEpisodeSteps,
-            currentHealth * 100.0f,
-            *GetName(),
-            *UEnum::GetValueAsString(CachedCommandedStrategy));
-
-        // Additional validation: Only mark as dead if health is actually 0
-        // This prevents false positives from uninitialized health values
-        if (currentHealth <= 0.0f)
-        {
-            return EAgentTrainingStatus::Completed; // Episode complete (agent died)
-        }
-        else
-        {
-            UE_LOG(LogTemp, Error, TEXT("[MocTrainer] IsAlive() returned false but Health=%.1f%% > 0! Possible bug in IsAlive_Implementation(). Continuing episode."),
-                currentHealth * 100.0f);
-            return EAgentTrainingStatus::Running;
-        }
+        // Agent is dead — continue episode, let TeamManager handle group respawn
+        return EAgentTrainingStatus::Running;
     }
 
     // Check game mode for victory/defeat conditions
@@ -1186,10 +1225,11 @@ AMocTrainer::FRewardBreakdown AMocTrainer::CalculateRewardBreakdown(
     {
     case EStrategyType::Assault:
         Breakdown.PositionComponent = AssaultMovementReward * PositionChange;
-        if (HealthLoss > 0.3f)
+        if (HealthLoss > 0.5f)
         {
             Breakdown.HealthComponent = -AssaultHealthPenalty * HealthLoss;
         }
+        Breakdown.TimePenaltyComponent = -AssaultTimePenalty;
         break;
 
     case EStrategyType::Defend:
@@ -1215,9 +1255,17 @@ AMocTrainer::FRewardBreakdown AMocTrainer::CalculateRewardBreakdown(
         break;
     }
 
-    if (!Current.bIsAlive)
+    bool bJustDied = Prev.bIsAlive && !Current.bIsAlive;
+    if (bJustDied)
     {
-        Breakdown.DeathPenaltyComponent = -DeathPenalty;
+        float DeathScale = 1.0f;
+        switch (Strategy)
+        {
+        case EStrategyType::Assault: DeathScale = AssaultDeathScale; break;
+        case EStrategyType::Support: DeathScale = 0.7f; break;
+        default: break;
+        }
+        Breakdown.DeathPenaltyComponent = -DeathPenalty * DeathScale;
     }
 
     Breakdown.StrategyReward = Breakdown.PositionComponent + Breakdown.HealthComponent;

@@ -160,6 +160,22 @@ public:
     UPROPERTY(EditAnywhere, Category="Training|Rewards")
     float AssaultZonePresenceBonus = 3.0f;
 
+    /** Assault: sparse bonus per newly captured point */
+    UPROPERTY(EditAnywhere, Category="Training|Rewards")
+    float AssaultCaptureBonus = 20.0f;
+
+    /** Assault: per-step penalty when all points are friendly and agent is idle */
+    UPROPERTY(EditAnywhere, Category="Training|Rewards")
+    float AssaultIdlePenalty = 0.5f;
+
+    /** Assault: death penalty multiplier (< 1.0 = less fear of death) */
+    UPROPERTY(EditAnywhere, Category="Training|Rewards")
+    float AssaultDeathScale = 0.3f;
+
+    /** Assault: higher time penalty to discourage camping */
+    UPROPERTY(EditAnywhere, Category="Training|Rewards")
+    float AssaultTimePenalty = 0.01f;
+
 protected:
     // ==================== Internal State ====================
 
@@ -185,6 +201,9 @@ protected:
     /** Cached reward from last action step (prevents re-computation on every tick) */
     float CachedStepReward = 0.0f;
     bool bHasNewReward = false;
+
+    /** Tracks dead→alive transition for post-respawn diagnostics */
+    bool bWasDeadLastTick = false;
 
     /**
      * Monotonically increasing lifetime reward counter.

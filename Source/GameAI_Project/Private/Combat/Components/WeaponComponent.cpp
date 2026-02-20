@@ -12,6 +12,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "Characters/MocCharacter.h"
 
 UWeaponComponent::UWeaponComponent()
 {
@@ -144,6 +145,15 @@ void UWeaponComponent::StopFiring()
 
 bool UWeaponComponent::CanFire() const
 {
+	// Dead agents must not fire (even if hidden/queued for respawn)
+	if (AMocCharacter* Character = Cast<AMocCharacter>(GetOwner()))
+	{
+		if (!Character->IsAlive_Implementation())
+		{
+			return false;
+		}
+	}
+
 	// Check basic conditions
 	if (IsOnCooldown() || IsReloading())
 	{

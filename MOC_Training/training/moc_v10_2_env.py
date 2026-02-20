@@ -375,6 +375,21 @@ if SCHOLA_AVAILABLE:
 
                 # 2. Send actions (non-blocking - just stores in schola_env.next_action)
                 num_formatted = sum(len(agents) for agents in formattedactions.values())
+
+                # ACTION SEND LOG: print every time actions are dispatched to UE5
+                print(f"[ACTION SEND] t={time.strftime('%H:%M:%S')} step={getattr(self, '_total_step_count', 0)+1} "
+                      f"agents_with_actions={num_formatted}/{len(actiondict)} "
+                      f"envs={list(formattedactions.keys())}")
+                for env_idx, agent_actions in formattedactions.items():
+                    for agent_idx, keyed_action in agent_actions.items():
+                        # keyed_action is {key: np.ndarray}; grab first value
+                        action_array = next(iter(keyed_action.values())) if keyed_action else np.zeros(7)
+                        flat_id = self.reverse_map.get((env_idx, agent_idx), f"env{env_idx}_a{agent_idx}")
+                        strategy_idx = self._agent_strategies.get(flat_id, -1)
+                        strategy_names = {0: "Assault", 1: "Defend", 2: "Support"}
+                        strat_str = strategy_names.get(strategy_idx, f"?({strategy_idx})")
+                        print(f"  [{flat_id}|{strat_str}] EQS={np.round(action_array, 3).tolist()}")
+
                 self.schola_env.send_actions(formattedactions)
 
                 # 3. Poll for observations (BLOCKING - waits for UE5 response)

@@ -229,13 +229,15 @@ void ATeamManager::ResetTeams()
 	{
 		if (Agent)
 		{
-			// Each agent resets its own state
-			Agent->ResetCharacter();
-
-			// Reposition agent at team spawn location
+			// Reposition agent at team spawn location BEFORE reset
+			// (so EQS queries during reset use the correct location)
 			int32 TeamID = Agent->TeamID;
 			FVector SpawnLocation = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
 			Agent->SetActorLocation(SpawnLocation);
+
+			// Each agent resets its own state
+			// ResetCharacter() handles full reactivation (unhide, re-enable collision/tick, etc.)
+			Agent->ResetCharacter();
 		}
 	}
 
