@@ -171,6 +171,51 @@ void AMocCharacter::Tick(float DeltaTime)
 	{
 		return;
 	}
+
+	HandleCombat();
+}
+
+void AMocCharacter::HandleCombat()
+{
+	if (!WeaponComponent || !WeaponComponent->CanFire()) return;
+	if (!TM) return;
+
+	AActor* ClosestEnemy = nullptr;
+	float ClosestDistance = FLT_MAX;
+	const FVector MyLocation = GetActorLocation();
+
+	// Use TeamManager's cached enemy list — avoids GetAllActorsOfClass world scan
+	TArray<AMocCharacter*> Enemies = TM->GetEnemyAgents(TeamID);
+	for (AMocCharacter* Enemy : Enemies)
+	{
+		if (!Enemy || !Enemy->IsAlive_Implementation()) continue;
+
+		const float Distance = FVector::Dist(Enemy->GetActorLocation(), MyLocation);
+		if (Distance > 8000.0f) continue;
+
+		FHitResult HitResult;
+		FCollisionQueryParams QueryParams;
+		QueryParams.AddIgnoredActor(this);
+
+		const bool bVisible = !GetWorld()->LineTraceSingleByChannel(
+			HitResult,
+			MyLocation + FVector(0, 0, 90),
+			Enemy->GetActorLocation() + FVector(0, 0, 90),
+			ECC_Visibility,
+			QueryParams
+		);
+
+		if (bVisible && Distance < ClosestDistance)
+		{
+			ClosestEnemy = Enemy;
+			ClosestDistance = Distance;
+		}
+	}
+
+	if (ClosestEnemy)
+	{
+		WeaponComponent->FireAtTarget(ClosestEnemy, true);
+	}
 }
 
 //========================================
@@ -241,6 +286,19 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 		if (UBrainComponent* Brain = AI->BrainComponent)
 		{
 			Brain->StopLogic(TEXT("Death"));
+		}
+	}
+
+	// Sparse RL rewards for death/kill
+	if (RewardCalculator)
+	{
+		RewardCalculator->CalculateDeathPenalty(CommandedStrategy);
+	}
+	if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
+	{
+		if (Killer->RewardCalculator)
+		{
+			Killer->RewardCalculator->CalculateKillReward(Killer->CommandedStrategy);
 		}
 	}
 

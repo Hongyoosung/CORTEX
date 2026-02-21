@@ -15,6 +15,8 @@
 class UScholaMocAgent;
 class UScholaTransitionLogger;
 class AMocCharacter;
+class ACapturePoint;
+class ATeamManager;
 
 
 /**
@@ -81,9 +83,6 @@ protected:
     /** 52-dim State 수집 */
     FObservation GatherStateObservation();
 
-    /** Handle combat (fire at visible enemies during training) */
-    void HandleCombat();
-
     /** Team-aligned Reward 계산 (commanded strategy 수행 품질) */
     float ComputeCommandedStrategyReward(EStrategyType CommandedStrategy,
                                          const FObservation& Prev,
@@ -132,6 +131,10 @@ protected:
     UPROPERTY()
     AMocCharacter* ControlledCharacter;
 
+    /** TeamManager reference — cached for O(1) ally/enemy list access */
+    UPROPERTY()
+    ATeamManager* CachedTeamManager;
+
     /** Episode 통계 */
     int32 CurrentEpisodeSteps;
     float EpisodeReward;
@@ -175,6 +178,10 @@ protected:
 
     /** 현재 commanded strategy 캐시 */
     EStrategyType CachedCommandedStrategy;
+
+    /** Cached capture point references for observation gathering */
+    UPROPERTY()
+    TArray<ACapturePoint*> CachedCapturePoints;
 
     /** Freeze watchdog: ticks elapsed since the last new action was received from Python */
     int32 TicksWithoutNewWeights = 0;

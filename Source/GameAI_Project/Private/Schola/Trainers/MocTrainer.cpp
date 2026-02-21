@@ -12,9 +12,8 @@
 #include "AIController.h"
 #include "Training/StateStructs/TrainerState.h"
 #include "Team/TeamManager.h"
-#include "Team/FogOfWarManager.h"
-#include "Combat/Components/WeaponComponent.h"
 #include "Core/MocGameMode.h"
+#include "Actors/CapturePoint.h"
 
 AMocTrainer::AMocTrainer()
 {
@@ -34,6 +33,7 @@ AMocTrainer::AMocTrainer()
     MocAgent = nullptr;
     ControlledCharacter = nullptr;
     TransitionLogger = nullptr;
+    CachedTeamManager = nullptr;
 
     // Default strategy
     CachedCommandedStrategy = EStrategyType::Assault;
@@ -70,6 +70,26 @@ void AMocTrainer::InitializeMocTrainer(UScholaMocAgent* InAgent)
             UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Failed to create TransitionLogger!"));
         }
     }
+
+    // Cache TeamManager reference (avoids GetAllActorsOfClass in hot paths)
+    CachedTeamManager = ControlledCharacter->GetTeamManager();
+    if (!CachedTeamManager)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] TeamManager not yet available — GatherStateObservation will fall back to world scan"));
+    }
+
+    // Cache capture point references (static actors — populated once)
+    TArray<AActor*> FoundPoints;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACapturePoint::StaticClass(), FoundPoints);
+    CachedCapturePoints.Reset(FoundPoints.Num());
+    for (AActor* Actor : FoundPoints)
+    {
+        if (ACapturePoint* CP = Cast<ACapturePoint>(Actor))
+        {
+            CachedCapturePoints.Add(CP);
+        }
+    }
+    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Cached %d capture points"), CachedCapturePoints.Num());
 
     // 초기 commanded strategy 캐시
     CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
@@ -194,9 +214,6 @@ void AMocTrainer::Tick(float DeltaTime)
         }
     }
 
-    // Handle combat (replaces BT task)
-    HandleCombat();
-
     // Debug visualization
     if (bEnableDebugVisualization)
     {
@@ -267,8 +284,8 @@ float AMocTrainer::ComputeReward()
         EpisodeReward += CachedStepReward;
         CumulativeLifetimeReward += CachedStepReward;
 
-        // Log transition
-        if (bLogTransitions && TransitionLogger)
+        // Log transition — skip dead-agent drain steps (observations are meaningless)
+        if (bLogTransitions && TransitionLogger && ControlledCharacter->IsAlive_Implementation())
         {
             LogTransition(
                 PreviousObservation,
@@ -341,56 +358,100 @@ FObservation AMocTrainer::GatherStateObservation()
     const int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
     const FVector MyLocation = ControlledCharacter->GetActorLocation();
 
-    // Scan all characters for allies and enemies
-    TArray<AActor*> AllCharacters;
-    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMocCharacter::StaticClass(), AllCharacters);
-
     int32 AllyIndex = 0;
     int32 EnemyIndex = 0;
 
-    for (AActor* Actor : AllCharacters)
+    // Allies — use TeamManager cached list (O(1) lookup, no world scan)
+    if (CachedTeamManager)
     {
-        AMocCharacter* OtherChar = Cast<AMocCharacter>(Actor);
-        if (!OtherChar || OtherChar == ControlledCharacter) continue;
-
-        if (OtherChar->GetTeamID_Implementation() == MyTeamID)
+        TArray<AMocCharacter*> Allies = CachedTeamManager->GetTeamAgents(MyTeamID);
+        for (AMocCharacter* Ally : Allies)
         {
-            // Ally — always known, no LoS required
-            if (AllyIndex < 4)
-            {
-                Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
-                Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
-                AllyIndex++;
-            }
+            if (!Ally || Ally == ControlledCharacter) continue;
+            if (AllyIndex >= 4) break;
+
+            Obs.AllyPositions[AllyIndex] = Ally->GetActorLocation();
+            Obs.AllyHealths[AllyIndex] = Ally->GetHealthPercentage_Implementation();
+            AllyIndex++;
         }
-        else
+
+        // Enemies — direct line-of-sight only (FogOfWarManager deprecated)
+        TArray<AMocCharacter*> Enemies = CachedTeamManager->GetEnemyAgents(MyTeamID);
+        for (AMocCharacter* Enemy : Enemies)
         {
-            // Enemy — direct line-of-sight only
-            if (EnemyIndex < 5)
+            if (!Enemy) continue;
+            if (EnemyIndex >= 5) break;
+
+            const float Distance = FVector::Dist(Enemy->GetActorLocation(), MyLocation);
+            bool bVisible = false;
+
+            if (Distance < 8000.0f)
             {
-                const FVector ToEnemy = OtherChar->GetActorLocation() - MyLocation;
-                const float Distance = ToEnemy.Size();
-                bool bVisible = false;
+                FHitResult HitResult;
+                FCollisionQueryParams QueryParams;
+                QueryParams.AddIgnoredActor(ControlledCharacter);
 
-                if (Distance < 8000.0f)
+                bVisible = !GetWorld()->LineTraceSingleByChannel(
+                    HitResult,
+                    MyLocation + FVector(0, 0, 90),
+                    Enemy->GetActorLocation() + FVector(0, 0, 90),
+                    ECC_Visibility,
+                    QueryParams
+                );
+            }
+
+            // Store actual position only when visible; ToArray zeros non-visible slots
+            Obs.EnemyPositions[EnemyIndex] = bVisible ? Enemy->GetActorLocation() : FVector::ZeroVector;
+            Obs.EnemyVisible[EnemyIndex] = bVisible;
+            EnemyIndex++;
+        }
+    }
+    else
+    {
+        // Fallback: world scan (CachedTeamManager unavailable at initialization)
+        TArray<AActor*> AllCharacters;
+        UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMocCharacter::StaticClass(), AllCharacters);
+
+        for (AActor* Actor : AllCharacters)
+        {
+            AMocCharacter* OtherChar = Cast<AMocCharacter>(Actor);
+            if (!OtherChar || OtherChar == ControlledCharacter) continue;
+
+            if (OtherChar->GetTeamID_Implementation() == MyTeamID)
+            {
+                if (AllyIndex < 4)
                 {
-                    FHitResult HitResult;
-                    FCollisionQueryParams QueryParams;
-                    QueryParams.AddIgnoredActor(ControlledCharacter);
-
-                    bVisible = !GetWorld()->LineTraceSingleByChannel(
-                        HitResult,
-                        MyLocation + FVector(0, 0, 90),
-                        OtherChar->GetActorLocation() + FVector(0, 0, 90),
-                        ECC_Visibility,
-                        QueryParams
-                    );
+                    Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
+                    Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
+                    AllyIndex++;
                 }
+            }
+            else
+            {
+                if (EnemyIndex < 5)
+                {
+                    const float Distance = FVector::Dist(OtherChar->GetActorLocation(), MyLocation);
+                    bool bVisible = false;
 
-                // Store actual position only when visible; ToArray zeros non-visible slots
-                Obs.EnemyPositions[EnemyIndex] = bVisible ? OtherChar->GetActorLocation() : FVector::ZeroVector;
-                Obs.EnemyVisible[EnemyIndex] = bVisible;
-                EnemyIndex++;
+                    if (Distance < 8000.0f)
+                    {
+                        FHitResult HitResult;
+                        FCollisionQueryParams QueryParams;
+                        QueryParams.AddIgnoredActor(ControlledCharacter);
+
+                        bVisible = !GetWorld()->LineTraceSingleByChannel(
+                            HitResult,
+                            MyLocation + FVector(0, 0, 90),
+                            OtherChar->GetActorLocation() + FVector(0, 0, 90),
+                            ECC_Visibility,
+                            QueryParams
+                        );
+                    }
+
+                    Obs.EnemyPositions[EnemyIndex] = bVisible ? OtherChar->GetActorLocation() : FVector::ZeroVector;
+                    Obs.EnemyVisible[EnemyIndex] = bVisible;
+                    EnemyIndex++;
+                }
             }
         }
     }
@@ -416,58 +477,6 @@ FObservation AMocTrainer::GatherStateObservation()
     }
 
     return Obs;
-}
-
-void AMocTrainer::HandleCombat()
-{
-    if (!ControlledCharacter) return;
-
-    UWeaponComponent* Weapon = ControlledCharacter->GetWeaponComponent();
-    if (!Weapon || !Weapon->CanFire()) return;
-
-    AActor* ClosestEnemy = nullptr;
-    float ClosestDistance = FLT_MAX;
-
-    const int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
-    const FVector MyLocation = ControlledCharacter->GetActorLocation();
-
-    // Direct scan: fire at the nearest currently-visible enemy
-    TArray<AActor*> AllCharacters;
-    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMocCharacter::StaticClass(), AllCharacters);
-
-    for (AActor* Actor : AllCharacters)
-    {
-        AMocCharacter* Enemy = Cast<AMocCharacter>(Actor);
-        if (!Enemy || Enemy == ControlledCharacter) continue;
-        if (Enemy->GetTeamID_Implementation() == MyTeamID) continue;
-        if (!Enemy->IsAlive_Implementation()) continue;
-
-        const float Distance = FVector::Dist(Enemy->GetActorLocation(), MyLocation);
-        if (Distance > 8000.0f) continue;
-
-        FHitResult HitResult;
-        FCollisionQueryParams QueryParams;
-        QueryParams.AddIgnoredActor(ControlledCharacter);
-
-        const bool bVisible = !GetWorld()->LineTraceSingleByChannel(
-            HitResult,
-            MyLocation + FVector(0, 0, 90),
-            Enemy->GetActorLocation() + FVector(0, 0, 90),
-            ECC_Visibility,
-            QueryParams
-        );
-
-        if (bVisible && Distance < ClosestDistance)
-        {
-            ClosestEnemy = Enemy;
-            ClosestDistance = Distance;
-        }
-    }
-
-    if (ClosestEnemy)
-    {
-        Weapon->FireAtTarget(ClosestEnemy, true);
-    }
 }
 
 float AMocTrainer::ComputeCommandedStrategyReward(

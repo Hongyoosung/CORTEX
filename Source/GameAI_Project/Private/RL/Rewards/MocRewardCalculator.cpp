@@ -16,6 +16,15 @@ void UMocRewardCalculator::BeginPlay()
 	Super::BeginPlay();
 	OwnerCharacter = Cast<AMocCharacter>(GetOwner());
 	CacheCapturePoints();
+
+	// Bind to every capture point's ownership-change event so sparse rewards fire automatically
+	for (ACapturePoint* CP : CachedCapturePoints)
+	{
+		if (CP)
+		{
+			CP->OnPointCaptured.AddDynamic(this, &UMocRewardCalculator::OnCapturePointCaptured);
+		}
+	}
 }
 
 // ==================== Internal Helpers ====================
@@ -41,6 +50,41 @@ float UMocRewardCalculator::ApplyAndLogReward(ERewardEventType EventType, EStrat
 void UMocRewardCalculator::AddReward(float Value)
 {
 	CumulativeReward += Value;
+}
+
+float UMocRewardCalculator::DrainSparseReward()
+{
+	const float Drained = CumulativeReward;
+	CumulativeReward = 0.0f;
+	return Drained;
+}
+
+void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
+{
+	if (!OwnerCharacter) return;
+
+	const int32 MyTeam = OwnerCharacter->GetTeamID_Implementation();
+
+	auto ToTeam = [](ECapturePointOwnership O) -> int32
+	{
+		if (O == ECapturePointOwnership::RedTeam)  return 0;
+		if (O == ECapturePointOwnership::BlueTeam) return 1;
+		return -1;
+	};
+
+	const int32 NewOwnerTeam  = ToTeam(NewOwner);
+	const int32 PrevOwnerTeam = ToTeam(PreviousOwner);
+
+	const EStrategyType Strategy = OwnerCharacter->GetCommandedStrategy();
+
+	if (NewOwnerTeam == MyTeam)
+	{
+		CalculateCaptureReward(Strategy);
+	}
+	else if (PrevOwnerTeam == MyTeam)
+	{
+		CalculateLosePointPenalty(Strategy);
+	}
 }
 
 // ==================== Event-Driven Sparse Rewards ====================
@@ -169,11 +213,10 @@ float UMocRewardCalculator::ComputeStepReward(
 					}
 				}
 
-				// New captures trigger a momentum window and bonus
+				// New captures: trigger momentum window (sparse reward fires via OnCapturePointCaptured)
 				int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
 				if (NewCaptures > 0)
 				{
-					Reward += CaptureReward * NewCaptures;
 					PostCaptureMomentumStepsRemaining = AssaultReward.PostCaptureMomentumDuration;
 
 					// Store location of nearest newly-friendly CP for momentum direction
@@ -260,18 +303,12 @@ float UMocRewardCalculator::ComputeStepReward(
 		break;
 	}
 
-	// Death penalty (role-scaled via UPROPERTY)
-	bool bJustDied = Prev.bIsAlive && !Current.bIsAlive;
-	if (bJustDied)
-	{
-		float DeathScale = GetStrategyScale(Strategy,
-			AssaultReward.DeathScale, DefendReward.DeathScale, SupportReward.DeathScale);
-		Reward -= DeathPenaltyReward * DeathScale;
-	}
-
 	// Time penalty (higher for Assault to discourage camping)
 	float EffectiveTimePenalty = (Strategy == EStrategyType::Assault) ? AssaultReward.TimePenalty : TimePenalty;
 	Reward -= EffectiveTimePenalty;
+
+	// Drain any sparse rewards accumulated by event callbacks (kills, deaths, captures) this step
+	Reward += DrainSparseReward();
 
 	return Reward;
 }

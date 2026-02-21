@@ -116,6 +116,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
 	UMocRewardCalculator* GetRewardCalculator() const { return RewardCalculator; }
 
+	/** Get TeamManager reference (for Trainer observation gathering) */
+	UFUNCTION(BlueprintPure, Category = "Character|Team")
+	ATeamManager* GetTeamManager() const { return TM; }
+
 	// ==================== Reward Interface (forwarding to RewardCalculator) ====================
 
 	/**
@@ -163,6 +167,9 @@ protected:
 	/** Handle death event from HealthComponent */
 	UFUNCTION()
 	void OnDeath(const FDeathEventData& DeathEvent);
+
+	/** Fire at the nearest visible enemy within combat range. Called from Tick. */
+	void HandleCombat();
 
 public:
 	//========================================

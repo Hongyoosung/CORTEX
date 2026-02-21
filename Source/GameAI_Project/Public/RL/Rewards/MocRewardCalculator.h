@@ -8,10 +8,10 @@
 #include "Types/ObservationTypes.h"
 #include "Types/EQSTypes.h"
 #include "Types/StrategyTypes.h"
+#include "Actors/CapturePoint.h"
 #include "MocRewardCalculator.generated.h"
 
 class AMocCharacter;
-class ACapturePoint;
 
 
 /**
@@ -103,6 +103,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	void ResetEpisodeState();
 
+	/**
+	 * Returns the accumulated sparse reward (kills, deaths, captures) since the last drain,
+	 * then resets the bucket to zero. Called once per step by ComputeStepReward().
+	 */
+	float DrainSparseReward();
+
+	/** Capture-point ownership-change handler. Bound to every ACapturePoint::OnPointCaptured in BeginPlay. */
+	UFUNCTION()
+	void OnCapturePointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner);
+
 	// ==================== Cumulative Reward ====================
 
 	UFUNCTION(BlueprintPure, Category = "MOC|Rewards")
@@ -132,6 +142,7 @@ private:
 	void CacheCapturePoints();
 
 
+public:
 	// ==================== Reward Shaping Parameters ====================
 	// (Tunable in Blueprint / Details panel)
 
@@ -211,6 +222,8 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float DefendWeaponReadyBonus = 1.0f;
 
+
+protected:
 	//==================== Per-Strategy Reward Settings ====================
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
@@ -223,7 +236,7 @@ private:
 	FSupportRewardSettings SupportReward;
 
 
-protected:
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewards")
 	float CumulativeReward = 0.0f;
 

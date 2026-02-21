@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "StrategyTypes.h"
 #include "RewardTypes.generated.h"
 
 
