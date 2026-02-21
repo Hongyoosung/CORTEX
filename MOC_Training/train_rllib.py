@@ -274,7 +274,7 @@ class SBDAPMConfig:
     LOG_STD_MAX = 0.0   # FIXED: Reduced from 0.5 (max σ = 1.0 instead of 1.65)
 
     # Training
-    NUM_WORKERS = 0  # Windows: single process
+    NUM_WORKERS = 1
     NUM_ENVS_PER_WORKER = 1 
     NUM_UE5_ENVIRONMENTS = 4 
     NUM_ITERATIONS = 100

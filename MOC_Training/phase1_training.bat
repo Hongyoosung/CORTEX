@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 
 SET "NUM_SCHOLA_ENVS=4"
 SET "NUM_WORKERS=0"
-SET "NUM_ITERATIONS=100"
+SET "NUM_ITERATIONS=50"
 SET "DETACH=false"
 SET "NO_BUILD=false"
 

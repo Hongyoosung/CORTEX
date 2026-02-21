@@ -1,16 +1,14 @@
 """
-Phase 1: v10.2 Command-Driven Policy Training
-
 Trains the multi-head policy network for the v10.2 Commander-Executor architecture.
 
 Key Changes from v10.1:
 - NO local MCTS - agents are pure executors
 - Receives commanded strategy from Squad Commander (Assault/Defend/Support)
-- Outputs 8-dim EQS weights in range [-1, 1] (not [0, 1])
-- Local observation only (57-dim: 52 base + 5 capture point statuses), no team-level planning
+- Outputs 7-dim EQS weights in range [-1, 1] (Corrected from 8-dim)
+- Local observation only (49-dim base: includes 44 tactical + 5 capture point statuses)
 
 Architecture:
-- Input: 57-dim local observation + commanded strategy (1-hot, 3-dim) = 60-dim
+- Input: 52-dim total (49-dim base observation + 3-dim strategy 1-hot)
 - Multi-head network: 3 strategy-specific heads (Assault/Defend/Support)
 - Output: 7-dim EQS weights per head, range [-1, 1]
 
@@ -57,11 +55,11 @@ STRATEGY_STR_TO_IDX = {"Assault": 0, "Defend": 1, "Support": 2}
 @dataclass
 class Transition:
     """Single training transition for v10.2."""
-    state: np.ndarray              # (57,) local observation (52 base + 5 capture point statuses)
+    state: np.ndarray              # (52,) local observation (52 base + 5 capture point statuses)
     commanded_strategy: int        # 0=Assault, 1=Defend, 2=Support
     eqs_weights: np.ndarray        # (7,) in range [-1, 1]
     reward: float
-    next_state: np.ndarray         # (57,)
+    next_state: np.ndarray         # (52,)
     done: bool
     info: Dict
     log_prob: float = 0.0          # Log probability under policy at collection time
@@ -72,7 +70,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
     v10.2 Multi-Head Policy for Command-Driven Execution.
 
     Architecture:
-    - Input: 60-dim (57 local obs + 3 strategy one-hot)
+    - Input: 52-dim (49 local obs + 3 strategy one-hot)
     - Shared Encoder: [256, 256] ReLU
     - 3 Strategy Heads: Assault, Defend, Support
     - Each head outputs: 7-dim EQS weights (tanh activation for [-1, 1] range)
@@ -80,7 +78,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
 
     def __init__(
         self,
-        obs_dim: int = 57,
+        obs_dim: int = 52,
         num_strategies: int = 3,
         eqs_dim: int = 7,
         hidden_dims: List[int] = [256, 256]
@@ -91,7 +89,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         self.num_strategies = num_strategies
         self.eqs_dim = eqs_dim
 
-        # Input: 57 (obs) + 3 (strategy one-hot) = 60
+        # Input: 49 (obs) + 3 (strategy one-hot) = 52
         input_dim = obs_dim + num_strategies
 
         # Shared state encoder
@@ -155,7 +153,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         self.log_std = nn.Parameter(torch.zeros(eqs_dim) - 0.5)  # init std ≈ 0.6
 
         print(f"[v10.2 Policy] Initialized: {obs_dim}-dim obs → {eqs_dim}-dim EQS weights")
-        print(f"  Input: {input_dim} (57 obs + 3 strategy)")
+        print(f"  Input: {input_dim} (49 obs + 3 strategy)")
         print(f"  Encoder: {hidden_dims}")
         print(f"  Heads: 3 strategies × 7 EQS weights")
         print(f"  Action Range: [-1, 1] (tanh activation)")
@@ -163,14 +161,14 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
 
     def forward(
         self,
-        obs: torch.Tensor,            # (B, 57)
+        obs: torch.Tensor,            # (B, 49)
         strategy_idx: torch.Tensor    # (B,) indices in [0, 1, 2]
     ) -> torch.Tensor:
         """
         Forward pass with commanded strategy.
 
         Args:
-            obs: Local observation (B, 57)
+            obs: Local observation (B, 49)
             strategy_idx: Commanded strategy indices (B,)
 
         Returns:
@@ -249,7 +247,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         Compute value estimates for advantage calculation.
 
         Args:
-            obs: Local observation (B, 57)
+            obs: Local observation (B, 49)
             strategy_idx: Commanded strategy indices (B,)
 
         Returns:
@@ -285,7 +283,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         Export policy to ONNX format for UE5 inference.
 
         Expected usage in UE5:
-        - Input: [obs (57), strategy_idx (1)]
+        - Input: [obs (49), strategy_idx (1)]
         - Output: [eqs_weights (7)]
         """
         self.eval()
@@ -309,7 +307,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         )
 
         print(f"[ONNX Export] Model saved to: {filepath}")
-        print(f"  Input: observation(B, 57), strategy_index(B)")
+        print(f"  Input: observation(B, 49), strategy_index(B)")
         print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
 
     def print_architecture(self):
@@ -546,7 +544,7 @@ def example_training_integration():
 
     # 1. Initialize policy
     policy = MultiHeadRLPolicy_v10_2(
-        obs_dim=57,
+        obs_dim=49,
         num_strategies=3,
         eqs_dim=7,
         hidden_dims=[256, 256]
@@ -563,7 +561,7 @@ def example_training_integration():
     print("Integration Steps:")
     print("1. Connect to UE5 environment via Schola gRPC")
     print("2. Receive commanded strategy from Squad Commander")
-    print("3. Collect local observation (57-dim: 52 base + 5 capture point statuses)")
+    print("3. Collect local observation (49-dim: 44 base + 5 capture point statuses)")
     print("4. Run policy inference:")
     print("   >>> obs_tensor = torch.tensor(obs, dtype=torch.float32)")
     print("   >>> strategy_tensor = torch.tensor([commanded_strategy], dtype=torch.long)")
@@ -576,12 +574,12 @@ def example_training_integration():
 
     # Example inference
     print("Example Inference:")
-    dummy_obs = torch.randn(1, 57)
+    dummy_obs = torch.randn(1, 49)
     dummy_strategy = torch.tensor([0], dtype=torch.long)  # Assault
 
     with torch.no_grad():
         eqs_weights = policy(dummy_obs, dummy_strategy)
-        print(f"  Input: obs(1, 57), strategy=Assault")
+        print(f"  Input: obs(1, 49), strategy=Assault")
         print(f"  Output: eqs_weights = {eqs_weights.numpy()[0]}")
         print(f"  Range: [{eqs_weights.min().item():.2f}, {eqs_weights.max().item():.2f}]")
         print(f"  ✓ All values in [-1, 1]: {(eqs_weights >= -1).all() and (eqs_weights <= 1).all()}")
@@ -618,7 +616,7 @@ if RLLIB_AVAILABLE:
 
             # Extract configuration
             custom_config = model_config.get("custom_model_config", {})
-            obs_dim = custom_config.get("obs_dim", 57)
+            obs_dim = custom_config.get("obs_dim", 49)
             num_strategies = custom_config.get("num_strategies", 3)
             eqs_dim = custom_config.get("eqs_dim", 7)
             hidden_dims = custom_config.get("hidden_dims", [256, 256])
@@ -647,7 +645,7 @@ if RLLIB_AVAILABLE:
             Forward pass for RLlib.
 
             Args:
-                input_dict: Contains 'obs' with shape (B, 60)
+                input_dict: Contains 'obs' with shape (B, 52)
                 state: RNN state (unused for feedforward)
                 seq_lens: Sequence lengths (unused for feedforward)
 
@@ -659,9 +657,9 @@ if RLLIB_AVAILABLE:
             batch_size = obs.shape[0]
 
             # Extract base observation and strategy from obs
-            # obs format: [57 base features, 3 strategy one-hot] = 60 total
-            base_obs = obs[:, :57]
-            strategy_onehot = obs[:, 57:60]
+            # obs format: [49 base features, 3 strategy one-hot] = 52 total
+            base_obs = obs[:, :49]
+            strategy_onehot = obs[:, 49:52]
             strategy_idx = torch.argmax(strategy_onehot, dim=1)
 
             # Store for value function
@@ -694,7 +692,7 @@ if RLLIB_AVAILABLE:
                 raise ValueError("Must call forward() before value_function()")
 
             # Extract base observation
-            base_obs = self._last_features[:, :57]
+            base_obs = self._last_features[:, :49]
 
             # Get value from policy
             values = self.policy.get_value(base_obs, self._last_strategy_idx)
@@ -728,8 +726,8 @@ class MOCv10_2TrainingConfig:
     # PPO hyperparameters
     LEARNING_RATE = 3e-4
     TRAIN_BATCH_SIZE = 10000
-    SGD_MINIBATCH_SIZE = 256  # ~11 minibatches per epoch (10000 ÷ 256)
-    NUM_SGD_ITER = 10
+    SGD_MINIBATCH_SIZE = 512  # ~20 minibatches per epoch (10000 ÷ 512)
+    NUM_SGD_ITER = 5
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
@@ -893,7 +891,7 @@ def create_ppo_config():
     config.model = {
         "custom_model": "multi_head_policy_v10_2",
         "custom_model_config": {
-            "obs_dim": 57,
+            "obs_dim": 49,
             "num_strategies": 3,
             "eqs_dim": 7,
             "hidden_dims": MOCv10_2TrainingConfig.HIDDEN_DIMS,
@@ -937,7 +935,7 @@ def export_onnx(algo, output_dir):
     model = policy.model.policy  # Unwrap the RLlib wrapper
     model.eval()
 
-    dummy_obs = torch.randn(1, 57)
+    dummy_obs = torch.randn(1, 49)
     dummy_strategy = torch.zeros(1, dtype=torch.long)
     model_path = os.path.join(output_dir, "moc_policy_v10_2.onnx")
 
@@ -956,7 +954,7 @@ def export_onnx(algo, output_dir):
     )
 
     print(f"[ONNX Export] Model saved to: {model_path}")
-    print(f"  Input: observation(B, 57), strategy_index(B)")
+    print(f"  Input: observation(B, 49), strategy_index(B)")
     print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
 
 
@@ -1163,12 +1161,12 @@ def run_validation():
             failed += 1
             print(f"  FAIL: {name} {detail}")
 
-    policy = MultiHeadRLPolicy_v10_2(obs_dim=57, num_strategies=3, eqs_dim=7)
+    policy = MultiHeadRLPolicy_v10_2(obs_dim=49, num_strategies=3, eqs_dim=7)
 
     # --- Test 1: Forward pass shapes ---
     print("[Test 1] Forward pass shape")
     batch = 8
-    obs = torch.randn(batch, 57)
+    obs = torch.randn(batch, 49)
     strat = torch.randint(0, 3, (batch,))
     out = policy(obs, strat)
     check("Output shape (B, 7)", out.shape == (batch, 7), f"got {out.shape}")
@@ -1176,7 +1174,7 @@ def run_validation():
     # --- Test 2: Output range [-1, 1] ---
     print("[Test 2] Output range")
     with torch.no_grad():
-        large_obs = torch.randn(256, 57)
+        large_obs = torch.randn(256, 49)
         large_strat = torch.randint(0, 3, (256,))
         large_out = policy(large_obs, large_strat)
     check("All values in [-1, 1]",
@@ -1186,7 +1184,7 @@ def run_validation():
     # --- Test 3: Strategy head distinctness ---
     print("[Test 3] Strategy head distinctness")
     with torch.no_grad():
-        test_obs = torch.randn(1, 57)
+        test_obs = torch.randn(1, 49)
         outputs = []
         for s in range(3):
             o = policy(test_obs, torch.tensor([s]))
@@ -1228,9 +1226,9 @@ def run_validation():
     for s in range(3):
         for _ in range(1000):
             t = Transition(
-                state=np.zeros(57), commanded_strategy=s,
+                state=np.zeros(49), commanded_strategy=s,
                 eqs_weights=np.zeros(7), reward=0.0,
-                next_state=np.zeros(57), done=False, info={}, log_prob=0.0
+                next_state=np.zeros(49), done=False, info={}, log_prob=0.0
             )
             buf.add(t)
     sample = buf.sample(300)
@@ -1272,7 +1270,7 @@ def evaluate_checkpoint(checkpoint_path: str):
     print("="*80 + "\n")
 
     # Try loading as raw PyTorch model first
-    policy = MultiHeadRLPolicy_v10_2(obs_dim=57, num_strategies=3, eqs_dim=7)
+    policy = MultiHeadRLPolicy_v10_2(obs_dim=49, num_strategies=3, eqs_dim=7)
 
     if checkpoint_path.endswith(".pt") or checkpoint_path.endswith(".pth"):
         print(f"Loading PyTorch checkpoint: {checkpoint_path}")
@@ -1307,7 +1305,7 @@ def evaluate_checkpoint(checkpoint_path: str):
     ]
 
     num_samples = 100
-    test_obs = torch.randn(num_samples, 57)
+    test_obs = torch.randn(num_samples, 49)
 
     with torch.no_grad():
         for strat_idx, strat_name in STRATEGY_NAMES.items():

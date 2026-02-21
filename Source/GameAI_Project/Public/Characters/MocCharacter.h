@@ -8,6 +8,8 @@
 #include "Types/StrategyTypes.h"
 #include "Types/GameStateTypes.h"
 #include "Types/EQSTypes.h"
+#include "Types/ObservationTypes.h"
+#include "Types/RewardTypes.h"
 #include "Combat/CombatStatsInterface.h"
 #include "MocCharacter.generated.h"
 
@@ -16,6 +18,7 @@
 class UHealthComponent;
 class UWeaponComponent;
 class UScholaMocAgent;
+class UMocRewardCalculator;
 class UAIPerceptionStimuliSourceComponent;
 class UBehaviorTree;
 class UEnvQuery;
@@ -109,6 +112,34 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
 	UScholaMocAgent* GetScholaAgent() const { return ScholaAgent; }
 
+	/** Get RewardCalculator */
+	UFUNCTION(BlueprintPure, Category = "Character|Components")
+	UMocRewardCalculator* GetRewardCalculator() const { return RewardCalculator; }
+
+	// ==================== Reward Interface (forwarding to RewardCalculator) ====================
+
+	/**
+	 * Compute a single-step reward for the state transition (Prev → Current).
+	 * Delegates to UMocRewardCalculator — MocTrainer calls this, never the calculator directly.
+	 */
+	float ComputeStepReward(EStrategyType Strategy,
+		const FObservation& Prev,
+		const FObservation& Current,
+		const FEQSWeightParameters& Action);
+
+	/**
+	 * Decompose the per-step reward into labelled components (for debug/logging).
+	 */
+	FRewardBreakdown ComputeRewardBreakdown(EStrategyType Strategy,
+		const FObservation& Prev,
+		const FObservation& Current) const;
+
+	/**
+	 * Reset per-episode reward state (cumulative reward, momentum counters).
+	 * Called by MocTrainer::ResetTrainer().
+	 */
+	void ResetRewardState();
+
 
 	//========================================
 	// Respawn
@@ -149,6 +180,10 @@ public:
 	/** RL training interface */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UScholaMocAgent* ScholaAgent;
+
+	/** Strategy-conditioned reward calculator */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UMocRewardCalculator* RewardCalculator;
 
 	/** AI perception registration */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")

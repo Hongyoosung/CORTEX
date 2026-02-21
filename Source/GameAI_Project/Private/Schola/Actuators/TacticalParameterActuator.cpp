@@ -65,23 +65,23 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 	{
 		MocAgent->UpdateTacticalWeights(Weights);
 
-		// ===== DIAGNOSTIC LOG: Action received =====
-		/*UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR] %s received action #%d"), *MocAgent->GetName(), ActionCount);
-		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   Raw Action: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f]"),
-			Action.Values[0], Action.Values[1], Action.Values[2], Action.Values[3],
-			Action.Values[4], Action.Values[5], Action.Values[6]);
-		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   EQS Weights: EnemyObj=%.3f, AllyObj=%.3f, Cover=%.3f, EnemyVis=%.3f, AllyProx=%.3f, Range=%.3f, Pickup=%.3f"),
-			Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity, Weights.CoverDensity,
-			Weights.EnemyVisibility, Weights.AllyProximity, Weights.CombatRange, Weights.PickupProximity);
-		UE_LOG(LogTemp, Warning, TEXT("[DIAG-ACTUATOR]   Position: %s"), *MocAgent->GetActorLocation().ToString());*/
+		// Diagnostic: confirm action was delivered to the character
+		UE_LOG(LogTemp, Verbose,
+			TEXT("[TacticalActuator] %s action #%d delivered: [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
+			*MocAgent->GetName(), ActionCount,
+			Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity,
+			Weights.CoverDensity, Weights.EnemyVisibility,
+			Weights.AllyProximity, Weights.CombatRange, Weights.PickupProximity);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] No MocCharacter owner found"));
+		// Action from Python was dropped — this directly causes agent freeze
 		UObject* MyOuter = GetOuter();
 		FString OuterName = MyOuter ? MyOuter->GetName() : TEXT("NULL");
 		FString OuterClass = MyOuter ? MyOuter->GetClass()->GetName() : TEXT("NULL");
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] Outer is not MocCharacter. Outer: %s (%s)"), *OuterName, *OuterClass);
+		UE_LOG(LogTemp, Error,
+			TEXT("[TacticalActuator] ACTION DROPPED (action #%d) — MocCharacter not found! Python sent weights but bWeightsDirty will NOT be set. Outer: %s (%s)"),
+			ActionCount, *OuterName, *OuterClass);
 		return;
 	}
 

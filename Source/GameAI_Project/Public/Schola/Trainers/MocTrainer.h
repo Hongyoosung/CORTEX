@@ -15,7 +15,6 @@
 class UScholaMocAgent;
 class UScholaTransitionLogger;
 class AMocCharacter;
-class ACapturePoint;
 
 
 /**
@@ -82,9 +81,6 @@ protected:
     /** 52-dim State 수집 */
     FObservation GatherStateObservation();
 
-    /** Detect enemies in line of sight and report to FogOfWarManager */
-    void DetectAndReportEnemies();
-
     /** Handle combat (fire at visible enemies during training) */
     void HandleCombat();
 
@@ -122,59 +118,8 @@ public:
     UPROPERTY(EditAnywhere, Category="Debug")
     bool bEnableDebugVisualization = false;
 
-    // ==================== Reward Shaping Parameters ====================
-
-    /** Assault 전략 보상 가중치 */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultMovementReward = 0.01f;
-
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultHealthPenalty = 5.0f;
-
-    /** Defend 전략 보상 가중치 */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float DefendPositionReward = 2.0f;
-
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float DefendHealthBonus = 2.0f;
-
-    /** Support 전략 보상 가중치 */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float SupportPositionReward = 1.0f;
-
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float SupportHealthBonus = 1.5f;
-
-    /** 공통 페널티 */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float DeathPenalty = 100.0f;
-
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float TimePenalty = 0.001f;
-
-    /** Assault: reward per cm of progress toward nearest non-friendly capture point */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultObjectiveProgressReward = 0.02f;
-
-    /** Assault: per-step bonus for standing inside a non-friendly capture zone */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultZonePresenceBonus = 3.0f;
-
-    /** Assault: sparse bonus per newly captured point */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultCaptureBonus = 20.0f;
-
-    /** Assault: per-step penalty when all points are friendly and agent is idle */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultIdlePenalty = 0.5f;
-
-    /** Assault: death penalty multiplier (< 1.0 = less fear of death) */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultDeathScale = 0.3f;
-
-    /** Assault: higher time penalty to discourage camping */
-    UPROPERTY(EditAnywhere, Category="Training|Rewards")
-    float AssaultTimePenalty = 0.01f;
+    // NOTE: Reward shaping parameters have moved to UMocRewardCalculator (on MocCharacter).
+    // Edit them in the RewardCalculator component of the MocCharacter Blueprint.
 
 protected:
     // ==================== Internal State ====================
@@ -217,13 +162,6 @@ protected:
     UPROPERTY()
     UScholaTransitionLogger* TransitionLogger;
 
-    /** Cached capture point references (populated in BeginPlay, reused every step) */
-    UPROPERTY()
-    TArray<TObjectPtr<ACapturePoint>> CachedCapturePoints;
-
-    /** Populate CachedCapturePoints from world */
-    void CacheCapturePoints();
-
     // ==================== Training Statistics ====================
 
     /** 총 에피소드 수 */
@@ -238,7 +176,12 @@ protected:
     /** 현재 commanded strategy 캐시 */
     EStrategyType CachedCommandedStrategy;
 
-    
+    /** Freeze watchdog: ticks elapsed since the last new action was received from Python */
+    int32 TicksWithoutNewWeights = 0;
+
+    /** How many ticks between freeze warning logs (300 ticks ≈ 5 s at 60 Hz) */
+    static constexpr int32 FreezeWatchdogInterval = 300;
+
 
 public:
     // ==================== Debug & Utilities ====================
@@ -264,22 +207,4 @@ public:
 private:
     /** 훈련 통계 업데이트 */
     void UpdateTrainingStatistics();
-
-    /** 보상 breakdown 계산 (디버깅용) */
-    struct FRewardBreakdown
-    {
-        float StrategyReward;
-        float HealthComponent;
-        float PositionComponent;
-        float ObjectiveComponent;
-        float DeathPenaltyComponent;
-        float TimePenaltyComponent;
-        float Total;
-    };
-
-    FRewardBreakdown CalculateRewardBreakdown(
-        EStrategyType Strategy,
-        const FObservation& Prev,
-        const FObservation& Current
-    ) const;
 };

@@ -11,12 +11,12 @@
 
 UMocTacticalObserver::UMocTacticalObserver()
 {
-	// Build observation space (60 continuous features: 57 base + 3 strategy one-hot)
+	// Build observation space (52 continuous features: 49 base + 3 strategy one-hot)
 	TArray<FBoxSpaceDimension> Dimensions;
-	Dimensions.Reserve(60);
+	Dimensions.Reserve(52);
 
-	// 57 base features: normalized to [-1, 1] or [0, 1]
-	for (int32 i = 0; i < 57; ++i)
+	// 49 base features: normalized to [-1, 1] or [0, 1]
+	for (int32 i = 0; i < 49; ++i)
 	{
 		FBoxSpaceDimension Dim;
 		Dim.Low = -1.0f;
@@ -71,8 +71,8 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 {
 	ObservationCallCount++;
 
-	// Initialize output with correct size (60-dim: 57 base + 3 strategy one-hot)
-	OutObservations.Values.SetNum(60);
+	// Initialize output with correct size (52-dim: 49 base + 3 strategy one-hot)
+	OutObservations.Values.SetNum(52);
 
 	// Safety check: Verify trainer and character are valid
 	AMocCharacter* Character = GetControlledCharacter();
@@ -83,29 +83,29 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			UE_LOG(LogTemp, Warning, TEXT("[MocTacticalObserver] Character invalid at observation #%d - returning zeros"), ObservationCallCount);
 		}
 
-		for (int32 i = 0; i < 60; ++i)
+		for (int32 i = 0; i < 52; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
 		return;
 	}
 
-	// 1. Gather 57-dim base observation
+	// 1. Gather 49-dim base observation
 	FObservation BaseObs = GatherBaseObservation();
 	TArray<float> BaseFeatures = BaseObs.ToArray();
 
-	if (BaseFeatures.Num() != 57)
+	if (BaseFeatures.Num() != 49)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Base observation size mismatch! Expected 57, got %d"), BaseFeatures.Num());
-		for (int32 i = 0; i < 60; ++i)
+		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Base observation size mismatch! Expected 49, got %d"), BaseFeatures.Num());
+		for (int32 i = 0; i < 52; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
 		return;
 	}
 
-	// Copy base features (57-dim)
-	for (int32 i = 0; i < 57; ++i)
+	// Copy base features (49-dim)
+	for (int32 i = 0; i < 49; ++i)
 	{
 		OutObservations.Values[i] = BaseFeatures[i];
 	}
@@ -116,7 +116,7 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 
 	for (int32 i = 0; i < 3; ++i)
 	{
-		OutObservations.Values[57 + i] = StrategyOneHot[i];
+		OutObservations.Values[49 + i] = StrategyOneHot[i];
 	}
 
 	// Validate final observation
@@ -158,18 +158,18 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 	AMocCharacter* Character = GetControlledCharacter();
 	if (!Character)
 	{
-		return Obs; // Return default-initialized observation
+		return Obs;
 	}
 
-	// Self state (10-dim)
+	// Self state
 	Obs.Position = Character->GetActorLocation();
 	Obs.Health = Character->GetHealthPercentage_Implementation();
 	Obs.Velocity = Character->GetVelocity();
 	Obs.WeaponCooldown = Character->GetWeaponCooldown_Implementation();
+	// CurrentStrategy and bIsAlive stored for reward logic, not included in ToArray
 	Obs.CurrentStrategy = Character->GetCommandedStrategy();
 	Obs.bIsAlive = Character->IsAlive_Implementation();
 
-	// Gather team information (allies + enemies)
 	TArray<AActor*> AllCharacters;
 	UGameplayStatics::GetAllActorsOfClass(
 		Character->GetWorld(),
@@ -180,6 +180,7 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 	int32 AllyIndex = 0;
 	int32 EnemyIndex = 0;
 	const int32 MyTeamID = Character->GetTeamID_Implementation();
+	const FVector MyLocation = Character->GetActorLocation();
 
 	for (AActor* Actor : AllCharacters)
 	{
@@ -191,28 +192,24 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 
 		if (OtherChar->GetTeamID_Implementation() == MyTeamID)
 		{
-			// Ally (max 4)
+			// Ally (max 4) — always known, no LoS required
 			if (AllyIndex < 4)
 			{
 				Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
 				Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
-				Obs.AllyStrategies[AllyIndex] = OtherChar->GetCommandedStrategy();
 				AllyIndex++;
 			}
 		}
 		else
 		{
-			// Enemy (max 5)
+			// Enemy (max 5) — direct line-of-sight only, no FogOfWar
 			if (EnemyIndex < 5)
 			{
-				Obs.EnemyPositions[EnemyIndex] = OtherChar->GetActorLocation();
-
-				// Simple visibility check (line of sight within vision range)
-				FVector ToEnemy = OtherChar->GetActorLocation() - Character->GetActorLocation();
-				float Distance = ToEnemy.Size();
+				const FVector ToEnemy = OtherChar->GetActorLocation() - MyLocation;
+				const float Distance = ToEnemy.Size();
 				bool bVisible = false;
 
-				if (Distance < 8000.0f) // Vision range
+				if (Distance < 8000.0f)
 				{
 					FHitResult HitResult;
 					FCollisionQueryParams QueryParams;
@@ -220,31 +217,25 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 
 					bVisible = !Character->GetWorld()->LineTraceSingleByChannel(
 						HitResult,
-						Character->GetActorLocation() + FVector(0, 0, 90), // Eye height
+						MyLocation + FVector(0, 0, 90),
 						OtherChar->GetActorLocation() + FVector(0, 0, 90),
 						ECC_Visibility,
 						QueryParams
 					);
 				}
 
+				// Store actual position only when visible; ToArray zeros non-visible slots
+				Obs.EnemyPositions[EnemyIndex] = bVisible ? OtherChar->GetActorLocation() : FVector::ZeroVector;
 				Obs.EnemyVisible[EnemyIndex] = bVisible;
 				EnemyIndex++;
 			}
 		}
 	}
 
-	// Map state: query game mode for capture point ownership and time remaining
+	// Map state: per-point capture ownership
 	AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(Character->GetWorld()));
 	if (GameMode)
 	{
-		// Normalized time remaining [0, 1]
-		const float MaxDuration = GameMode->MaxMatchDuration;
-		Obs.TimeRemaining = MaxDuration > 0.0f
-			? FMath::Clamp(GameMode->GetTimeRemaining() / MaxDuration, 0.0f, 1.0f)
-			: 1.0f;
-
-		// Per-point ownership relative to this agent's team (5-dim)
-		// Order matches ECapturePointID: PointA=0, PointB=1, PointC=2, PointD=3, PointE=4
 		static const ECapturePointID PointOrder[] = {
 			ECapturePointID::PointA,
 			ECapturePointID::PointB,
@@ -253,19 +244,15 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 			ECapturePointID::PointE
 		};
 
-		int32 FriendlyOwned = 0;
-		int32 EnemyOwned = 0;
-
 		for (int32 i = 0; i < 5; ++i)
 		{
 			const ACapturePoint* Point = GameMode->GetCapturePoint(PointOrder[i]);
 			if (Point)
 			{
-				const int32 PointOwner = Point->GetOwningTeamID(); // 0=Red, 1=Blue, -1=Neutral
+				const int32 PointOwner = Point->GetOwningTeamID();
 				if (PointOwner == MyTeamID)
 				{
 					Obs.CapturePointStatuses[i] = 1.0f;
-					FriendlyOwned++;
 				}
 				else if (PointOwner == -1)
 				{
@@ -274,20 +261,11 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 				else
 				{
 					Obs.CapturePointStatuses[i] = -1.0f;
-					EnemyOwned++;
 				}
 			}
 		}
-
-		// Balance: friendly owned minus enemy owned, normalized to [-1, 1]
-		Obs.CapturePointBalance = FriendlyOwned - EnemyOwned;
 	}
-	else
-	{
-		Obs.TimeRemaining = 1.0f;
-		Obs.CapturePointBalance = 0;
-		// CapturePointStatuses stays all 0.0 (neutral) from default constructor
-	}
+	// CapturePointStatuses defaults to all 0.0 (neutral) from constructor if GameMode unavailable
 
 	return Obs;
 }
@@ -319,9 +297,9 @@ TArray<float> UMocTacticalObserver::EncodeStrategyOneHot(EStrategyType Strategy)
 
 bool UMocTacticalObserver::ValidateObservation(const TArray<float>& Observation) const
 {
-	if (Observation.Num() != 60)
+	if (Observation.Num() != 52)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Invalid observation size: %d (expected 60)"), Observation.Num());
+		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Invalid observation size: %d (expected 52)"), Observation.Num());
 		return false;
 	}
 

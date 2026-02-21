@@ -21,12 +21,14 @@ class AMocTrainer;
  * - Layer 1 (Squad Commander): Uses FTeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
- * Observation Space (60-dim):
- * - Base State (57-dim): Agent's local observation (FObservation)
- *   • Self (10): Position(3), Health(1), Velocity(3), Cooldown(1), Strategy(1), Alive(1)
- *   • Allies (20): 4 agents × [Position(3), Health(1), Strategy(1)]
- *   • Enemies (20): 5 agents × [Position(3), Visible(1)]
- *   • Map (7): CapturePointBalance(1), TimeRemaining(1), PointStatus×5 (+1=friendly/0=neutral/-1=enemy)
+ * Observation Space (52-dim):
+ * - Base State (49-dim): Agent's local observation (FObservation)
+ *   • Self  (8): Position/7500(3), Health(1), Velocity/600(3), Cooldown(1)
+ *   • Allies(16): 4 agents × [RelPos/8000(3), Health(1)]  — always known
+ *   • Enemies(20): 5 agents × [RelPos/8000_if_visible(3), Visible(1)]  — LoS only
+ *   • Map   (5): PointStatus×5 (+1=friendly / 0=neutral / -1=enemy)
+ *   Ally/enemy positions are agent-relative (offset from self) so the same
+ *   tactical geometry produces identical features anywhere on the map.
  *
  * - Commanded Strategy (3-dim): One-hot encoding of EStrategyType
  *   • [1,0,0] = Assault
@@ -42,7 +44,7 @@ class AMocTrainer;
  * Integration:
  * - Owner: AMocTrainer (Schola trainer)
  * - Data Source: AMocCharacter (via trainer reference)
- * - Output: FBoxPoint with 55 continuous values
+ * - Output: FBoxPoint with 52 continuous values
  */
 UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "MOC Tactical Observer v10.2"))
 class GAMEAI_PROJECT_API UMocTacticalObserver : public UBoxObserver

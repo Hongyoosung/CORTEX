@@ -235,31 +235,55 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 		return;
 	}
 
-	// Get my team ID to determine enemy team
 	int32 MyTeamID = MocChar->GetTeamID_Implementation();
-	int32 EnemyTeamID = (MyTeamID == 0) ? 1 : 0; // Red = 0, Blue = 1
+	FVector AgentPos = MocChar->GetActorLocation();
 
-	// Find enemy team's base capture point
-	// Red team base = PointA, Blue team base = PointE
-	ECapturePointID EnemyBaseID = (EnemyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
-
-	// Find the specific capture point
+	// Find the NEAREST non-friendly capture point instead of only the enemy base.
+	// This aligns EQS objective-seeking with the reward function, which rewards
+	// progress toward the closest non-friendly point.
 	TArray<AActor*> AllCapturePoints;
 	UGameplayStatics::GetAllActorsOfClass(World, ACapturePoint::StaticClass(), AllCapturePoints);
 
+	ACapturePoint* NearestNonFriendly = nullptr;
+	float NearestDist = FLT_MAX;
+
 	for (AActor* Actor : AllCapturePoints)
 	{
-		ACapturePoint* CapturePoint = Cast<ACapturePoint>(Actor);
-		if (CapturePoint && CapturePoint->PointID == EnemyBaseID)
+		ACapturePoint* CP = Cast<ACapturePoint>(Actor);
+		if (!CP) continue;
+
+		// Skip points already owned by this agent's team
+		if (CP->GetOwningTeamID() == MyTeamID) continue;
+
+		float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
+		if (Dist < NearestDist)
 		{
-			UEnvQueryItemType_Point::SetContextHelper(ContextData, CapturePoint->GetActorLocation());
+			NearestDist = Dist;
+			NearestNonFriendly = CP;
+		}
+	}
+
+	if (NearestNonFriendly)
+	{
+		UEnvQueryItemType_Point::SetContextHelper(ContextData, NearestNonFriendly->GetActorLocation());
+		return;
+	}
+
+	// Fallback: all points are friendly — target enemy base as push target
+	int32 EnemyTeamID = (MyTeamID == 0) ? 1 : 0;
+	ECapturePointID EnemyBaseID = (EnemyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
+
+	for (AActor* Actor : AllCapturePoints)
+	{
+		ACapturePoint* CP = Cast<ACapturePoint>(Actor);
+		if (CP && CP->PointID == EnemyBaseID)
+		{
+			UEnvQueryItemType_Point::SetContextHelper(ContextData, CP->GetActorLocation());
 			return;
 		}
 	}
 
-	// If not found, log warning - THIS IS LIKELY THE BUG: context returns empty, test scores all 0
-	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Enemy objective not found (Point %d) for team %d"),
-		static_cast<int32>(EnemyBaseID), MyTeamID);
+	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] No non-friendly objective found for team %d"), MyTeamID);
 }
 
 void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const

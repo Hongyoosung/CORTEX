@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Characters/MocCharacter.h"
+#include "RL/Rewards/MocRewardCalculator.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Combat/Components/WeaponComponent.h"
 #include "Schola/Components/ScholaMocAgent.h"
@@ -30,6 +31,7 @@ AMocCharacter::AMocCharacter()
 	, HealthComponent(nullptr)
 	, WeaponComponent(nullptr)
 	, ScholaAgent(nullptr)
+	, RewardCalculator(nullptr)
 	, StimuliSource(nullptr)
 	, BehaviorTree(nullptr)
 	, VisionRange(3000.0f)
@@ -48,6 +50,7 @@ AMocCharacter::AMocCharacter()
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
 	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 	ScholaAgent = CreateDefaultSubobject<UScholaMocAgent>(TEXT("ScholaAgent"));
+	RewardCalculator = CreateDefaultSubobject<UMocRewardCalculator>(TEXT("RewardCalculator"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 	EQSExecutor = CreateDefaultSubobject<UMocEQSExecutor>(TEXT("EQSExecutor"));
 
@@ -163,17 +166,10 @@ void AMocCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Update fog-of-war vision ONLY if alive (FIXED: was inverted logic)
+	// Skip tick logic if dead
 	if (!bIsAlive)
 	{
-		return; // Skip if dead
-	}
-
-	int32 MyTeamID = GetTeamID_Implementation();
-	if (MyTeamID >= 0)
-	{
-		FVector MyLocation = GetActorLocation();
-		FogManager->UpdateVision(MyTeamID, MyLocation, VisionRange);
+		return;
 	}
 }
 
@@ -271,10 +267,15 @@ void AMocCharacter::ResetCharacter()
 	SetActorEnableCollision(true);
 	SetActorTickEnabled(true);
 
-	// 1. Reset health and combat components
+	// 1. Reset health, combat, and reward components
 	if (HealthComponent)
 	{
 		HealthComponent->ResetHealth();
+	}
+
+	if (RewardCalculator)
+	{
+		RewardCalculator->ResetEpisodeState();
 	}
 
 	if (WeaponComponent)
@@ -386,8 +387,24 @@ void AMocCharacter::PerformTacticalAction()
 	UBlackboardComponent* BB = AICtrl->GetBlackboardComponent();
 	bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EAgentMode::Training;
 
+	// DIAGNOSTIC: Log mode detection state so freeze cause is visible in output log
+	UE_LOG(LogTemp, Verbose,
+		TEXT("[MocCharacter] %s PerformTacticalAction: bIsTraining=%s (ScholaAgent=%s, Mode=%s) BB=%s"),
+		*GetName(),
+		bIsTraining ? TEXT("true") : TEXT("false"),
+		ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
+		ScholaAgent ? *UEnum::GetValueAsString(ScholaAgent->CurrentMode) : TEXT("N/A"),
+		BB ? TEXT("Valid") : TEXT("NULL"));
+
 	if (BB && !bIsTraining)
 	{
+		// DIAGNOSTIC: This branch skips MoveTo — if hit during training, agent will freeze
+		UE_LOG(LogTemp, Warning,
+			TEXT("[MocCharacter] %s: Entering INFERENCE branch during PerformTacticalAction — no MoveTo issued! ScholaAgent=%s, Mode=%s"),
+			*GetName(),
+			ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
+			ScholaAgent ? *UEnum::GetValueAsString(ScholaAgent->CurrentMode) : TEXT("N/A"));
+
 		// Inference mode: sync weights to Blackboard, let BT handle EQS
 		BB->SetValueAsFloat(TEXT("Weight_EnemyObj"), CurrentEQSWeights.EnemyObjectiveProximity);
 		BB->SetValueAsFloat(TEXT("Weight_AllyObj"), CurrentEQSWeights.AllyObjectiveProximity);
@@ -548,4 +565,35 @@ void AMocCharacter::UpdateTeamColorVFX()
 
 	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] Agent %s (Team %d) VFX color updated to: R=%.2f, G=%.2f, B=%.2f"),
 		*GetName(), TeamID, TeamColor.R, TeamColor.G, TeamColor.B);
+}
+
+//========================================
+// Reward Interface (forwarding to UMocRewardCalculator)
+//========================================
+
+float AMocCharacter::ComputeStepReward(
+	EStrategyType Strategy,
+	const FObservation& Prev,
+	const FObservation& Current,
+	const FEQSWeightParameters& Action)
+{
+	if (!RewardCalculator) return 0.0f;
+	return RewardCalculator->ComputeStepReward(Strategy, Prev, Current, Action);
+}
+
+FRewardBreakdown AMocCharacter::ComputeRewardBreakdown(
+	EStrategyType Strategy,
+	const FObservation& Prev,
+	const FObservation& Current) const
+{
+	if (!RewardCalculator) return FRewardBreakdown{};
+	return RewardCalculator->ComputeRewardBreakdown(Strategy, Prev, Current);
+}
+
+void AMocCharacter::ResetRewardState()
+{
+	if (RewardCalculator)
+	{
+		RewardCalculator->ResetEpisodeState();
+	}
 }

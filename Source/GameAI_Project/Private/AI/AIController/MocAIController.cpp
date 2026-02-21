@@ -145,7 +145,6 @@ FObservation AMocAIController::BuildObservationFromPerception()
     // Initialize arrays
     Obs.AllyPositions.Reserve(4);
     Obs.AllyHealths.Reserve(4);
-    Obs.AllyStrategies.Reserve(4);
     Obs.EnemyPositions.Reserve(5);
     Obs.EnemyVisible.Reserve(5);
 
@@ -170,7 +169,6 @@ FObservation AMocAIController::BuildObservationFromPerception()
             {
                 Obs.AllyPositions.Add(OtherChar->GetActorLocation());
                 Obs.AllyHealths.Add(OtherChar->GetHealthPercentage_Implementation());
-                Obs.AllyStrategies.Add(OtherChar->GetCommandedStrategy());
                 AllyIndex++;
             }
         }
@@ -216,7 +214,6 @@ FObservation AMocAIController::BuildObservationFromPerception()
     {
         Obs.AllyPositions.Add(FVector::ZeroVector);
         Obs.AllyHealths.Add(0.0f);
-        Obs.AllyStrategies.Add(EStrategyType::Assault);
     }
 
     while (Obs.EnemyPositions.Num() < 5)
@@ -224,15 +221,6 @@ FObservation AMocAIController::BuildObservationFromPerception()
         Obs.EnemyPositions.Add(FVector::ZeroVector);
         Obs.EnemyVisible.Add(false);
     }
-
-    // ========================================
-    // Map State (2-dim)
-    // ========================================
-    // TODO: Implement capture point balance calculation from game mode
-    Obs.CapturePointBalance = 0;
-
-    // TODO: Get actual time remaining from game mode
-    Obs.TimeRemaining = 1.0f;
 
     return Obs;
 }

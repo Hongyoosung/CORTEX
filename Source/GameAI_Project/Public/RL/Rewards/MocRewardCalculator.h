@@ -4,78 +4,27 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Types/MocTypes.h"
+#include "Types/RewardTypes.h"
+#include "Types/ObservationTypes.h"
+#include "Types/EQSTypes.h"
+#include "Types/StrategyTypes.h"
 #include "MocRewardCalculator.generated.h"
 
 class AMocCharacter;
+class ACapturePoint;
 
-/**
- * Reward event types for logging and analysis
- */
-UENUM(BlueprintType)
-enum class ERewardEventType : uint8
-{
-	Kill,
-	Assist,
-	Death,
-	CapturePoint,
-	LosePoint,
-	RevealEnemy,
-	PickupDeny,
-	Survival,
-	DistanceShaping,
-	TeamVictory,
-	StrategyDiversity
-};
-
-/**
- * Reward event log entry
- */
-USTRUCT(BlueprintType)
-struct FRewardEvent
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadOnly)
-	ERewardEventType EventType;
-
-	UPROPERTY(BlueprintReadOnly)
-	EStrategyType ActiveStrategy;
-
-	UPROPERTY(BlueprintReadOnly)
-	float RewardValue = 0.0f;
-
-	UPROPERTY(BlueprintReadOnly)
-	float Timestamp = 0.0f;
-
-	UPROPERTY(BlueprintReadOnly)
-	int32 AgentID = -1;
-
-	FRewardEvent() = default;
-
-	FRewardEvent(ERewardEventType Type, EStrategyType Strategy, float Value, float Time, int32 ID)
-		: EventType(Type)
-		, ActiveStrategy(Strategy)
-		, RewardValue(Value)
-		, Timestamp(Time)
-		, AgentID(ID)
-	{}
-};
 
 /**
  * Strategy-conditioned reward calculator for MOC Arena.
  *
- * Implements reward structure from MocGameEnvSpecification.md Section 0.6.
- * Each strategy receives specialized rewards to encourage role specialization.
+ * Responsibilities:
+ * - Event-driven sparse rewards: kills, captures, deaths (called by MocCharacter events)
+ * - Dense per-step rewards: movement shaping, health, objective progress, time penalty
+ * - Momentum state for post-capture behaviour shaping
  *
- * Design Philosophy:
- * - Sparse rewards: Kills, captures, match outcome (training stability)
- * - Dense rewards: Distance shaping, damage dealt (early exploration)
- * - Curriculum: Phase 1a uses dense → Phase 1b transitions to sparse
- *
- * Example:
- * - Assault agent kills enemy: +10 reward
- * - Defend agent kills enemy: +5 reward (less important for role)
+ * Access pattern:
+ *   MocTrainer → MocCharacter (forwarding methods) → UMocRewardCalculator
+ *   MocTrainer never includes this header directly.
  */
 UCLASS(ClassGroup=(MOC), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UMocRewardCalculator : public UActorComponent
@@ -85,140 +34,213 @@ class GAMEAI_PROJECT_API UMocRewardCalculator : public UActorComponent
 public:
 	UMocRewardCalculator();
 
-	/**
-	 * Calculate reward for enemy kill
-	 * Assault: +10, Defend: +5, Support: +3
-	 */
+	virtual void BeginPlay() override;
+
+	// ==================== Event-Driven Sparse Rewards ====================
+
+	/** Assault: +10, Defend: +5, Support: +3 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateKillReward(EStrategyType ActiveStrategy);
 
-	/**
-	 * Calculate reward for assist (damage contribution)
-	 * Assault: +3, Defend: +2, Support: +4
-	 */
+	/** Scales by damage contribution (0–100 normalized) */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateAssistReward(EStrategyType ActiveStrategy, float DamageDealt);
 
-	/**
-	 * Calculate penalty for death
-	 * Assault: -20, Defend: -15, Support: -10
-	 */
+	/** Assault: -20, Defend: -15, Support: -10 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateDeathPenalty(EStrategyType ActiveStrategy);
 
-	/**
-	 * Calculate reward for capturing point
-	 * Assault: +15, Defend: +20 (core objective), Support: +10
-	 */
+	/** Assault: +15, Defend: +20 (core objective), Support: +10 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateCaptureReward(EStrategyType ActiveStrategy);
 
-	/**
-	 * Calculate penalty for losing point
-	 * Assault: -25, Defend: -30 (critical failure), Support: -15
-	 */
+	/** Assault: -25, Defend: -30 (critical failure), Support: -15 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateLosePointPenalty(EStrategyType ActiveStrategy);
 
-	/**
-	 * Calculate reward for revealing enemy (first sight)
-	 * Assault: +2, Defend: +1, Support: +1,(core objective)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
-	float CalculateRevealEnemyReward(EStrategyType ActiveStrategy);
-
-	/**
-	 * Calculate reward for pickup denial (take before enemy)
-	 * Assault: +1, Defend: +1, Support: +2, (resource control)
-	 */
+	/** Assault: +1, Defend: +1, Support: +2 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculatePickupDenyReward(EStrategyType ActiveStrategy);
 
-	/**
-	 * Calculate reward for survival at low HP (per 5 seconds)
-	 * Assault: -5, Defend: -3, Support: -2
-	 */
+	/** Only fires when HP < SurvivalHPThreshold */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateSurvivalReward(EStrategyType ActiveStrategy, float CurrentHP, float MaxHP);
 
-	/**
-	 * Calculate distance shaping penalty
-	 * All strategies: -0.01 to -0.03 per meter to assigned target
-	 */
+	/** Dense distance shaping penalty (disabled when bUseDenseRewards=false) */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateDistanceShaping(EStrategyType ActiveStrategy, float DistanceToTarget);
 
-	/**
-	 * Calculate team-level bonus for strategy diversity
-	 * Shared reward: +2 if ≥3 distinct strategies active
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
-	float CalculateStrategyDiversityBonus(int32 UniqueStrategiesCount);
-
-	/**
-	 * Calculate team-level bonus for objective majority
-	 * Shared reward: +0.5 per step if controlling ≥3 points
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
-	float CalculateObjectiveMajorityBonus(int32 ControlledPoints);
-
-	/**
-	 * Calculate match victory bonus
-	 * All agents: +100 (distributed equally)
-	 */
+	/** Match victory: +100 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateVictoryBonus() const { return 100.0f; }
 
+	// ==================== Dense Per-Step Reward ====================
+
 	/**
-	 * Get total cumulative reward for agent
+	 * Compute a single-step reward for the state transition (Prev → Current).
+	 * Encapsulates all dense reward logic previously in MocTrainer::ComputeCommandedStrategyReward.
+	 *
+	 * Caller: MocCharacter::ComputeStepReward() — MocTrainer never calls this directly.
 	 */
+	float ComputeStepReward(
+		EStrategyType Strategy,
+		const FObservation& Prev,
+		const FObservation& Current,
+		const FEQSWeightParameters& Action);
+
+	/**
+	 * Decompose the last step's reward into labelled components (debug / GetInfo).
+	 * Does NOT re-run full objective logic (ObjectiveComponent left 0 — needs world access).
+	 */
+	FRewardBreakdown ComputeRewardBreakdown(
+		EStrategyType Strategy,
+		const FObservation& Prev,
+		const FObservation& Current) const;
+
+	// ==================== Episode Management ====================
+
+	/** Reset per-episode state: cumulative reward, event log, momentum counters */
+	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
+	void ResetEpisodeState();
+
+	// ==================== Cumulative Reward ====================
+
 	UFUNCTION(BlueprintPure, Category = "MOC|Rewards")
 	float GetCumulativeReward() const { return CumulativeReward; }
 
-	/**
-	 * Reset cumulative reward (start of new episode)
-	 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	void ResetCumulativeReward() { CumulativeReward = 0.0f; EventLog.Empty(); }
 
-	/**
-	 * Log reward event for analysis
-	 */
+	// ==================== Event Log ====================
+
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	void LogRewardEvent(ERewardEventType EventType, EStrategyType Strategy, float Reward);
 
-	/**
-	 * Get reward event history
-	 */
 	UFUNCTION(BlueprintPure, Category = "MOC|Rewards")
 	const TArray<FRewardEvent>& GetEventLog() const { return EventLog; }
 
-	/**
-	 * Enable/disable dense rewards (curriculum learning)
-	 * Phase 1a: Dense = true
-	 * Phase 1b: Dense = false (sparse only)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
-	void SetUseDenseRewards(bool bUseDense) { bUseDenseRewards = bUseDense; }
+
+private:
+	float ApplyAndLogReward(ERewardEventType EventType, EStrategyType Strategy, float RewardValue);
+
+	/** Returns the strategy-conditioned scale. Falls back to 1.0 for unknown strategies. */
+	float GetStrategyScale(EStrategyType Strategy, float AssaultScale, float DefendScale, float SupportScale) const;
+
+	void AddReward(float Value);
+
+	/** Populate CachedCapturePoints from world. Called once in BeginPlay. */
+	void CacheCapturePoints();
+
+
+	// ==================== Reward Shaping Parameters ====================
+	// (Tunable in Blueprint / Details panel)
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float TimePenalty = 0.001f;
+
+	/** Enable distance-shaping dense rewards */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rewards|Common")
+	bool bUseDenseRewards = true;
+
+	/** Fraction of KillReward awarded for an assist (scaled by normalized damage contribution) */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float AssistRewardScale = 0.5f;
+
+	//==================== Common Base Rewards ====================
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float SurvivalReward = 0.5f;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float DeathPenaltyReward = 100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float KillReward = 10.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float CaptureReward = 100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float LossCaptureReward = -100.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float PickupDenyReward = 1.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float PenaltyPerMeter = -0.01f;
+
+	// ==================== Tunable Thresholds ====================
+
+	/** HP fraction below which CalculateSurvivalReward fires */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float SurvivalHPThreshold = 0.3f;
+
+	/** Assault: minimum health loss (normalized) to apply the per-step health penalty */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float AssaultHealthLossThreshold = 0.5f;
+
+	/** Assault: movement below this distance (cm) triggers idle penalty when not in zone */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float AssaultIdleMovementThreshold = 50.0f;
+
+	/** Defend: movement below this distance (cm) awards the stationary position bonus */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float DefendStationaryThreshold = 200.0f;
+
+	/** Support: minimum movement (cm) for position reward (lower bound) */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float SupportMinMoveThreshold = 100.0f;
+
+	/** Support: maximum movement (cm) for position reward (upper bound) */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float SupportMaxMoveThreshold = 500.0f;
+
+	/** Defend: health fraction above which the health bonus applies */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float DefendHealthThreshold = 0.7f;
+
+	/** Support: health fraction above which the health bonus applies */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float SupportHealthThreshold = 0.8f;
+
+	/** Defend: normalized weapon cooldown below which the readiness bonus fires */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float DefendWeaponCooldownThreshold = 0.3f;
+
+	/** Defend: flat bonus awarded when weapon is ready */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float DefendWeaponReadyBonus = 1.0f;
+
+	//==================== Per-Strategy Reward Settings ====================
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	FAssaultRewardSettings AssaultReward;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	FDefendRewardSettings DefendReward;
+
+	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	FSupportRewardSettings SupportReward;
+
 
 protected:
-	/** Cumulative reward for current episode */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewards")
 	float CumulativeReward = 0.0f;
 
-	/** Reward event log for analysis */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewards")
 	TArray<FRewardEvent> EventLog;
 
-	/** Use dense rewards (distance shaping, etc.) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rewards")
-	bool bUseDenseRewards = true;
-
-	/** Owner character */
 	UPROPERTY()
 	AMocCharacter* OwnerCharacter;
 
-private:
-	/** Add reward to cumulative total */
-	void AddReward(float Value);
+	/** Cached capture point references (populated in BeginPlay) */
+	UPROPERTY()
+	TArray<TObjectPtr<ACapturePoint>> CachedCapturePoints;
+
+	/** Shared capture radius (taken from first cached point; assumes uniform radius) */
+	float CaptureRadius_Cached = 500.0f;
+
+	// Momentum state (per-episode, reset in ResetEpisodeState)
+	int32 PostCaptureMomentumStepsRemaining = 0;
+	FVector LastCapturedPointLocation = FVector::ZeroVector;
 };

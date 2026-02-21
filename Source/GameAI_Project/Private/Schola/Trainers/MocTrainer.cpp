@@ -1,7 +1,6 @@
 // File: Schola/Trainers/MocTrainer.cpp
 
 #include "Schola/Trainers/MocTrainer.h"
-#include "Actors/CapturePoint.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Schola/Logging/ScholaTransitionLogger.h"
 #include "Schola/Logging/MocTransitionLogger.h"
@@ -87,9 +86,6 @@ void AMocTrainer::BeginPlay()
     // v10.2: Strategy는 Squad Commander가 할당
     // Executor는 commanded strategy를 수행하는 데만 집중
 
-    // Cache capture point references once — they don't spawn/despawn during an episode
-    CacheCapturePoints();
-
     // Initialize observation state
     PreviousObservation = FObservation();
     CurrentObservation = GatherStateObservation();
@@ -101,6 +97,26 @@ void AMocTrainer::Tick(float DeltaTime)
 
     if (!ControlledCharacter || !ControlledCharacter->IsAlive_Implementation())
     {
+        // Dead agents MUST still drain any queued action so Schola's multi-agent
+        // step barrier can advance. Schola waits for all agents to acknowledge their
+        // action before releasing the barrier and sending the next batch to Python.
+        // If dead agents skip ConsumeNewWeights(), the barrier never releases and
+        // all agents (including alive ones) stop receiving actions.
+        if (ControlledCharacter && ControlledCharacter->ConsumeNewWeights())
+        {
+            // Action drained — signal that ComputeReward() can be called this step.
+            // ComputeReward() will return CachedStepReward (last death-penalty value).
+            bHasNewReward = true;
+            TicksWithoutNewWeights = 0;
+            // Count dead-agent drains toward MaxEpisodeSteps.
+            // Without this, dead agents never reach MaxEpisodeSteps while alive agents do,
+            // so ComputeStatus() returns Running for the dead agent indefinitely.
+            // That blocks AllAgentsThink()'s AllDone=true check, preventing the SAME_STEP
+            // auto-reset from firing and leaving alive agents permanently stuck in Truncated.
+            CurrentEpisodeSteps++;
+            UE_LOG(LogTemp, Log, TEXT("[MocTrainer] %s (DEAD): action drained (step %d/%d)"),
+                *ControlledCharacter->GetName(), CurrentEpisodeSteps, MaxEpisodeSteps);
+        }
         bWasDeadLastTick = true;
         return;
     }
@@ -126,6 +142,14 @@ void AMocTrainer::Tick(float DeltaTime)
 
     if (ControlledCharacter->ConsumeNewWeights())
     {
+        // New action received from Python — reset freeze watchdog
+        if (TicksWithoutNewWeights >= FreezeWatchdogInterval)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] FREEZE RESOLVED: %s received new weights after %d ticks (%.1fs frozen)"),
+                *ControlledCharacter->GetName(), TicksWithoutNewWeights, TicksWithoutNewWeights * 0.0167f);
+        }
+        TicksWithoutNewWeights = 0;
+
         // Actuator가 설정한 최신 가중치 가져오기
         LastAction = ControlledCharacter->GetEQSWeights();
         CurrentEpisodeSteps++;
@@ -140,9 +164,35 @@ void AMocTrainer::Tick(float DeltaTime)
         // ComputeReward() will compute and cache the reward on first call
         bHasNewReward = true;
     }
+    else
+    {
+        // No new weights this tick — increment watchdog counter
+        TicksWithoutNewWeights++;
 
-    // Detect enemies and report to Fog of War (replaces BT service)
-    DetectAndReportEnemies();
+        // Log at regular intervals to diagnose freeze
+        if (TicksWithoutNewWeights % FreezeWatchdogInterval == 0)
+        {
+            const float FrozenSeconds = TicksWithoutNewWeights * 0.0167f;
+            UE_LOG(LogTemp, Warning,
+                TEXT("[MocTrainer] FREEZE WATCHDOG: %s — %d ticks (%.1fs) without new weights | Alive=%s | Steps=%d | bHasNewReward=%s"),
+                *ControlledCharacter->GetName(),
+                TicksWithoutNewWeights,
+                FrozenSeconds,
+                ControlledCharacter->IsAlive_Implementation() ? TEXT("true") : TEXT("false"),
+                CurrentEpisodeSteps,
+                bHasNewReward ? TEXT("true") : TEXT("false"));
+
+            // Diagnose why weights are not arriving
+            UE_LOG(LogTemp, Warning,
+                TEXT("[MocTrainer] FREEZE DIAG: %s — AIController=%s | Health=%.1f%% | LastAction=[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
+                *ControlledCharacter->GetName(),
+                ControlledCharacter->GetController() ? TEXT("Valid") : TEXT("NULL"),
+                ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f,
+                LastAction.EnemyObjectiveProximity, LastAction.AllyObjectiveProximity,
+                LastAction.CoverDensity, LastAction.EnemyVisibility,
+                LastAction.AllyProximity, LastAction.CombatRange, LastAction.PickupProximity);
+        }
+    }
 
     // Handle combat (replaces BT task)
     HandleCombat();
@@ -174,9 +224,9 @@ TArray<float> AMocTrainer::GetObservation()
     TArray<float> Observation = CurrentObservation.ToArray();
 
     // 차원 검증
-    if (Observation.Num() != 52)
+    if (Observation.Num() != 49)
     {
-        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Observation dimension mismatch: %d (expected 52)"),
+        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Observation dimension mismatch: %d (expected 49)"),
             Observation.Num());
     }
 
@@ -246,20 +296,6 @@ bool AMocTrainer::IsEpisodeDone()
         return true;
     }
     
-    if (!ControlledCharacter || ControlledCharacter->GetHealthPercentage_Implementation() <= 0.0f)
-    {
-        UE_LOG(LogTemp, Log, TEXT("Episode ended: Agent died"));
-        return true;
-    }
-    
-    // 게임 종료 조건 (승리/패배)
-    AGameModeBase* GameMode = UGameplayStatics::GetGameMode(GetWorld());
-    if (GameMode)
-    {
-        // 게임 모드별 종료 조건 체크
-        // 예: 모든 거점 점령, 시간 초과 등
-    }
-    
     return false;
 }
 
@@ -296,189 +332,90 @@ FObservation AMocTrainer::GatherStateObservation()
 
     // Self state
     Obs.Position = ControlledCharacter->GetActorLocation();
-    Obs.Health = ControlledCharacter->GetHealthPercentage_Implementation(); // [0.0-1.0]
+    Obs.Health = ControlledCharacter->GetHealthPercentage_Implementation();
     Obs.Velocity = ControlledCharacter->GetVelocity();
     Obs.WeaponCooldown = ControlledCharacter->GetWeaponCooldown_Implementation();
     Obs.CurrentStrategy = ControlledCharacter->GetCommandedStrategy();
     Obs.bIsAlive = ControlledCharacter->IsAlive_Implementation();
 
-    int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
+    const int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
+    const FVector MyLocation = ControlledCharacter->GetActorLocation();
 
-    // Get TeamManager and FogOfWarManager
-    AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
-    if (!GameMode)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] GameMode not found"));
-        return Obs;
-    }
-
-    ATeamManager* TeamManager = GameMode->GetTeamManager();
-    if (!TeamManager)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] TeamManager not found"));
-        return Obs;
-    }
-
-    AFogOfWarManager* FogManager = TeamManager->GetFogOfWarManager();
-    if (!FogManager)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] FogOfWarManager not found"));
-        return Obs;
-    }
-
-    // Collect ally information (allies are always known)
+    // Scan all characters for allies and enemies
     TArray<AActor*> AllCharacters;
-    UGameplayStatics::GetAllActorsOfClass(
-        GetWorld(),
-        AMocCharacter::StaticClass(),
-        AllCharacters
-    );
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMocCharacter::StaticClass(), AllCharacters);
 
     int32 AllyIndex = 0;
+    int32 EnemyIndex = 0;
+
     for (AActor* Actor : AllCharacters)
     {
-        AMocCharacter* FoundCharacter = Cast<AMocCharacter>(Actor);
-        if (!FoundCharacter || FoundCharacter == ControlledCharacter) continue;
+        AMocCharacter* OtherChar = Cast<AMocCharacter>(Actor);
+        if (!OtherChar || OtherChar == ControlledCharacter) continue;
 
-        if (FoundCharacter->GetTeamID_Implementation() == MyTeamID)
+        if (OtherChar->GetTeamID_Implementation() == MyTeamID)
         {
-            // Ally - always known
+            // Ally — always known, no LoS required
             if (AllyIndex < 4)
             {
-                Obs.AllyPositions[AllyIndex] = FoundCharacter->GetActorLocation();
-                Obs.AllyHealths[AllyIndex] = FoundCharacter->GetHealthPercentage_Implementation();
-                Obs.AllyStrategies[AllyIndex] = FoundCharacter->GetCommandedStrategy();
+                Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
+                Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
                 AllyIndex++;
+            }
+        }
+        else
+        {
+            // Enemy — direct line-of-sight only
+            if (EnemyIndex < 5)
+            {
+                const FVector ToEnemy = OtherChar->GetActorLocation() - MyLocation;
+                const float Distance = ToEnemy.Size();
+                bool bVisible = false;
+
+                if (Distance < 8000.0f)
+                {
+                    FHitResult HitResult;
+                    FCollisionQueryParams QueryParams;
+                    QueryParams.AddIgnoredActor(ControlledCharacter);
+
+                    bVisible = !GetWorld()->LineTraceSingleByChannel(
+                        HitResult,
+                        MyLocation + FVector(0, 0, 90),
+                        OtherChar->GetActorLocation() + FVector(0, 0, 90),
+                        ECC_Visibility,
+                        QueryParams
+                    );
+                }
+
+                // Store actual position only when visible; ToArray zeros non-visible slots
+                Obs.EnemyPositions[EnemyIndex] = bVisible ? OtherChar->GetActorLocation() : FVector::ZeroVector;
+                Obs.EnemyVisible[EnemyIndex] = bVisible;
+                EnemyIndex++;
             }
         }
     }
 
-    // Collect enemy information from Fog of War (only known enemies)
-    TArray<AActor*> RememberedEnemies = FogManager->GetRememberedEnemies(MyTeamID);
-    int32 EnemyIndex = 0;
-
-    for (AActor* EnemyActor : RememberedEnemies)
-    {
-        if (EnemyIndex >= 5) break;
-
-        AMocCharacter* Enemy = Cast<AMocCharacter>(EnemyActor);
-        if (!Enemy) continue;
-
-        // Get last known position from Fog of War
-        FVector LastKnownPosition = FogManager->GetLastKnownEnemyPosition(MyTeamID, EnemyActor);
-        Obs.EnemyPositions[EnemyIndex] = LastKnownPosition;
-
-        // Check if enemy is currently visible (line of sight)
-        FVector ToEnemy = Enemy->GetActorLocation() - ControlledCharacter->GetActorLocation();
-        float Distance = ToEnemy.Size();
-        bool bVisible = false;
-
-        if (Distance < 8000.0f) // Vision range
-        {
-            FHitResult HitResult;
-            FCollisionQueryParams QueryParams;
-            QueryParams.AddIgnoredActor(ControlledCharacter);
-
-            bVisible = !GetWorld()->LineTraceSingleByChannel(
-                HitResult,
-                ControlledCharacter->GetActorLocation() + FVector(0, 0, 90), // Eye height
-                Enemy->GetActorLocation() + FVector(0, 0, 90),
-                ECC_Visibility,
-                QueryParams
-            );
-        }
-
-        Obs.EnemyVisible[EnemyIndex] = bVisible;
-        EnemyIndex++;
-    }
-
     // Map state: per-point ownership relative to this agent's team
     Obs.CapturePointStatuses.Init(0.0f, 5);
-    int32 FriendlyPoints = 0;
-    int32 EnemyPoints = 0;
-
     for (ACapturePoint* CP : CachedCapturePoints)
     {
         if (!CP) continue;
-        int32 Idx = static_cast<int32>(CP->PointID);
+        const int32 Idx = static_cast<int32>(CP->PointID);
         if (Idx < 0 || Idx >= 5) continue;
 
-        int32 OwnerTeam = CP->GetOwningTeamID();
+        const int32 OwnerTeam = CP->GetOwningTeamID();
         if (OwnerTeam == MyTeamID)
         {
             Obs.CapturePointStatuses[Idx] = 1.0f;
-            FriendlyPoints++;
         }
-        else if (OwnerTeam != -1) // enemy-owned
+        else if (OwnerTeam != -1)
         {
             Obs.CapturePointStatuses[Idx] = -1.0f;
-            EnemyPoints++;
         }
         // neutral → stays 0.0f
     }
 
-    Obs.CapturePointBalance = FriendlyPoints - EnemyPoints;
-    Obs.TimeRemaining = 1.0f; // TODO: Get actual time from game mode
-
     return Obs;
-}
-
-void AMocTrainer::DetectAndReportEnemies()
-{
-    if (!ControlledCharacter) return;
-
-    // Get managers
-    AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
-    if (!GameMode) return;
-
-    ATeamManager* TeamManager = GameMode->GetTeamManager();
-    if (!TeamManager) return;
-
-    int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
-    FVector MyLocation = ControlledCharacter->GetActorLocation();
-
-    // Find all characters in the level
-    TArray<AActor*> AllCharacters;
-    UGameplayStatics::GetAllActorsOfClass(
-        GetWorld(),
-        AMocCharacter::StaticClass(),
-        AllCharacters
-    );
-
-    // Check each character for visibility
-    for (AActor* Actor : AllCharacters)
-    {
-        AMocCharacter* OtherCharacter = Cast<AMocCharacter>(Actor);
-        if (!OtherCharacter || OtherCharacter == ControlledCharacter) continue;
-
-        // Only check enemies
-        if (OtherCharacter->GetTeamID_Implementation() == MyTeamID) continue;
-
-        // Check distance
-        FVector ToEnemy = OtherCharacter->GetActorLocation() - MyLocation;
-        float Distance = ToEnemy.Size();
-
-        if (Distance > 8000.0f) continue; // Outside vision range
-
-        // Line of sight check
-        FHitResult HitResult;
-        FCollisionQueryParams QueryParams;
-        QueryParams.AddIgnoredActor(ControlledCharacter);
-
-        bool bHasLineOfSight = !GetWorld()->LineTraceSingleByChannel(
-            HitResult,
-            MyLocation + FVector(0, 0, 90), // Eye height
-            OtherCharacter->GetActorLocation() + FVector(0, 0, 90),
-            ECC_Visibility,
-            QueryParams
-        );
-
-        // Report to Fog of War if visible
-        if (bHasLineOfSight)
-        {
-            TeamManager->ReportEnemySighting(MyTeamID, OtherCharacter, OtherCharacter->GetActorLocation());
-        }
-    }
 }
 
 void AMocTrainer::HandleCombat()
@@ -488,42 +425,31 @@ void AMocTrainer::HandleCombat()
     UWeaponComponent* Weapon = ControlledCharacter->GetWeaponComponent();
     if (!Weapon || !Weapon->CanFire()) return;
 
-    // Get visible enemies from current observation
     AActor* ClosestEnemy = nullptr;
     float ClosestDistance = FLT_MAX;
 
-    int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
-    FVector MyLocation = ControlledCharacter->GetActorLocation();
+    const int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
+    const FVector MyLocation = ControlledCharacter->GetActorLocation();
 
-    // Get managers
-    AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
-    if (!GameMode) return;
+    // Direct scan: fire at the nearest currently-visible enemy
+    TArray<AActor*> AllCharacters;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMocCharacter::StaticClass(), AllCharacters);
 
-    ATeamManager* TeamManager = GameMode->GetTeamManager();
-    if (!TeamManager) return;
-
-    AFogOfWarManager* FogManager = TeamManager->GetFogOfWarManager();
-    if (!FogManager) return;
-
-    // Get remembered enemies
-    TArray<AActor*> RememberedEnemies = FogManager->GetRememberedEnemies(MyTeamID);
-
-    for (AActor* EnemyActor : RememberedEnemies)
+    for (AActor* Actor : AllCharacters)
     {
-        AMocCharacter* Enemy = Cast<AMocCharacter>(EnemyActor);
-        if (!Enemy || !Enemy->IsAlive_Implementation()) continue;
+        AMocCharacter* Enemy = Cast<AMocCharacter>(Actor);
+        if (!Enemy || Enemy == ControlledCharacter) continue;
+        if (Enemy->GetTeamID_Implementation() == MyTeamID) continue;
+        if (!Enemy->IsAlive_Implementation()) continue;
 
-        // Check if currently visible (line of sight)
-        FVector ToEnemy = Enemy->GetActorLocation() - MyLocation;
-        float Distance = ToEnemy.Size();
-
-        if (Distance > 8000.0f) continue; // Outside vision range
+        const float Distance = FVector::Dist(Enemy->GetActorLocation(), MyLocation);
+        if (Distance > 8000.0f) continue;
 
         FHitResult HitResult;
         FCollisionQueryParams QueryParams;
         QueryParams.AddIgnoredActor(ControlledCharacter);
 
-        bool bVisible = !GetWorld()->LineTraceSingleByChannel(
+        const bool bVisible = !GetWorld()->LineTraceSingleByChannel(
             HitResult,
             MyLocation + FVector(0, 0, 90),
             Enemy->GetActorLocation() + FVector(0, 0, 90),
@@ -531,7 +457,6 @@ void AMocTrainer::HandleCombat()
             QueryParams
         );
 
-        // Only fire at visible enemies
         if (bVisible && Distance < ClosestDistance)
         {
             ClosestEnemy = Enemy;
@@ -539,12 +464,9 @@ void AMocTrainer::HandleCombat()
         }
     }
 
-    // Fire at closest visible enemy
     if (ClosestEnemy)
     {
-        // Use predictive aiming for training (helps agents learn tactical positioning)
-        bool bUsePrediction = true;
-        Weapon->FireAtTarget(ClosestEnemy, bUsePrediction);
+        Weapon->FireAtTarget(ClosestEnemy, true);
     }
 }
 
@@ -555,164 +477,10 @@ float AMocTrainer::ComputeCommandedStrategyReward(
     const FEQSWeightParameters& Action
 )
 {
-    float Reward = 0.0f;
-
-    // v10.2: Team-aligned rewards based on commanded strategy execution quality
-    // Using configurable parameters for reward shaping
-
-    switch (CommandedStrategy)
-    {
-    case EStrategyType::Assault:
-        {
-            // Movement reward: encourage forward momentum, not idling
-            float PositionChange = FVector::Dist(Prev.Position, Current.Position);
-            Reward += AssaultMovementReward * PositionChange;
-
-            // Health penalty: only for catastrophic damage (>50% in one step)
-            // Mild damage is acceptable for Assault — closing distance means taking fire
-            float HealthLoss = Prev.Health - Current.Health;
-            if (HealthLoss > 0.5f)
-            {
-                Reward -= AssaultHealthPenalty * HealthLoss;
-            }
-
-            // NO weapon readiness reward — it rewarded idling
-
-            // Objective shaping: close in on and occupy capture points
-            if (ControlledCharacter && CachedCapturePoints.Num() > 0)
-            {
-                int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
-                float PrevNearestDist = FLT_MAX;
-                float CurrNearestDist = FLT_MAX;
-                bool bInNonFriendlyZone = false;
-                int32 PrevFriendlyPoints = 0;
-                int32 CurrFriendlyPoints = 0;
-
-                for (ACapturePoint* CP : CachedCapturePoints)
-                {
-                    if (!CP) continue;
-
-                    bool bFriendly = (CP->GetOwningTeamID() == MyTeamID);
-
-                    // Count friendly points for capture delta reward
-                    if (bFriendly) CurrFriendlyPoints++;
-
-                    // Distance shaping targets non-friendly points only
-                    if (!bFriendly)
-                    {
-                        float DistPrev = FVector::Dist(Prev.Position, CP->GetActorLocation());
-                        float DistCurr = FVector::Dist(Current.Position, CP->GetActorLocation());
-
-                        if (DistPrev < PrevNearestDist) PrevNearestDist = DistPrev;
-                        if (DistCurr < CurrNearestDist) CurrNearestDist = DistCurr;
-
-                        if (DistCurr <= CP->CaptureRadius)
-                        {
-                            bInNonFriendlyZone = true;
-                        }
-                    }
-                }
-
-                // Count previous friendly points for capture delta
-                for (int32 i = 0; i < Prev.CapturePointStatuses.Num(); ++i)
-                {
-                    if (Prev.CapturePointStatuses[i] > 0.5f) PrevFriendlyPoints++;
-                }
-
-                // Sparse capture reward: big bonus when a new point flips to friendly
-                int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
-                if (NewCaptures > 0)
-                {
-                    Reward += AssaultCaptureBonus * NewCaptures;
-                }
-
-                // Reward progress toward the nearest non-friendly point
-                if (PrevNearestDist < FLT_MAX && CurrNearestDist < FLT_MAX)
-                {
-                    Reward += AssaultObjectiveProgressReward * (PrevNearestDist - CurrNearestDist);
-                }
-
-                // Bonus per step spent inside a non-friendly capture zone
-                if (bInNonFriendlyZone)
-                {
-                    Reward += AssaultZonePresenceBonus;
-                }
-
-                // Idle penalty: if all reachable points are friendly and agent isn't moving
-                if (PrevNearestDist == FLT_MAX && PositionChange < 50.0f)
-                {
-                    // All points captured, agent camping — penalize
-                    Reward -= AssaultIdlePenalty;
-                }
-            }
-        }
-        break;
-
-    case EStrategyType::Defend:
-        {
-            // Reward for staying in defensive position (low movement)
-            float PositionChange = FVector::Dist(Prev.Position, Current.Position);
-            if (PositionChange < 200.0f) // Staying relatively still
-            {
-                Reward += DefendPositionReward;
-            }
-
-            // Health preservation is critical for defenders
-            if (Current.Health > 0.7f)
-            {
-                Reward += DefendHealthBonus;
-            }
-
-            // Reward for weapon readiness
-            if (Current.WeaponCooldown < 0.3f)
-            {
-                Reward += 1.0f;
-            }
-        }
-        break;
-
-    case EStrategyType::Support:
-        {
-            // Reward for moderate positioning (not too aggressive, not too passive)
-            float PositionChange = FVector::Dist(Prev.Position, Current.Position);
-            if (PositionChange > 100.0f && PositionChange < 500.0f)
-            {
-                Reward += SupportPositionReward;
-            }
-
-            // Health preservation important for support
-            if (Current.Health > 0.8f)
-            {
-                Reward += SupportHealthBonus;
-            }
-        }
-        break;
-    }
-
-    // Death penalty — scaled by strategy role
-    // Assault agents should not fear death as much; their job is to push forward
-    bool bJustDied = Prev.bIsAlive && !Current.bIsAlive;
-    if (bJustDied)
-    {
-        float StrategyDeathScale = 1.0f;
-        switch (CommandedStrategy)
-        {
-        case EStrategyType::Assault: StrategyDeathScale = AssaultDeathScale; break;
-        case EStrategyType::Defend:  StrategyDeathScale = 1.0f; break;
-        case EStrategyType::Support: StrategyDeathScale = 0.7f; break;
-        }
-        Reward -= DeathPenalty * StrategyDeathScale;
-    }
-
-    // Time penalty — higher for Assault to discourage camping
-    float EffectiveTimePenalty = TimePenalty;
-    if (CommandedStrategy == EStrategyType::Assault)
-    {
-        EffectiveTimePenalty = AssaultTimePenalty;
-    }
-    Reward -= EffectiveTimePenalty;
-
-    return Reward;
+    // Delegate to MocCharacter → UMocRewardCalculator.
+    // All reward math and momentum state live in the calculator component.
+    if (!ControlledCharacter) return 0.0f;
+    return ControlledCharacter->ComputeStepReward(CommandedStrategy, Prev, Current, Action);
 }
 
 void AMocTrainer::LogTransition(
@@ -997,7 +765,7 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
     // Reward breakdown
     if (ControlledCharacter)
     {
-        FRewardBreakdown Breakdown = CalculateRewardBreakdown(
+        FRewardBreakdown Breakdown = ControlledCharacter->ComputeRewardBreakdown(
             CachedCommandedStrategy,
             PreviousObservation,
             CurrentObservation
@@ -1157,7 +925,7 @@ bool AMocTrainer::ValidateObservation(const FObservation& Obs) const
         }
     }
 
-    if (Obs.AllyPositions.Num() != 4 || Obs.AllyHealths.Num() != 4 || Obs.AllyStrategies.Num() != 4)
+    if (Obs.AllyPositions.Num() != 4 || Obs.AllyHealths.Num() != 4)
     {
         UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Ally data array size mismatch"));
         return false;
@@ -1185,94 +953,6 @@ void AMocTrainer::UpdateTrainingStatistics()
         TotalEpisodes, EpisodeReward, CurrentEpisodeSteps, AverageEpisodeLength);
 }
 
-void AMocTrainer::CacheCapturePoints()
-{
-    CachedCapturePoints.Empty();
-
-    TArray<AActor*> Found;
-    UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACapturePoint::StaticClass(), Found);
-
-    for (AActor* Actor : Found)
-    {
-        if (ACapturePoint* CP = Cast<ACapturePoint>(Actor))
-        {
-            CachedCapturePoints.Add(CP);
-        }
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Cached %d capture points for reward computation"),
-        CachedCapturePoints.Num());
-}
-
-AMocTrainer::FRewardBreakdown AMocTrainer::CalculateRewardBreakdown(
-    EStrategyType Strategy,
-    const FObservation& Prev,
-    const FObservation& Current
-) const
-{
-    FRewardBreakdown Breakdown;
-    Breakdown.StrategyReward = 0.0f;
-    Breakdown.HealthComponent = 0.0f;
-    Breakdown.PositionComponent = 0.0f;
-    Breakdown.ObjectiveComponent = 0.0f; // Note: not computed here (needs world access)
-    Breakdown.DeathPenaltyComponent = 0.0f;
-    Breakdown.TimePenaltyComponent = -TimePenalty;
-
-    float PositionChange = FVector::Dist(Prev.Position, Current.Position);
-    float HealthLoss = Prev.Health - Current.Health;
-
-    switch (Strategy)
-    {
-    case EStrategyType::Assault:
-        Breakdown.PositionComponent = AssaultMovementReward * PositionChange;
-        if (HealthLoss > 0.5f)
-        {
-            Breakdown.HealthComponent = -AssaultHealthPenalty * HealthLoss;
-        }
-        Breakdown.TimePenaltyComponent = -AssaultTimePenalty;
-        break;
-
-    case EStrategyType::Defend:
-        if (PositionChange < 200.0f)
-        {
-            Breakdown.PositionComponent = DefendPositionReward;
-        }
-        if (Current.Health > 0.7f)
-        {
-            Breakdown.HealthComponent = DefendHealthBonus;
-        }
-        break;
-
-    case EStrategyType::Support:
-        if (PositionChange > 100.0f && PositionChange < 500.0f)
-        {
-            Breakdown.PositionComponent = SupportPositionReward;
-        }
-        if (Current.Health > 0.8f)
-        {
-            Breakdown.HealthComponent = SupportHealthBonus;
-        }
-        break;
-    }
-
-    bool bJustDied = Prev.bIsAlive && !Current.bIsAlive;
-    if (bJustDied)
-    {
-        float DeathScale = 1.0f;
-        switch (Strategy)
-        {
-        case EStrategyType::Assault: DeathScale = AssaultDeathScale; break;
-        case EStrategyType::Support: DeathScale = 0.7f; break;
-        default: break;
-        }
-        Breakdown.DeathPenaltyComponent = -DeathPenalty * DeathScale;
-    }
-
-    Breakdown.StrategyReward = Breakdown.PositionComponent + Breakdown.HealthComponent;
-    Breakdown.Total = Breakdown.StrategyReward + Breakdown.ObjectiveComponent + Breakdown.DeathPenaltyComponent + Breakdown.TimePenaltyComponent;
-
-    return Breakdown;
-}
 
 void AMocTrainer::GetTrainingStats(int32& OutEpisodes, float& OutAvgReward, float& OutAvgLength) const
 {
@@ -1285,7 +965,7 @@ void AMocTrainer::LogRewardBreakdown() const
 {
     if (!ControlledCharacter) return;
 
-    FRewardBreakdown Breakdown = CalculateRewardBreakdown(
+    FRewardBreakdown Breakdown = ControlledCharacter->ComputeRewardBreakdown(
         CachedCommandedStrategy,
         PreviousObservation,
         CurrentObservation

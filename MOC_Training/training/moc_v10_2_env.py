@@ -2,7 +2,7 @@
 MOC v10.2 Synchronous Multi-Agent Environment
 
 - 3 strategies (Assault, Defend, Support)
-- 57-dim base observation + 3-dim strategy one-hot = 60-dim total
+- 49-dim base observation + 3-dim strategy one-hot = 52-dim total
 - Action space: Box([-1, 1]^7) for EQS weights
 - Commanders assign strategies; executors output EQS weights
 
@@ -37,9 +37,14 @@ except ImportError:
 
 class MOCv10_2Config:
     """Configuration for MOC v10.2 environment."""
-    OBSERVATION_BASE_SIZE = 57  # Local observation (52 + 5 per-point capture statuses)
+    # Observation layout (49 base + 3 strategy one-hot = 52 total):
+    #   Self      (8):  pos/7500(3), health(1), vel/600(3), cooldown(1)
+    #   Allies   (16):  4 × [rel_pos/8000(3), health(1)]
+    #   Enemies  (20):  5 × [rel_pos/8000_if_visible(3), visible(1)]
+    #   Map       (5):  capture_point_status×5
+    OBSERVATION_BASE_SIZE = 49
     NUM_STRATEGIES = 3  # Assault, Defend, Support
-    OBSERVATION_SIZE = 60  # 57 + 3 strategy one-hot
+    OBSERVATION_SIZE = 52  # 49 + 3 strategy one-hot
     NUM_EQS_WEIGHTS = 7  # EQS weight outputs
 
 
@@ -67,6 +72,7 @@ if SCHOLA_AVAILABLE:
             print(f"[MOC v10.2] Connecting to {host}:{port}...")
             print(f"[MOC v10.2] Multi-environment: {self.num_envs} parallel UE5 envs")
             print(f"[MOC v10.2] Architecture: Command-Driven Executor (3 strategies)")
+            print(f"[MOC v10.2] Obs Space: {MOCv10_2Config.OBSERVATION_SIZE}-dim (49 base + 3 strategy one-hot)")
             print(f"[MOC v10.2] Action Space: Box([-1, 1]^7) EQS weights")
 
             # Connect to UE5
@@ -101,7 +107,7 @@ if SCHOLA_AVAILABLE:
                 self._update_agent_map()
 
             # Observation/Action Spaces
-            # v10.2: 60-dim input (57 local + 3 strategy)
+            # v10.2: 52-dim input (49 local + 3 strategy one-hot)
             self._obs_space = spaces.Box(
                 low=-np.inf, high=np.inf,
                 shape=(MOCv10_2Config.OBSERVATION_SIZE,),
@@ -131,6 +137,11 @@ if SCHOLA_AVAILABLE:
             # Performance metrics
             self.step_durations = deque(maxlen=100)
             self.poll_durations = deque(maxlen=100)
+
+            # Freeze diagnostic: track inter-step gaps
+            self._last_step_return_time = None  # When step() last returned to RLlib
+            self._last_step_call_time = None    # When step() was last called
+            self._step_call_count = 0
 
             print(f"[MOC v10.2] Initialization complete!")
 
@@ -222,18 +233,18 @@ if SCHOLA_AVAILABLE:
             return all_keys
 
         def _build_observation(self, base_obs, strategy_idx=0):
-            """Build 60-dim observation: 57 base + 3 strategy one-hot.
+            """Build 52-dim observation: 49 base + 3 strategy one-hot.
 
             Args:
-                base_obs: 57-dim observation vector (52 local + 5 capture point statuses)
+                base_obs: 49-dim observation vector from UE5
                 strategy_idx: Strategy index (0=Assault, 1=Defend, 2=Support)
 
             Returns:
-                60-dim observation array
+                52-dim observation array
             """
-            TARGET_BASE_SIZE = 57
+            TARGET_BASE_SIZE = 49
 
-            # Pad/truncate to 57 dimensions
+            # Pad/truncate to 49 dimensions
             if len(base_obs) < TARGET_BASE_SIZE:
                 base_obs = np.pad(base_obs[:TARGET_BASE_SIZE], (0, TARGET_BASE_SIZE - len(base_obs)), mode='constant')
             else:
@@ -257,7 +268,7 @@ if SCHOLA_AVAILABLE:
                 dist_str = " | ".join([f"{n}={p}" for n, p in zip(names, pct)])
                 print(f"[STRATEGY DIST] {dist_str}")
 
-            # Final result: 57(Base) + 3(Strategy) = 60 floats
+            # Final result: 49(Base) + 3(Strategy) = 52 floats
             return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
 
         @property
@@ -350,6 +361,17 @@ if SCHOLA_AVAILABLE:
                 obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
             """
             step_start = time.time()
+            self._step_call_count += 1
+
+            # Freeze diagnostic: detect large gaps between step() calls
+            # (indicates RLlib hung during training/processing)
+            if self._last_step_return_time is not None:
+                gap = step_start - self._last_step_return_time
+                if gap > 5.0:
+                    print(f"[FREEZE DIAG] ⚠️ RLlib took {gap:.1f}s between step() calls "
+                          f"(step #{self._step_call_count}, env_steps={self._env_episode_steps})")
+                elif gap > 30.0:
+                    print(f"[FREEZE DIAG] 🚨 RLlib took {gap:.1f}s — likely training hang!")
 
             try:
                 # 1. Format actions for Schola
@@ -375,20 +397,6 @@ if SCHOLA_AVAILABLE:
 
                 # 2. Send actions (non-blocking - just stores in schola_env.next_action)
                 num_formatted = sum(len(agents) for agents in formattedactions.values())
-
-                # ACTION SEND LOG: print every time actions are dispatched to UE5
-                print(f"[ACTION SEND] t={time.strftime('%H:%M:%S')} step={getattr(self, '_total_step_count', 0)+1} "
-                      f"agents_with_actions={num_formatted}/{len(actiondict)} "
-                      f"envs={list(formattedactions.keys())}")
-                for env_idx, agent_actions in formattedactions.items():
-                    for agent_idx, keyed_action in agent_actions.items():
-                        # keyed_action is {key: np.ndarray}; grab first value
-                        action_array = next(iter(keyed_action.values())) if keyed_action else np.zeros(7)
-                        flat_id = self.reverse_map.get((env_idx, agent_idx), f"env{env_idx}_a{agent_idx}")
-                        strategy_idx = self._agent_strategies.get(flat_id, -1)
-                        strategy_names = {0: "Assault", 1: "Defend", 2: "Support"}
-                        strat_str = strategy_names.get(strategy_idx, f"?({strategy_idx})")
-                        print(f"  [{flat_id}|{strat_str}] EQS={np.round(action_array, 3).tolist()}")
 
                 self.schola_env.send_actions(formattedactions)
 
@@ -470,6 +478,16 @@ if SCHOLA_AVAILABLE:
                 step_duration = time.time() - step_start
                 self.step_durations.append(step_duration)
 
+                # Freeze diagnostic: detect NaN in rewards/observations before returning to RLlib
+                for aid, rew in reward_dict.items():
+                    if aid != '__all__' and (np.isnan(rew) or np.isinf(rew)):
+                        print(f"[FREEZE DIAG] 🚨 NaN/Inf REWARD for {aid}: {rew} at step #{self._step_call_count}")
+                for aid, obs in obs_dict.items():
+                    if isinstance(obs, np.ndarray) and (np.any(np.isnan(obs)) or np.any(np.isinf(obs))):
+                        nan_idx = np.where(np.isnan(obs) | np.isinf(obs))[0]
+                        print(f"[FREEZE DIAG] 🚨 NaN/Inf OBS for {aid}: indices={nan_idx} at step #{self._step_call_count}")
+
+                self._last_step_return_time = time.time()
                 return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
 
             except Exception as e:
@@ -507,16 +525,15 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    full_obs = np.zeros(60, dtype=np.float32)
+                    full_obs = np.zeros(52, dtype=np.float32)
 
-                # Extract strategy from observation (last 3 dimensions are one-hot for v10.2)
-                obs_len = len(full_obs)
-                if obs_len >= 60:
-                    base_obs = full_obs[:57]
-                    strategy_onehot = full_obs[57:60]
+                # Extract strategy from observation (last 3 dimensions are one-hot)
+                if len(full_obs) >= 52:
+                    base_obs = full_obs[:49]
+                    strategy_onehot = full_obs[49:52]
                     strategy_idx = int(np.argmax(strategy_onehot))
                 else:
-                    base_obs = full_obs[:57] if len(full_obs) >= 57 else np.pad(full_obs, (0, 57 - len(full_obs)))
+                    base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
                     strategy_idx = 0
 
                 # Cache strategy for this agent
@@ -561,15 +578,15 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    full_obs = np.zeros(60, dtype=np.float32)
+                    full_obs = np.zeros(52, dtype=np.float32)
 
                 # Extract strategy from observation (last 3 dimensions are one-hot)
-                if len(full_obs) >= 60:
-                    base_obs = full_obs[:57]
-                    strategy_onehot = full_obs[57:60]
+                if len(full_obs) >= 52:
+                    base_obs = full_obs[:49]
+                    strategy_onehot = full_obs[49:52]
                     strategy_idx = int(np.argmax(strategy_onehot))
                 else:
-                    base_obs = full_obs[:57] if len(full_obs) >= 57 else np.pad(full_obs, (0, 57 - len(full_obs)))
+                    base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
                     strategy_idx = 0
 
                 # Cache strategy for this agent
@@ -682,15 +699,15 @@ if SCHOLA_AVAILABLE:
                         obs_val = agent_obs_data
                     full_obs = np.array(obs_val, dtype=np.float32).flatten()
                 else:
-                    full_obs = np.zeros(60, dtype=np.float32)
+                    full_obs = np.zeros(52, dtype=np.float32)
 
                 # Extract strategy from observation
-                if len(full_obs) >= 60:
-                    base_obs = full_obs[:57]
-                    strategy_onehot = full_obs[57:60]
+                if len(full_obs) >= 52:
+                    base_obs = full_obs[:49]
+                    strategy_onehot = full_obs[49:52]
                     strategy_idx = int(np.argmax(strategy_onehot))
                 else:
-                    base_obs = full_obs[:57] if len(full_obs) >= 57 else np.pad(full_obs, (0, 57 - len(full_obs)))
+                    base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
                     strategy_idx = 0
 
                 # Cache strategy for this agent
@@ -764,7 +781,7 @@ if SCHOLA_AVAILABLE:
             obs_dict = {}
             for flat_id in self._agent_ids:
                 strategy_idx = self._agent_strategies.get(flat_id, 0)
-                obs_dict[flat_id] = self._build_observation(np.zeros(57, dtype=np.float32), strategy_idx)
+                obs_dict[flat_id] = self._build_observation(np.zeros(49, dtype=np.float32), strategy_idx)
 
             reward_dict = {flat_id: 0.0 for flat_id in self._agent_ids}
             terminated_dict = {flat_id: False for flat_id in self._agent_ids}
@@ -780,7 +797,7 @@ if SCHOLA_AVAILABLE:
             fallback_obs = {}
             for flat_id in self._agent_ids:
                 strategy_idx = self._agent_strategies.get(flat_id, 0)
-                fallback_obs[flat_id] = self._build_observation(np.zeros(57, dtype=np.float32), strategy_idx)
+                fallback_obs[flat_id] = self._build_observation(np.zeros(49, dtype=np.float32), strategy_idx)
 
             terminated_fallback = {flat_id: True for flat_id in self._agent_ids}
             terminated_fallback['__all__'] = True

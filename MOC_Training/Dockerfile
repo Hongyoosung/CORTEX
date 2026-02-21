@@ -50,7 +50,7 @@ EXPOSE 6006
 EXPOSE 50051 50052 50053 50054
 
 # Environment variables (can be overridden in docker-compose.yml)
-ENV NUM_WORKERS=0
+ENV NUM_WORKERS=1
 ENV NUM_ITERATIONS=100
 ENV HOST=host.docker.internal
 ENV PORT=50051

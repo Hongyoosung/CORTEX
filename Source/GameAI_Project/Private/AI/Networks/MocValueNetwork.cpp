@@ -39,16 +39,21 @@ float UMocValueNetwork::EvaluateState(const FObservation& State)
     // FObservation 구조체를 신경망 입력 텐서(TArray<float>)로 변환합니다.
     // 설계 문서에 정의된 입력 피처 수는 54개입니다.
     const int32 FeatureCount = ModelConfig::INPUT_FEATURES;
-    
-    if (State.Features.Num() != FeatureCount)
+
+    // FObservation::ToArray() produces the 49-dim base vector.
+    // MocTacticalObserver appends a 3-dim strategy one-hot for 52 total dims.
+    // Here we use the base 49-dim array for value estimation.
+    TArray<float> InputFeatures = State.ToArray();
+
+    if (InputFeatures.Num() != FeatureCount)
     {
         // 피처 수가 맞지 않으면 0으로 패딩하거나 잘라내는 안전장치
-        UE_LOG(LogTemp, Warning, TEXT("ValueNetwork: Input feature mismatch. Expected %d, got %d"), FeatureCount, State.Features.Num());
+        UE_LOG(LogTemp, Warning, TEXT("ValueNetwork: Input feature mismatch. Expected %d, got %d"), FeatureCount, InputFeatures.Num());
     }
 
     // 2. 추론 실행
     // 실제로는 GPU/NPU로 데이터를 전송하여 연산합니다.
-    float WinProbability = RunInference(State.Features);
+    float WinProbability = RunInference(InputFeatures);
 
     // 3. 결과값 검증 (0.0 ~ 1.0 범위 보장)
     return FMath::Clamp(WinProbability, 0.0f, 1.0f);
@@ -62,14 +67,29 @@ float UMocValueNetwork::RunInference(const TArray<float>& InputTensor)
     // 학습된 모델이 없으면 이 함수가 '가짜' 승률을 계산해줍니다.
     // =========================================================
 
-    // 가정: 
-    // Feature[0] = 현재 체력 비율 (0.0 ~ 1.0)
-    // Feature[1] = 적과의 거리 (Normalized, 가까울수록 1.0)
-    // Feature[2] = 목표 점유 여부 (0.0 or 1.0)
-    
-    float Health = InputTensor.IsValidIndex(0) ? InputTensor[0] : 0.5f;
-    float EnemyProximity = InputTensor.IsValidIndex(1) ? InputTensor[1] : 0.5f;
-    float HasObjective = InputTensor.IsValidIndex(2) ? InputTensor[2] : 0.0f;
+    // 49-dim layout (from FObservation::ToArray()):
+    // [0-2]  = self pos / 7500
+    // [3]    = health [0.0-1.0]
+    // [4-6]  = velocity / 600
+    // [7]    = weapon cooldown
+    // [8-23] = 4 allies × [rel_pos/8000 (3), health (1)]
+    // [24-43]= 5 enemies × [rel_pos/8000 (3), visible (1)]
+    // [44-48]= capture point statuses (+1/0/-1)
+    //
+    // Feature[3]  = self health
+    // Feature[26] = nearest enemy visible flag (enemy slot 0)
+    // Feature[44] = first capture point status (proxy for objective control)
+
+    float Health = InputTensor.IsValidIndex(3) ? InputTensor[3] : 0.5f;
+    // Enemy proximity: use visible flag of first enemy slot as a binary proxy
+    float EnemyProximity = InputTensor.IsValidIndex(27) ? InputTensor[27] : 0.0f;
+    // Objective: average capture point status mapped to [0,1]
+    float CaptureSum = 0.0f;
+    for (int32 i = 44; i <= 48; ++i)
+    {
+        CaptureSum += InputTensor.IsValidIndex(i) ? InputTensor[i] : 0.0f;
+    }
+    float HasObjective = FMath::Clamp((CaptureSum / 5.0f + 1.0f) * 0.5f, 0.0f, 1.0f);
 
     // 간단한 선형 결합으로 승률 계산 (테스트용)
     // 체력이 높고(0.5), 목표를 잡고있으면(0.3) 유리함
