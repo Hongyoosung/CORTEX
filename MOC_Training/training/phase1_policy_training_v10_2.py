@@ -186,20 +186,16 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         # Encode
         features = self.state_encoder(input_tensor)
 
-        # Route to appropriate head
-        eqs_weights = torch.zeros(batch_size, self.eqs_dim, device=obs.device)
+        # Route to appropriate head (vectorized — no data-dependent branching)
+        assault_out = self.assault_head(features)   # (B, 7)
+        defend_out  = self.defend_head(features)    # (B, 7)
+        support_out = self.support_head(features)   # (B, 7)
 
-        for i in range(batch_size):
-            strat = strategy_idx[i].item()
+        assault_mask = (strategy_idx == 0).float().unsqueeze(1)  # (B, 1)
+        defend_mask  = (strategy_idx == 1).float().unsqueeze(1)
+        support_mask = (strategy_idx == 2).float().unsqueeze(1)
 
-            if strat == 0:  # Assault
-                eqs_weights[i] = self.assault_head(features[i:i+1]).squeeze(0)
-            elif strat == 1:  # Defend
-                eqs_weights[i] = self.defend_head(features[i:i+1]).squeeze(0)
-            else:  # Support
-                eqs_weights[i] = self.support_head(features[i:i+1]).squeeze(0)
-            
-        return eqs_weights
+        return assault_out * assault_mask + defend_out * defend_mask + support_out * support_mask
 
     def sample_action(
         self,
@@ -263,20 +259,16 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
         input_tensor = torch.cat([obs, strategy_onehot], dim=-1)
         features = self.state_encoder(input_tensor)
 
-        # Route to appropriate value head
-        values = torch.zeros(batch_size, device=obs.device)
+        # Route to appropriate value head (vectorized)
+        assault_val = self.assault_value(features).squeeze(1)   # (B,)
+        defend_val  = self.defend_value(features).squeeze(1)
+        support_val = self.support_value(features).squeeze(1)
 
-        for i in range(batch_size):
-            strat = strategy_idx[i].item()
+        assault_mask = (strategy_idx == 0).float()
+        defend_mask  = (strategy_idx == 1).float()
+        support_mask = (strategy_idx == 2).float()
 
-            if strat == 0:  # Assault
-                values[i] = self.assault_value(features[i:i+1]).squeeze()
-            elif strat == 1:  # Defend
-                values[i] = self.defend_value(features[i:i+1]).squeeze()
-            else:  # Support
-                values[i] = self.support_value(features[i:i+1]).squeeze()
-
-        return values
+        return assault_val * assault_mask + defend_val * defend_mask + support_val * support_mask
 
     def export_onnx(self, filepath: str, batch_size: int = 1):
         """
