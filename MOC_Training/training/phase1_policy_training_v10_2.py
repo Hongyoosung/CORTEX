@@ -149,15 +149,18 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
             nn.Linear(64, 1)
         )
 
-        # Learnable log standard deviation (shared across strategies)
-        self.log_std = nn.Parameter(torch.zeros(eqs_dim) - 0.5)  # init std ≈ 0.6
+        # Per-head learnable log standard deviation — separate so each strategy can
+        # independently tune its exploration variance without gradient conflicts.
+        self.assault_log_std = nn.Parameter(torch.zeros(eqs_dim) - 0.5)  # init std ≈ 0.6
+        self.defend_log_std  = nn.Parameter(torch.zeros(eqs_dim) - 0.5)
+        self.support_log_std = nn.Parameter(torch.zeros(eqs_dim) - 0.5)
 
         print(f"[v10.2 Policy] Initialized: {obs_dim}-dim obs → {eqs_dim}-dim EQS weights")
         print(f"  Input: {input_dim} (49 obs + 3 strategy)")
         print(f"  Encoder: {hidden_dims}")
         print(f"  Heads: 3 strategies × 7 EQS weights")
         print(f"  Action Range: [-1, 1] (tanh activation)")
-        print(f"  Learnable log_std: {eqs_dim}-dim")
+        print(f"  Learnable log_std: per-head ({eqs_dim}-dim × 3 strategies)")
 
     def forward(
         self,
@@ -197,6 +200,23 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
 
         return assault_out * assault_mask + defend_out * defend_mask + support_out * support_mask
 
+    def _get_std(self, strategy_idx: torch.Tensor) -> torch.Tensor:
+        """
+        Build per-sample std tensor by routing each sample to its strategy's log_std.
+
+        Returns:
+            std: (B, eqs_dim)
+        """
+        assault_std = torch.exp(self.assault_log_std).clamp(min=1e-6)  # (eqs_dim,)
+        defend_std  = torch.exp(self.defend_log_std).clamp(min=1e-6)
+        support_std = torch.exp(self.support_log_std).clamp(min=1e-6)
+
+        assault_mask = (strategy_idx == 0).float().unsqueeze(1)  # (B, 1)
+        defend_mask  = (strategy_idx == 1).float().unsqueeze(1)
+        support_mask = (strategy_idx == 2).float().unsqueeze(1)
+
+        return assault_std * assault_mask + defend_std * defend_mask + support_std * support_mask
+
     def sample_action(
         self,
         obs: torch.Tensor,
@@ -210,7 +230,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
             log_probs: (B,) log probabilities
         """
         means = self.forward(obs, strategy_idx)
-        std = torch.exp(self.log_std).clamp(min=1e-6)
+        std = self._get_std(strategy_idx)
         dist = torch.distributions.Normal(means, std)
         raw_actions = dist.rsample()
         log_probs = dist.log_prob(raw_actions).sum(dim=-1)
@@ -230,7 +250,7 @@ class MultiHeadRLPolicy_v10_2(nn.Module):
             log_probs: (B,)
         """
         means = self.forward(obs, strategy_idx)
-        std = torch.exp(self.log_std).clamp(min=1e-6)
+        std = self._get_std(strategy_idx)
         dist = torch.distributions.Normal(means, std)
         return dist.log_prob(actions).sum(dim=-1)
 
@@ -479,23 +499,30 @@ class PPOTrainer_v10_2:
 
         # PPO update epochs
         metrics = defaultdict(list)
+        strategy_names = {0: "assault", 1: "defend", 2: "support"}
 
         for epoch in range(epochs):
             # Recompute log probs and values under current policy
             new_log_probs = self.policy.compute_log_prob(states, strategy_idxs, old_eqs_weights)
             new_values = self.policy.get_value(states, strategy_idxs)
 
-            # Entropy from current policy distribution
-            std = torch.exp(self.policy.log_std).clamp(min=1e-6)
-            entropy = 0.5 * torch.log(2 * np.pi * np.e * std ** 2).sum()
+            # Per-head entropy: mean over the batch of each head's entropy
+            per_head_entropy = {}
+            for strat_idx, name in strategy_names.items():
+                log_std_param = getattr(self.policy, f"{name}_log_std")
+                std = torch.exp(log_std_param).clamp(min=1e-6)
+                per_head_entropy[name] = (0.5 * torch.log(2 * np.pi * np.e * std ** 2)).sum()
+            # Weighted entropy for total loss: average across active strategies in batch
+            entropy = sum(per_head_entropy.values()) / len(per_head_entropy)
 
-            # Policy loss (PPO clip)
+            # Policy loss (PPO clip) — per-strategy breakdown
             ratio = torch.exp(new_log_probs - old_log_probs)
             surr1 = ratio * advantages
             surr2 = torch.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+            clipped = -torch.min(surr1, surr2)
+            policy_loss = clipped.mean()
 
-            # Value loss
+            # Value loss — per-strategy breakdown
             value_loss = nn.MSELoss()(new_values, returns)
 
             # Total loss
@@ -507,14 +534,29 @@ class PPOTrainer_v10_2:
             nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
             self.optimizer.step()
 
-            # Log metrics
+            # Aggregate metrics
             metrics['policy_loss'].append(policy_loss.item())
             metrics['value_loss'].append(value_loss.item())
             metrics['entropy'].append(entropy.item())
             metrics['total_loss'].append(total_loss.item())
             metrics['approx_kl'].append((old_log_probs - new_log_probs).mean().item())
 
-        # Average metrics
+            # Per-strategy metrics (computed without grad for logging only)
+            with torch.no_grad():
+                for strat_idx, name in strategy_names.items():
+                    mask = (strategy_idxs == strat_idx)
+                    if mask.sum() == 0:
+                        continue
+                    metrics[f'policy_loss/{name}'].append(clipped[mask].mean().item())
+                    metrics[f'value_loss/{name}'].append(
+                        nn.MSELoss()(new_values[mask], returns[mask]).item()
+                    )
+                    metrics[f'entropy/{name}'].append(per_head_entropy[name].item())
+                    metrics[f'approx_kl/{name}'].append(
+                        (old_log_probs[mask] - new_log_probs[mask]).mean().item()
+                    )
+
+        # Average metrics across epochs
         return {key: np.mean(values) for key, values in metrics.items()}
 
 
@@ -786,10 +828,14 @@ if RLLIB_AVAILABLE:
             for strat_idx, name in STRATEGY_NAMES.items():
                 rewards = episode.user_data["strategy_rewards"][strat_idx]
                 count = episode.user_data["strategy_counts"][strat_idx]
-                episode.custom_metrics[f"strategy_{name.lower()}_reward_mean"] = (
+                name_lower = name.lower()
+                episode.custom_metrics[f"strategy_{name_lower}_reward_mean"] = (
                     np.mean(rewards) if rewards else 0.0
                 )
-                episode.custom_metrics[f"strategy_{name.lower()}_count"] = count
+                episode.custom_metrics[f"strategy_{name_lower}_reward_std"] = (
+                    np.std(rewards) if len(rewards) > 1 else 0.0
+                )
+                episode.custom_metrics[f"strategy_{name_lower}_count"] = count
 
             total = sum(episode.user_data["strategy_counts"].values())
             if total > 0:
@@ -797,6 +843,30 @@ if RLLIB_AVAILABLE:
                     episode.custom_metrics[f"strategy_{name.lower()}_frac"] = (
                         episode.user_data["strategy_counts"][strat_idx] / total
                     )
+
+        def on_train_result(self, *, algorithm, result, **kwargs):
+            """Extract per-strategy loss metrics from learner_stats and re-publish
+            them as top-level custom_metrics so TensorBoard writes them to
+            ray/tune/custom_metrics/* alongside the per-strategy reward curves."""
+            learner_stats = (
+                result.get("info", {})
+                      .get("learner", {})
+                      .get("shared_policy", {})
+                      .get("learner_stats", {})
+            )
+            if not learner_stats:
+                return
+
+            per_strategy_keys = [
+                "policy_loss", "value_loss", "entropy", "approx_kl"
+            ]
+            for key in per_strategy_keys:
+                for name in ["assault", "defend", "support"]:
+                    stat_key = f"{key}/{name}"
+                    if stat_key in learner_stats:
+                        result.setdefault("custom_metrics", {})[
+                            f"train_{key}_{name}"
+                        ] = learner_stats[stat_key]
 
 
 def create_ppo_config():
@@ -1312,9 +1382,10 @@ def evaluate_checkpoint(checkpoint_path: str):
                 bar = "#" * bar_len + "." * (20 - bar_len)
                 print(f"    {label:<15} {means[i]:>6.3f} +/- {stds[i]:.3f}  [{bar}]")
 
-    # Log std info
-    std_vals = torch.exp(policy.log_std).detach().numpy()
-    print(f"\n  Learned std: {std_vals}")
+    # Per-head learned std
+    for name in ["assault", "defend", "support"]:
+        std_vals = torch.exp(getattr(policy, f"{name}_log_std")).detach().numpy()
+        print(f"\n  Learned std ({name}): {np.round(std_vals, 3)}")
 
     print("\n" + "="*80 + "\n")
 

@@ -156,6 +156,14 @@ struct FDefendRewardSettings
     UPROPERTY(EditAnywhere, Category = "Capture")
     float LossCaptureRewardScale = 1.5f;
 
+    /** Flat bonus awarded each step the agent is physically inside a friendly capture zone */
+    UPROPERTY(EditAnywhere, Category = "Capture")
+    float ZonePresenceBonus = 3.0f;
+
+    /** Per-cm shaping reward for approaching the nearest friendly capture zone (when outside it) */
+    UPROPERTY(EditAnywhere, Category = "Capture")
+    float ZoneApproachReward = 0.002f;
+
 
     //========== Movement Properties =============
 
@@ -188,6 +196,17 @@ struct FSupportRewardSettings
 
     UPROPERTY(EditAnywhere, Category = "Combat")
     float PickupDenyRewardScale = 1.0f;
+
+
+    //========== Ally Proximity Properties =============
+
+    /** Flat bonus per step for being within SupportAllyProximityThreshold of the most-injured ally */
+    UPROPERTY(EditAnywhere, Category = "AllyProximity")
+    float AllyProximityBonus = 2.0f;
+
+    /** Per-cm shaping reward for approaching the most-injured ally */
+    UPROPERTY(EditAnywhere, Category = "AllyProximity")
+    float AllyApproachReward = 0.001f;
 
 
     //========== Capture Properties =============

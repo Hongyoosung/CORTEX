@@ -164,6 +164,7 @@ float UMocRewardCalculator::ComputeStepReward(
 {
 	float Reward = 0.0f;
 	const float PositionChange = FVector::Dist(Prev.Position, Current.Position);
+	const int32 MyTeamID = (OwnerCharacter) ? OwnerCharacter->GetTeamID_Implementation() : -1;
 
 	switch (Strategy)
 	{
@@ -182,8 +183,6 @@ float UMocRewardCalculator::ComputeStepReward(
 			// Objective shaping: capture point progress
 			if (OwnerCharacter && CachedCapturePoints.Num() > 0)
 			{
-				const int32 MyTeamID = OwnerCharacter->GetTeamID_Implementation();
-
 				// Friendly point counts from observation snapshots (consistent source)
 				int32 PrevFriendlyPoints = 0;
 				int32 CurrFriendlyPoints = 0;
@@ -286,6 +285,40 @@ float UMocRewardCalculator::ComputeStepReward(
 			{
 				Reward += DefendWeaponReadyBonus;
 			}
+
+			// Zone anchoring: reward for defending owned capture points
+			if (MyTeamID >= 0 && CachedCapturePoints.Num() > 0)
+			{
+				float CurrNearestFriendlyDist = FLT_MAX;
+				float PrevNearestFriendlyDist = FLT_MAX;
+				bool bInFriendlyZone = false;
+
+				for (ACapturePoint* CP : CachedCapturePoints)
+				{
+					if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+
+					const float CurrDist = FVector::Dist(Current.Position, CP->GetActorLocation());
+					const float PrevDist = FVector::Dist(Prev.Position, CP->GetActorLocation());
+					CurrNearestFriendlyDist = FMath::Min(CurrNearestFriendlyDist, CurrDist);
+					PrevNearestFriendlyDist = FMath::Min(PrevNearestFriendlyDist, PrevDist);
+
+					if (CurrDist <= CP->CaptureRadius)
+					{
+						bInFriendlyZone = true;
+					}
+				}
+
+				if (bInFriendlyZone)
+				{
+					// Flat presence bonus for standing in a friendly zone
+					Reward += DefendReward.ZonePresenceBonus;
+				}
+				else if (CurrNearestFriendlyDist < FLT_MAX && PrevNearestFriendlyDist < FLT_MAX)
+				{
+					// Progressive shaping toward nearest friendly zone
+					Reward += DefendReward.ZoneApproachReward * (PrevNearestFriendlyDist - CurrNearestFriendlyDist);
+				}
+			}
 		}
 		break;
 
@@ -298,6 +331,42 @@ float UMocRewardCalculator::ComputeStepReward(
 			if (Current.Health > SupportHealthThreshold)
 			{
 				Reward += SupportReward.HealthBonus;
+			}
+
+			// Ally proximity: reward for staying near the most-injured alive ally
+			{
+				float LowestAllyHealth = FLT_MAX;
+				int32 InjuredAllyIdx = -1;
+
+				for (int32 i = 0; i < Current.AllyHealths.Num(); ++i)
+				{
+					const float AllyHP = Current.AllyHealths[i];
+					// Skip slots that are empty/dead (health == 0 means dead or unpopulated)
+					if (AllyHP <= 0.0f) continue;
+					if (AllyHP < LowestAllyHealth)
+					{
+						LowestAllyHealth = AllyHP;
+						InjuredAllyIdx = i;
+					}
+				}
+
+				if (InjuredAllyIdx >= 0 && InjuredAllyIdx < Current.AllyPositions.Num())
+				{
+					const float CurrAllyDist = FVector::Dist(Current.Position, Current.AllyPositions[InjuredAllyIdx]);
+
+					// Flat proximity bonus when within support range
+					if (CurrAllyDist <= SupportAllyProximityThreshold)
+					{
+						Reward += SupportReward.AllyProximityBonus;
+					}
+
+					// Approach shaping toward injured ally
+					if (InjuredAllyIdx < Prev.AllyPositions.Num())
+					{
+						const float PrevAllyDist = FVector::Dist(Prev.Position, Prev.AllyPositions[InjuredAllyIdx]);
+						Reward += SupportReward.AllyApproachReward * (PrevAllyDist - CurrAllyDist);
+					}
+				}
 			}
 		}
 		break;
@@ -338,6 +407,8 @@ FRewardBreakdown UMocRewardCalculator::ComputeRewardBreakdown(
 	case EStrategyType::Defend:
 		if (PositionChange < DefendStationaryThreshold) Breakdown.PositionComponent = DefendReward.PositionReward;
 		if (Current.Health > DefendHealthThreshold)     Breakdown.HealthComponent = DefendReward.HealthBonus;
+		// Zone anchoring approximation (ObjectiveComponent) — full world query omitted in breakdown
+		Breakdown.ObjectiveComponent = 0.0f;
 		break;
 
 	case EStrategyType::Support:
@@ -345,6 +416,8 @@ FRewardBreakdown UMocRewardCalculator::ComputeRewardBreakdown(
 			Breakdown.PositionComponent = SupportReward.PositionReward;
 		if (Current.Health > SupportHealthThreshold)
 			Breakdown.HealthComponent = SupportReward.HealthBonus;
+		// Ally proximity approximation (ObjectiveComponent) — ally world query omitted in breakdown
+		Breakdown.ObjectiveComponent = 0.0f;
 		break;
 	}
 

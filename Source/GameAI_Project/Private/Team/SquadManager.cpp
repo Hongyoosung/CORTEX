@@ -742,21 +742,35 @@ ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& Te
 
 	if (RandomValue < TeamManager->ExplorationRate)
 	{
-		int32 RandomIndex = FMath::RandRange(0, 9);
-		switch (RandomIndex)
+		// Weighted random selection targeting ~A=35%, D=33%, S=32% per agent-step.
+		// Uniform selection yields A=40%, D=36%, S=24% due to play composition bias.
+		// Support-inclusive plays (Phalanx, HealerComp, ResourceDeny, PincerManeuver)
+		// are up-weighted; Assault-heavy plays (AllOutRush, AggressivePush) are down-weighted.
+		//
+		// Play             Weight  |  A  D  S
+		// AllOutRush          4    |  5  0  0
+		// AggressivePush      6    |  4  0  1
+		// Phalanx            16    |  0  2  3
+		// StandardComp       11    |  2  2  1
+		// FortressDefense     9    |  1  4  0
+		// TurtleFormation     7    |  0  5  0
+		// BaitStrategy        7    |  1  4  0
+		// PincerManeuver     13    |  3  0  2
+		// HealerComp         14    |  2  1  2
+		// ResourceDeny       13    |  2  0  3  (sum = 100)
+		static const float PlayWeights[10] = { 4.f, 6.f, 16.f, 11.f, 9.f, 7.f, 7.f, 13.f, 14.f, 13.f };
+
+		const float R = FMath::FRand() * 100.0f;
+		float Cumulative = 0.0f;
+		for (int32 i = 0; i < 10; ++i)
 		{
-		case 0: return ETacticalPlay::AllOutRush;
-		case 1: return ETacticalPlay::AggressivePush;
-		case 2: return ETacticalPlay::Phalanx;
-		case 3: return ETacticalPlay::StandardComp;
-		case 4: return ETacticalPlay::FortressDefense;
-		case 5: return ETacticalPlay::TurtleFormation;
-		case 6: return ETacticalPlay::BaitStrategy;
-		case 7: return ETacticalPlay::PincerManeuver;
-		case 8: return ETacticalPlay::HealerComp;
-		case 9: return ETacticalPlay::ResourceDeny;
-		default: return ETacticalPlay::StandardComp;
+			Cumulative += PlayWeights[i];
+			if (R < Cumulative)
+			{
+				return static_cast<ETacticalPlay>(i);
+			}
 		}
+		return ETacticalPlay::StandardComp;
 	}
 	else
 	{

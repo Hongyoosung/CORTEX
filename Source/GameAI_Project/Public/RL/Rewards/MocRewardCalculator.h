@@ -206,6 +206,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float SupportMaxMoveThreshold = 500.0f;
 
+	/** Support: maximum distance (cm) from the most-injured ally to trigger AllyProximityBonus */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
+	float SupportAllyProximityThreshold = 1500.0f;
+
 	/** Defend: health fraction above which the health bonus applies */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float DefendHealthThreshold = 0.7f;
