@@ -124,6 +124,16 @@ protected:
 	/** Sample a random tactical play and distribute roles (Phase 1 RL training) */
 	void SampleRandomTacticalPlay();
 
+	/**
+	 * Returns the subset of all 10 tactical plays that are feasible given the current team state.
+	 * A play is infeasible if it assigns a role whose precondition cannot be met:
+	 *   - Defend: requires at least one friendly-owned capture point
+	 *   - Support: requires at least two alive allies
+	 * If all plays are filtered out, returns { StandardComp } as a safe fallback.
+	 * Used by both Phase 1 (random/event sampling) and Phase 3 (MCTS/epsilon-greedy).
+	 */
+	TArray<ETacticalPlay> GetFeasiblePlays(const FTeamWorldState& State) const;
+
 	/** Construct FTeamWorldState from live agents via TeamManager */
 	FTeamWorldState CollectTeamState() const;
 
@@ -182,7 +192,7 @@ protected:
 private:
 	FCompositeReward CalculateTeamReward(const FTeamWorldState& OldState, const FTeamWorldState& NewState) const;
 
-	ETacticalPlay SelectEpsilonGreedyAction(const FTeamWorldState& TeamState) const;
+	ETacticalPlay SelectEpsilonGreedyAction(const FTeamWorldState& TeamState, const TArray<ETacticalPlay>& FeasiblePlays) const;
 
 	//========================================
 	// Critical Event Handlers

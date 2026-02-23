@@ -77,6 +77,14 @@ public:
 	ETacticalPlay FindBestTacticalPlay(const FTeamWorldState& CurrentState);
 
 	/**
+	 * Overload that constrains MCTS to a pre-computed feasible play set.
+	 * GenerateTacticalPlays will intersect its candidates with FeasiblePlays,
+	 * ensuring infeasible plays (e.g. Defend with no friendly points) are never
+	 * expanded in the tree.
+	 */
+	ETacticalPlay FindBestTacticalPlay(const FTeamWorldState& CurrentState, const TArray<ETacticalPlay>& FeasiblePlays);
+
+	/**
 	 * Get statistics from last planning cycle
 	 * @return Number of MCTS iterations executed
 	 */
@@ -155,4 +163,11 @@ private:
 	/** Statistics from last planning cycle */
 	int32 LastIterationCount;
 	float LastPlanningTimeMs;
+
+	/**
+	 * Optional feasibility constraint set for the current planning call.
+	 * Non-empty only during FindBestTacticalPlay(State, FeasiblePlays).
+	 * GenerateTacticalPlays intersects candidates with this set when non-empty.
+	 */
+	TArray<ETacticalPlay> FeasiblePlaysOverride;
 };

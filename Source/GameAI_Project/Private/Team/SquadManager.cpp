@@ -348,10 +348,83 @@ void USquadManager::Reset()
 	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Reset complete - default assignments restored"));
 }
 
+TArray<ETacticalPlay> USquadManager::GetFeasiblePlays(const FTeamWorldState& State) const
+{
+	// Precondition: Defend requires ≥1 friendly capture point
+	bool bHasFriendlyPoint = false;
+	for (int32 Ownership : State.CapturePointOwnership)
+	{
+		if (Ownership == 1) { bHasFriendlyPoint = true; break; }
+	}
+
+	// Precondition: Support requires ≥2 alive allies (support agent needs someone to support)
+	int32 AliveCount = 0;
+	for (bool bAlive : State.FriendlyAlive)
+	{
+		if (bAlive) AliveCount++;
+	}
+	const bool bCanSupport = (AliveCount >= 2);
+
+	// Build feasible set — check each play's role composition
+	static const ETacticalPlay AllPlays[10] = {
+		ETacticalPlay::AllOutRush,     // 5A
+		ETacticalPlay::AggressivePush, // 4A 1S
+		ETacticalPlay::Phalanx,        // 2D 3S
+		ETacticalPlay::StandardComp,   // 2A 2D 1S
+		ETacticalPlay::FortressDefense,// 1A 4D
+		ETacticalPlay::TurtleFormation,// 5D
+		ETacticalPlay::BaitStrategy,   // 1A 4D
+		ETacticalPlay::PincerManeuver, // 3A 2S
+		ETacticalPlay::HealerComp,     // 2A 1D 2S
+		ETacticalPlay::ResourceDeny,   // 2A 3S
+	};
+
+	TArray<ETacticalPlay> Feasible;
+	for (ETacticalPlay Play : AllPlays)
+	{
+		TArray<EStrategyType> Roles = DecodeTacticalPlay(Play);
+
+		bool bNeedsDefend  = Roles.Contains(EStrategyType::Defend);
+		bool bNeedsSupport = Roles.Contains(EStrategyType::Support);
+
+		if (bNeedsDefend  && !bHasFriendlyPoint) continue;
+		if (bNeedsSupport && !bCanSupport)        continue;
+
+		Feasible.Add(Play);
+	}
+
+	if (Feasible.IsEmpty())
+	{
+		// Ultimate fallback: pure assault is always valid
+		UE_LOG(LogTemp, Warning, TEXT("[SquadManager] Team %d: No feasible plays — falling back to AllOutRush"), TeamID);
+		Feasible.Add(ETacticalPlay::AllOutRush);
+	}
+
+	return Feasible;
+}
+
 void USquadManager::SampleRandomTacticalPlay()
 {
-	int32 RandomIndex = FMath::RandRange(0, 9);
-	ETacticalPlay RandomPlay = static_cast<ETacticalPlay>(RandomIndex);
+	FTeamWorldState CurrentState = CollectTeamState();
+	TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(CurrentState);
+
+	// Weighted random within feasible set using the same per-play weights as epsilon-greedy
+	static const float PlayWeights[10] = { 4.f, 6.f, 16.f, 11.f, 9.f, 7.f, 7.f, 13.f, 14.f, 13.f };
+
+	float TotalWeight = 0.0f;
+	for (ETacticalPlay Play : FeasiblePlays)
+	{
+		TotalWeight += PlayWeights[static_cast<int32>(Play)];
+	}
+
+	ETacticalPlay RandomPlay = FeasiblePlays[0];
+	const float R = FMath::FRand() * TotalWeight;
+	float Cumulative = 0.0f;
+	for (ETacticalPlay Play : FeasiblePlays)
+	{
+		Cumulative += PlayWeights[static_cast<int32>(Play)];
+		if (R < Cumulative) { RandomPlay = Play; break; }
+	}
 
 	TArray<EStrategyType> Roles = DecodeTacticalPlay(RandomPlay);
 	DistributeRoles(Roles);
@@ -359,8 +432,8 @@ void USquadManager::SampleRandomTacticalPlay()
 	ActiveTacticalPlay = RandomPlay;
 	CurrentRoleAssignments = Roles;
 
-	UE_LOG(LogTemp, Warning, TEXT("[SquadManager] Phase 1 RL: Sampled tactical play %s for episode"),
-		*UEnum::GetValueAsString(RandomPlay));
+	UE_LOG(LogTemp, Warning, TEXT("[SquadManager] Phase 1 RL: Sampled tactical play %s for episode (feasible set: %d plays)"),
+		*UEnum::GetValueAsString(RandomPlay), FeasiblePlays.Num());
 }
 
 //========================================
@@ -389,28 +462,31 @@ void USquadManager::PerformTacticalPlanning()
 	ETacticalPlay BestPlay = ETacticalPlay::StandardComp;
 	float PlanningStartTime = FPlatformTime::Seconds();
 
+	// Pre-compute feasible plays once — shared by all selection paths
+	TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(GlobalState);
+
 	if (TeamManager->bDataCollectionMode)
 	{
-		BestPlay = SelectEpsilonGreedyAction(GlobalState);
+		BestPlay = SelectEpsilonGreedyAction(GlobalState, FeasiblePlays);
 
 		float SelectionTime = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
 
 		if (TeamManager->bShowDebugInfo)
 		{
-			UE_LOG(LogTemp, Display, TEXT("Team %d ε-Greedy Selection: %s (%.3f ms, ExplorationRate=%.2f)"),
-				TeamID, *UEnum::GetValueAsString(BestPlay), SelectionTime, TeamManager->ExplorationRate);
+			UE_LOG(LogTemp, Display, TEXT("Team %d ε-Greedy Selection: %s (%.3f ms, ExplorationRate=%.2f, feasible=%d)"),
+				TeamID, *UEnum::GetValueAsString(BestPlay), SelectionTime, TeamManager->ExplorationRate, FeasiblePlays.Num());
 		}
 	}
 	else if (TeamMCTSPlanner && TeamWorldModel && TeamWorldModel->IsModelLoaded())
 	{
-		BestPlay = TeamMCTSPlanner->FindBestTacticalPlay(GlobalState);
+		BestPlay = TeamMCTSPlanner->FindBestTacticalPlay(GlobalState, FeasiblePlays);
 
 		float PlanningTime = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
 
 		if (TeamManager->bShowDebugInfo)
 		{
-			UE_LOG(LogTemp, Display, TEXT("Team %d MCTS Planning: %.2f ms, %d iterations"),
-				TeamID, PlanningTime, TeamMCTSPlanner->GetLastIterationCount());
+			UE_LOG(LogTemp, Display, TEXT("Team %d MCTS Planning: %.2f ms, %d iterations, feasible=%d"),
+				TeamID, PlanningTime, TeamMCTSPlanner->GetLastIterationCount(), FeasiblePlays.Num());
 		}
 
 		if (PlanningTime > TeamManager->MCTSTimeBudget * 1000.0f)
@@ -421,15 +497,17 @@ void USquadManager::PerformTacticalPlanning()
 	}
 	else
 	{
-		// Fallback heuristic if MCTS not available
+		// Fallback heuristic if MCTS not available — constrained to feasible set
 		float AvgHealth = GlobalState.GetAverageHealth();
-		BestPlay = (AvgHealth < 0.3f) ? ETacticalPlay::FortressDefense
+		ETacticalPlay Preferred = (AvgHealth < 0.3f) ? ETacticalPlay::FortressDefense
 			: (AvgHealth > 0.7f) ? ETacticalPlay::AggressivePush
 			: ETacticalPlay::StandardComp;
 
+		BestPlay = FeasiblePlays.Contains(Preferred) ? Preferred : FeasiblePlays[0];
+
 		if (TeamManager->bShowDebugInfo)
 		{
-			UE_LOG(LogTemp, Display, TEXT("Team %d: Using fallback heuristic (world model not loaded)"), TeamID);
+			UE_LOG(LogTemp, Display, TEXT("Team %d: Using fallback heuristic (world model not loaded), feasible=%d"), TeamID, FeasiblePlays.Num());
 		}
 	}
 
@@ -457,9 +535,22 @@ void USquadManager::PerformTacticalPlanning()
 
 void USquadManager::ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AActor* InstigatorActor)
 {
-	// Phase 1 RL Training: no mid-episode strategy changes
+	// Phase 1 RL Training: no tactical replanning, but DO enforce feasibility.
+	// If the current play has become impossible (e.g. all friendly points lost → Defend invalid),
+	// resample within the feasible set so agents always have an achievable objective.
 	if (TeamManager && TeamManager->bRLTrainingMode)
 	{
+		FTeamWorldState CurrentState = CollectTeamState();
+		TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(CurrentState);
+
+		if (!FeasiblePlays.Contains(ActiveTacticalPlay))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[SquadManager] Phase 1 RL Team %d: Active play %s is no longer feasible after event %s — resampling"),
+				TeamID, *UEnum::GetValueAsString(ActiveTacticalPlay), *UEnum::GetValueAsString(EventType));
+			SampleRandomTacticalPlay();
+			EventDrivenReplanCount++;
+		}
 		return;
 	}
 
@@ -736,70 +827,79 @@ FCompositeReward USquadManager::CalculateTeamReward(const FTeamWorldState& OldSt
 	return Reward;
 }
 
-ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& TeamState) const
+ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& TeamState, const TArray<ETacticalPlay>& FeasiblePlays) const
 {
+	// Play             Weight  |  A  D  S
+	// AllOutRush          4    |  5  0  0
+	// AggressivePush      6    |  4  0  1
+	// Phalanx            16    |  0  2  3
+	// StandardComp       11    |  2  2  1
+	// FortressDefense     9    |  1  4  0
+	// TurtleFormation     7    |  0  5  0
+	// BaitStrategy        7    |  1  4  0
+	// PincerManeuver     13    |  3  0  2
+	// HealerComp         14    |  2  1  2
+	// ResourceDeny       13    |  2  0  3  (sum = 100)
+	static const float PlayWeights[10] = { 4.f, 6.f, 16.f, 11.f, 9.f, 7.f, 7.f, 13.f, 14.f, 13.f };
+
+	// Helper: pick first feasible play from an ordered preference array
+	auto PickFeasible = [&](TArrayView<const ETacticalPlay> Preferences) -> ETacticalPlay
+	{
+		for (ETacticalPlay P : Preferences)
+		{
+			if (FeasiblePlays.Contains(P)) return P;
+		}
+		return FeasiblePlays[0]; // guaranteed non-empty by GetFeasiblePlays
+	};
+
 	float RandomValue = FMath::FRand();
 
 	if (RandomValue < TeamManager->ExplorationRate)
 	{
-		// Weighted random selection targeting ~A=35%, D=33%, S=32% per agent-step.
-		// Uniform selection yields A=40%, D=36%, S=24% due to play composition bias.
-		// Support-inclusive plays (Phalanx, HealerComp, ResourceDeny, PincerManeuver)
-		// are up-weighted; Assault-heavy plays (AllOutRush, AggressivePush) are down-weighted.
-		//
-		// Play             Weight  |  A  D  S
-		// AllOutRush          4    |  5  0  0
-		// AggressivePush      6    |  4  0  1
-		// Phalanx            16    |  0  2  3
-		// StandardComp       11    |  2  2  1
-		// FortressDefense     9    |  1  4  0
-		// TurtleFormation     7    |  0  5  0
-		// BaitStrategy        7    |  1  4  0
-		// PincerManeuver     13    |  3  0  2
-		// HealerComp         14    |  2  1  2
-		// ResourceDeny       13    |  2  0  3  (sum = 100)
-		static const float PlayWeights[10] = { 4.f, 6.f, 16.f, 11.f, 9.f, 7.f, 7.f, 13.f, 14.f, 13.f };
-
-		const float R = FMath::FRand() * 100.0f;
-		float Cumulative = 0.0f;
-		for (int32 i = 0; i < 10; ++i)
+		// Weighted random within feasible set
+		float TotalWeight = 0.0f;
+		for (ETacticalPlay Play : FeasiblePlays)
 		{
-			Cumulative += PlayWeights[i];
-			if (R < Cumulative)
-			{
-				return static_cast<ETacticalPlay>(i);
-			}
+			TotalWeight += PlayWeights[static_cast<int32>(Play)];
 		}
-		return ETacticalPlay::StandardComp;
+
+		const float R = FMath::FRand() * TotalWeight;
+		float Cumulative = 0.0f;
+		for (ETacticalPlay Play : FeasiblePlays)
+		{
+			Cumulative += PlayWeights[static_cast<int32>(Play)];
+			if (R < Cumulative) return Play;
+		}
+		return FeasiblePlays[0];
 	}
 	else
 	{
 		float AvgHealth = TeamState.GetAverageHealth();
-		int32 AliveCount = 0;
-		for (int32 i = 0; i < 5; ++i) { if (TeamState.FriendlyAlive[i]) AliveCount++; }
 
 		if (AvgHealth < 0.25f)
 		{
-			return FMath::RandBool() ? ETacticalPlay::FortressDefense : ETacticalPlay::TurtleFormation;
+			const ETacticalPlay Prefs[] = { ETacticalPlay::FortressDefense, ETacticalPlay::TurtleFormation, ETacticalPlay::BaitStrategy, ETacticalPlay::AllOutRush };
+			return PickFeasible(Prefs);
 		}
 		else if (AvgHealth < 0.5f)
 		{
-			return FMath::RandBool() ? ETacticalPlay::StandardComp : ETacticalPlay::Phalanx;
+			const ETacticalPlay Prefs[] = { ETacticalPlay::StandardComp, ETacticalPlay::Phalanx, ETacticalPlay::HealerComp, ETacticalPlay::AllOutRush };
+			return PickFeasible(Prefs);
 		}
 		else if (AvgHealth > 0.75f)
 		{
-			return FMath::RandBool() ? ETacticalPlay::AggressivePush : ETacticalPlay::AllOutRush;
+			const ETacticalPlay Prefs[] = { ETacticalPlay::AggressivePush, ETacticalPlay::AllOutRush, ETacticalPlay::PincerManeuver, ETacticalPlay::StandardComp };
+			return PickFeasible(Prefs);
 		}
 		else
 		{
-			switch (FMath::RandRange(0, 3))
-			{
-			case 0: return ETacticalPlay::StandardComp;
-			case 1: return ETacticalPlay::HealerComp;
-			case 2: return ETacticalPlay::PincerManeuver;
-			case 3: return ETacticalPlay::BaitStrategy;
-			default: return ETacticalPlay::StandardComp;
-			}
+			// Mid-health: shuffle the preferred candidate, then fall back in order
+			const ETacticalPlay MidCandidates[4] = {
+				ETacticalPlay::StandardComp, ETacticalPlay::HealerComp,
+				ETacticalPlay::PincerManeuver, ETacticalPlay::BaitStrategy
+			};
+			const ETacticalPlay Prefs[] = { MidCandidates[FMath::RandRange(0, 3)], ETacticalPlay::StandardComp, ETacticalPlay::AllOutRush };
+			return PickFeasible(Prefs);
 		}
 	}
 }

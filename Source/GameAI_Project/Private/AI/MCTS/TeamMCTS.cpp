@@ -19,6 +19,14 @@ void UTeamMCTS::Setup(UTeamWorldModel* InTeamWorldModel, const FTeamMCTSConfig& 
 		Config.TimeBudgetSeconds * 1000.0f, Config.BatchSize);
 }
 
+ETacticalPlay UTeamMCTS::FindBestTacticalPlay(const FTeamWorldState& CurrentState, const TArray<ETacticalPlay>& FeasiblePlays)
+{
+	FeasiblePlaysOverride = FeasiblePlays;
+	ETacticalPlay Result = FindBestTacticalPlay(CurrentState);
+	FeasiblePlaysOverride.Empty();
+	return Result;
+}
+
 ETacticalPlay UTeamMCTS::FindBestTacticalPlay(const FTeamWorldState& CurrentState)
 {
 	if (!TeamWorldModel)
@@ -144,20 +152,29 @@ TArray<ETacticalPlay> UTeamMCTS::GenerateTacticalPlays(const FTeamWorldState& St
 	Plays.Add(ETacticalPlay::HealerComp);
 	Plays.Add(ETacticalPlay::ResourceDeny);
 
-	// Optional: Filter based on state constraints
-	// Example: Don't allow AllOutRush if average health < 30%
+	// Health-based pruning: remove aggressive plays when critically low
 	float AvgHealth = State.GetAverageHealth();
 	if (AvgHealth < 0.3f)
 	{
-		// Remove aggressive plays when low health
 		Plays.Remove(ETacticalPlay::AllOutRush);
 		Plays.Remove(ETacticalPlay::AggressivePush);
 	}
 
-	// Ensure at least one play is available
+	// Feasibility constraint: intersect with the pre-computed feasible set when provided.
+	// This removes plays whose role preconditions cannot be met (e.g. Defend with no
+	// friendly capture points, Support with fewer than 2 alive allies).
+	if (FeasiblePlaysOverride.Num() > 0)
+	{
+		Plays = Plays.FilterByPredicate([&](ETacticalPlay P)
+		{
+			return FeasiblePlaysOverride.Contains(P);
+		});
+	}
+
+	// Ensure at least one play is always available
 	if (Plays.Num() == 0)
 	{
-		Plays.Add(ETacticalPlay::StandardComp);
+		Plays.Add(ETacticalPlay::AllOutRush);
 	}
 
 	return Plays;
