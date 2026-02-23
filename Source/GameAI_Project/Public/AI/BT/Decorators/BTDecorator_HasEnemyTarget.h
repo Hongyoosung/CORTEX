@@ -29,7 +29,7 @@
  * - bCheckLineOfSight: Verify line of sight to target
  * - MaxRange: Maximum valid engagement range (0 = no limit)
  */
-UCLASS()
+UCLASS(Blueprintable)
 class GAMEAI_PROJECT_API UBTDecorator_HasEnemyTarget : public UBTDecorator
 {
 	GENERATED_BODY()

@@ -18,8 +18,6 @@
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "AIController.h"
-#include "BehaviorTree/BehaviorTree.h"
-#include "BehaviorTree/BlackboardComponent.h"
 #include "BrainComponent.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
@@ -33,7 +31,6 @@ AMocCharacter::AMocCharacter()
 	, ScholaAgent(nullptr)
 	, RewardCalculator(nullptr)
 	, StimuliSource(nullptr)
-	, BehaviorTree(nullptr)
 	, VisionRange(3000.0f)
 	, AgentID(0)
 	, TeamID(-1)
@@ -109,15 +106,6 @@ void AMocCharacter::BeginPlay()
 	{
 		StimuliSource->RegisterWithPerceptionSystem();
 		StimuliSource->RegisterForSense(TSubclassOf<UAISense_Sight>());
-	}
-
-	// Start behavior tree
-	if (AAIController* AI = Cast<AAIController>(GetController()))
-	{
-		if (BehaviorTree)
-		{
-			AI->RunBehaviorTree(BehaviorTree);
-		}
 	}
 
 
@@ -379,15 +367,6 @@ void AMocCharacter::ResetCharacter()
 	float CurrentHealth = HealthComponent ? HealthComponent->GetHealthPercentage() : 0.0f;
 	UE_LOG(LogTemp, Log, TEXT("[MocCharacter] %s reset complete - bIsAlive=%d, Health=%.1f%%, Location=%s"),
 		*GetName(), bIsAlive, CurrentHealth * 100.0f, *GetActorLocation().ToString());
-
-	// 6. Restart AI
-	if (AAIController* AI = Cast<AAIController>(GetController()))
-	{
-		if (BehaviorTree)
-		{
-			AI->RunBehaviorTree(BehaviorTree);
-		}
-	}
 
 	// 7. Delegate to RL component
 	if (ScholaAgent)

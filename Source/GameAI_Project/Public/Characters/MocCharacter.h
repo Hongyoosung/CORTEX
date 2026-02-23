@@ -20,10 +20,9 @@ class UWeaponComponent;
 class UScholaMocAgent;
 class UMocRewardCalculator;
 class UAIPerceptionStimuliSourceComponent;
-class UBehaviorTree;
 class UEnvQuery;
 class UMocEQSExecutor;
-class ASquadManager;
+class USquadManager;
 class AMocGameMode;
 class ATeamManager;
 class AFogOfWarManager;
@@ -204,10 +203,6 @@ public:
 	// Configuration
 	//========================================
 
-	/** Behavior Tree to run */
-	UPROPERTY(EditDefaultsOnly, Category = "AI")
-	UBehaviorTree* BehaviorTree;
-
 	/** Vision range for fog-of-war updates (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Vision")
 	float VisionRange; // 30 meters
@@ -329,7 +324,7 @@ protected:
 	FVector LastEQSTargetLocation = FVector::ZeroVector;
 
 	/** Reference to Squad Commander (set on spawn) */
-	TObjectPtr<ASquadManager> SquadCommander;
+	USquadManager* SquadCommander;
 
 	/** Time when character was last spawned/reset (for death diagnostics) */
 	float SpawnTime = 0.0f;

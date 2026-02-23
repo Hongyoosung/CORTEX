@@ -2,7 +2,7 @@
 
 #include "Team/TeamManager.h"
 #include "Team/FogOfWarManager.h"
-#include "Team/SquadManager.h"
+#include "Team/SquadManager.h"  // USquadManager
 #include "Characters/MocCharacter.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Actors/PickupBase.h"
@@ -46,6 +46,13 @@ void ATeamManager::BeginPlay()
 			SpawnParams
 		);
 	}
+
+	// Create Squad Planners programmatically (one per team)
+	RedTeamCommander = NewObject<USquadManager>(this);
+	RedTeamCommander->Initialize(0, this);
+
+	BlueTeamCommander = NewObject<USquadManager>(this);
+	BlueTeamCommander->Initialize(1, this);
 }
 
 void ATeamManager::Tick(float DeltaTime)
@@ -54,6 +61,10 @@ void ATeamManager::Tick(float DeltaTime)
 
 	// Process respawn queue
 	ProcessRespawnQueue(DeltaTime);
+
+	// Tick Squad Planners
+	if (RedTeamCommander)  RedTeamCommander->TickPlanner(DeltaTime);
+	if (BlueTeamCommander) BlueTeamCommander->TickPlanner(DeltaTime);
 
 	// Debug visualization
 	if (bShowDebugInfo)
@@ -184,7 +195,9 @@ AMocCharacter* ATeamManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 		// Set agent name
 		FString TeamName = TeamData ? TeamData->TeamName : (TeamID == 0 ? TEXT("Red") : TEXT("Blue"));
 		FString AgentName = FString::Printf(TEXT("%s_Agent_%d"), *TeamName, AgentIndex);
+#if WITH_EDITOR
 		Agent->SetActorLabel(AgentName);
+#endif
 
 		UE_LOG(LogTemp, Log, TEXT("TeamManager: Spawned %s at %s"), *AgentName, *SpawnLocation.ToString());
 	}
@@ -362,7 +375,7 @@ void ATeamManager::ProcessRespawnQueue(float DeltaTime)
 		}
 
 		// After group respawn, trigger immediate replanning so agents get strategy commands
-		ASquadManager* Commander = GetSquadCommander(TeamID);
+		USquadManager* Commander = GetSquadCommander(TeamID);
 		if (Commander)
 		{
 			Commander->PerformTacticalPlanning();
@@ -497,7 +510,7 @@ bool ATeamManager::IsEnemyPositionValid(int32 TeamID, AActor* Enemy) const
 // v10.2 Squad Commander Access
 //========================================
 
-ASquadManager* ATeamManager::GetSquadCommander(int32 TeamID) const
+USquadManager* ATeamManager::GetSquadCommander(int32 TeamID) const
 {
 	if (TeamID == 0)
 	{
@@ -511,19 +524,6 @@ ASquadManager* ATeamManager::GetSquadCommander(int32 TeamID) const
 	return nullptr;
 }
 
-void ATeamManager::SetSquadCommander(int32 TeamID, ASquadManager* Commander)
-{
-	if (TeamID == 0)
-	{
-		RedTeamCommander = Commander;
-		UE_LOG(LogTemp, Log, TEXT("TeamManager: Red Team Commander set"));
-	}
-	else if (TeamID == 1)
-	{
-		BlueTeamCommander = Commander;
-		UE_LOG(LogTemp, Log, TEXT("TeamManager: Blue Team Commander set"));
-	}
-}
 
 FLinearColor FTeamConfiguration::GetTeamColor() const
 {

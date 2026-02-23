@@ -177,8 +177,7 @@ void AMocTrainer::Tick(float DeltaTime)
         // Capture state BEFORE executing action (for reward computation)
         PreviousObservation = CurrentObservation;
 
-        // 물리/로직적 행동 실행
-        ControlledCharacter->PerformTacticalAction();
+        // Movement is triggered by TacticalParameterActuator::TakeAction() → PerformTacticalAction()
 
         // Signal that a new reward needs to be computed
         // ComputeReward() will compute and cache the reward on first call
@@ -544,7 +543,6 @@ void AMocTrainer::DrawTrainingDebug(float DeltaTime)
 
     FString DebugText = FString::Printf(
         TEXT("Strategy: %s\n")
-        TEXT("Health: %.1f%%\n")
         TEXT("Steps: %d / %d\n")
         TEXT("Episode Reward: %.2f\n")
         TEXT("Total Episodes: %d\n")
@@ -554,7 +552,6 @@ void AMocTrainer::DrawTrainingDebug(float DeltaTime)
         TEXT("AllyProx: %.2f | Range: %.2f\n")
         TEXT("Pickup: %.2f"),
         *StrategyInfo,
-        CurrentObservation.Health * 100.0f,
         CurrentEpisodeSteps,
         MaxEpisodeSteps,
         EpisodeReward,

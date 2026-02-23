@@ -33,10 +33,10 @@ struct FRewardEvent
     GENERATED_BODY()
 
     UPROPERTY(BlueprintReadOnly)
-    ERewardEventType EventType;
+    ERewardEventType EventType = ERewardEventType::Survival;
 
     UPROPERTY(BlueprintReadOnly)
-    EStrategyType ActiveStrategy;
+    EStrategyType ActiveStrategy = EStrategyType::Assault;
 
     UPROPERTY(BlueprintReadOnly)
     float RewardValue = 0.0f;

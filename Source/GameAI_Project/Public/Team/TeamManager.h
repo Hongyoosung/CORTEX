@@ -11,7 +11,7 @@ class UScholaMocAgent;
 class ACapturePoint;
 class APickupBase;
 class AFogOfWarManager;
-class ASquadManager;
+class USquadManager;
 class UTeamData;
 
 /**
@@ -201,13 +201,9 @@ public:
 	// v10.2 Squad Commander Access
 	//========================================
 
-	/** Get Squad Commander for team (v10.2 centralized planning) */
+	/** Get Squad Planner for team (v10.2 centralized planning) */
 	UFUNCTION(BlueprintPure, Category = "TeamManager")
-	ASquadManager* GetSquadCommander(int32 TeamID) const;
-
-	/** Set Squad Commander for team */
-	UFUNCTION(BlueprintCallable, Category = "TeamManager")
-	void SetSquadCommander(int32 TeamID, ASquadManager* Commander);
+	USquadManager* GetSquadCommander(int32 TeamID) const;
 
 protected:
 	//========================================
@@ -270,6 +266,48 @@ public:
 	bool bShowDebugInfo = false;
 
 	//========================================
+	// v10.2 Squad Planner Configuration
+	// One USquadManager is created per team automatically in BeginPlay.
+	// All MCTS and data-collection settings are configured here.
+	//========================================
+
+	/** Planning interval (seconds) between MCTS replanning cycles */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Squad")
+	float PlanningInterval = 0.5f;
+
+	/** Time budget for MCTS per planning cycle (seconds) */
+	UPROPERTY(EditAnywhere, Category = "TeamManager|Squad")
+	float MCTSTimeBudget = 0.015f;
+
+	/** Batch size for MCTS leaf expansion */
+	UPROPERTY(EditAnywhere, Category = "TeamManager|Squad")
+	int32 MCTSBatchSize = 8;
+
+	/** Path to team world model ONNX file (shared by both teams; empty = skip MCTS) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Squad")
+	FString TeamWorldModelPath;
+
+	/** Enable data collection mode (ε-greedy instead of MCTS, for faster data collection) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Squad")
+	bool bDataCollectionMode = false;
+
+	/** Exploration rate for ε-greedy policy (0=pure exploitation, 1=pure exploration) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Squad", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ExplorationRate = 0.7f;
+
+	/** Draw role assignment labels above agents */
+	UPROPERTY(EditAnywhere, Category = "TeamManager|Squad|Debug")
+	bool bDrawRoleAssignments = true;
+
+	/**
+	 * Phase 1 RL Training Mode: fix strategy for entire episode (sampled at reset).
+	 * Single source of truth — ScholaEnvironment propagates bPhase1RLTraining here.
+	 * USquadManager instances read it via their TeamManager pointer.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Training")
+	bool bRLTrainingMode = false;
+
+	//========================================
 	// Events
 	//========================================
 
@@ -304,10 +342,11 @@ protected:
 	UPROPERTY()
 	TArray<AMocCharacter*> AllAgents;
 
-	/** Squad Commanders (v10.2) */
+	/** Squad Planners — created automatically in BeginPlay, one per team */
 	UPROPERTY()
-	ASquadManager* RedTeamCommander;
+	USquadManager* RedTeamCommander;
 
 	UPROPERTY()
-	ASquadManager* BlueTeamCommander;
+	USquadManager* BlueTeamCommander;
+
 };

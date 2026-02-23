@@ -173,6 +173,15 @@ void AScholaEnvironment::InitializeEnvironment()
 		CacheSquadCommanders();
 	}
 
+	// Propagate Phase 1 RL training flag to all TeamManagers (single source of truth)
+	// SquadManagers read this flag via their TeamManager reference at runtime
+	for (TActorIterator<ATeamManager> It(GetWorld()); It; ++It)
+	{
+		(*It)->bRLTrainingMode = bPhase1RLTraining;
+		UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] Set TeamManager bRLTrainingMode=%s on %s"),
+			bPhase1RLTraining ? TEXT("true") : TEXT("false"), *(*It)->GetName());
+	}
+
 	bEnvironmentInitialized = true;
 }
 
@@ -223,6 +232,15 @@ void AScholaEnvironment::ResetEnvironment()
 		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] GameMode is null! Cannot reset game state."));
 	}
 
+	// Reset Squad Commanders (triggers SampleRandomTacticalPlay in RL training mode)
+	for (auto& Pair : SquadCommanders)
+	{
+		if (Pair.Value)
+		{
+			Pair.Value->Reset();
+		}
+	}
+
 	OnScholaEnvironmentInitialized_Delegate.Broadcast();
 
 	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET v10.2] ResetEnvironment() complete - ready for Python poll()"));
@@ -237,6 +255,14 @@ void AScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPawn
 	UE_LOG(LogTemp, Warning, TEXT("║ Centralized Planning: %s                                     ║"),
 		bEnableCentralizedPlanning ? TEXT("ENABLED") : TEXT("DISABLED"));
 	UE_LOG(LogTemp, Warning, TEXT("╚══════════════════════════════════════════════════════════════╝"));
+
+	// Inference mode: skip trainer spawning entirely.
+	// Pawns are controlled by AMocAIController (BT + ONNX) — no Python connection needed.
+	if (!bTrainingMode)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] bTrainingMode=false — skipping trainer registration (inference mode)"));
+		return;
+	}
 
 	if (bAgentsRegistered)
 	{
@@ -422,9 +448,9 @@ void AScholaEnvironment::SeedEnvironment(int Seed)
 // v10.2 COMMANDER INTEGRATION
 //------------------------------------------------------------------------------
 
-const ASquadManager* AScholaEnvironment::GetSquadCommander(int32 TeamID) const
+USquadManager* AScholaEnvironment::GetSquadCommander(int32 TeamID) const
 {
-	if (const ASquadManager* const* FoundCommander = SquadCommanders.Find(TeamID))
+	if (USquadManager* const* FoundCommander = SquadCommanders.Find(TeamID))
 	{
 		return *FoundCommander;
 	}
@@ -432,9 +458,9 @@ const ASquadManager* AScholaEnvironment::GetSquadCommander(int32 TeamID) const
 	return nullptr;
 }
 
-TArray<ASquadManager*> AScholaEnvironment::GetAllSquadCommanders() const
+TArray<USquadManager*> AScholaEnvironment::GetAllSquadCommanders() const
 {
-	TArray<ASquadManager*> Commanders;
+	TArray<USquadManager*> Commanders;
 	SquadCommanders.GenerateValueArray(Commanders);
 	return Commanders;
 }
@@ -461,7 +487,7 @@ void AScholaEnvironment::CacheSquadCommanders()
 		// Team 0 = Red Team, Team 1 = Blue Team
 		for (int32 TeamID = 0; TeamID <= 1; TeamID++)
 		{
-			ASquadManager* Commander = TeamManager->GetSquadCommander(TeamID);
+			USquadManager* Commander = TeamManager->GetSquadCommander(TeamID);
 			if (Commander)
 			{
 				SquadCommanders.Add(TeamID, Commander);

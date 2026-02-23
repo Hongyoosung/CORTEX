@@ -2,6 +2,7 @@
 
 #include "Schola/Observers/MocTacticalObserver.h"
 #include "Schola/Trainers/MocTrainer.h"
+#include "Schola/Components/ScholaMocAgent.h"
 #include "Characters/MocCharacter.h"
 #include "Core/MocGameMode.h"
 #include "Actors/CapturePoint.h"
@@ -37,6 +38,7 @@ UMocTacticalObserver::UMocTacticalObserver()
 
 	// Initialize cached references
 	CachedTrainer = nullptr;
+	CachedCharacter = nullptr;
 	ObservationCallCount = 0;
 }
 
@@ -44,16 +46,23 @@ void UMocTacticalObserver::InitializeObserver()
 {
 	Super::InitializeObserver();
 
-	// Cache trainer reference (owner should be AMocTrainer)
+	// Path 1: Training mode — outer is AMocTrainer (AIController that possesses pawn)
 	CachedTrainer = GetTypedOuter<AMocTrainer>();
-	if (!CachedTrainer)
+	if (CachedTrainer)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Owner is not AMocTrainer! Observer will not function correctly."));
+		UE_LOG(LogTemp, Log, TEXT("[MocTacticalObserver] Initialized (Training mode) for trainer: %s"), *CachedTrainer->GetName());
+		return;
 	}
-	else
+
+	// Path 2: Inference mode — outer is UScholaMocAgent component on AMocCharacter (pawn)
+	CachedCharacter = GetTypedOuter<AMocCharacter>();
+	if (CachedCharacter)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[MocTacticalObserver] Initialized for trainer: %s"), *CachedTrainer->GetName());
+		UE_LOG(LogTemp, Log, TEXT("[MocTacticalObserver] Initialized (Inference mode) for character: %s"), *CachedCharacter->GetName());
+		return;
 	}
+
+	UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Could not find AMocTrainer or AMocCharacter in outer chain! Observer will not function."));
 }
 
 void UMocTacticalObserver::ResetObserver()
@@ -141,14 +150,19 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 
 AMocCharacter* UMocTacticalObserver::GetControlledCharacter() const
 {
-	if (!CachedTrainer)
+	// Path 1: Training mode — get pawn from trainer
+	if (CachedTrainer)
 	{
-		return nullptr;
+		return Cast<AMocCharacter>(CachedTrainer->GetPawn());
 	}
 
-	// Get pawn from trainer (should be AMocCharacter)
-	APawn* ControlledPawn = CachedTrainer->GetPawn();
-	return Cast<AMocCharacter>(ControlledPawn);
+	// Path 2: Inference mode — direct character reference
+	if (CachedCharacter)
+	{
+		return CachedCharacter;
+	}
+
+	return nullptr;
 }
 
 FObservation UMocTacticalObserver::GatherBaseObservation() const

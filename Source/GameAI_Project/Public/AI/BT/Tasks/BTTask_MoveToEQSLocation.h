@@ -2,94 +2,103 @@
 
 #include "BehaviorTree/BTTaskNode.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "AIController.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/EnvQuery.h"
 #include "DrawDebugHelpers.h"
-#include "AI/AIController/MocAIController.h"
 #include "Types/EQSTypes.h"
 #include "BTTask_MoveToEQSLocation.generated.h"
 
 
-UCLASS()
-class GAMEAI_PROJECT_API UBTTask_MoveToEQSLocation : public UBTTaskNode {
-
+/**
+ * BTTask_MoveToEQSLocation
+ *
+ * Inference-mode movement task. Reads EQS weights from Blackboard
+ * (written by PerformTacticalAction() → inference path), builds a weighted
+ * FEnvQueryRequest, runs it asynchronously, then commands MoveToLocation.
+ *
+ * Blackboard keys read (set by AMocCharacter::PerformTacticalAction):
+ *   Weight_EnemyObj, Weight_AllyObj, Weight_Cover, Weight_EnemyVis,
+ *   Weight_AllyProx, Weight_Range, Weight_Pickup
+ *
+ * No dependency on AMocAIController — works with any AAIController.
+ */
+UCLASS(Blueprintable)
+class GAMEAI_PROJECT_API UBTTask_MoveToEQSLocation : public UBTTaskNode
+{
     GENERATED_BODY()
-    
+
 public:
     virtual EBTNodeResult::Type ExecuteTask(
         UBehaviorTreeComponent& OwnerComp,
         uint8* NodeMemory
-    ) override {
-        AMocAIController* AIController = Cast<AMocAIController>(
-            OwnerComp.GetAIOwner()
-        );
-
-        if (!AIController)
+    ) override
+    {
+        AAIController* AIController = Cast<AAIController>(OwnerComp.GetAIOwner());
+        if (!AIController || !QueryTemplate)
         {
             return EBTNodeResult::Failed;
         }
 
-        // 1. Blackboard에서 EQS 가중치 읽기 (v10.2: weights set by controller)
+        // Read EQS weights from Blackboard
+        // Keys match AMocCharacter::PerformTacticalAction() writer
         UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
+        if (!BB)
+        {
+            return EBTNodeResult::Failed;
+        }
+
         FEQSWeightParameters Weights;
         Weights.EnemyObjectiveProximity = BB->GetValueAsFloat(TEXT("Weight_EnemyObj"));
-        Weights.AllyObjectiveProximity = BB->GetValueAsFloat(TEXT("Weight_AllyObj"));
-        Weights.CoverDensity = BB->GetValueAsFloat(TEXT("Weight_Cover"));
-        Weights.EnemyVisibility = BB->GetValueAsFloat(TEXT("Weight_Visibility"));
-        Weights.AllyProximity = BB->GetValueAsFloat(TEXT("Weight_AllyProx"));
-        Weights.CombatRange = BB->GetValueAsFloat(TEXT("Weight_Range"));
-        Weights.PickupProximity = BB->GetValueAsFloat(TEXT("Weight_Pickup"));
+        Weights.AllyObjectiveProximity  = BB->GetValueAsFloat(TEXT("Weight_AllyObj"));
+        Weights.CoverDensity            = BB->GetValueAsFloat(TEXT("Weight_Cover"));
+        Weights.EnemyVisibility         = BB->GetValueAsFloat(TEXT("Weight_EnemyVis"));
+        Weights.AllyProximity           = BB->GetValueAsFloat(TEXT("Weight_AllyProx"));
+        Weights.CombatRange             = BB->GetValueAsFloat(TEXT("Weight_Range"));
+        Weights.PickupProximity         = BB->GetValueAsFloat(TEXT("Weight_Pickup"));
 
-        // 2. EQS Query 생성 (consolidated method)
-        FEnvQueryRequest QueryRequest = AIController->CreateDynamicEQSQuery(Weights);
+        // Normalize RL output [-1, 1] → EQS scale [-2, 2]
+        auto Normalize = [](float W) { return FMath::Clamp(W * 2.0f, -2.0f, 2.0f); };
 
-        // 3. EQS 실행 (비동기)
+        UObject* OwnerPawn = Cast<UObject>(AIController->GetPawn());
+        FEnvQueryRequest QueryRequest(QueryTemplate, OwnerPawn);
+        QueryRequest.SetFloatParam(TEXT("EnemyObjectiveWeight"), Normalize(Weights.EnemyObjectiveProximity));
+        QueryRequest.SetFloatParam(TEXT("AllyObjectiveWeight"),  Normalize(Weights.AllyObjectiveProximity));
+        QueryRequest.SetFloatParam(TEXT("CoverDensityWeight"),   Normalize(Weights.CoverDensity));
+        QueryRequest.SetFloatParam(TEXT("EnemyVisibilityWeight"),Normalize(Weights.EnemyVisibility));
+        QueryRequest.SetFloatParam(TEXT("AllyProximityWeight"),  Normalize(Weights.AllyProximity));
+        QueryRequest.SetFloatParam(TEXT("CombatRangeWeight"),    Normalize(Weights.CombatRange));
+        QueryRequest.SetFloatParam(TEXT("PickupWeight"),         Normalize(Weights.PickupProximity));
+
         CachedOwnerComp = &OwnerComp;
-        FQueryFinishedSignature QueryFinishedDelegate;
-        QueryFinishedDelegate.BindUObject(
-            this,
-            &UBTTask_MoveToEQSLocation::OnQueryFinished
-        );
-
-        QueryRequest.Execute(
-            EEnvQueryRunMode::SingleResult,  // 최고 점수 1개만
-            QueryFinishedDelegate
-        );
+        FQueryFinishedSignature Delegate;
+        Delegate.BindUObject(this, &UBTTask_MoveToEQSLocation::OnQueryFinished);
+        QueryRequest.Execute(EEnvQueryRunMode::SingleResult, Delegate);
 
         return EBTNodeResult::InProgress;
     }
-    
+
+    /** EQS query template — assign in BT asset */
+    UPROPERTY(EditAnywhere, Category = "EQS")
+    UEnvQuery* QueryTemplate;
+
 private:
     void OnQueryFinished(TSharedPtr<FEnvQueryResult> Result)
     {
+        if (!CachedOwnerComp)
+        {
+            return;
+        }
+
         if (Result->IsSuccessful())
         {
-            FVector TargetLocation = Result->GetItemAsLocation(0);
-
-            // 4. UE5 Navigation System으로 이동
+            const FVector TargetLocation = Result->GetItemAsLocation(0);
             AAIController* AIController = Cast<AAIController>(CachedOwnerComp->GetAIOwner());
             if (AIController)
             {
-                AIController->MoveToLocation(
-                    TargetLocation,
-                    100.0f,  // AcceptanceRadius
-                    true,    // bStopOnOverlap
-                    true     // bUsePathfinding
-                );
-
-                // 디버그 시각화
-                DrawDebugSphere(
-                    AIController->GetWorld(),
-                    TargetLocation,
-                    50.0f,
-                    12,
-                    FColor::Green,
-                    false,
-                    2.0f
-                );
-
+                AIController->MoveToLocation(TargetLocation, 100.0f, true, true);
                 FinishLatentTask(*CachedOwnerComp, EBTNodeResult::Succeeded);
             }
             else
@@ -103,5 +112,5 @@ private:
         }
     }
 
-    UBehaviorTreeComponent* CachedOwnerComp;
+    UBehaviorTreeComponent* CachedOwnerComp = nullptr;
 };

@@ -33,7 +33,7 @@ class AMocCharacter;
  * - bContinuousFire: Keep firing while target is valid (default: true)
  * - bRequireLineOfSight: Verify line of sight before each shot
  */
-UCLASS()
+UCLASS(Blueprintable)
 class GAMEAI_PROJECT_API UBTTask_CombatFire : public UBTTaskNode
 {
 	GENERATED_BODY()

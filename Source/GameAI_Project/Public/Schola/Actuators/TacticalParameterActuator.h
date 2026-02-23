@@ -30,7 +30,7 @@ class AAbstractTrainer;
  * - Receives Box action from Schola framework
  * - Converts to FEQSWeightParameters
  * - Writes weights to MocCharacter via UpdateTacticalWeights()
- * - Does NOT trigger execution (MocTrainer or BT handles that)
+ * - Triggers movement via PerformTacticalAction() (unified for training + inference)
  */ //============================================================
 UCLASS(BlueprintType, meta = (DisplayName = "v10.2 Tactical Parameter Actuator"))
 class GAMEAI_PROJECT_API UTacticalParameterActuator : public UBoxActuator

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/Actor.h"
+#include "UObject/NoExportTypes.h"
 #include "Team/TeamWorldState.h"
 #include "Types/StrategyTypes.h"
 #include "Types/EventTypes.h"
@@ -19,83 +19,70 @@ class UTeamDataCollector;
 class ACapturePoint;
 
 /**
- * ASquadManager - MOC v10.2 Centralized Tactical Commander
+ * USquadManager - MOC v10.2 Centralized Tactical Planner
  *
- * Core Innovation of v10.2 Architecture:
- * Instead of each agent running independent MCTS, a single Squad Commander
- * performs centralized planning and distributes role assignments to executors.
+ * UObject (not Actor): owned and ticked by ATeamManager.
+ * Two instances are created programmatically in ATeamManager::BeginPlay()
+ * — one per team, no level placement required.
+ *
+ * All configuration (PlanningInterval, MCTSTimeBudget, WorldModelPath, etc.)
+ * lives on ATeamManager as the single configuration point.
  *
  * Responsibilities:
  * - Collect global team state from all 5 friendly agents
  * - Run MCTS planning on team-level action space (Tactical Plays)
  * - Distribute role assignments to individual executor agents
  * - Trigger replanning on critical events (Kill/Death, objective capture)
- *
- * Performance Budget:
- * - MCTS: 15ms per planning cycle
- * - Frequency: Every 0.5s or on high-volatility events
- * - Batch inference: Process 8-16 leaves simultaneously
- *
- * Usage:
- * 1. Spawned by ATeamManager at match start (one per team)
- * 2. Initialize() called with TeamID and TeamManager reference
- * 3. Tick() manages planning intervals and event-driven replanning
- * 4. Agents call GetAgentStrategy() to receive role assignments
  */
 UCLASS()
-class GAMEAI_PROJECT_API ASquadManager : public AActor
+class GAMEAI_PROJECT_API USquadManager : public UObject
 {
 	GENERATED_BODY()
 
 public:
-	ASquadManager();
+	USquadManager();
 
-	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
+	/** UObject world context — delegates to TeamManager outer */
+	virtual UWorld* GetWorld() const override;
 
 	//========================================
 	// Initialization
 	//========================================
 
 	/**
-	 * Setup with team reference (called by TeamManager)
-	 * @param InTeamID - Team ID (0 = Red, 1 = Blue)
-	 * @param InTeamManager - Reference to TeamManager for agent queries
+	 * Setup with team reference (called by ATeamManager::BeginPlay)
+	 * @param InTeamID       - Team ID (0 = Red, 1 = Blue)
+	 * @param InTeamManager  - Owning TeamManager (config + agent queries)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "SquadManager")
 	void Initialize(int32 InTeamID, ATeamManager* InTeamManager);
+
+	//========================================
+	// Planner Tick (called by ATeamManager::Tick)
+	//========================================
+
+	void TickPlanner(float DeltaTime);
 
 	//========================================
 	// Centralized Planning
 	//========================================
 
 	/**
-	 * Main planning entry point - run MCTS and update role assignments
-	 * Performance: ~15ms (MCTS time budget)
-	 * Triggers: Every 0.5s or on critical events
+	 * Main planning entry point — run MCTS and update role assignments.
+	 * Performance: ~15ms (MCTS time budget, configured on TeamManager).
+	 * Triggers: Every PlanningInterval or on critical events.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "SquadManager")
 	void PerformTacticalPlanning();
 
-	/**
-	 * Get current global team state
-	 * Collects positions, health, strategies from all 5 agents
-	 */
-	UFUNCTION(BlueprintPure, Category = "SquadManager")
+	/** Get current global team state */
 	FTeamWorldState GetGlobalTeamState() const;
 
 	/**
 	 * Get assigned strategy for specific agent
 	 * @param AgentIndex - Agent index in team (0-4)
-	 * @return Strategy assigned by last planning cycle
 	 */
-	UFUNCTION(BlueprintPure, Category = "SquadManager")
 	EStrategyType GetAgentStrategy(int32 AgentIndex) const;
 
-	/**
-	 * Get current active tactical play
-	 */
-	UFUNCTION(BlueprintPure, Category = "SquadManager")
+	/** Get current active tactical play */
 	ETacticalPlay GetActiveTacticalPlay() const { return ActiveTacticalPlay; }
 
 	//========================================
@@ -103,130 +90,72 @@ public:
 	//========================================
 
 	/**
-	 * Notify commander of critical event requiring immediate replanning
-	 * Examples: Ally killed, objective captured, team health critical
-	 *
-	 * @param EventType - Type of critical event
-	 * @param Instigator - Actor that triggered event (optional)
+	 * Notify planner of critical event requiring immediate replanning.
+	 * @param EventType       - Type of critical event
+	 * @param InstigatorActor - Actor that triggered event (optional)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "SquadManager")
 	void ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AActor* InstigatorActor);
 
-	/**
-	 * Check if replanning is needed based on timer or volatility
-	 * Conditions: TimeSinceLastPlan >= PlanningInterval
-	 */
-	UFUNCTION(BlueprintPure, Category = "SquadManager")
+	/** Check if replanning is needed based on timer */
 	bool ShouldReplan() const;
 
 	//========================================
 	// Episode Management
 	//========================================
 
-	/** Reset squad commander state for new episode */
-	UFUNCTION(BlueprintCallable, Category = "SquadManager|Episode")
+	/** Reset planner state for new episode */
 	void Reset();
 
 	//========================================
-	// Configuration
+	// Debug Accessors
 	//========================================
 
-	/** Planning interval (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SquadManager|Config")
-	float PlanningInterval = 0.5f;
-
-	/** Time budget for MCTS (seconds) */
-	UPROPERTY(EditAnywhere, Category = "SquadManager|Config")
-	float MCTSTimeBudget = 0.015f;
-
-	/** Batch size for MCTS leaf expansion */
-	UPROPERTY(EditAnywhere, Category = "SquadManager|Config")
-	int32 MCTSBatchSize = 8;
-
-	/** Enable debug visualization */
-	UPROPERTY(EditAnywhere, Category = "SquadManager|Debug")
-	bool bShowDebugInfo = true;
-
-	/** Draw debug lines for role assignments */
-	UPROPERTY(EditAnywhere, Category = "SquadManager|Debug")
-	bool bDrawRoleAssignments = true;
-
-	//========================================
-	// World Model Configuration (v10.2 Week 3)
-	//========================================
-
-	/** Path to team world model ONNX file (optional, empty = skip MCTS) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SquadManager|WorldModel")
-	FString TeamWorldModelPath;
-
-	//========================================
-	// Data Collection Mode (v10.2 Week 2)
-	//========================================
-
-	/** Enable data collection mode (skip MCTS, use ε-greedy policy for faster data collection) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SquadManager|DataCollection")
-	bool bDataCollectionMode = false;
-
-	/** Exploration rate for ε-greedy policy (0.0 = pure exploitation, 1.0 = pure exploration) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SquadManager|DataCollection", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ExplorationRate = 0.7f;
+	int32 GetTeamID()                const { return TeamID; }
+	int32 GetPlanningCycleCount()     const { return PlanningCycleCount; }
+	int32 GetEventDrivenReplanCount() const { return EventDrivenReplanCount; }
+	float GetPlanConfidence()         const { return PlanConfidence; }
+	const TArray<EStrategyType>& GetCurrentRoleAssignments() const { return CurrentRoleAssignments; }
 
 protected:
 	//========================================
 	// Internal Implementation
 	//========================================
 
-	/**
-	 * Construct FTeamState from live agents
-	 * Queries TeamManager for friendly/enemy positions, health, etc.
-	 */
+	/** Sample a random tactical play and distribute roles (Phase 1 RL training) */
+	void SampleRandomTacticalPlay();
+
+	/** Construct FTeamWorldState from live agents via TeamManager */
 	FTeamWorldState CollectTeamState() const;
 
-	/**
-	 * Convert MCTS result (ETacticalPlay) to role distribution
-	 * Example: Phalanx → [Defend, Defend, Support, Support, Support]
-	 *
-	 * @param Play - Selected tactical play from MCTS
-	 * @return Array of 5 strategies (one per agent)
-	 */
+	/** Convert ETacticalPlay to role distribution (5 × EStrategyType) */
 	TArray<EStrategyType> DecodeTacticalPlay(ETacticalPlay Play) const;
 
-	/**
-	 * Broadcast role assignments to agents
-	 * Calls SetCommandedStrategy() on each AMocCharacter
-	 *
-	 * @param Roles - Array of 5 strategies to distribute
-	 */
+	/** Broadcast role assignments to agents via SetCommandedStrategy() */
 	void DistributeRoles(const TArray<EStrategyType>& Roles);
 
-	/**
-	 * Log planning decision for analytics
-	 * Output: Timestamp, TacticalPlay, Confidence, TeamState
-	 */
+	/** Log planning decision for analytics */
 	void LogPlanningDecision(ETacticalPlay Play, float Confidence) const;
 
-	/**
-	 * Draw debug visualization for current tactical play
-	 */
+	/** Draw debug visualization for current tactical play */
 	void DrawDebugVisualization() const;
 
 	//========================================
 	// Dependencies
 	//========================================
 
-	/** Team-level MCTS planner (centralized, v10.2) */
+	/** Team-level MCTS planner */
 	UPROPERTY()
 	UTeamMCTS* TeamMCTSPlanner;
 
-	/** Team world model for MCTS predictions (NEW - v10.2 Week 3) */
+	/** Team world model for MCTS predictions */
 	UPROPERTY()
 	class UTeamWorldModel* TeamWorldModel;
 
-	/** Training data collector for team world model (NEW - v10.2 Week 2) */
+	/** Training data collector */
 	UPROPERTY()
 	UTeamDataCollector* DataCollector;
 
-	/** Reference to TeamManager for agent queries */
+	/** Owning TeamManager — source of config and agent queries */
 	UPROPERTY()
 	ATeamManager* TeamManager;
 
@@ -234,83 +163,29 @@ protected:
 	// Runtime State
 	//========================================
 
-	/** Team ID this commander manages (0 = Red, 1 = Blue) */
-	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|State")
-	int32 TeamID;
-
-	/**
-	 * Current role assignments [5]
-	 * Index corresponds to agent index in TeamManager
-	 */
-	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|State")
+	int32 TeamID = 0;
 	TArray<EStrategyType> CurrentRoleAssignments;
+	float TimeSinceLastPlan = 0.0f;
+	ETacticalPlay ActiveTacticalPlay = ETacticalPlay::StandardComp;
+	float PlanConfidence = 0.5f;
+	int32 PlanningCycleCount = 0;
+	int32 EventDrivenReplanCount = 0;
 
-	/** Time since last planning cycle (seconds) */
-	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|State")
-	float TimeSinceLastPlan;
-
-	/** Current active tactical play */
-	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|State")
-	ETacticalPlay ActiveTacticalPlay;
-
-	/** Confidence score of current plan [0-1] */
-	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|State")
-	float PlanConfidence;
-
-	/** Number of planning cycles executed */
-	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|Stats")
-	int32 PlanningCycleCount;
-
-	/** Number of event-driven replans triggered */
-	UPROPERTY(BlueprintReadOnly, Category = "SquadManager|Stats")
-	int32 EventDrivenReplanCount;
-
-	//========================================
-	// Training Data Collection (v10.2 Week 2)
-	//========================================
-
-	/** Previous team state (for transition recording) */
 	FTeamWorldState PreviousTeamState;
+	ETacticalPlay PreviousTacticalPlay = ETacticalPlay::StandardComp;
+	bool bHasPreviousState = false;
 
-	/** Previous tactical play executed */
-	ETacticalPlay PreviousTacticalPlay;
-
-	/** Flag to track if we have a valid previous state */
-	bool bHasPreviousState;
-
-	/** Health critical state tracking (prevents repeated triggers) */
 	bool bHealthCriticalTriggered = false;
-
-	/** Last planning cycle duration in ms */
 	float LastPlanningDurationMs = 0.0f;
-
-	/** Validation tick accumulator */
 	float ValidationTickCounter = 0.0f;
 
 private:
-	/**
-	 * Calculate reward based on team state transition
-	 * @param OldState - Previous team state
-	 * @param NewState - Current team state
-	 * @return Multi-objective reward
-	 */
 	FCompositeReward CalculateTeamReward(const FTeamWorldState& OldState, const FTeamWorldState& NewState) const;
 
-	/**
-	 * Select tactical play using ε-greedy policy (for data collection)
-	 *
-	 * With probability ε: Random tactical play (exploration)
-	 * With probability 1-ε: Heuristic-based play (exploitation)
-	 *
-	 * This provides diverse training data without requiring expensive MCTS
-	 *
-	 * @param TeamState - Current team state for heuristic selection
-	 * @return Selected tactical play
-	 */
 	ETacticalPlay SelectEpsilonGreedyAction(const FTeamWorldState& TeamState) const;
 
 	//========================================
-	// Critical Event Handlers (v10.2)
+	// Critical Event Handlers
 	//========================================
 
 	UFUNCTION()

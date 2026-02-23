@@ -9,6 +9,7 @@
 
 class AMocCharacter;
 class AMocTrainer;
+class UScholaMocAgent;
 
 /**
  * MOC v10.2 Tactical Observer (Schola-Integrated)
@@ -144,9 +145,13 @@ private:
 	/** Cached observation space (built in constructor) */
 	FBoxSpace CachedObservationSpace;
 
-	/** Cached trainer reference (set in InitializeObserver) */
+	/** Cached trainer reference (set in InitializeObserver, training mode only) */
 	UPROPERTY()
 	AMocTrainer* CachedTrainer;
+
+	/** Cached character reference (set in InitializeObserver, inference mode fallback) */
+	UPROPERTY()
+	AMocCharacter* CachedCharacter;
 
 	/** Observation call counter (for debug logging) */
 	int32 ObservationCallCount = 0;

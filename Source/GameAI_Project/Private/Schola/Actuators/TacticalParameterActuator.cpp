@@ -63,7 +63,8 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 
 	if (MocAgent)
 	{
-		MocAgent->UpdateTacticalWeights(Weights);
+		MocAgent->UpdateTacticalWeights(Weights);  // stores weights + sets bWeightsDirty
+		MocAgent->PerformTacticalAction();          // triggers movement (sync EQS in training, BB write in inference)
 
 		// Diagnostic: confirm action was delivered to the character
 		UE_LOG(LogTemp, Verbose,

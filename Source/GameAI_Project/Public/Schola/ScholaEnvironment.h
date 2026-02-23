@@ -9,7 +9,7 @@
 
 
 class AMocGameMode;
-class ASquadManager;
+class USquadManager;
 class UScholaMocAgent;
 class UEpisodeManagerComponent;
 class AMocTrainer;
@@ -95,11 +95,11 @@ public:
 
 	/** Get the Squad Commander for a specific team (centralized planner) */
 	UFUNCTION(BlueprintCallable, Category = "Schola|v10.2")
-	const ASquadManager* GetSquadCommander(int32 TeamID) const;
+	USquadManager* GetSquadCommander(int32 TeamID) const;
 
-	/** Get all registered Squad Commanders across all teams */
+	/** Get all registered Squad Planners across all teams */
 	UFUNCTION(BlueprintCallable, Category = "Schola|v10.2")
-	TArray<ASquadManager*> GetAllSquadCommanders() const;
+	TArray<USquadManager*> GetAllSquadCommanders() const;
 
 
 
@@ -139,6 +139,15 @@ public:
 	// CONFIGURATION
 	//==========================================================================
 
+	/**
+	 * Enable RL training mode.
+	 * TRUE  → Schola spawns AMocTrainer controllers and connects to Python via gRPC.
+	 * FALSE → Inference mode: agents are controlled by AMocAIController (BT + ONNX).
+	 *          RegisterAgents() is skipped; no trainers are spawned.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
+	bool bTrainingMode = true;
+
 	/** Auto-discover agents in level (finds all AMocCharacter with ScholaAgentComponents) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoDiscoverAgents = true;
@@ -156,6 +165,10 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoSpawnTrainers = true;
+
+	/** Phase 1 RL Training: fix strategy per episode (random sample at reset) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
+	bool bPhase1RLTraining = false;
 
 	/** Enable centralized planning via Squad Commanders (v10.2) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
@@ -180,7 +193,7 @@ public:
 
 	/** Cached Squad Commander references per team (v10.2) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State|v10.2")
-	TMap<int32, ASquadManager*> SquadCommanders;
+	TMap<int32, USquadManager*> SquadCommanders;
 
 	/** Is gRPC server running? */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
