@@ -849,6 +849,31 @@ void AMocTrainer::ResetTrainer()
     // Reset observations
     PreviousObservation = FObservation();
 
+    // Round-Robin Curriculum (A-2): Cycle strategy every EpisodesPerStrategy episodes.
+    // All agents in the same environment rotate together (TotalEpisodes increments
+    // simultaneously for all agents due to Python's force timeout).
+    if (bRoundRobinStrategy && MocAgent && MocAgent->bUseTrainingStrategyOverride)
+    {
+        const int32 StrategyPhase = (TotalEpisodes / EpisodesPerStrategy) % 3;
+        EStrategyType NewStrategy;
+        switch (StrategyPhase)
+        {
+        case 0:  NewStrategy = EStrategyType::Assault; break;
+        case 1:  NewStrategy = EStrategyType::Defend;  break;
+        default: NewStrategy = EStrategyType::Support; break;
+        }
+
+        if (MocAgent->TrainingStrategyOverride != NewStrategy)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Round-Robin: Cycling strategy %s -> %s (Episode %d, Phase %d)"),
+                *UEnum::GetValueAsString(MocAgent->TrainingStrategyOverride),
+                *UEnum::GetValueAsString(NewStrategy),
+                TotalEpisodes + 1,
+                StrategyPhase);
+            MocAgent->TrainingStrategyOverride = NewStrategy;
+        }
+    }
+
     if (ControlledCharacter && IsValid(ControlledCharacter))
     {
         CurrentObservation = GatherStateObservation();

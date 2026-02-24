@@ -739,8 +739,6 @@ if SCHOLA_AVAILABLE:
             for aid in list(env_agents)[:4]:
                 agent_reward = self._agent_episode_rewards.get(aid, 0.0)
                 print(f"    {aid}: {agent_reward:.2f}")
-            if len(env_agents) > 4:
-                print(f"    ... and {len(env_agents) - 4} more agents")
             print("=" * 80)
 
         def _log_progress(self):

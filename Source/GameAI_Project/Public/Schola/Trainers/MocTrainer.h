@@ -105,6 +105,20 @@ public:
     UPROPERTY(EditAnywhere, Category="Training")
     int32 MaxEpisodeSteps = 3000;
 
+    // ==================== Round-Robin Curriculum (A-2) ====================
+
+    /** Enable round-robin strategy cycling during Phase 1 training.
+     *  Requires bUseTrainingStrategyOverride=true on ScholaMocAgent.
+     *  Cycles: Assault → Defend → Support → Assault → ... every EpisodesPerStrategy episodes. */
+    UPROPERTY(EditAnywhere, Category="Training|Curriculum")
+    bool bRoundRobinStrategy = true;
+
+    /** Number of consecutive episodes per strategy before rotating.
+     *  Lower = faster refresh (less forgetting), Higher = deeper per-strategy learning. */
+    UPROPERTY(EditAnywhere, Category="Training|Curriculum",
+        meta = (EditCondition = "bRoundRobinStrategy", ClampMin = "1"))
+    int32 EpisodesPerStrategy = 5;
+
     /** Transition 로깅 활성화 (World Model 학습용) */
     UPROPERTY(EditAnywhere, Category="Training|Logging")
     bool bLogTransitions = true;

@@ -83,6 +83,17 @@ void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapt
 	}
 	else if (PrevOwnerTeam == MyTeam)
 	{
+		// B4: Cooldown — prevent flip-flop scenarios from flooding sparse penalties.
+		// Max 1 loss penalty per capture point per CaptureLossCooldownSeconds.
+		const float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		const float* LastPenaltyTime = LastCaptureLossPenaltyTime.Find(PointID);
+		if (LastPenaltyTime && (CurrentTime - *LastPenaltyTime) < CaptureLossCooldownSeconds)
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("[MocRewardCalculator] Capture loss cooldown active for CP %d (%.1fs remaining)"),
+				static_cast<int32>(PointID), CaptureLossCooldownSeconds - (CurrentTime - *LastPenaltyTime));
+			return;
+		}
+		LastCaptureLossPenaltyTime.Add(PointID, CurrentTime);
 		CalculateLosePointPenalty(Strategy);
 	}
 }
@@ -283,19 +294,11 @@ float UMocRewardCalculator::ComputeStepReward(
 
 	case EStrategyType::Defend:
 		{
-			// FIX (Issue 3 — Defend): Redesigned dense reward to eliminate the
-			// PositionReward-vs-ZoneApproachReward conflict.
-			//
-			// OLD DESIGN FLAW:
-			//   PositionReward=2.0 fired for ANY stationary position.
-			//   ZoneApproachReward=0.002/cm ≈ 0.2/m — always smaller than staying still.
-			//   Result: agent learned to idle anywhere rather than navigate to zone.
-			//
-			// NEW DESIGN:
-			//   • Outside zone: approach shaping (0.01/cm = 1.0/m) + distance penalty
-			//     pushes agent to navigate TO the zone.
-			//   • Inside zone: stationary bonus + health bonus + zone presence bonus
-			//     rewards actually DEFENDING the zone.
+			// B1: Unconditional baseline — offsets expected negative dense reward for untrained agents.
+			// Without this, random policies accumulate massive negatives from distance penalties,
+			// preventing the critic from fitting the reward distribution.
+			Reward += DefendBaselineReward;
+
 			if (MyTeamID >= 0 && CachedCapturePoints.Num() > 0)
 			{
 				float CurrNearestFriendlyDist = FLT_MAX;
@@ -318,7 +321,6 @@ float UMocRewardCalculator::ComputeStepReward(
 				}
 
 				// Proximity-proportional zone bonus: ramps from 0 at 3× radius to full at edge.
-			// Eliminates the binary cliff that caused Defend's reward death spiral.
 			const float ZoneRampRadius = CaptureRadius_Cached * 3.0f;
 			const float ZoneProximityFactor = (CurrNearestFriendlyDist < FLT_MAX)
 				? FMath::Clamp(1.0f - (CurrNearestFriendlyDist / ZoneRampRadius), 0.0f, 1.0f)
@@ -347,15 +349,16 @@ float UMocRewardCalculator::ComputeStepReward(
 				{
 					if (!bIsRespawnStep)
 					{
-						// Outside zone: strong shaping gradient toward zone
-						// (skip on respawn — Prev.Position is death location, delta is meaningless)
+						// Outside zone: only reward APPROACHING, clamp negative to 0.
+						// This prevents random movement from accumulating massive negatives.
 						const float ApproachDelta = PrevNearestFriendlyDist - CurrNearestFriendlyDist;
-						Reward += DefendReward.ZoneApproachReward * ApproachDelta; // +1.0/m when closing in
+						Reward += DefendReward.ZoneApproachReward * FMath::Max(ApproachDelta, 0.0f);
 					}
 
-					// Distance-proportional penalty uses only Current.Position — safe on respawn.
-					// Clamped to [-1.0] so it does not overpower sparse rewards.
-					const float DistPenalty = FMath::Min(CurrNearestFriendlyDist / 10000.0f, 1.0f) * 0.5f;
+					// Softened distance penalty: reduced magnitude so it doesn't dominate.
+					// Original: 0.5 * min(dist/10000, 1.0) → up to -0.5/step.
+					// New: 0.2 * min(dist/10000, 1.0) → up to -0.2/step (baseline absorbs this).
+					const float DistPenalty = FMath::Min(CurrNearestFriendlyDist / 10000.0f, 1.0f) * 0.2f;
 					Reward -= DistPenalty;
 				}
 			}
@@ -364,21 +367,9 @@ float UMocRewardCalculator::ComputeStepReward(
 
 	case EStrategyType::Support:
 		{
-			// FIX (Issue 3 — Support): Redesigned dense reward with stable target
-			// ally tracking and meaningful approach gradient.
-			//
-			// OLD DESIGN FLAWS:
-			//   1. AllyApproachReward=0.001/cm = 0.1/m — too weak to shape navigation.
-			//   2. InjuredAllyIdx recomputed every step: if a different ally becomes
-			//      most-injured between steps, PrevAllyDist references the WRONG slot,
-			//      making the approach-delta noisy (can be negative even when closing in).
-			//
-			// NEW DESIGN:
-			//   • CachedInjuredAllyIdx: target ally is locked for InjuredAllyReevalInterval
-			//     steps so approach-deltas are always coherent.
-			//   • AllyApproachReward raised to 0.01/cm = 1.0/m (in RewardTypes.h).
-			//   • Outside proximity: distance penalty creates urgency to reach ally.
-			//   • Bonus for being near a critically injured ally (< 30% HP).
+			// B2: Unconditional baseline — same rationale as Defend.
+			Reward += SupportBaselineReward;
+
 			if (Current.Health > SupportHealthThreshold)
 			{
 				Reward += SupportReward.HealthBonus;
@@ -432,24 +423,21 @@ float UMocRewardCalculator::ComputeStepReward(
 						Reward += SupportReward.AllyProximityBonus * 0.5f;
 					}
 				}
-				else
-				{
-					// Outside proximity: distance-proportional penalty for being far from allies.
-					const float DistPenalty = FMath::Min(CurrAllyDist / SupportAllyProximityThreshold - 1.0f, 2.0f) * 0.3f;
-					Reward -= DistPenalty;
-				}
+				// B2: Removed distance penalty for being far from allies.
+				// Baseline reward provides the offset; approach shaping provides the gradient.
+				// No need to punish distance — just reward approaching.
 
-				// Approach shaping using STABLE cached target (coherent prev→curr delta).
+				// Approach shaping: only reward APPROACHING (clamp negative to 0).
 				if (!bIsRespawnStep && InjuredAllyIdx < Prev.AllyPositions.Num())
 				{
 					const float PrevAllyDist = FVector::Dist(Prev.Position, Prev.AllyPositions[InjuredAllyIdx]);
-					Reward += SupportReward.AllyApproachReward * (PrevAllyDist - CurrAllyDist);
+					const float ApproachDelta = PrevAllyDist - CurrAllyDist;
+					Reward += SupportReward.AllyApproachReward * FMath::Max(ApproachDelta, 0.0f);
 				}
 			}
 			else
 			{
 				// No valid ally target (all dead or no allies): provide a small baseline
-				// so reward doesn't collapse to near-zero when allies scatter/die
 				Reward += SupportReward.PositionReward * 0.5f;
 			}
 		}
@@ -462,6 +450,11 @@ float UMocRewardCalculator::ComputeStepReward(
 
 	// Drain any sparse rewards accumulated by event callbacks (kills, deaths, captures) this step
 	Reward += DrainSparseReward();
+
+	// B3: Clamp total step reward to prevent catastrophic accumulation.
+	// Without this, a single agent can reach -27000+ over 500 steps from
+	// compounding sparse penalties (capture flip-flops) and dense negatives.
+	Reward = FMath::Clamp(Reward, StepRewardClampMin, StepRewardClampMax);
 
 	return Reward;
 }
@@ -531,6 +524,7 @@ void UMocRewardCalculator::ResetEpisodeState()
 	LastCapturedPointLocation = FVector::ZeroVector;
 	CachedInjuredAllyIdx = -1;
 	InjuredAllyStalenessCounter = 0;
+	LastCaptureLossPenaltyTime.Empty();
 }
 
 // ==================== Event Log ====================

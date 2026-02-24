@@ -218,6 +218,33 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float SupportHealthThreshold = 0.8f;
 
+	// ==================== Reward Clamping (B3) ====================
+
+	/** Minimum per-step reward (prevents catastrophic negative accumulation) */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
+	float StepRewardClampMin = -10.0f;
+
+	/** Maximum per-step reward */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
+	float StepRewardClampMax = 10.0f;
+
+	// ==================== Capture Loss Cooldown (B4) ====================
+
+	/** Minimum seconds between loss penalties for the same capture point.
+	 *  Prevents flip-flop scenarios from flooding sparse negative rewards. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Capture")
+	float CaptureLossCooldownSeconds = 10.0f;
+
+	// ==================== Strategy Baselines (B1/B2) ====================
+
+	/** Unconditional per-step baseline for Defend so random policies don't diverge to -inf.
+	 *  Offsets the expected distance penalty for an untrained agent. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	float DefendBaselineReward = 0.3f;
+
+	/** Unconditional per-step baseline for Support. Same purpose as DefendBaselineReward. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	float SupportBaselineReward = 0.3f;
 
 
 protected:
@@ -262,4 +289,7 @@ protected:
 	// Re-evaluate target ally every N steps (or on death: idx goes invalid)
 	int32 InjuredAllyStalenessCounter = 0;
 	static constexpr int32 InjuredAllyReevalInterval = 5;
+
+	// B4: Per-capture-point cooldown for loss penalties (keyed by PointID)
+	TMap<ECapturePointID, float> LastCaptureLossPenaltyTime;
 };

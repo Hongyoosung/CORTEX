@@ -517,7 +517,18 @@ class PPOTrainer_v10_2:
 
         # Compute advantages
         advantages, returns = self.compute_advantages(rewards, old_values, dones)
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # Per-strategy advantage normalization: normalize within each strategy group
+        # so that the different reward scales (Assault positive, Defend/Support smaller)
+        # don't cause one strategy to dominate the gradient.
+        for strat_idx in range(3):
+            mask = (strategy_idxs == strat_idx)
+            if mask.sum() > 1:
+                strat_adv = advantages[mask]
+                advantages[mask] = (strat_adv - strat_adv.mean()) / (strat_adv.std() + 1e-8)
+        # Fallback: if only one strategy present, normalize globally
+        if len(torch.unique(strategy_idxs)) == 1:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # PPO update epochs
         metrics = defaultdict(list)
@@ -881,6 +892,13 @@ if RLLIB_AVAILABLE:
                     episode.custom_metrics[f"strategy_{name.lower()}_frac"] = (
                         episode.user_data["strategy_counts"][strat_idx] / total
                     )
+
+                # Round-robin detection: log which strategy is dominant this episode
+                dominant_strat = max(
+                    episode.user_data["strategy_counts"],
+                    key=episode.user_data["strategy_counts"].get
+                )
+                episode.custom_metrics["round_robin_active_strategy"] = dominant_strat
 
         def on_train_result(self, *, algorithm, result, **kwargs):
             """Extract per-strategy loss metrics from learner_stats and re-publish
