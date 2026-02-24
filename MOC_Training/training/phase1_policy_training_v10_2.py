@@ -407,6 +407,7 @@ class PPOTrainer_v10_2:
         self,
         policy: MultiHeadRLPolicy_v10_2,
         learning_rate: float = 3e-4,
+        critic_lr_scale: float = 0.3,      # FIX (Issue 1): Critic gets lower LR
         clip_epsilon: float = 0.2,
         value_coef: float = 0.5,
         entropy_coef: float = 0.01,
@@ -422,8 +423,29 @@ class PPOTrainer_v10_2:
         self.entropy_coef = entropy_coef
         self.max_grad_norm = max_grad_norm
 
-        # Optimizer
-        self.optimizer = optim.Adam(policy.parameters(), lr=learning_rate)
+        # FIX (Issue 1 — Critic Collapse): Separate actor/critic learning rates.
+        # Using a single LR causes the actor gradient (dominated by the clear
+        # Assault reward signal) to corrupt the shared encoder and destabilize
+        # the critic for Defend/Support strategies.
+        # Solution: one Adam with two param-groups — critic heads run at
+        # critic_lr_scale × learning_rate (default 30% of actor LR).
+        encoder_params = list(policy.state_encoder.parameters())
+        actor_params = (
+            list(policy.assault_head.parameters()) +
+            list(policy.defend_head.parameters()) +
+            list(policy.support_head.parameters()) +
+            [policy.assault_log_std, policy.defend_log_std, policy.support_log_std]
+        )
+        critic_params = (
+            list(policy.assault_value.parameters()) +
+            list(policy.defend_value.parameters()) +
+            list(policy.support_value.parameters())
+        )
+        self.optimizer = optim.Adam([
+            {'params': encoder_params, 'lr': learning_rate},
+            {'params': actor_params,   'lr': learning_rate},
+            {'params': critic_params,  'lr': learning_rate * critic_lr_scale},
+        ])
 
     def compute_advantages(
         self,
@@ -703,12 +725,26 @@ if RLLIB_AVAILABLE:
             # Get EQS weights from policy (these are the means)
             eqs_weights = self.policy(base_obs, strategy_idx)  # (B, 8)
 
-            # For RLlib's continuous action space, we need to return [means, log_stds]
-            # Use fixed log_std for simplicity (can be learned if needed)
-            log_stds = torch.zeros(batch_size, self.action_dim, device=obs.device) - 0.5  # log(std) = -0.5 -> std ≈ 0.6
+            # For RLlib's continuous action space, return [means, log_stds].
+            # FIX (Issue 2 — Entropy Flattening): Route per-head LEARNED log_std by
+            # strategy instead of using a hardcoded constant.  The old constant
+            # (-0.5 for every dim, every strategy) pinned entropy at a permanent
+            # 6.43, making the entropy schedule a no-op and killing exploration.
+            assault_log_std = self.policy.assault_log_std  # (eqs_dim,) Parameter
+            defend_log_std  = self.policy.defend_log_std
+            support_log_std = self.policy.support_log_std
+
+            assault_mask = (strategy_idx == 0).float().unsqueeze(1)  # (B, 1)
+            defend_mask  = (strategy_idx == 1).float().unsqueeze(1)
+            support_mask = (strategy_idx == 2).float().unsqueeze(1)
+
+            # Select the appropriate per-head log_std for each sample (B, eqs_dim)
+            log_stds = (assault_log_std * assault_mask +
+                        defend_log_std  * defend_mask  +
+                        support_log_std * support_mask)
 
             # Concatenate means and log_stds
-            output = torch.cat([eqs_weights, log_stds], dim=-1)  # (B, 16)
+            output = torch.cat([eqs_weights, log_stds], dim=-1)  # (B, 14)
 
             
 
@@ -758,15 +794,17 @@ class MOCv10_2TrainingConfig:
     HIDDEN_DIMS = [256, 256]
 
     # PPO hyperparameters
+    # FIX (Issue 1 — Critic Collapse): Larger batch + more SGD epochs give the
+    # critic more gradient steps per iteration, stabilising vf_explained_var.
     LEARNING_RATE = 3e-4
-    TRAIN_BATCH_SIZE = 10000
-    SGD_MINIBATCH_SIZE = 512  # ~20 minibatches per epoch (10000 ÷ 512)
-    NUM_SGD_ITER = 5
+    TRAIN_BATCH_SIZE = 20000          # was 10000 — larger batch reduces reward-variance noise for critic
+    SGD_MINIBATCH_SIZE = 512          # ~39 minibatches per epoch (20000 ÷ 512)
+    NUM_SGD_ITER = 10                 # was 5  — more critic update steps per iteration
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
     ENTROPY_COEFF = 0.01
-    VF_LOSS_COEFF = 0.5
+    VF_LOSS_COEFF = 1.0               # was 0.5 — give critic loss equal weight to actor
     GRAD_CLIP = 0.5
     VF_CLIP_PARAM = 10.0
 

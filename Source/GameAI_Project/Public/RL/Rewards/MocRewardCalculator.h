@@ -218,13 +218,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float SupportHealthThreshold = 0.8f;
 
-	/** Defend: normalized weapon cooldown below which the readiness bonus fires */
-	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float DefendWeaponCooldownThreshold = 0.3f;
-
-	/** Defend: flat bonus awarded when weapon is ready */
-	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float DefendWeaponReadyBonus = 1.0f;
 
 
 protected:
@@ -260,4 +253,13 @@ protected:
 	// Momentum state (per-episode, reset in ResetEpisodeState)
 	int32 PostCaptureMomentumStepsRemaining = 0;
 	FVector LastCapturedPointLocation = FVector::ZeroVector;
+
+	// FIX (Issue 3 — Support): Cache the target ally index so the approach-delta
+	// is always computed against the SAME ally across consecutive steps.
+	// Without this, if a different ally becomes most-injured between steps,
+	// PrevAllyDist uses the old position of a different slot → noisy gradient.
+	int32 CachedInjuredAllyIdx = -1;
+	// Re-evaluate target ally every N steps (or on death: idx goes invalid)
+	int32 InjuredAllyStalenessCounter = 0;
+	static constexpr int32 InjuredAllyReevalInterval = 5;
 };
