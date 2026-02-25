@@ -173,6 +173,23 @@ float UMocRewardCalculator::ComputeStepReward(
 	const FObservation& Current,
 	const FEQSWeightParameters& Action)
 {
+	// B5: Death masking — if agent already died this episode, return 0.
+	// Sparse rewards (kill callbacks from other agents) are still drained to prevent
+	// accumulation, but not forwarded. This ensures the death penalty isn't drowned
+	// out by 200+ steps of baseline reward post-respawn.
+	if (bAgentDiedThisEpisode)
+	{
+		DrainSparseReward(); // drain and discard
+		return 0.0f;
+	}
+
+	// Detect death on THIS step → set flag for all future steps
+	if (Prev.bIsAlive && !Current.bIsAlive)
+	{
+		bAgentDiedThisEpisode = true;
+		// Still compute this step's reward (includes the death penalty from sparse drain)
+	}
+
 	float Reward = 0.0f;
 	const float PositionChange = FVector::Dist(Prev.Position, Current.Position);
 	const int32 MyTeamID = (OwnerCharacter) ? OwnerCharacter->GetTeamID_Implementation() : -1;
@@ -451,9 +468,11 @@ float UMocRewardCalculator::ComputeStepReward(
 	// Drain any sparse rewards accumulated by event callbacks (kills, deaths, captures) this step
 	Reward += DrainSparseReward();
 
+	// Global reward normalization: scale down so VF can fit discounted returns.
+	// Applied BEFORE clamping so sparse events (±20) become ±2 and dense (0.3) becomes 0.03.
+	Reward *= GlobalRewardScale;
+
 	// B3: Clamp total step reward to prevent catastrophic accumulation.
-	// Without this, a single agent can reach -27000+ over 500 steps from
-	// compounding sparse penalties (capture flip-flops) and dense negatives.
 	Reward = FMath::Clamp(Reward, StepRewardClampMin, StepRewardClampMax);
 
 	return Reward;
@@ -525,6 +544,7 @@ void UMocRewardCalculator::ResetEpisodeState()
 	CachedInjuredAllyIdx = -1;
 	InjuredAllyStalenessCounter = 0;
 	LastCaptureLossPenaltyTime.Empty();
+	bAgentDiedThisEpisode = false;
 }
 
 // ==================== Event Log ====================

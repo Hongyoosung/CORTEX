@@ -22,6 +22,7 @@ services:
       - HOST=host.docker.internal                 # Connect to UE5 on host machine
       - PORT=50051
       - IS_DOCKER=true                            # Enable Docker-specific gRPC settings
+      - RESUME_CHECKPOINT=${RESUME_CHECKPOINT:-}  # Optional: path to checkpoint to resume from
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # $$VAR is expanded by the container shell (not by Compose),

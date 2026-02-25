@@ -69,6 +69,10 @@ if SCHOLA_AVAILABLE:
             self.num_envs = kwargs.get("num_envs", 4)
             self._agent_strategies = {}  # flat_id → strategy_idx (0=Assault, 1=Defend, 2=Support)
 
+            # Force uniform strategy distribution: override UE5 SquadCommander assignments
+            # so each strategy head sees equal training data.
+            self._force_uniform_strategy = kwargs.get("force_uniform_strategy", True)
+
             print(f"[MOC v10.2] Connecting to {host}:{port}...")
             print(f"[MOC v10.2] Multi-environment: {self.num_envs} parallel UE5 envs")
             print(f"[MOC v10.2] Architecture: Command-Driven Executor (3 strategies)")
@@ -130,7 +134,7 @@ if SCHOLA_AVAILABLE:
             self._agent_episode_rewards = {}  # Cumulative rewards per agent per episode
 
             # Episode timeout (backup mechanism - will sync from UE5)
-            self._max_episode_steps = 300  # Default fallback, synced from UE5 on first step; 300 = ~2.5min at 2Hz
+            self._max_episode_steps = 100  # Shorter episodes improve credit assignment; 100 = ~50s at 2Hz
             self._max_episode_steps_synced = False
             self._force_timeout_enabled = True
 
@@ -177,6 +181,23 @@ if SCHOLA_AVAILABLE:
         def _get_agents_for_env(self, physical_env_idx):
             """Get all agent IDs belonging to a physical Schola environment."""
             return [aid for aid in self._agent_ids if aid.startswith(f"agent_{physical_env_idx}_")]
+
+        def _assign_uniform_strategies(self):
+            """Assign strategies in round-robin across all agents for uniform distribution.
+
+            Called at episode boundaries. Each agent gets a fixed strategy for the episode.
+            Distribution: approximately 33%/33%/33% across Assault/Defend/Support.
+            """
+            agents_sorted = sorted(self._agent_ids)
+            for i, flat_id in enumerate(agents_sorted):
+                self._agent_strategies[flat_id] = i % 3  # 0=Assault, 1=Defend, 2=Support
+
+        def _get_agent_strategy(self, flat_id, ue5_strategy_idx):
+            """Get strategy for an agent, applying uniform override if enabled."""
+            if self._force_uniform_strategy:
+                # Use pre-assigned uniform strategy (set in reset / episode boundary)
+                return self._agent_strategies.get(flat_id, ue5_strategy_idx)
+            return ue5_strategy_idx
 
         def _sync_max_episode_steps_from_ue5(self, info_dict):
             """
@@ -250,6 +271,16 @@ if SCHOLA_AVAILABLE:
             else:
                 base_obs = base_obs[:TARGET_BASE_SIZE]
 
+            # Force uniform strategy distribution during training:
+            # Override UE5 SquadCommander assignment with round-robin per agent.
+            # This ensures each strategy head sees equal data volume.
+            if self._force_uniform_strategy:
+                if not hasattr(self, '_agent_strategy_counter'):
+                    self._agent_strategy_counter = 0
+                # Rotate strategy per observation (each agent gets a fixed strategy per episode,
+                # reassigned on episode boundary via _assign_uniform_strategies)
+                pass  # strategy_idx already set by _assign_uniform_strategies
+
             # Strategy one-hot (3-dim for v10.2)
             strategy_onehot = np.zeros(3, dtype=np.float32)
             strategy_idx = min(int(strategy_idx), 2)  # Range check: [0,2]
@@ -313,6 +344,11 @@ if SCHOLA_AVAILABLE:
                 self._first_reset_done = True
 
                 self._update_agent_map()
+
+                # Assign uniform strategies if enabled
+                if self._force_uniform_strategy:
+                    self._assign_uniform_strategies()
+                    print(f"[MOC v10.2] Uniform strategy assignment: {dict(sorted(self._agent_strategies.items()))}")
 
                 # Re-initialize reward tracking after agent map is built
                 for flat_id in self._agent_ids:
@@ -460,6 +496,10 @@ if SCHOLA_AVAILABLE:
                         for aid in env_agents:
                             self._agent_episode_rewards[aid] = 0.0
 
+                        # Shuffle strategy assignments for next episode
+                        if self._force_uniform_strategy:
+                            self._assign_uniform_strategies()
+
                 # Set __all__ after processing all environments
                 all_envs_done = all(self._env_done_flags.get(i, False) for i in range(self.num_envs))
                 if all_envs_done:
@@ -531,10 +571,13 @@ if SCHOLA_AVAILABLE:
                 if len(full_obs) >= 52:
                     base_obs = full_obs[:49]
                     strategy_onehot = full_obs[49:52]
-                    strategy_idx = int(np.argmax(strategy_onehot))
+                    ue5_strategy_idx = int(np.argmax(strategy_onehot))
                 else:
                     base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
-                    strategy_idx = 0
+                    ue5_strategy_idx = 0
+
+                # Apply uniform strategy override if enabled
+                strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
 
                 # Cache strategy for this agent
                 self._agent_strategies[flat_id] = strategy_idx
@@ -584,10 +627,13 @@ if SCHOLA_AVAILABLE:
                 if len(full_obs) >= 52:
                     base_obs = full_obs[:49]
                     strategy_onehot = full_obs[49:52]
-                    strategy_idx = int(np.argmax(strategy_onehot))
+                    ue5_strategy_idx = int(np.argmax(strategy_onehot))
                 else:
                     base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
-                    strategy_idx = 0
+                    ue5_strategy_idx = 0
+
+                # Apply uniform strategy override if enabled
+                strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
 
                 # Cache strategy for this agent
                 self._agent_strategies[flat_id] = strategy_idx
@@ -705,10 +751,13 @@ if SCHOLA_AVAILABLE:
                 if len(full_obs) >= 52:
                     base_obs = full_obs[:49]
                     strategy_onehot = full_obs[49:52]
-                    strategy_idx = int(np.argmax(strategy_onehot))
+                    ue5_strategy_idx = int(np.argmax(strategy_onehot))
                 else:
                     base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
-                    strategy_idx = 0
+                    ue5_strategy_idx = 0
+
+                # Apply uniform strategy override if enabled
+                strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
 
                 # Cache strategy for this agent
                 self._agent_strategies[flat_id] = strategy_idx

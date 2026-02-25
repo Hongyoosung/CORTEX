@@ -6,6 +6,7 @@ SET "NUM_WORKERS=0"
 SET "NUM_ITERATIONS=50"
 SET "DETACH=false"
 SET "NO_BUILD=false"
+SET "RESUME_CHECKPOINT="
 
 :parse_args
 if "%~1"=="" goto :end_parse
@@ -32,6 +33,134 @@ if ERRORLEVEL 1 (
     pause
     exit /b 1
 )
+
+REM ── Mode selection ──────────────────────────────────────────────────────────
+echo.
+echo Select training mode:
+echo   1) Start new training
+echo   2) Resume from checkpoint
+echo.
+set /p "MODE_CHOICE=Enter choice (1 or 2): "
+
+if "%MODE_CHOICE%"=="2" goto :resume_menu
+if "%MODE_CHOICE%"=="1" goto :start_training
+echo Invalid choice. Defaulting to new training.
+goto :start_training
+
+
+REM ── Resume menu ─────────────────────────────────────────────────────────────
+:resume_menu
+echo.
+echo ----------------------------------------
+echo  Available training runs:
+echo ----------------------------------------
+
+REM List run directories under training_results_v10_2\
+set "RESULTS_DIR=%~dp0training_results_v10_2"
+if not exist "%RESULTS_DIR%" (
+    echo No training runs found. training_results_v10_2\ does not exist.
+    echo Falling back to new training.
+    goto :start_training
+)
+
+set "RUN_COUNT=0"
+for /d %%D in ("%RESULTS_DIR%\v10_2_*") do (
+    set /a "RUN_COUNT+=1"
+    set "RUN_!RUN_COUNT!=%%~nD"
+    echo    !RUN_COUNT!^) %%~nD
+)
+
+if "%RUN_COUNT%"=="0" (
+    echo No training runs found in training_results_v10_2\.
+    echo Falling back to new training.
+    goto :start_training
+)
+
+echo.
+set /p "RUN_CHOICE=Select run number (1-%RUN_COUNT%): "
+
+REM Validate run choice
+set "SELECTED_RUN="
+for /l %%i in (1,1,%RUN_COUNT%) do (
+    if "%RUN_CHOICE%"=="%%i" set "SELECTED_RUN=!RUN_%%i!"
+)
+if "%SELECTED_RUN%"=="" (
+    echo Invalid selection. Falling back to new training.
+    goto :start_training
+)
+
+echo.
+echo ----------------------------------------
+echo  Checkpoints in %SELECTED_RUN%:
+echo ----------------------------------------
+
+set "RUN_DIR=%RESULTS_DIR%\%SELECTED_RUN%"
+set "CKP_COUNT=0"
+set "CKP_LATEST="
+
+REM List numbered checkpoints (alphabetical = numerical order for checkpoint_XXXXXX)
+for /d %%D in ("%RUN_DIR%\checkpoint_*") do (
+    set /a "CKP_COUNT+=1"
+    set "CKP_!CKP_COUNT!=%%~nD"
+    set "CKP_LATEST=%%~nD"
+    echo    !CKP_COUNT!^) %%~nD
+)
+
+REM Add "latest" shortcut (dedicated overwriting checkpoint saved every iteration)
+if exist "%RUN_DIR%\latest" (
+    set /a "CKP_COUNT+=1"
+    set "CKP_!CKP_COUNT!=latest"
+    echo    !CKP_COUNT!^) latest  ^(most recent progress^)
+) else if defined CKP_LATEST (
+    REM Fallback: no dedicated latest/ dir, use highest-numbered checkpoint
+    set /a "CKP_COUNT+=1"
+    set "CKP_!CKP_COUNT!=!CKP_LATEST!"
+    echo    !CKP_COUNT!^) latest  ^(!CKP_LATEST!^)
+)
+
+REM Add "best" if it exists
+if exist "%RUN_DIR%\best" (
+    set /a "CKP_COUNT+=1"
+    set "CKP_!CKP_COUNT!=best"
+    echo    !CKP_COUNT!^) best  ^(highest-reward checkpoint^)
+)
+
+if "!CKP_COUNT!"=="0" (
+    echo No checkpoints found in %SELECTED_RUN%.
+    echo Falling back to new training.
+    goto :start_training
+)
+
+echo.
+set /p "CKP_CHOICE=Select checkpoint number (1-%CKP_COUNT%): "
+
+set "SELECTED_CKP="
+for /l %%i in (1,1,%CKP_COUNT%) do (
+    if "%CKP_CHOICE%"=="%%i" set "SELECTED_CKP=!CKP_%%i!"
+)
+if "%SELECTED_CKP%"=="" (
+    echo Invalid selection. Falling back to new training.
+    goto :start_training
+)
+
+REM Build the container-side path (volume is mounted at /app/training_results_v10_2)
+set "RESUME_CHECKPOINT=/app/training_results_v10_2/%SELECTED_RUN%/%SELECTED_CKP%"
+echo.
+echo Resuming from: %RESUME_CHECKPOINT%
+goto :start_training
+
+
+REM ── Build and run ────────────────────────────────────────────────────────────
+:start_training
+echo.
+echo ========================================
+if "%RESUME_CHECKPOINT%"=="" (
+    echo  Starting new training run
+) else (
+    echo  Resuming training
+    echo  Checkpoint: %SELECTED_CKP%
+)
+echo ========================================
 
 if "%NO_BUILD%"=="false" (
     echo [1/2] Building training image...

@@ -805,16 +805,14 @@ class MOCv10_2TrainingConfig:
     HIDDEN_DIMS = [256, 256]
 
     # PPO hyperparameters
-    # FIX (Issue 1 — Critic Collapse): Larger batch + more SGD epochs give the
-    # critic more gradient steps per iteration, stabilising vf_explained_var.
     LEARNING_RATE = 3e-4
-    TRAIN_BATCH_SIZE = 20000          # was 10000 — larger batch reduces reward-variance noise for critic
-    SGD_MINIBATCH_SIZE = 512          # ~39 minibatches per epoch (20000 ÷ 512)
-    NUM_SGD_ITER = 10                 # was 5  — more critic update steps per iteration
+    TRAIN_BATCH_SIZE = 4000           # Reduced: shorter episodes (100 steps) × fewer agents per policy
+    SGD_MINIBATCH_SIZE = 256          # ~16 minibatches per epoch (4000 ÷ 256)
+    NUM_SGD_ITER = 10
     GAMMA = 0.99
     GAE_LAMBDA = 0.95
     CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.01
+    ENTROPY_COEFF = 0.02  # Higher initial entropy for more exploration with separate policies
     VF_LOSS_COEFF = 1.0               # was 0.5 — give critic loss equal weight to actor
     GRAD_CLIP = 0.5
     VF_CLIP_PARAM = 10.0
@@ -825,9 +823,9 @@ class MOCv10_2TrainingConfig:
     NUM_ITERATIONS = int(os.environ.get('NUM_ITERATIONS', 100))
     CHECKPOINT_FREQ = 10
 
-    # Schedules
-    LR_SCHEDULE = [[0, 3e-4], [50000, 1e-4], [100000, 5e-5]]
-    ENTROPY_COEFF_SCHEDULE = [[0, 0.01], [50000, 0.005], [100000, 0.001]]
+    # Schedules — adjusted for shorter episodes and smaller batches
+    LR_SCHEDULE = [[0, 3e-4], [200000, 1e-4], [500000, 5e-5]]
+    ENTROPY_COEFF_SCHEDULE = [[0, 0.02], [200000, 0.01], [500000, 0.005]]
 
     # Paths
     OUTPUT_DIR = "training_results_v10_2"
@@ -839,6 +837,7 @@ def create_env_config():
         "host": MOCv10_2TrainingConfig.HOST,
         "base_port": MOCv10_2TrainingConfig.PORT,
         "num_envs": MOCv10_2TrainingConfig.NUM_UE5_ENVIRONMENTS,
+        "force_uniform_strategy": True,  # Override UE5 SquadCommander for balanced training
     }
 
 
@@ -901,28 +900,53 @@ if RLLIB_AVAILABLE:
                 episode.custom_metrics["round_robin_active_strategy"] = dominant_strat
 
         def on_train_result(self, *, algorithm, result, **kwargs):
-            """Extract per-strategy loss metrics from learner_stats and re-publish
+            """Extract per-policy loss metrics from learner_stats and re-publish
             them as top-level custom_metrics so TensorBoard writes them to
             ray/tune/custom_metrics/* alongside the per-strategy reward curves."""
-            learner_stats = (
-                result.get("info", {})
-                      .get("learner", {})
-                      .get("shared_policy", {})
-                      .get("learner_stats", {})
-            )
-            if not learner_stats:
-                return
+            learner_info = result.get("info", {}).get("learner", {})
 
-            per_strategy_keys = [
-                "policy_loss", "value_loss", "entropy", "approx_kl"
-            ]
-            for key in per_strategy_keys:
-                for name in ["assault", "defend", "support"]:
-                    stat_key = f"{key}/{name}"
-                    if stat_key in learner_stats:
+            for policy_name, strategy_label in [
+                ("assault_policy", "assault"),
+                ("defend_policy", "defend"),
+                ("support_policy", "support"),
+            ]:
+                policy_stats = learner_info.get(policy_name, {}).get("learner_stats", {})
+                if not policy_stats:
+                    continue
+                for key in ["policy_loss", "vf_loss", "entropy", "total_loss"]:
+                    if key in policy_stats:
                         result.setdefault("custom_metrics", {})[
-                            f"train_{key}_{name}"
-                        ] = learner_stats[stat_key]
+                            f"train_{key}_{strategy_label}"
+                        ] = policy_stats[key]
+
+
+_STRATEGY_TO_POLICY = {0: "assault_policy", 1: "defend_policy", 2: "support_policy"}
+
+
+def _strategy_policy_mapping_fn(agent_id, episode, worker, **kwargs):
+    """Map agents to per-strategy policies based on the strategy one-hot in their observation.
+
+    The env assigns strategies uniformly (round-robin) and encodes them in obs[49:52].
+    We extract the strategy index from the latest observation to route to the correct policy.
+    """
+    # Try to get the latest observation for this agent
+    try:
+        obs = episode.last_observation_for(agent_id)
+        if obs is not None and len(obs) >= 52:
+            strategy_onehot = obs[49:52]
+            strategy_idx = int(np.argmax(strategy_onehot))
+            return _STRATEGY_TO_POLICY.get(strategy_idx, "assault_policy")
+    except Exception:
+        pass
+
+    # Fallback: derive strategy from agent ID hash for deterministic assignment
+    # agent_id format: "agent_{env_idx}_{schola_idx}"
+    try:
+        parts = agent_id.split("_")
+        agent_num = int(parts[-1])  # schola_agent_idx
+        return _STRATEGY_TO_POLICY.get(agent_num % 3, "assault_policy")
+    except (ValueError, IndexError):
+        return "assault_policy"
 
 
 def create_ppo_config():
@@ -946,7 +970,7 @@ def create_ppo_config():
     config = config.env_runners(
         num_env_runners=MOCv10_2TrainingConfig.NUM_WORKERS,
         num_envs_per_env_runner=MOCv10_2TrainingConfig.NUM_ENVS_PER_WORKER,
-        rollout_fragment_length=300,  # Matches episode length for clean episode boundaries
+        rollout_fragment_length=100,  # Matches episode length for clean episode boundaries
         batch_mode="truncate_episodes",
     )
 
@@ -964,10 +988,16 @@ def create_ppo_config():
             )
             print("[v10.2] Windows fallback: using old API stack")
 
-    # Multi-agent
+    # Multi-agent: 3 separate per-strategy policies to eliminate gradient conflict.
+    # Each agent is mapped to its strategy's policy based on the cached strategy assignment.
+    # All three policies share the same model architecture but train independently.
     config = config.multi_agent(
-        policies={"shared_policy"},
-        policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "shared_policy",
+        policies={
+            "assault_policy",
+            "defend_policy",
+            "support_policy",
+        },
+        policy_mapping_fn=_strategy_policy_mapping_fn,
         count_steps_by="agent_steps",
     )
 
@@ -1044,34 +1074,45 @@ def register_custom_model():
 
 
 def export_onnx(algo, output_dir):
-    """Export trained policy to ONNX format for UE5."""
-    policy = algo.get_policy("shared_policy")
-    if not policy:
-        print("\n[FATAL] export_onnx: Could not get 'shared_policy'")
-        sys.exit(1)
+    """Export trained policies to ONNX format for UE5.
 
-    model = policy.model.policy  # Unwrap the RLlib wrapper
-    model.eval()
+    With separate per-strategy policies, exports 3 ONNX files — one per strategy.
+    """
+    strategy_policies = {
+        0: ("assault_policy", "assault"),
+        1: ("defend_policy", "defend"),
+        2: ("support_policy", "support"),
+    }
 
-    dummy_obs = torch.randn(1, 49)
-    dummy_strategy = torch.zeros(1, dtype=torch.long)
-    model_path = os.path.join(output_dir, "moc_policy_v10_2.onnx")
+    for strategy_idx, (policy_name, strategy_label) in strategy_policies.items():
+        policy = algo.get_policy(policy_name)
+        if not policy:
+            print(f"\n[WARN] export_onnx: Could not get '{policy_name}', skipping")
+            continue
 
-    torch.onnx.export(
-        model,
-        (dummy_obs, dummy_strategy),
-        model_path,
-        input_names=['observation', 'strategy_index'],
-        output_names=['eqs_weights'],
-        dynamic_axes={
-            'observation': {0: 'batch_size'},
-            'strategy_index': {0: 'batch_size'},
-            'eqs_weights': {0: 'batch_size'}
-        },
-        opset_version=14
-    )
+        model = policy.model.policy  # Unwrap the RLlib wrapper
+        model.eval()
 
-    print(f"[ONNX Export] Model saved to: {model_path}")
+        dummy_obs = torch.randn(1, 49)
+        dummy_strategy = torch.full((1,), strategy_idx, dtype=torch.long)
+        model_path = os.path.join(output_dir, f"moc_policy_v10_2_{strategy_label}.onnx")
+
+        torch.onnx.export(
+            model,
+            (dummy_obs, dummy_strategy),
+            model_path,
+            input_names=['observation', 'strategy_index'],
+            output_names=['eqs_weights'],
+            dynamic_axes={
+                'observation': {0: 'batch_size'},
+                'strategy_index': {0: 'batch_size'},
+                'eqs_weights': {0: 'batch_size'}
+            },
+            opset_version=14
+        )
+
+        print(f"[ONNX Export] {strategy_label} model saved to: {model_path}")
+
     print(f"  Input: observation(B, 49), strategy_index(B)")
     print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
 
@@ -1128,9 +1169,11 @@ def train_with_rllib(args):
     register_custom_model()
 
     # Create output directory
+    import shutil
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(MOCv10_2TrainingConfig.OUTPUT_DIR, f"v10_2_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
+    latest_dir = os.path.join(output_dir, "latest")
     print(f"Output: {output_dir}")
 
     # Create logger
@@ -1149,6 +1192,17 @@ def train_with_rllib(args):
         print(f"[ERROR] Failed to connect: {e}")
         ray.shutdown()
         return
+
+    # Resume from checkpoint if requested
+    if args.resume:
+        print(f"\nResuming from checkpoint: {args.resume}")
+        try:
+            algo.restore(args.resume)
+            print("Checkpoint loaded successfully.\n")
+        except Exception as e:
+            print(f"[ERROR] Failed to restore checkpoint: {e}")
+            ray.shutdown()
+            return
 
     # Training loop
     best_reward = float("-inf")
@@ -1205,22 +1259,29 @@ def train_with_rllib(args):
             print(f"    Agent steps this iteration: {agent_steps}")
             print(f"    Cumulative: {cumulative_episodes} episodes, {cumulative_steps} steps")
 
-            # Show learner stats
-            learner_info = result.get('info', {}).get('learner', {}).get('shared_policy', {}).get('learner_stats', {})
-            if learner_info:
-                total_loss = learner_info.get('total_loss', 'N/A')
-                vf_loss = learner_info.get('vf_loss', 'N/A')
-                policy_loss = learner_info.get('policy_loss', 'N/A')
-                entropy = learner_info.get('entropy', 'N/A')
-                print(f"    Loss: total={total_loss:.4f}, policy={policy_loss:.4f}, vf={vf_loss:.4f}" if isinstance(total_loss, float) else f"    Loss: {total_loss}")
-                if isinstance(entropy, float):
-                    print(f"    Entropy: {entropy:.2f}")
+            # Show per-policy learner stats
+            learner_all = result.get('info', {}).get('learner', {})
+            for pol_name, pol_label in [("assault_policy", "Assault"), ("defend_policy", "Defend"), ("support_policy", "Support")]:
+                pol_stats = learner_all.get(pol_name, {}).get('learner_stats', {})
+                if pol_stats:
+                    tl = pol_stats.get('total_loss', 'N/A')
+                    vl = pol_stats.get('vf_loss', 'N/A')
+                    pl = pol_stats.get('policy_loss', 'N/A')
+                    ent = pol_stats.get('entropy', 'N/A')
+                    if isinstance(tl, float):
+                        print(f"    {pol_label}: total={tl:.4f}, policy={pl:.4f}, vf={vl:.4f}, entropy={ent:.2f}" if isinstance(ent, float) else f"    {pol_label}: total={tl:.4f}")
             print()
 
-        # Checkpoint
+        # Numbered checkpoint (kept permanently)
         if (i + 1) % args.checkpoint_freq == 0:
             algo.save(output_dir)
             print(f"  >> Checkpoint saved at iteration {current_iter}\n")
+
+        # Latest checkpoint (overwritten every latest_freq iterations for easy resume)
+        if (i + 1) % args.latest_freq == 0:
+            if os.path.exists(latest_dir):
+                shutil.rmtree(latest_dir)
+            algo.save(latest_dir)
 
         # Track best
         if reward > best_reward and not np.isnan(reward):
@@ -1243,7 +1304,7 @@ def train_with_rllib(args):
     algo.save(output_dir)
     print(f"Final model saved to: {output_dir}")
 
-    # Export ONNX
+    # Export ONNX (3 separate models, one per strategy)
     best_dir = os.path.join(output_dir, "best")
     if os.path.exists(best_dir):
         algo.restore(os.path.abspath(best_dir))
@@ -1405,7 +1466,7 @@ def evaluate_checkpoint(checkpoint_path: str):
             config = create_ppo_config()
             algo = config.build()
             algo.restore(checkpoint_path)
-            rllib_policy = algo.get_policy("shared_policy")
+            rllib_policy = algo.get_policy("assault_policy")
             policy = rllib_policy.model.policy
             print("Loaded from RLlib checkpoint")
         except Exception as e:
@@ -1461,12 +1522,17 @@ if __name__ == '__main__':
                        help="Number of training iterations (for rllib mode)")
     parser.add_argument("--checkpoint-freq", type=int, default=10,
                        help="Checkpoint frequency (for rllib mode)")
+    parser.add_argument("--latest-freq", type=int, default=1,
+                       help="How often to overwrite the 'latest' checkpoint (1 = every iteration)")
     parser.add_argument("--host", type=str, default=MOCv10_2TrainingConfig.HOST,
                        help="UE5 host address")
     parser.add_argument("--port", type=int, default=MOCv10_2TrainingConfig.PORT,
                        help="UE5 gRPC port")
     parser.add_argument("--checkpoint", type=str, default=None,
                        help="Checkpoint path (for eval mode)")
+    parser.add_argument("--resume", type=str,
+                       default=os.environ.get("RESUME_CHECKPOINT") or None,
+                       help="RLlib checkpoint path to resume from (rllib mode)")
 
     args = parser.parse_args()
 

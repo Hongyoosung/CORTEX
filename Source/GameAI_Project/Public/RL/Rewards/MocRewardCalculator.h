@@ -218,15 +218,21 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float SupportHealthThreshold = 0.8f;
 
-	// ==================== Reward Clamping (B3) ====================
+	// ==================== Reward Normalization & Clamping ====================
 
-	/** Minimum per-step reward (prevents catastrophic negative accumulation) */
+	/** Global reward scale applied to all step rewards before clamping.
+	 *  Reduces reward magnitude so the value function can fit discounted returns.
+	 *  Default 0.1 ⇒ per-step rewards land in ~[-0.5, 0.5] range. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMin = -10.0f;
+	float GlobalRewardScale = 0.1f;
 
-	/** Maximum per-step reward */
+	/** Minimum per-step reward (after scaling) */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMax = 10.0f;
+	float StepRewardClampMin = -2.0f;
+
+	/** Maximum per-step reward (after scaling) */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
+	float StepRewardClampMax = 2.0f;
 
 	// ==================== Capture Loss Cooldown (B4) ====================
 
@@ -292,4 +298,9 @@ protected:
 
 	// B4: Per-capture-point cooldown for loss penalties (keyed by PointID)
 	TMap<ECapturePointID, float> LastCaptureLossPenaltyTime;
+
+	// B5: Death masking — once an agent dies, zero all rewards for the rest of the episode.
+	// This prevents baseline rewards (0.3/step) from drowning out the death penalty signal.
+	// Reset in ResetEpisodeState().
+	bool bAgentDiedThisEpisode = false;
 };
