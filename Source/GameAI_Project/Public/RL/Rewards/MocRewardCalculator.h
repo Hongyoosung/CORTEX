@@ -58,10 +58,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateLosePointPenalty(EStrategyType ActiveStrategy);
 
-	/** Assault: +1, Defend: +1, Support: +2 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
-	float CalculatePickupDenyReward(EStrategyType ActiveStrategy);
-
 	/** Only fires when HP < SurvivalHPThreshold */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateSurvivalReward(EStrategyType ActiveStrategy, float CurrentHP, float MaxHP);
@@ -173,9 +169,6 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float LossCaptureReward = -100.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float PickupDenyReward = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float PenaltyPerMeter = -0.01f;

@@ -5,7 +5,6 @@
 #include "Team/SquadManager.h"  // USquadManager
 #include "Characters/MocCharacter.h"
 #include "Schola/Components/ScholaMocAgent.h"
-#include "Actors/PickupBase.h"
 #include "Data/TeamData.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -474,17 +473,6 @@ void ATeamManager::ReportEnemySighting(int32 ReportingTeamID, AActor* Enemy, FVe
 	FogOfWarManager->ReportEnemy(ReportingTeamID, Enemy, Location);
 }
 
-void ATeamManager::ReportResourceDiscovery(int32 TeamID, APickupBase* Resource)
-{
-	if (!FogOfWarManager || !Resource)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamManager: FogOfWarManager not available for resource discovery report"));
-		return;
-	}
-
-	bool bAvailable = Resource->IsAvailable();
-	FogOfWarManager->ReportResource(TeamID, Resource, bAvailable);
-}
 
 FVector ATeamManager::GetLastKnownEnemyPosition(int32 TeamID, AActor* Enemy) const
 {

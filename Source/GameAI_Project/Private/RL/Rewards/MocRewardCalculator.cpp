@@ -138,13 +138,6 @@ float UMocRewardCalculator::CalculateLosePointPenalty(EStrategyType ActiveStrate
 	return ApplyAndLogReward(ERewardEventType::LosePoint, ActiveStrategy, LossCaptureReward * Scale);
 }
 
-float UMocRewardCalculator::CalculatePickupDenyReward(EStrategyType ActiveStrategy)
-{
-	float Scale = GetStrategyScale(ActiveStrategy,
-		AssaultReward.PickupDenyRewardScale, DefendReward.PickupDenyRewardScale, SupportReward.PickupDenyRewardScale);
-	return ApplyAndLogReward(ERewardEventType::PickupDeny, ActiveStrategy, PickupDenyReward * Scale);
-}
-
 float UMocRewardCalculator::CalculateSurvivalReward(EStrategyType ActiveStrategy, float CurrentHP, float MaxHP)
 {
 	if (MaxHP <= 0.0f || (CurrentHP / MaxHP) > SurvivalHPThreshold) return 0.0f;

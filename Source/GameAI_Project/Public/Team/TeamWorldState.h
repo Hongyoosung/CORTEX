@@ -13,7 +13,7 @@
  * Replaces individual FObservation (52-dim) with team-wide awareness including:
  * - Friendly unit status (positions, health, strategies, cooldowns)
  * - Enemy estimates (last known positions with confidence decay)
- * - Map state (capture points, pickups)
+ * - Map state (capture points)
  *
  * Total Dimensionality: ~60-dim
  *
@@ -116,14 +116,6 @@ struct GAMEAI_PROJECT_API FTeamWorldState
 	TArray<int32> CapturePointOwnership;
 
 	/**
-	 * Pickup availability bitmask
-	 * Bit flags: 0=Taken, 1=Available
-	 * Can be expanded to TArray<bool> for clarity
-	 */
-	UPROPERTY(BlueprintReadWrite, Category = "TeamState|Map")
-	int32 PickupAvailability;
-
-	/**
 	 * Game time remaining (normalized 0-1)
 	 * 1.0 = match start, 0.0 = match end
 	 */
@@ -195,9 +187,6 @@ struct GAMEAI_PROJECT_API FTeamWorldState
 			Tensor.Add(static_cast<float>(Ownership));
 		}
 
-		// Pickup availability (1-dim, can be expanded)
-		Tensor.Add(static_cast<float>(PickupAvailability));
-
 		// Time remaining (1-dim)
 		Tensor.Add(TimeRemaining);
 
@@ -264,7 +253,6 @@ struct GAMEAI_PROJECT_API FTeamWorldState
 		EnemyAlive.Init(true, 5);
 
 		CapturePointOwnership.Init(0, 5);
-		PickupAvailability = 0;
 		TimeRemaining = 1.0f;
 	}
 };

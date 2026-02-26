@@ -487,8 +487,6 @@ FTeamWorldState UTeamWorldModel::ParseTensorToTeamState(const TArray<float>& Ten
 		State.CapturePointOwnership[i] = FMath::RoundToInt(Tensor[Idx++]);
 	}
 
-	// 11. Pickup availability (1-dim)
-	State.PickupAvailability = FMath::RoundToInt(Tensor[Idx++]);
 
 	// 12. Time remaining (1-dim)
 	State.TimeRemaining = FMath::Clamp(Tensor[Idx++], 0.0f, 1.0f);

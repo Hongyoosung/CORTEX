@@ -621,22 +621,6 @@ FTeamWorldState USquadManager::CollectTeamState() const
 				}
 			}
 
-			int32 PickupBitmask = 0;
-			int32 BitIndex = 0;
-			TArray<AActor*> PickupActors;
-			UGameplayStatics::GetAllActorsOfClass(World, APickupBase::StaticClass(), PickupActors);
-			for (int32 i = 0; i < FMath::Min(32, PickupActors.Num()); ++i)
-			{
-				if (APickupBase* Pickup = Cast<APickupBase>(PickupActors[i]))
-				{
-					if (Pickup->IsAvailable())
-					{
-						PickupBitmask |= (1 << BitIndex);
-					}
-					BitIndex++;
-				}
-			}
-			State.PickupAvailability = PickupBitmask;
 
 			float MaxDuration = GameMode->MaxMatchDuration;
 			if (MaxDuration > 0.0f)

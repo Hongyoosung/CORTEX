@@ -18,7 +18,6 @@
 // Forward declarations
 
 class UHealthComponent;
-class UWeaponComponent;
 class UScholaMocAgent;
 class UMocRewardCalculator;
 class UAIPerceptionStimuliSourceComponent;
@@ -29,6 +28,7 @@ class AMocGameMode;
 class ATeamManager;
 class AFogOfWarManager;
 class UNiagaraComponent;
+class UNiagaraSystem;
 struct FDeathEventData;
 struct FMocTeamInfo;
 
@@ -37,7 +37,7 @@ struct FMocTeamInfo;
  *
  * Component Architecture:
  * - UHealthComponent: Damage, death, respawn
- * - UWeaponComponent: Firing, ammo, cooldown
+ * - UAttackAbility: Firing, ammo, cooldown, target scanning
  * - UScholaMocAgent: RL training interface
  * - UAIPerceptionStimuliSourceComponent: AI visibility
  *
@@ -105,9 +105,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
 	UHealthComponent* GetHealthComponent() const { return HealthComponent; }
 
-	/** Get WeaponComponent */
+	/** Get AttackAbility (weapon + combat logic) */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UWeaponComponent* GetWeaponComponent() const { return WeaponComponent; }
+	UAttackAbility* GetAttackAbility() const { return AttackAbility; }
 
 	/** Get ScholaMocAgent */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
@@ -190,10 +190,6 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UHealthComponent* HealthComponent;
 
-	/** Weapon and combat */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UWeaponComponent* WeaponComponent;
-
 	/** RL training interface */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UScholaMocAgent* ScholaAgent;
@@ -236,15 +232,15 @@ public:
 
 	/** EQS result acceptance radius for movement (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
-	float EQSAcceptanceRadius = 50.0f;
+	float EQSAcceptanceRadius;
 
 	/** Niagara system asset for team identification VFX */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|VFX")
-	class UNiagaraSystem* TeamColorVFXAsset;
+	UNiagaraSystem* TeamColorVFXAsset;
 
 	/** VFX color parameter name */
 	UPROPERTY(EditAnywhere, Category = "Character|VFX")
-	FName VFXColorParameterName = FName("TeamColor");
+	FName VFXColorParameterName;
 
 	//========================================
 	// v10.2 Command Interface
@@ -306,14 +302,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|EQS")
 	FVector GetLastEQSTargetLocation() const { return LastEQSTargetLocation; }
 
+	UFUNCTION()
+	void ProcessTrainingAbilities();
 
 public:
 	/** Agent Info for team coordination */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 AgentID;
 
-	/** Team ID (0 = Red, 1 = Blue) - Assigned by TeamManager on spawn */
-	UPROPERTY(BlueprintReadOnly, Category = "AI|Identity")
+	/** Team ID (0 = Red, 1 = Blue) - Assigned by TeamManager on spawn, or set directly in editor for test maps */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 TeamID;
 
 protected:
@@ -336,21 +334,33 @@ protected:
 	FEQSWeightParameters CurrentEQSWeights;
 
 	/** True when Actuator wrote new weights that haven't been consumed yet */
-	bool bWeightsDirty = false;
+	bool bWeightsDirty;
 
 	/** Last EQS target location (for debugging) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
-	FVector LastEQSTargetLocation = FVector::ZeroVector;
+	FVector LastEQSTargetLocation;
 
 	/** Reference to Squad Commander (set on spawn) */
 	USquadManager* SquadCommander;
 
 	/** Time when character was last spawned/reset (for death diagnostics) */
-	float SpawnTime = 0.0f;
+	float SpawnTime;
 
 	TObjectPtr<AMocGameMode> GameMode;
 
 	TObjectPtr<ATeamManager> TM;
 
-	TObjectPtr<AFogOfWarManager> FogManager;
+	FTimerHandle TrainingAbilityTimerHandle;
+
+	//========================================
+	// Strategy Stat Modifiers
+	//========================================
+
+	/** Base stats cached at BeginPlay — used to restore after strategy change */
+	float BaseAttackDamage;
+	float BaseAttackRange;
+	float BaseMaxHealth;
+
+	/** Apply strategy-specific stat multipliers (Support: -50% damage/range, -30% max HP) */
+	void ApplyStrategyStatModifiers(EStrategyType Strategy);
 };

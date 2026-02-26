@@ -24,7 +24,6 @@ class AAbstractTrainer;
  * - [3]: EnemyVisibility          (-1=hide, +1=expose)
  * - [4]: AllyProximity            (-1=solo, +1=group)
  * - [5]: CombatRange              (normalized engagement distance)
- * - [6]: PickupProximity          (-1=ignore, +1=prioritize)
  *
  * Responsibility:
  * - Receives Box action from Schola framework

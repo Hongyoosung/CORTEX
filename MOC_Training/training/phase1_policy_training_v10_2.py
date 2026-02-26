@@ -4,7 +4,7 @@ Trains independent per-strategy policy networks for the v10.2 Commander-Executor
 Key Changes from v10.1:
 - NO local MCTS - agents are pure executors
 - Receives commanded strategy from Squad Commander (Assault/Defend/Support)
-- Outputs 7-dim EQS weights in range [-1, 1]
+- Outputs 6-dim EQS weights in range [-1, 1]
 - Local observation only (49-dim base: includes 44 tactical + 5 capture point statuses)
 
 Architecture (v10.2.1 — Independent Models):
@@ -18,14 +18,13 @@ Previous architecture (v10.2.0 — removed):
 - Suffered from gradient interference causing support head collapse
 - When used with 3 RLlib policies, created 6 dead heads per policy instance
 
-Action Space: Box([-1, 1]^7)
+Action Space: Box([-1, 1]^6)
 - [0]: EnemyObjectiveProximity
 - [1]: AllyObjectiveProximity
 - [2]: CoverDensity
 - [3]: EnemyVisibility
 - [4]: AllyProximity
 - [5]: CombatRange
-- [6]: PickupProximity
 
 Target:
 - 100,000 transitions
@@ -91,7 +90,7 @@ class SingleHeadPolicy_v10_2(nn.Module):
         self,
         obs_dim: int = 49,
         strategy_dim: int = 3,
-        eqs_dim: int = 7,
+        eqs_dim: int = 6,
         hidden_dims: List[int] = [256, 256],
         strategy_name: str = "unknown"
     ):
@@ -116,7 +115,7 @@ class SingleHeadPolicy_v10_2(nn.Module):
             prev_dim = hidden_dim
         self.state_encoder = nn.Sequential(*encoder_layers)
 
-        # Single action head → 7-dim EQS weights in [-1, 1]
+        # Single action head → 6-dim EQS weights in [-1, 1]
         final_dim = hidden_dims[-1]
         self.action_head = nn.Sequential(
             nn.Linear(final_dim, 64),
@@ -171,7 +170,7 @@ class SingleHeadPolicy_v10_2(nn.Module):
         Sample actions from Gaussian policy.
 
         Returns:
-            actions: (B, 7) clamped to [-1, 1]
+            actions: (B, 6) clamped to [-1, 1]
             log_probs: (B,)
         """
         means = self.forward(obs, strategy_idx)
@@ -477,7 +476,7 @@ def example_training_integration():
         policies[strat_name] = SingleHeadPolicy_v10_2(
             obs_dim=49,
             strategy_dim=3,
-            eqs_dim=7,
+            eqs_dim=6,
             hidden_dims=[256, 256],
             strategy_name=strat_name
         )
@@ -537,7 +536,7 @@ if RLLIB_AVAILABLE:
             custom_config = model_config.get("custom_model_config", {})
             obs_dim = custom_config.get("obs_dim", 49)
             strategy_dim = custom_config.get("strategy_dim", 3)
-            eqs_dim = custom_config.get("eqs_dim", 7)
+            eqs_dim = custom_config.get("eqs_dim", 6)
             hidden_dims = custom_config.get("hidden_dims", [256, 256])
             strategy_name = custom_config.get("strategy_name", name)
 
@@ -851,7 +850,7 @@ def create_ppo_config():
         "custom_model_config": {
             "obs_dim": 49,
             "strategy_dim": 3,
-            "eqs_dim": 7,
+            "eqs_dim": 6,
             "hidden_dims": MOCv10_2TrainingConfig.HIDDEN_DIMS,
         },
         "max_seq_len": 20,
@@ -1143,7 +1142,7 @@ def run_validation():
     for strat_idx, strat_name in STRATEGY_NAMES.items():
         strat = torch.full((batch,), strat_idx, dtype=torch.long)
         out = policies[strat_name](obs, strat)
-        check(f"{strat_name} output shape (B, 7)", out.shape == (batch, 7), f"got {out.shape}")
+        check(f"{strat_name} output shape (B, 6)", out.shape == (batch, 6), f"got {out.shape}")
 
     # --- Test 2: Output range [-1, 1] ---
     print("[Test 2] Output range")
@@ -1203,7 +1202,7 @@ def run_validation():
         for _ in range(1000):
             t = Transition(
                 state=np.zeros(49), commanded_strategy=s,
-                eqs_weights=np.zeros(7), reward=0.0,
+                eqs_weights=np.zeros(6), reward=0.0,
                 next_state=np.zeros(49), done=False, info={}, log_prob=0.0
             )
             buf.add(t)
@@ -1229,7 +1228,7 @@ def run_validation():
     for strat_idx, strat_name in STRATEGY_NAMES.items():
         strat = torch.full((batch,), strat_idx, dtype=torch.long)
         actions, log_probs = policies[strat_name].sample_action(obs, strat)
-        check(f"{strat_name} sample_action shape", actions.shape == (batch, 7))
+        check(f"{strat_name} sample_action shape", actions.shape == (batch, 6))
         check(f"{strat_name} sample_action range",
               (actions >= -1).all().item() and (actions <= 1).all().item())
         check(f"{strat_name} log_probs shape", log_probs.shape == (batch,))
@@ -1271,7 +1270,7 @@ def evaluate_checkpoint(checkpoint_path: str):
     if checkpoint_path.endswith(".pt") or checkpoint_path.endswith(".pth"):
         # Single PyTorch model file — load as one policy and evaluate
         print(f"Loading PyTorch checkpoint: {checkpoint_path}")
-        policy = SingleHeadPolicy_v10_2(obs_dim=49, strategy_dim=3, eqs_dim=7, strategy_name="loaded")
+        policy = SingleHeadPolicy_v10_2(obs_dim=49, strategy_dim=3, eqs_dim=6, strategy_name="loaded")
         state_dict = torch.load(checkpoint_path, map_location="cpu")
         policy.load_state_dict(state_dict)
         policy.eval()

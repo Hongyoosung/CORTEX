@@ -17,7 +17,6 @@ enum class ERewardEventType : uint8
     Death,
     CapturePoint,
     LosePoint,
-    PickupDeny,
     Survival,
     DistanceShaping,
     TeamVictory,
@@ -88,9 +87,6 @@ struct FAssaultRewardSettings
     UPROPERTY(EditAnywhere, Category = "Combat")
     float TimePenalty = 0.01f;
 
-    UPROPERTY(EditAnywhere, Category = "Combat")
-    float PickupDenyRewardScale = 1.0f;
-
 
     //========== Capture Properties =============
 
@@ -152,9 +148,6 @@ struct FDefendRewardSettings
     UPROPERTY(EditAnywhere, Category = "Combat")
     float DeathScale = 0.15f;
 
-    UPROPERTY(EditAnywhere, Category = "Combat")
-    float PickupDenyRewardScale = 1.0f;
-
     //========== Capture Properties =============
 
     /** Defend: +20 per capture — core objective (base CaptureReward=100 × 0.20) */
@@ -207,10 +200,6 @@ struct FSupportRewardSettings
     /** Support: -10 per death (base DeathPenaltyReward=100 × 0.10) */
     UPROPERTY(EditAnywhere, Category = "Combat")
     float DeathScale = 0.10f;
-
-    /** Support: +2 per pickup deny */
-    UPROPERTY(EditAnywhere, Category = "Combat")
-    float PickupDenyRewardScale = 2.0f;
 
 
     //========== Ally Proximity Properties =============

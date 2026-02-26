@@ -55,18 +55,6 @@ public:
 };
 
 /**
- * EQS Context: Provides resource pickup locations (health/ammo)
- */
-UCLASS()
-class GAMEAI_PROJECT_API UEnvQueryContext_MocPickups : public UEnvQueryContext
-{
-	GENERATED_BODY()
-
-public:
-	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
-};
-
-/**
  * EQS Context: Provides enemy team's objective/base location
  * Used for Weight [0] - EnemyObjectiveProximity
  */

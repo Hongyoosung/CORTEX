@@ -6,7 +6,7 @@
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "GameFramework/Character.h"
 #include "Characters/MocCharacter.h"
-#include "Combat/Components/WeaponComponent.h"
+#include "Combat/Abilities/AttackAbility.h"
 #include "Combat/CombatStatsInterface.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -27,25 +27,23 @@ EBTNodeResult::Type UBTTask_CombatFire::ExecuteTask(UBehaviorTreeComponent& Owne
 {
 	// Validate combat conditions
 	AActor* Target = nullptr;
-	UWeaponComponent* Weapon = nullptr;
-	if (!ValidateCombatConditions(OwnerComp, Target, Weapon))
+	UAttackAbility* Ability = nullptr;
+	if (!ValidateCombatConditions(OwnerComp, Target, Ability))
 	{
 		return EBTNodeResult::Failed;
 	}
 
-	// If continuous fire mode, start firing and return InProgress
 	if (bContinuousFire)
 	{
 		bIsFiring = true;
 		return EBTNodeResult::InProgress;
 	}
-	// Otherwise, fire once and complete
 	else
 	{
 		APawn* OwnerPawn = OwnerComp.GetAIOwner()->GetPawn();
 		AimAtTarget(OwnerPawn, Target);
 
-		bool bFired = FireWeapon(Weapon, Target);
+		bool bFired = FireWeapon(Ability, Target);
 		return bFired ? EBTNodeResult::Succeeded : EBTNodeResult::Failed;
 	}
 }
@@ -64,17 +62,15 @@ void UBTTask_CombatFire::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* Node
 		return;
 	}
 
-	// Validate combat conditions
 	AActor* Target = nullptr;
-	UWeaponComponent* Weapon = nullptr;
-	if (!ValidateCombatConditions(OwnerComp, Target, Weapon))
+	UAttackAbility* Ability = nullptr;
+	if (!ValidateCombatConditions(OwnerComp, Target, Ability))
 	{
 		bIsFiring = false;
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;
 	}
 
-	// Check if target is still valid
 	APawn* OwnerPawn = OwnerComp.GetAIOwner()->GetPawn();
 	if (!IsTargetValid(Target, OwnerPawn))
 	{
@@ -83,14 +79,11 @@ void UBTTask_CombatFire::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* Node
 		return;
 	}
 
-	// Aim at target
 	AimAtTarget(OwnerPawn, Target);
-
-	// Try to fire weapon (respects cooldown internally)
-	FireWeapon(Weapon, Target);
+	FireWeapon(Ability, Target);
 }
 
-bool UBTTask_CombatFire::ValidateCombatConditions(UBehaviorTreeComponent& OwnerComp, AActor*& OutTarget, UWeaponComponent*& OutWeapon) const
+bool UBTTask_CombatFire::ValidateCombatConditions(UBehaviorTreeComponent& OwnerComp, AActor*& OutTarget, UAttackAbility*& OutAbility) const
 {
 	// Get AI Controller
 	AAIController* AIController = OwnerComp.GetAIOwner();
@@ -106,22 +99,20 @@ bool UBTTask_CombatFire::ValidateCombatConditions(UBehaviorTreeComponent& OwnerC
 		return false;
 	}
 
-	// Get MocCharacter and WeaponComponent
 	AMocCharacter* MocChar = Cast<AMocCharacter>(ControlledPawn);
 	if (!MocChar)
 	{
 		return false;
 	}
 
-	OutWeapon = MocChar->GetWeaponComponent();
-	if (!OutWeapon)
+	OutAbility = MocChar->GetAttackAbility();
+	if (!OutAbility)
 	{
-		UE_LOG(LogBehaviorTree, Warning, TEXT("BTTask_CombatFire: WeaponComponent not found on %s"), *MocChar->GetName());
+		UE_LOG(LogBehaviorTree, Warning, TEXT("BTTask_CombatFire: AttackAbility not found on %s"), *MocChar->GetName());
 		return false;
 	}
 
-	// Check if weapon can fire (ammo + cooldown)
-	if (!OutWeapon->CanFire())
+	if (!OutAbility->CanFire())
 	{
 		return false;
 	}
@@ -247,15 +238,8 @@ void UBTTask_CombatFire::AimAtTarget(APawn* OwnerPawn, AActor* Target)
 	OwnerPawn->SetActorRotation(NewRotation);
 }
 
-bool UBTTask_CombatFire::FireWeapon(UWeaponComponent* Weapon, AActor* Target)
+bool UBTTask_CombatFire::FireWeapon(UAttackAbility* Ability, AActor* Target)
 {
-	if (!Weapon || !Target)
-	{
-		return false;
-	}
-
-	// Fire weapon at target using predictive aiming if enabled
-	bool bSuccess = Weapon->FireAtTarget(Target, bUsePredictiveAiming);
-
-	return bSuccess;
+	if (!Ability || !Target) return false;
+	return Ability->FireAtTarget(Target, bUsePredictiveAiming);
 }

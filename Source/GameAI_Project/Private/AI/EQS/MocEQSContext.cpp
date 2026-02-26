@@ -175,36 +175,6 @@ void UEnvQueryContext_MocCapturePoints::ProvideContext(FEnvQueryInstance& QueryI
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, PointPositions);
 }
 
-void UEnvQueryContext_MocPickups::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
-{
-	AActor* QueryOwner = Cast<AActor>(QueryInstance.Owner.Get());
-	if (!QueryOwner)
-	{
-		return;
-	}
-
-	UWorld* World = QueryOwner->GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	// Find all pickup actors (health packs, ammo crates)
-	TArray<AActor*> FoundPickups;
-	UGameplayStatics::GetAllActorsWithTag(World, FName("Pickup"), FoundPickups);
-
-	TArray<FVector> PickupPositions;
-	for (AActor* Pickup : FoundPickups)
-	{
-		if (Pickup)
-		{
-			PickupPositions.Add(Pickup->GetActorLocation());
-		}
-	}
-
-	UEnvQueryItemType_Point::SetContextHelper(ContextData, PickupPositions);
-}
-
 void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
 	AActor* QueryOwner = Cast<AActor>(QueryInstance.Owner.Get());

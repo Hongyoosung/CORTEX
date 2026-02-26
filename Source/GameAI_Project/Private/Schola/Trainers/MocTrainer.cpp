@@ -203,13 +203,13 @@ void AMocTrainer::Tick(float DeltaTime)
 
             // Diagnose why weights are not arriving
             UE_LOG(LogTemp, Warning,
-                TEXT("[MocTrainer] FREEZE DIAG: %s — AIController=%s | Health=%.1f%% | LastAction=[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
+                TEXT("[MocTrainer] FREEZE DIAG: %s — AIController=%s | Health=%.1f%% | LastAction=[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
                 *ControlledCharacter->GetName(),
                 ControlledCharacter->GetController() ? TEXT("Valid") : TEXT("NULL"),
                 ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f,
                 LastAction.EnemyObjectiveProximity, LastAction.AllyObjectiveProximity,
                 LastAction.CoverDensity, LastAction.EnemyVisibility,
-                LastAction.AllyProximity, LastAction.CombatRange, LastAction.PickupProximity);
+                LastAction.AllyProximity, LastAction.CombatRange);
         }
     }
 
@@ -550,7 +550,6 @@ void AMocTrainer::DrawTrainingDebug(float DeltaTime)
         TEXT("EnemyObj: %.2f | AllyObj: %.2f\n")
         TEXT("Cover: %.2f | Visibility: %.2f\n")
         TEXT("AllyProx: %.2f | Range: %.2f\n")
-        TEXT("Pickup: %.2f"),
         *StrategyInfo,
         CurrentEpisodeSteps,
         MaxEpisodeSteps,
@@ -562,7 +561,6 @@ void AMocTrainer::DrawTrainingDebug(float DeltaTime)
         LastAction.EnemyVisibility,
         LastAction.AllyProximity,
         LastAction.CombatRange,
-        LastAction.PickupProximity
     );*/
 
     FString DebugText = FString::Printf(
@@ -941,8 +939,6 @@ bool AMocTrainer::ValidateEQSWeights(const FEQSWeightParameters& Weights) const
     CheckRange(Weights.EnemyVisibility, TEXT("EnemyVisibility"));
     CheckRange(Weights.AllyProximity, TEXT("AllyProximity"));
     CheckRange(Weights.CombatRange, TEXT("CombatRange"));
-    CheckRange(Weights.PickupProximity, TEXT("PickupProximity"));
-
 
     return bValid;
 }

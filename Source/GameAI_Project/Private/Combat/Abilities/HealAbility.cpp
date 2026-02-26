@@ -6,6 +6,8 @@
 #include "Team/TeamManager.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
 
 UHealAbility::UHealAbility()
 {
@@ -15,26 +17,24 @@ UHealAbility::UHealAbility()
 void UHealAbility::BeginPlay()
 {
 	Super::BeginPlay();
-	if (AMocCharacter* Owner = GetOwnerCharacter())
+
+	CachedOwner = GetOwnerCharacter();
+	if (CachedOwner)
 	{
-		CachedTM = Owner->GetTeamManager();
+		CachedTM = CachedOwner->GetTeamManager();
 	}
 
-	// Spawn the beam component once; kept inactive until healing begins
-	if (HealBeamSystem)
+	if (HealBeamSystem && CachedOwner)
 	{
-		if (AMocCharacter* Owner = GetOwnerCharacter())
-		{
-			HealBeamComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
-				HealBeamSystem,
-				Owner->GetRootComponent(),
-				NAME_None,
-				FVector::ZeroVector,
-				FRotator::ZeroRotator,
-				EAttachLocation::KeepRelativeOffset,
-				false,  // bAutoDestroy
-				false); // bAutoActivate
-		}
+		HealBeamComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
+			HealBeamSystem,
+			CachedOwner->GetRootComponent(),
+			NAME_None,
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			EAttachLocation::KeepRelativeOffset,
+			false,
+			false);
 	}
 }
 
@@ -49,10 +49,8 @@ void UHealAbility::ExecuteAbility(float DeltaTime)
 		return;
 	}
 
-	AMocCharacter* Owner = GetOwnerCharacter();
-	if (!Owner) return;
+	if (!CachedOwner) return;
 
-	// Detect target change — reset cumulative tracker
 	if (Target->AgentID != CurrentHealTargetIdx)
 	{
 		CumulativeHealAmount = 0.0f;
@@ -78,8 +76,7 @@ void UHealAbility::ExecuteAbilityWithTarget(float DeltaTime, AActor* Target)
 		return;
 	}
 
-	AMocCharacter* Owner = GetOwnerCharacter();
-	if (!Owner) return;
+	if (!CachedOwner) return;
 
 	if (Ally->AgentID != CurrentHealTargetIdx)
 	{
@@ -126,10 +123,9 @@ void UHealAbility::UpdateHealBeam(const AActor* Target)
 		return;
 	}
 
-	const AMocCharacter* Owner = GetOwnerCharacter();
-	if (!Owner) return;
+	if (!CachedOwner) return;
 
-	HealBeamComponent->SetVariableVec3(BeamStartParamName, Owner->GetActorLocation());
+	HealBeamComponent->SetVariableVec3(BeamStartParamName, CachedOwner->GetActorLocation());
 	HealBeamComponent->SetVariableVec3(BeamEndParamName, Target->GetActorLocation());
 
 	if (!HealBeamComponent->IsActive())
@@ -140,29 +136,61 @@ void UHealAbility::UpdateHealBeam(const AActor* Target)
 
 AMocCharacter* UHealAbility::FindNearestInjuredAlly() const
 {
-	AMocCharacter* Owner = GetOwnerCharacter();
-	if (!Owner || !CachedTM) return nullptr;
+	if (!CachedOwner) return nullptr;
 
-	TArray<AMocCharacter*> Allies = CachedTM->GetTeamAgents(Owner->TeamID);
-	AMocCharacter* Nearest = nullptr;
-	float NearestDist = HealRange;
+	TArray<AMocCharacter*> Allies;
+	if (CachedTM)
+	{
+		Allies = CachedTM->GetTeamAgents(CachedOwner->TeamID);
+	}
+	else
+	{
+		// Fallback: world scan when no TeamManager (e.g. test maps)
+		for (TActorIterator<AMocCharacter> It(GetWorld()); It; ++It)
+		{
+			if (*It != CachedOwner && (*It)->TeamID == CachedOwner->TeamID)
+				Allies.Add(*It);
+		}
+	}
+	AMocCharacter* NearestAlly = nullptr;
 
-	const FVector MyLoc = Owner->GetActorLocation();
+	const float HealRangeSq = FMath::Square(HealRange);
+	float NearestDistSq = HealRangeSq;
+	const FVector MyLoc = CachedOwner->GetActorLocation();
 
 	for (AMocCharacter* Ally : Allies)
 	{
-		if (!Ally || Ally == Owner || !Ally->IsAlive_Implementation()) continue;
+		if (!Ally || Ally == CachedOwner || !Ally->IsAlive_Implementation()) continue;
 
 		const float AllyHP = Ally->Execute_GetHealthPercentage(Ally);
 		if (AllyHP >= 1.0f) continue;
 
-		const float Dist = FVector::Dist(Ally->GetActorLocation(), MyLoc);
-		if (Dist < NearestDist)
+		const float DistSq = FVector::DistSquared(Ally->GetActorLocation(), MyLoc);
+		if (DistSq < NearestDistSq)
 		{
-			NearestDist = Dist;
-			Nearest = Ally;
+			// bRequireLineOfSight가 true이면 시야가 확보되는지 검사
+			if (bRequireLineOfSight)
+			{
+				FCollisionQueryParams QueryParams;
+				QueryParams.AddIgnoredActor(CachedOwner);
+				QueryParams.AddIgnoredActor(Ally);
+
+				FHitResult HitResult;
+				bool bBlocked = GetWorld()->LineTraceSingleByChannel(
+					HitResult,
+					MyLoc + FVector(0, 0, 90),
+					Ally->GetActorLocation() + FVector(0, 0, 90),
+					ECC_Visibility,
+					QueryParams
+				);
+
+				if (bBlocked) continue; // 벽에 막혔으므로 제외
+			}
+
+			NearestDistSq = DistSq;
+			NearestAlly = Ally;
 		}
 	}
 
-	return Nearest;
+	return NearestAlly;
 }

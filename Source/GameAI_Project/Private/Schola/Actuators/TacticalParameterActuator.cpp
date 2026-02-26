@@ -25,7 +25,6 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 	// [3]: EnemyVisibility
 	// [4]: AllyProximity
 	// [5]: CombatRange
-	// [6]: PickupProximity
 
 	FBoxSpace Space;
 	for (int32 i = 0; i < 7; ++i)  // v10.2: 7 dimensions (was 8 in error)
@@ -68,11 +67,11 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 
 		// Diagnostic: confirm action was delivered to the character
 		UE_LOG(LogTemp, Verbose,
-			TEXT("[TacticalActuator] %s action #%d delivered: [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
+			TEXT("[TacticalActuator] %s action #%d delivered: [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
 			*MocAgent->GetName(), ActionCount,
 			Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity,
 			Weights.CoverDensity, Weights.EnemyVisibility,
-			Weights.AllyProximity, Weights.CombatRange, Weights.PickupProximity);
+			Weights.AllyProximity, Weights.CombatRange);
 	}
 	else
 	{
@@ -196,7 +195,6 @@ FEQSWeightParameters UTacticalParameterActuator::ActionToEQSWeights(const FBoxPo
 	Weights.EnemyVisibility = Action.Values[3];
 	Weights.AllyProximity = Action.Values[4];
 	Weights.CombatRange = Action.Values[5];
-	Weights.PickupProximity = Action.Values[6];
 
 	return Weights;
 }

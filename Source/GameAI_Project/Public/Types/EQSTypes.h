@@ -6,7 +6,7 @@
 #include "EQSTypes.generated.h"
 
 /**
- * EQS Weight Parameters (7-dim output from RL policy)
+ * EQS Weight Parameters (6-dim output from RL policy)
  * These weights configure Environment Query System tests for spatial reasoning.
  * See v10.2 Architecture.md Section 2.5 for detailed parameter descriptions.
  */
@@ -39,10 +39,6 @@ struct FEQSWeightParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EQS Weights")
 	float CombatRange = 0.0f;
 
-	/** Pickup proximity (collect health/ammo) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EQS Weights")
-	float PickupProximity = 0.0f;
-
 
 	FEQSWeightParameters() = default;
 
@@ -56,14 +52,13 @@ struct FEQSWeightParameters
 			EnemyVisibility,
 			AllyProximity,
 			CombatRange,
-			PickupProximity,
 		};
 	}
 
 	/** Create from flat array (from ONNX output) */
 	static FEQSWeightParameters FromArray(const TArray<float>& Weights)
 	{
-		check(Weights.Num() == 7);
+		check(Weights.Num() == 6);
 
 		FEQSWeightParameters Params;
 		Params.EnemyObjectiveProximity = Weights[0];
@@ -72,7 +67,6 @@ struct FEQSWeightParameters
 		Params.EnemyVisibility = Weights[3];
 		Params.AllyProximity = Weights[4];
 		Params.CombatRange = Weights[5];
-		Params.PickupProximity = Weights[6];
 
 		return Params;
 	}
@@ -86,19 +80,17 @@ struct FEQSWeightParameters
 		EnemyVisibility = FMath::Clamp(EnemyVisibility, -1.0f, 1.0f);
 		AllyProximity = FMath::Clamp(AllyProximity, -1.0f, 1.0f);
 		CombatRange = FMath::Clamp(CombatRange, -1.0f, 1.0f);
-		PickupProximity = FMath::Clamp(PickupProximity, -1.0f, 1.0f);
 	}
 
 	FString ToString() const
 	{
-		return FString::Printf(TEXT("E_Obj:%.2f, A_Obj:%.2f, Cover:%.2f, Vis:%.2f, Ally:%.2f, Rng:%.2f, Pick:%.2f"),
+		return FString::Printf(TEXT("E_Obj:%.2f, A_Obj:%.2f, Cover:%.2f, Vis:%.2f, Ally:%.2f, Rng:%.2f"),
 			EnemyObjectiveProximity,
 			AllyObjectiveProximity,
 			CoverDensity,
 			EnemyVisibility,
 			AllyProximity,
-			CombatRange,
-			PickupProximity);
+			CombatRange);
 	}
 };
 

@@ -21,7 +21,7 @@
  *
  * Blackboard keys read (set by AMocCharacter::PerformTacticalAction):
  *   Weight_EnemyObj, Weight_AllyObj, Weight_Cover, Weight_EnemyVis,
- *   Weight_AllyProx, Weight_Range, Weight_Pickup
+ *   Weight_AllyProx, Weight_Range
  *
  * No dependency on AMocAIController — works with any AAIController.
  */
@@ -57,7 +57,6 @@ public:
         Weights.EnemyVisibility         = BB->GetValueAsFloat(TEXT("Weight_EnemyVis"));
         Weights.AllyProximity           = BB->GetValueAsFloat(TEXT("Weight_AllyProx"));
         Weights.CombatRange             = BB->GetValueAsFloat(TEXT("Weight_Range"));
-        Weights.PickupProximity         = BB->GetValueAsFloat(TEXT("Weight_Pickup"));
 
         // Normalize RL output [-1, 1] → EQS scale [-2, 2]
         auto Normalize = [](float W) { return FMath::Clamp(W * 2.0f, -2.0f, 2.0f); };
@@ -70,7 +69,6 @@ public:
         QueryRequest.SetFloatParam(TEXT("EnemyVisibilityWeight"),Normalize(Weights.EnemyVisibility));
         QueryRequest.SetFloatParam(TEXT("AllyProximityWeight"),  Normalize(Weights.AllyProximity));
         QueryRequest.SetFloatParam(TEXT("CombatRangeWeight"),    Normalize(Weights.CombatRange));
-        QueryRequest.SetFloatParam(TEXT("PickupWeight"),         Normalize(Weights.PickupProximity));
 
         CachedOwnerComp = &OwnerComp;
         FQueryFinishedSignature Delegate;

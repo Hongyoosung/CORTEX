@@ -29,7 +29,7 @@ class ATeamManager;
  * - EQS 가중치 형태의 Action 수집 및 적용
  * - Team-level Reward 계산 (Squad Commander에서 할당받은 전략 기준)
  *
- * Action Space: Box(7) - Continuous EQS weights [-1, 1]
+ * Action Space: Box(6) - Continuous EQS weights [-1, 1]
  * Observation Space: Box(52) - Agent State only (Strategy는 외부에서 commanded)
  */
 UCLASS(Blueprintable)

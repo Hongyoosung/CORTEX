@@ -9,7 +9,6 @@
 class AMocCharacter;
 class UScholaMocAgent;
 class ACapturePoint;
-class APickupBase;
 class AFogOfWarManager;
 class USquadManager;
 class UTeamData;
@@ -180,10 +179,6 @@ public:
 	/** Report enemy sighting to team (delegates to FogOfWarManager) */
 	UFUNCTION(BlueprintCallable, Category = "TeamManager")
 	void ReportEnemySighting(int32 ReportingTeamID, AActor* Enemy, FVector Location);
-
-	/** Report resource discovery to team (delegates to FogOfWarManager) */
-	UFUNCTION(BlueprintCallable, Category = "TeamManager")
-	void ReportResourceDiscovery(int32 TeamID, APickupBase* Resource);
 
 	/** Get last known enemy position (delegates to FogOfWarManager) */
 	UFUNCTION(BlueprintPure, Category = "TeamManager")

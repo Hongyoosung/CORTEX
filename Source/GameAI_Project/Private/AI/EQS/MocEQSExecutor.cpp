@@ -40,7 +40,6 @@ void UMocEQSExecutor::ApplyWeightsToRequest(FEnvQueryRequest& Request, const FEQ
 	Request.SetFloatParam(TEXT("EnemyVisibility"), Weights.EnemyVisibility * WeightScale);
 	Request.SetFloatParam(TEXT("AllyProximity"), Weights.AllyProximity * WeightScale);
 	Request.SetFloatParam(TEXT("CombatRange"), Weights.CombatRange * WeightScale);
-	Request.SetFloatParam(TEXT("PickupProximity"), Weights.PickupProximity * WeightScale);
 	Request.SetFloatParam(TEXT("SearchRadius"), SearchRadius);
 }
 

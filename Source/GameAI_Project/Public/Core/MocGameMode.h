@@ -10,9 +10,6 @@
 // Forward declarations
 class ATeamManager;
 class ACapturePoint;
-class APickupBase;
-class AHealthPack;
-class AAmmoCrate;
 class AMocCharacter;
 
 /**
@@ -38,15 +35,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnScoreUpdated, int32, TeamID, i
  * AMocGameMode - MOC v10.1 Game Mode Orchestrator
  *
  * Responsibilities:
- * - Spawn and manage all game entities (TeamManager, CapturePoints, Pickups)
- * - Subscribe to game events (captures, kills, pickups)
+ * - Spawn and manage all game entities (TeamManager, CapturePoints)
+ * - Subscribe to game events (captures, kills)
  * - Manage scoring system (capture, passive income, kills)
  * - Check win conditions (300 points or 600 seconds)
  * - Coordinate match state transitions
  *
  * Match Flow:
  * 1. BeginPlay: Spawn TeamManager, 5 CapturePoints, 12 HealthPacks, 8 AmmoCrates
- * 2. Subscribe to events: OnPointCaptured, OnAgentKilled, OnPickupCollected
+ * 2. Subscribe to events: OnPointCaptured, OnAgentKilled
  * 3. Tick: Update passive income, check win conditions
  * 4. EndMatch: Broadcast winner, disable gameplay
  *
@@ -137,12 +134,6 @@ protected:
 	/** Initialize capture points (find existing or spawn new) */
 	void InitializeCapturePoints();
 
-	/** Initialize health packs (find existing or spawn new) */
-	void InitializeHealthPacks();
-
-	/** Initialize ammo crates (find existing or spawn new) */
-	void InitializeAmmoCrates();
-
 	/** Subscribe to all game events */
 	void SubscribeToEvents();
 
@@ -152,12 +143,6 @@ protected:
 
 	/** Find all placed capture points in the level */
 	void FindPlacedCapturePoints();
-
-	/** Find all placed health packs in the level */
-	void FindPlacedHealthPacks();
-
-	/** Find all placed ammo crates in the level */
-	void FindPlacedAmmoCrates();
 
 	//========================================
 	// Event Handlers
@@ -170,10 +155,6 @@ protected:
 	/** Handle agent killed event */
 	UFUNCTION()
 	void OnAgentKilled(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim);
-
-	/** Handle pickup collected event */
-	UFUNCTION()
-	void OnPickupCollected(AActor* Collector, EPickupType PickupType);
 
 	//========================================
 	// Game Logic
@@ -200,14 +181,6 @@ public:
 	/** CapturePoint class */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameMode|Classes")
 	TSubclassOf<ACapturePoint> CapturePointClass;
-
-	/** HealthPack class */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameMode|Classes")
-	TSubclassOf<APickupBase> HealthPackClass;
-
-	/** AmmoCrate class */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameMode|Classes")
-	TSubclassOf<APickupBase> AmmoCrateClass;
 
 	//========================================
 	// Configuration - Match Settings
@@ -265,18 +238,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "GameMode|CapturePoints")
 	FVector PointE_Location = FVector(7000.0f, 0.0f, 100.0f);
 
-	//========================================
-	// Configuration - Pickup Locations
-	//========================================
-
-	/** Health pack locations (12 total) */
-	UPROPERTY(EditAnywhere, Category = "GameMode|Pickups")
-	TArray<FVector> HealthPackLocations;
-
-	/** Ammo crate locations (8 total) */
-	UPROPERTY(EditAnywhere, Category = "GameMode|Pickups")
-	TArray<FVector> AmmoCrateLocations;
-
 	/** Show debug visualization */
 	UPROPERTY(EditAnywhere, Category = "GameMode|Debug")
 	bool bShowDebugInfo = false;
@@ -305,14 +266,6 @@ protected:
 	/** Capture points mapped by ID */
 	UPROPERTY(BlueprintReadOnly, Category = "GameMode|State")
 	TMap<ECapturePointID, ACapturePoint*> CapturePointsMap;
-
-	/** Spawned health packs */
-	UPROPERTY()
-	TArray<APickupBase*> HealthPacks;
-
-	/** Spawned ammo crates */
-	UPROPERTY()
-	TArray<APickupBase*> AmmoCrates;
 
 	/** Current match state */
 	UPROPERTY(BlueprintReadOnly, Category = "GameMode|State")

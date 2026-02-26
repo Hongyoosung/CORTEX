@@ -5,7 +5,6 @@
 #include "Combat/Abilities/HealAbility.h"
 #include "RL/Rewards/MocRewardCalculator.h"
 #include "Combat/Components/HealthComponent.h"
-#include "Combat/Components/WeaponComponent.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Schola/Actuators/TacticalParameterActuator.h"
 #include "AI/EQS/MocEQSExecutor.h"
@@ -29,27 +28,35 @@
 AMocCharacter::AMocCharacter()
 	: Super()
 	, HealthComponent(nullptr)
-	, WeaponComponent(nullptr)
 	, ScholaAgent(nullptr)
 	, RewardCalculator(nullptr)
 	, StimuliSource(nullptr)
+	, TeamColorVFX(nullptr)
+	, VisionRange(3000.0f)
 	, AttackAbility(nullptr)
 	, HealAbility(nullptr)
-	, VisionRange(3000.0f)
+	, EQSExecutor(nullptr)
+	, EQSAcceptanceRadius(50.0f)
+	, TeamColorVFXAsset(nullptr)
+	, VFXColorParameterName(FName("TeamColor"))
 	, AgentID(0)
 	, TeamID(-1)
 	, bIsAlive(true)
-	, CommandedStrategy(EStrategyType::Assault)
+	, CommandedStrategy(EStrategyType::Support)
+	, bWeightsDirty(false)
+	, LastEQSTargetLocation(FVector::ZeroVector)
 	, SquadCommander(nullptr)
+	, SpawnTime(0.0f)
 	, GameMode(nullptr)
 	, TM(nullptr)
-	, FogManager(nullptr)
+	, BaseAttackDamage(0.0f)
+	, BaseAttackRange(0.0f)
+	, BaseMaxHealth(0.0f)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
 	// Create components
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
-	WeaponComponent = CreateDefaultSubobject<UWeaponComponent>(TEXT("WeaponComponent"));
 	ScholaAgent = CreateDefaultSubobject<UScholaMocAgent>(TEXT("ScholaAgent"));
 	RewardCalculator = CreateDefaultSubobject<UMocRewardCalculator>(TEXT("RewardCalculator"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
@@ -69,18 +76,6 @@ AMocCharacter::AMocCharacter()
 		HealthComponent->MaxHealth = 100.0f;
 		HealthComponent->StartingHealth = 100.0f;
 		HealthComponent->bEnableHealthRegen = false;
-	}
-
-	// Configure WeaponComponent (Section 0.3 - Combat Parameters)
-	if (WeaponComponent)
-	{
-		WeaponComponent->Damage = 15.0f;               // Base damage per shot
-		WeaponComponent->AttackSpeed = 6.67f;          // Fire rate (shots/sec)
-		WeaponComponent->bUseAmmo = true;
-		WeaponComponent->MaxAmmo = 150;
-		WeaponComponent->StartingAmmo = 150;
-		WeaponComponent->WeaponSpread = 2.0f;          // Degrees
-		WeaponComponent->bUsePredictiveAiming = false; // Let AI learn aiming
 	}
 
 	// Configure movement (Section 0.3 - Movement Speed)
@@ -131,13 +126,6 @@ void AMocCharacter::BeginPlay()
 				UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetTeamManager"));
 				return;
 			}
-
-			FogManager = TM->GetFogOfWarManager();
-			if (!FogManager)
-			{
-				UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetFogManager"));
-				return;
-			}
 		}
 	}
 	else
@@ -152,6 +140,32 @@ void AMocCharacter::BeginPlay()
 		TeamColorVFX->Activate();
 	}
 
+	const bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EAgentMode::Training;
+	if (bIsTraining)
+	{
+		GetWorld()->GetTimerManager().SetTimer(
+			TrainingAbilityTimerHandle,
+			this,
+			&AMocCharacter::ProcessTrainingAbilities,
+			0.2f, // 1초에 5번만 실행 (매 프레임 실행 대비 압도적인 성능 향상)
+			true
+		);
+	}
+
+	// Cache base stats for strategy-based modifiers
+	if (AttackAbility)
+	{
+		BaseAttackDamage = AttackAbility->Damage;
+		BaseAttackRange  = AttackAbility->AttackRange;
+	}
+	if (HealthComponent)
+	{
+		BaseMaxHealth = HealthComponent->MaxHealth;
+	}
+
+	// Apply modifier for the initial commanded strategy
+	ApplyStrategyStatModifiers(CommandedStrategy);
+
 	// Update team color VFX
 	UpdateTeamColorVFX();
 }
@@ -159,35 +173,6 @@ void AMocCharacter::BeginPlay()
 void AMocCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	// Skip tick logic if dead
-	if (!bIsAlive)
-	{
-		return;
-	}
-
-	// In training mode, abilities are driven directly from Tick.
-	// In inference mode, BT tasks (BTTask_AttackAbility / BTTask_HealAbility) drive them.
-	const bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EAgentMode::Training;
-	if (bIsTraining)
-	{
-		if (AttackAbility)
-		{
-			AttackAbility->ExecuteAbility(DeltaTime);
-		}
-
-		if (HealAbility)
-		{
-			if (CommandedStrategy == EStrategyType::Support)
-			{
-				HealAbility->ExecuteAbility(DeltaTime);
-			}
-			else
-			{
-				HealAbility->ResetTickHeal();
-			}
-		}
-	}
 }
 
 //========================================
@@ -245,9 +230,9 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 	}
 
 	// Stop weapon immediately (prevent invisible dead agents from firing)
-	if (WeaponComponent)
+	if (AttackAbility)
 	{
-		WeaponComponent->StopFiring();
+		AttackAbility->StopFiring();
 	}
 
 	// Disable character movement
@@ -322,9 +307,9 @@ void AMocCharacter::ResetCharacter()
 		RewardCalculator->ResetEpisodeState();
 	}
 
-	if (WeaponComponent)
+	if (AttackAbility)
 	{
-		WeaponComponent->RefillAmmo();
+		AttackAbility->RefillAmmo();
 	}
 
 	// Reset heal state
@@ -453,7 +438,6 @@ void AMocCharacter::PerformTacticalAction()
 		BB->SetValueAsFloat(TEXT("Weight_EnemyVis"), CurrentEQSWeights.EnemyVisibility);
 		BB->SetValueAsFloat(TEXT("Weight_AllyProx"), CurrentEQSWeights.AllyProximity);
 		BB->SetValueAsFloat(TEXT("Weight_Range"), CurrentEQSWeights.CombatRange);
-		BB->SetValueAsFloat(TEXT("Weight_Pickup"), CurrentEQSWeights.PickupProximity);
 		return;
 	}
 
@@ -520,9 +504,42 @@ void AMocCharacter::SetCommandedStrategy(EStrategyType NewStrategy)
 			}
 		}
 
+		ApplyStrategyStatModifiers(NewStrategy);
+
 		UE_LOG(LogTemp, Log, TEXT("[MocCharacter] Agent %d received strategy command: %s"),
 			AgentID, *UEnum::GetValueAsString(NewStrategy));
 	}
+}
+
+void AMocCharacter::ApplyStrategyStatModifiers(EStrategyType Strategy)
+{
+	const bool bIsSupport = (Strategy == EStrategyType::Support);
+
+	if (AttackAbility && BaseAttackDamage > 0.0f)
+	{
+		AttackAbility->Damage      = BaseAttackDamage * (bIsSupport ? 0.5f : 1.0f);
+		AttackAbility->AttackRange = BaseAttackRange  * (bIsSupport ? 0.5f : 1.0f);
+	}
+
+	if (HealthComponent && BaseMaxHealth > 0.0f)
+	{
+		const float NewMaxHealth = BaseMaxHealth * (bIsSupport ? 0.7f : 1.0f);
+		HealthComponent->MaxHealth = NewMaxHealth;
+
+		// Clamp current HP so agent doesn't exceed the new lower cap
+		if (HealthComponent->CurrentHealth > NewMaxHealth)
+		{
+			HealthComponent->SetHealth(NewMaxHealth);
+		}
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[MocCharacter] Agent %d stat modifiers applied: Strategy=%s  Damage=%.1f  Range=%.0f  MaxHP=%.0f"),
+		AgentID,
+		*UEnum::GetValueAsString(Strategy),
+		AttackAbility ? AttackAbility->Damage      : 0.0f,
+		AttackAbility ? AttackAbility->AttackRange : 0.0f,
+		HealthComponent ? HealthComponent->MaxHealth : 0.0f);
 }
 
 //========================================
@@ -550,40 +567,27 @@ float AMocCharacter::Heal_Implementation(float HealAmount)
 
 float AMocCharacter::GetWeaponCooldown_Implementation() const
 {
-	if (WeaponComponent)
-	{
-		return WeaponComponent->GetCooldownProgress();
-	}
-	return 0.0f;
+	return AttackAbility ? AttackAbility->GetCooldownProgress() : 0.0f;
 }
 
 int32 AMocCharacter::AddAmmo_Implementation(int32 AmmoAmount)
 {
-	if (WeaponComponent)
+	if (AttackAbility)
 	{
-		WeaponComponent->AddAmmo(AmmoAmount);
+		AttackAbility->AddAmmo(AmmoAmount);
+		return AttackAbility->GetCurrentAmmo();
 	}
-	
-	return WeaponComponent->GetCurrentAmmo();;
+	return 0;
 }
 
 float AMocCharacter::GetAmmoPercentage_Implementation() const
 {
-	if (WeaponComponent)
-	{
-		return WeaponComponent->GetAmmoPercentage();
-	}
-
-	return 0;
+	return AttackAbility ? AttackAbility->GetAmmoPercentage() : 0.0f;
 }
 
 bool AMocCharacter::CanFireWeapon_Implementation() const
 {
-	if (WeaponComponent)
-	{
-		return WeaponComponent->CanFire();
-	}
-	return false;
+	return AttackAbility ? AttackAbility->CanFire() : false;
 }
 
 //========================================
@@ -636,5 +640,28 @@ void AMocCharacter::ResetRewardState()
 	if (RewardCalculator)
 	{
 		RewardCalculator->ResetEpisodeState();
+	}
+}
+
+void AMocCharacter::ProcessTrainingAbilities()
+{
+	if (!bIsAlive) return;
+
+
+	if (AttackAbility)
+	{
+		AttackAbility->ExecuteAbility(0.2f);
+	}
+
+	if (HealAbility)
+	{
+		if (CommandedStrategy == EStrategyType::Support)
+		{
+			HealAbility->ExecuteAbility(0.2f);
+		}
+		else
+		{
+			HealAbility->ResetTickHeal();
+		}
 	}
 }
