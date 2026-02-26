@@ -541,7 +541,7 @@ void AMocTrainer::DrawTrainingDebug(float DeltaTime)
         StrategyInfo += TEXT(" [TRAINING OVERRIDE]");
     }
 
-    FString DebugText = FString::Printf(
+    /*FString DebugText = FString::Printf(
         TEXT("Strategy: %s\n")
         TEXT("Steps: %d / %d\n")
         TEXT("Episode Reward: %.2f\n")
@@ -563,6 +563,16 @@ void AMocTrainer::DrawTrainingDebug(float DeltaTime)
         LastAction.AllyProximity,
         LastAction.CombatRange,
         LastAction.PickupProximity
+    );*/
+
+    FString DebugText = FString::Printf(
+        TEXT("Steps: %d / %d\n")
+        TEXT("Episode Reward: %.2f\n")
+        TEXT("Total Episodes: %d\n"),
+        CurrentEpisodeSteps,
+        MaxEpisodeSteps,
+        EpisodeReward,
+        TotalEpisodes
     );
 
     DrawDebugString(

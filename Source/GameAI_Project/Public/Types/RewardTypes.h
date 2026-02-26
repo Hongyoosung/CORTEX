@@ -21,7 +21,8 @@ enum class ERewardEventType : uint8
     Survival,
     DistanceShaping,
     TeamVictory,
-    StrategyDiversity
+    StrategyDiversity,
+    HealAlly
 };
 
 /**
@@ -235,6 +236,27 @@ struct FSupportRewardSettings
     /** Support: -15 per loss (base LossCaptureReward=-100 × 0.15) */
     UPROPERTY(EditAnywhere, Category = "Capture")
     float LossCaptureRewardScale = 0.15f;
+
+
+    //========== Heal Properties =============
+
+    /** Per-tick reward when actively healing an ally */
+    UPROPERTY(EditAnywhere, Category = "Heal")
+    float HealTickReward = 0.6f;
+
+    /** Cumulative HP healed on one ally required to trigger the burst bonus */
+    UPROPERTY(EditAnywhere, Category = "Heal")
+    float HealBurstThreshold = 40.0f;
+
+    /** One-time bonus awarded when cumulative heal reaches HealBurstThreshold */
+    UPROPERTY(EditAnywhere, Category = "Heal")
+    float HealBurstBonus = 3.0f;
+
+    //========== Positioning Properties =============
+
+    /** Per-step bonus for being farther from the nearest visible enemy than the nearest ally */
+    UPROPERTY(EditAnywhere, Category = "Positioning")
+    float RearGuardBonus = 0.3f;
 
 
     //========== Movement Properties =============

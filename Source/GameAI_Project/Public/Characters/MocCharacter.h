@@ -11,6 +11,8 @@
 #include "Types/ObservationTypes.h"
 #include "Types/RewardTypes.h"
 #include "Combat/CombatStatsInterface.h"
+#include "Combat/Abilities/AttackAbility.h"
+#include "Combat/Abilities/HealAbility.h"
 #include "MocCharacter.generated.h"
 
 // Forward declarations
@@ -158,6 +160,18 @@ public:
 	void UpdateTeamColorVFX();
 
 
+	// ==================== Heal Interface (for MocRewardCalculator) ====================
+
+	/** HP healed on an ally during the most recent heal tick (pass-through to HealAbility) */
+	float GetLastTickHealAmount() const;
+
+	/**
+	 * Returns true and resets the accumulator if cumulative heal on the current target
+	 * has reached or exceeded Threshold. Pass-through to HealAbility.
+	 */
+	bool ConsumeHealBurst(float Threshold);
+
+
 protected:
 	//========================================
 	// Event Handlers
@@ -166,9 +180,6 @@ protected:
 	/** Handle death event from HealthComponent */
 	UFUNCTION()
 	void OnDeath(const FDeathEventData& DeathEvent);
-
-	/** Fire at the nearest visible enemy within combat range. Called from Tick. */
-	void HandleCombat();
 
 public:
 	//========================================
@@ -210,6 +221,14 @@ public:
 	//========================================
 	// EQS Configuration
 	//========================================
+
+	/** Attack ability component - encapsulates HandleCombat() logic */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UAttackAbility* AttackAbility;
+
+	/** Heal ability component - encapsulates TickSupportHealing() logic */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UHealAbility* HealAbility;
 
 	/** EQS Executor component - handles query execution with correct parameter names */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")

@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+// DEPRECATED: Use BTTask_AttackAbility instead.
 
 #pragma once
 

@@ -457,6 +457,55 @@ float UMocRewardCalculator::ComputeStepReward(
 				// No valid ally target (all dead or no allies): provide a small baseline
 				Reward += SupportReward.PositionReward * 0.5f;
 			}
+
+			// --- Heal tick reward ---
+			if (OwnerCharacter && OwnerCharacter->GetLastTickHealAmount() > 0.0f)
+			{
+				Reward += SupportReward.HealTickReward;
+				LogRewardEvent(ERewardEventType::HealAlly, Strategy, SupportReward.HealTickReward);
+			}
+
+			// --- Heal burst bonus (sparse) ---
+			if (OwnerCharacter && OwnerCharacter->ConsumeHealBurst(SupportReward.HealBurstThreshold))
+			{
+				Reward += SupportReward.HealBurstBonus;
+				LogRewardEvent(ERewardEventType::HealAlly, Strategy, SupportReward.HealBurstBonus);
+			}
+
+			// --- Rear-guard positioning bonus ---
+			// Reward agent for being farther from nearest visible enemy than its nearest ally.
+			if (!bIsRespawnStep && Current.EnemyPositions.Num() > 0 && Current.AllyPositions.Num() > 0)
+			{
+				float NearestEnemyDist = FLT_MAX;
+				FVector NearestEnemyPos = FVector::ZeroVector;
+				for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
+				{
+					if (i < Current.EnemyVisible.Num() && Current.EnemyVisible[i])
+					{
+						const float D = FVector::Dist(Current.Position, Current.EnemyPositions[i]);
+						if (D < NearestEnemyDist)
+						{
+							NearestEnemyDist = D;
+							NearestEnemyPos = Current.EnemyPositions[i];
+						}
+					}
+				}
+
+				if (NearestEnemyDist < FLT_MAX)
+				{
+					float NearestAllyToEnemyDist = FLT_MAX;
+					for (const FVector& AllyPos : Current.AllyPositions)
+					{
+						if (AllyPos.IsZero()) continue;
+						NearestAllyToEnemyDist = FMath::Min(NearestAllyToEnemyDist, FVector::Dist(AllyPos, NearestEnemyPos));
+					}
+
+					if (NearestEnemyDist > NearestAllyToEnemyDist)
+					{
+						Reward += SupportReward.RearGuardBonus;
+					}
+				}
+			}
 		}
 		break;
 	}

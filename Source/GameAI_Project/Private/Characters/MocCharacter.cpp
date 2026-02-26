@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Characters/MocCharacter.h"
+#include "Combat/Abilities/AttackAbility.h"
+#include "Combat/Abilities/HealAbility.h"
 #include "RL/Rewards/MocRewardCalculator.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Combat/Components/WeaponComponent.h"
@@ -31,6 +33,8 @@ AMocCharacter::AMocCharacter()
 	, ScholaAgent(nullptr)
 	, RewardCalculator(nullptr)
 	, StimuliSource(nullptr)
+	, AttackAbility(nullptr)
+	, HealAbility(nullptr)
 	, VisionRange(3000.0f)
 	, AgentID(0)
 	, TeamID(-1)
@@ -50,6 +54,8 @@ AMocCharacter::AMocCharacter()
 	RewardCalculator = CreateDefaultSubobject<UMocRewardCalculator>(TEXT("RewardCalculator"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 	EQSExecutor = CreateDefaultSubobject<UMocEQSExecutor>(TEXT("EQSExecutor"));
+	AttackAbility = CreateDefaultSubobject<UAttackAbility>(TEXT("AttackAbility"));
+	HealAbility = CreateDefaultSubobject<UHealAbility>(TEXT("HealAbility"));
 
 	// Create Niagara VFX component
 	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
@@ -160,50 +166,42 @@ void AMocCharacter::Tick(float DeltaTime)
 		return;
 	}
 
-	HandleCombat();
-}
-
-void AMocCharacter::HandleCombat()
-{
-	if (!WeaponComponent || !WeaponComponent->CanFire()) return;
-	if (!TM) return;
-
-	AActor* ClosestEnemy = nullptr;
-	float ClosestDistance = FLT_MAX;
-	const FVector MyLocation = GetActorLocation();
-
-	// Use TeamManager's cached enemy list — avoids GetAllActorsOfClass world scan
-	TArray<AMocCharacter*> Enemies = TM->GetEnemyAgents(TeamID);
-	for (AMocCharacter* Enemy : Enemies)
+	// In training mode, abilities are driven directly from Tick.
+	// In inference mode, BT tasks (BTTask_AttackAbility / BTTask_HealAbility) drive them.
+	const bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EAgentMode::Training;
+	if (bIsTraining)
 	{
-		if (!Enemy || !Enemy->IsAlive_Implementation()) continue;
-
-		const float Distance = FVector::Dist(Enemy->GetActorLocation(), MyLocation);
-		if (Distance > 8000.0f) continue;
-
-		FHitResult HitResult;
-		FCollisionQueryParams QueryParams;
-		QueryParams.AddIgnoredActor(this);
-
-		const bool bVisible = !GetWorld()->LineTraceSingleByChannel(
-			HitResult,
-			MyLocation + FVector(0, 0, 90),
-			Enemy->GetActorLocation() + FVector(0, 0, 90),
-			ECC_Visibility,
-			QueryParams
-		);
-
-		if (bVisible && Distance < ClosestDistance)
+		if (AttackAbility)
 		{
-			ClosestEnemy = Enemy;
-			ClosestDistance = Distance;
+			AttackAbility->ExecuteAbility(DeltaTime);
+		}
+
+		if (HealAbility)
+		{
+			if (CommandedStrategy == EStrategyType::Support)
+			{
+				HealAbility->ExecuteAbility(DeltaTime);
+			}
+			else
+			{
+				HealAbility->ResetTickHeal();
+			}
 		}
 	}
+}
 
-	if (ClosestEnemy)
-	{
-		WeaponComponent->FireAtTarget(ClosestEnemy, true);
-	}
+//========================================
+// Heal Interface pass-throughs (MocRewardCalculator calls these)
+//========================================
+
+float AMocCharacter::GetLastTickHealAmount() const
+{
+	return HealAbility ? HealAbility->GetLastTickHealAmount() : 0.0f;
+}
+
+bool AMocCharacter::ConsumeHealBurst(float Threshold)
+{
+	return HealAbility ? HealAbility->ConsumeHealBurst(Threshold) : false;
 }
 
 //========================================
@@ -327,6 +325,12 @@ void AMocCharacter::ResetCharacter()
 	if (WeaponComponent)
 	{
 		WeaponComponent->RefillAmmo();
+	}
+
+	// Reset heal state
+	if (HealAbility)
+	{
+		HealAbility->ResetHealState();
 	}
 
 	// 2. Re-enable movement
