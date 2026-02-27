@@ -56,7 +56,7 @@ if SCHOLA_AVAILABLE:
 
         Design:
             - Receives commanded strategy from UE5 Squad Commander
-            - Agents output 7-dim EQS weights in range [-1, 1]
+            - Agents output 6-dim EQS weights in range [-1, 1]
             - Synchronous: step() blocks until UE5 responds
             - Clean episode boundaries with terminal state detection
         """
@@ -253,6 +253,51 @@ if SCHOLA_AVAILABLE:
 
             return all_keys
 
+        def _extract_agent_observation(self, flat_id, obs_nested, info_nested):
+            """Extract and build observation + info for a single agent from nested Schola data.
+
+            Shared by _process_obs, _parse_step_result, and _parse_step_result_full.
+
+            Returns:
+                (obs_52dim, info_dict, strategy_idx)
+            """
+            env_idx, agent_idx = self.agent_map[flat_id]
+
+            # Extract raw observation
+            agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
+            if agent_obs_data is not None:
+                if isinstance(agent_obs_data, dict):
+                    obs_val = list(agent_obs_data.values())[0]
+                else:
+                    obs_val = agent_obs_data
+                full_obs = np.array(obs_val, dtype=np.float32).flatten()
+            else:
+                full_obs = np.zeros(52, dtype=np.float32)
+
+            # Split into base obs + strategy
+            if len(full_obs) >= 52:
+                base_obs = full_obs[:49]
+                strategy_onehot = full_obs[49:52]
+                ue5_strategy_idx = int(np.argmax(strategy_onehot))
+            else:
+                base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
+                ue5_strategy_idx = 0
+
+            # Apply uniform strategy override if enabled
+            strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
+            self._agent_strategies[flat_id] = strategy_idx
+
+            obs = self._build_observation(base_obs, strategy_idx)
+
+            # Info
+            ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
+            if isinstance(ue5_info, dict):
+                info = {"env_id": env_idx, **ue5_info}
+            else:
+                info = {"env_id": env_idx}
+
+            return obs, info, strategy_idx
+
         def _build_observation(self, base_obs, strategy_idx=0):
             """Build 52-dim observation: 49 base + 3 strategy one-hot.
 
@@ -270,16 +315,6 @@ if SCHOLA_AVAILABLE:
                 base_obs = np.pad(base_obs[:TARGET_BASE_SIZE], (0, TARGET_BASE_SIZE - len(base_obs)), mode='constant')
             else:
                 base_obs = base_obs[:TARGET_BASE_SIZE]
-
-            # Force uniform strategy distribution during training:
-            # Override UE5 SquadCommander assignment with round-robin per agent.
-            # This ensures each strategy head sees equal data volume.
-            if self._force_uniform_strategy:
-                if not hasattr(self, '_agent_strategy_counter'):
-                    self._agent_strategy_counter = 0
-                # Rotate strategy per observation (each agent gets a fixed strategy per episode,
-                # reassigned on episode boundary via _assign_uniform_strategies)
-                pass  # strategy_idx already set by _assign_uniform_strategies
 
             # Strategy one-hot (3-dim for v10.2)
             strategy_onehot = np.zeros(3, dtype=np.float32)
@@ -553,43 +588,10 @@ if SCHOLA_AVAILABLE:
 
             obs_dict = {}
             info_dict = {}
-
             for flat_id in self._agent_ids:
-                env_idx, agent_idx = self.agent_map[flat_id]
-                agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
-
-                if agent_obs_data is not None:
-                    if isinstance(agent_obs_data, dict):
-                        obs_val = list(agent_obs_data.values())[0]
-                    else:
-                        obs_val = agent_obs_data
-                    full_obs = np.array(obs_val, dtype=np.float32).flatten()
-                else:
-                    full_obs = np.zeros(52, dtype=np.float32)
-
-                # Extract strategy from observation (last 3 dimensions are one-hot)
-                if len(full_obs) >= 52:
-                    base_obs = full_obs[:49]
-                    strategy_onehot = full_obs[49:52]
-                    ue5_strategy_idx = int(np.argmax(strategy_onehot))
-                else:
-                    base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
-                    ue5_strategy_idx = 0
-
-                # Apply uniform strategy override if enabled
-                strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
-
-                # Cache strategy for this agent
-                self._agent_strategies[flat_id] = strategy_idx
-                obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
-
-                # Info (extract from UE5's GetInfo())
-                ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
-                if isinstance(ue5_info, dict):
-                    info_dict[flat_id] = {"env_id": env_idx, **ue5_info}
-                else:
-                    info_dict[flat_id] = {"env_id": env_idx}
-
+                obs_dict[flat_id], info_dict[flat_id], _ = self._extract_agent_observation(
+                    flat_id, obs_nested, info_nested
+                )
             return obs_dict, info_dict
 
         def _parse_step_result_full(self, step_result):
@@ -612,32 +614,10 @@ if SCHOLA_AVAILABLE:
             for flat_id in self._agent_ids:
                 env_idx, agent_idx = self.agent_map[flat_id]
 
-                # Observation
-                agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
-                if agent_obs_data is not None:
-                    if isinstance(agent_obs_data, dict):
-                        obs_val = list(agent_obs_data.values())[0]
-                    else:
-                        obs_val = agent_obs_data
-                    full_obs = np.array(obs_val, dtype=np.float32).flatten()
-                else:
-                    full_obs = np.zeros(52, dtype=np.float32)
-
-                # Extract strategy from observation (last 3 dimensions are one-hot)
-                if len(full_obs) >= 52:
-                    base_obs = full_obs[:49]
-                    strategy_onehot = full_obs[49:52]
-                    ue5_strategy_idx = int(np.argmax(strategy_onehot))
-                else:
-                    base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
-                    ue5_strategy_idx = 0
-
-                # Apply uniform strategy override if enabled
-                strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
-
-                # Cache strategy for this agent
-                self._agent_strategies[flat_id] = strategy_idx
-                obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
+                # Observation + Info (shared helper)
+                obs_dict[flat_id], info_dict[flat_id], _ = self._extract_agent_observation(
+                    flat_id, obs_nested, info_nested
+                )
 
                 # Reward (from UE5)
                 raw_reward = rew_nested.get(env_idx, {}).get(agent_idx, 0.0)
@@ -648,13 +628,6 @@ if SCHOLA_AVAILABLE:
                 is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
                 terminated_dict[flat_id] = is_term
                 truncated_dict[flat_id] = is_trunc
-
-                # Info (extract from UE5's GetInfo())
-                ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
-                if isinstance(ue5_info, dict):
-                    info_dict[flat_id] = {"env_id": env_idx, **ue5_info}
-                else:
-                    info_dict[flat_id] = {"env_id": env_idx}
 
             # v10.2 FIX: Suppress individual agent termination signals from UE5.
             # With AutoResetType.SAME_STEP, individual agent deaths trigger auto-reset
@@ -733,43 +706,10 @@ if SCHOLA_AVAILABLE:
 
             obs_dict = {}
             info_dict = {}
-
             for flat_id in self._agent_ids:
-                env_idx, agent_idx = self.agent_map[flat_id]
-                agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
-
-                if agent_obs_data is not None:
-                    if isinstance(agent_obs_data, dict):
-                        obs_val = list(agent_obs_data.values())[0]
-                    else:
-                        obs_val = agent_obs_data
-                    full_obs = np.array(obs_val, dtype=np.float32).flatten()
-                else:
-                    full_obs = np.zeros(52, dtype=np.float32)
-
-                # Extract strategy from observation
-                if len(full_obs) >= 52:
-                    base_obs = full_obs[:49]
-                    strategy_onehot = full_obs[49:52]
-                    ue5_strategy_idx = int(np.argmax(strategy_onehot))
-                else:
-                    base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
-                    ue5_strategy_idx = 0
-
-                # Apply uniform strategy override if enabled
-                strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
-
-                # Cache strategy for this agent
-                self._agent_strategies[flat_id] = strategy_idx
-                obs_dict[flat_id] = self._build_observation(base_obs, strategy_idx)
-
-                # Info (extract from UE5's GetInfo())
-                ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
-                if isinstance(ue5_info, dict):
-                    info_dict[flat_id] = {"env_id": env_idx, **ue5_info}
-                else:
-                    info_dict[flat_id] = {"env_id": env_idx}
-
+                obs_dict[flat_id], info_dict[flat_id], _ = self._extract_agent_observation(
+                    flat_id, obs_nested, info_nested
+                )
             return obs_dict, info_dict
 
         def _log_episode_completion(self, env_idx, env_agents, terminated_dict, truncated_dict):

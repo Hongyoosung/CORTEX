@@ -9,7 +9,7 @@ Key Changes from v10.1:
 
 Architecture (v10.2.1 — Independent Models):
 - 3 independent single-head policies, one per strategy (Assault/Defend/Support)
-- Each policy: Input 52-dim (49 obs + 3 strategy one-hot) → Encoder [256,256] → Single Head → 7-dim EQS
+- Each policy: Input 52-dim (49 obs + 3 strategy one-hot) → Encoder [256,256] → Single Head → 6-dim EQS
 - RLlib multi-agent routes each agent to its strategy's policy via policy_mapping_fn
 - No shared encoder, no gradient interference, full per-strategy tuning
 
@@ -81,9 +81,9 @@ class SingleHeadPolicy_v10_2(nn.Module):
     Architecture:
     - Input: 52-dim (49 local obs + 3 strategy one-hot)
     - Encoder: [256, 256] ReLU + LayerNorm
-    - Action Head: 256 → 64 → 7 (tanh)
+    - Action Head: 256 → 64 → 6 (tanh)
     - Value Head: 256 → 64 → 1
-    - Learnable log_std: (7,)
+    - Learnable log_std: (6,)
     """
 
     def __init__(
@@ -148,7 +148,7 @@ class SingleHeadPolicy_v10_2(nn.Module):
             strategy_idx: Strategy indices (B,) — used only for one-hot encoding
 
         Returns:
-            eqs_weights: (B, 7) in range [-1, 1]
+            eqs_weights: (B, 6) in range [-1, 1]
         """
         batch_size = obs.shape[0]
         strategy_onehot = torch.zeros(batch_size, self.strategy_dim, device=obs.device)
@@ -488,7 +488,7 @@ def example_training_integration():
     print("2. Receive commanded strategy from Squad Commander")
     print("3. Route agent to the corresponding policy (assault/defend/support)")
     print("4. Run policy inference:")
-    print("   >>> eqs_weights = policy(obs_tensor, strategy_tensor)  # Output: (1, 7)")
+    print("   >>> eqs_weights = policy(obs_tensor, strategy_tensor)  # Output: (1, 6)")
     print("5. Send eqs_weights to TacticalParameterActuator_v10_2 via Schola")
     print("\n" + "="*80 + "\n")
 
@@ -559,7 +559,7 @@ if RLLIB_AVAILABLE:
         @override(TorchModelV2)
         def forward(self, input_dict, state, seq_lens):
             """
-            Forward pass.  Returns (B, 14) = [means(7), log_stds(7)].
+            Forward pass.  Returns (B, 12) = [means(6), log_stds(6)].
             """
             obs = input_dict["obs"]
 
@@ -571,12 +571,12 @@ if RLLIB_AVAILABLE:
             self._last_strategy_idx = strategy_idx
 
             # Single head — no routing needed
-            eqs_weights = self.policy(base_obs, strategy_idx)  # (B, 7)
+            eqs_weights = self.policy(base_obs, strategy_idx)  # (B, 6)
 
             # Broadcast single learned log_std to batch
-            log_stds = self.policy.log_std.unsqueeze(0).expand_as(eqs_weights)  # (B, 7)
+            log_stds = self.policy.log_std.unsqueeze(0).expand_as(eqs_weights)  # (B, 6)
 
-            output = torch.cat([eqs_weights, log_stds], dim=-1)  # (B, 14)
+            output = torch.cat([eqs_weights, log_stds], dim=-1)  # (B, 12)
             return output, state
 
         @override(TorchModelV2)
@@ -901,7 +901,7 @@ def export_onnx(algo, output_dir):
         model.export_onnx(model_path, strategy_idx_value=strategy_idx)
 
     print(f"  Input: observation(B, 49), strategy_index(B)")
-    print(f"  Output: eqs_weights(B, 7) in [-1, 1]")
+    print(f"  Output: eqs_weights(B, 6) in [-1, 1]")
 
 
 def train_with_rllib(args):
@@ -1131,7 +1131,7 @@ def run_validation():
     policies = {}
     for strat_idx, strat_name in STRATEGY_NAMES.items():
         policies[strat_name] = SingleHeadPolicy_v10_2(
-            obs_dim=49, strategy_dim=3, eqs_dim=7, strategy_name=strat_name
+            obs_dim=49, strategy_dim=3, eqs_dim=6, strategy_name=strat_name
         )
 
     batch = 8
@@ -1258,7 +1258,7 @@ def evaluate_checkpoint(checkpoint_path: str):
 
     eqs_labels = [
         "EnemyObjProx", "AllyObjProx", "CoverDensity", "EnemyVis",
-        "AllyProx", "CombatRange", "PickupProx"
+        "AllyProx", "CombatRange"
     ]
 
     strategy_policies = {
