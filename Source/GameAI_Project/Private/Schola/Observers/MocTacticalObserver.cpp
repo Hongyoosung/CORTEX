@@ -80,6 +80,15 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 {
 	ObservationCallCount++;
 
+	// === DIAGNOSTIC: Log first few observations to confirm pipeline is flowing ===
+	if (ObservationCallCount <= 5)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MocTacticalObserver] CollectObservations() call #%d | Trainer=%s | Character=%s"),
+			ObservationCallCount,
+			CachedTrainer ? *CachedTrainer->GetName() : TEXT("NULL"),
+			GetControlledCharacter() ? *GetControlledCharacter()->GetName() : TEXT("NULL"));
+	}
+
 	// Initialize output with correct size (52-dim: 49 base + 3 strategy one-hot)
 	OutObservations.Values.SetNum(52);
 

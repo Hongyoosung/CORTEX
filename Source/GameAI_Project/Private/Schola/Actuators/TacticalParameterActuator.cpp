@@ -27,7 +27,7 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 	// [5]: CombatRange
 
 	FBoxSpace Space;
-	for (int32 i = 0; i < 7; ++i)  // v10.2: 7 dimensions (was 8 in error)
+	for (int32 i = 0; i < 6; ++i)  // v10.2: 6 EQS weight dimensions
 	{
 		Space.Add(-1.0f, 1.0f);  // All weights in range [-1, 1]
 	}
@@ -37,7 +37,19 @@ FBoxSpace UTacticalParameterActuator::GetActionSpace()
 
 void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 {
-	if (Action.Values.Num() != 7) return;
+	// === DIAGNOSTIC: Log every TakeAction call for first 10 actions ===
+	if (ActionCount < 10)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] TakeAction() CALLED (action #%d) — Values.Num()=%d"),
+			ActionCount + 1, Action.Values.Num());
+	}
+
+	if (Action.Values.Num() != 6)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] ACTION REJECTED — expected 6 values, got %d! Check action space mismatch."),
+			Action.Values.Num());
+		return;
+	}
 
 	FEQSWeightParameters Weights = ActionToEQSWeights(Action);
 
@@ -58,6 +70,10 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 	if (!MocAgent)
 	{
 		MocAgent = FindMocCharacter();
+		if (MocAgent)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] FindMocCharacter() found: %s"), *MocAgent->GetName());
+		}
 	}
 
 	if (MocAgent)
@@ -65,13 +81,17 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 		MocAgent->UpdateTacticalWeights(Weights);  // stores weights + sets bWeightsDirty
 		MocAgent->PerformTacticalAction();          // triggers movement (sync EQS in training, BB write in inference)
 
-		// Diagnostic: confirm action was delivered to the character
-		UE_LOG(LogTemp, Verbose,
-			TEXT("[TacticalActuator] %s action #%d delivered: [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
-			*MocAgent->GetName(), ActionCount,
-			Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity,
-			Weights.CoverDensity, Weights.EnemyVisibility,
-			Weights.AllyProximity, Weights.CombatRange);
+		// Diagnostic: log first 10 actions at Warning level for visibility
+		if (ActionCount <= 10)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[TacticalActuator] %s action #%d DELIVERED: [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f] | Controller=%s"),
+				*MocAgent->GetName(), ActionCount,
+				Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity,
+				Weights.CoverDensity, Weights.EnemyVisibility,
+				Weights.AllyProximity, Weights.CombatRange,
+				MocAgent->GetController() ? *MocAgent->GetController()->GetName() : TEXT("NULL"));
+		}
 	}
 	else
 	{
@@ -79,9 +99,23 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 		UObject* MyOuter = GetOuter();
 		FString OuterName = MyOuter ? MyOuter->GetName() : TEXT("NULL");
 		FString OuterClass = MyOuter ? MyOuter->GetClass()->GetName() : TEXT("NULL");
+
+		// Walk the full outer chain for debugging
+		FString OuterChain;
+		UObject* Current = GetOuter();
+		int32 Depth = 0;
+		while (Current && Depth < 10)
+		{
+			OuterChain += FString::Printf(TEXT("[%d] %s (%s) → "), Depth, *Current->GetName(), *Current->GetClass()->GetName());
+			Current = Current->GetOuter();
+			Depth++;
+		}
+
 		UE_LOG(LogTemp, Error,
-			TEXT("[TacticalActuator] ACTION DROPPED (action #%d) — MocCharacter not found! Python sent weights but bWeightsDirty will NOT be set. Outer: %s (%s)"),
-			ActionCount, *OuterName, *OuterClass);
+			TEXT("[TacticalActuator] ACTION DROPPED (action #%d) — MocCharacter not found! bWeightsDirty will NOT be set."),
+			ActionCount);
+		UE_LOG(LogTemp, Error,
+			TEXT("[TacticalActuator] Outer chain: %s"), *OuterChain);
 		return;
 	}
 
@@ -94,6 +128,8 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 
 void UTacticalParameterActuator::InitializeActuator()
 {
+	UE_LOG(LogTemp, Warning, TEXT("========== [TacticalActuator] InitializeActuator DIAGNOSTIC =========="));
+
 	if (!MocAgent && bAutoFindMoc)
 	{
 		MocAgent = FindMocCharacter();
@@ -101,12 +137,27 @@ void UTacticalParameterActuator::InitializeActuator()
 
 	if (MocAgent)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[TacticalParameterActuator] Initialized for %s"), *MocAgent->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] ✓ Initialized for: %s"), *MocAgent->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator]   Controller: %s"),
+			MocAgent->GetController() ? *MocAgent->GetController()->GetName() : TEXT("NULL"));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalParameterActuator] No MocCharacter found. Call SetOwnerCharacter() explicitly."));
+		// Detailed failure diagnosis
+		UObject* MyOuter = GetOuter();
+		FString OuterChain;
+		UObject* Current = MyOuter;
+		int32 Depth = 0;
+		while (Current && Depth < 10)
+		{
+			OuterChain += FString::Printf(TEXT("[%d] %s (%s) → "), Depth, *Current->GetName(), *Current->GetClass()->GetName());
+			Current = Current->GetOuter();
+			Depth++;
+		}
+		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] ✗ No MocCharacter found! Outer chain: %s"), *OuterChain);
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("======================================================================"));
 
 	CurrentCommandedStrategy = EStrategyType::Assault;
 	ActionCount = 0;
@@ -186,7 +237,7 @@ FEQSWeightParameters UTacticalParameterActuator::ActionToEQSWeights(const FBoxPo
 	// Direct mapping from 7-dim Box action to FEQSWeightParameters
 	// Box action space is [-1, 1]^7, matching the weight range
 
-	check(Action.Values.Num() == 7);
+	check(Action.Values.Num() == 6);
 
 	FEQSWeightParameters Weights;
 	Weights.EnemyObjectiveProximity = Action.Values[0];

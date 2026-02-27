@@ -109,6 +109,23 @@ void AMocTrainer::BeginPlay()
     // Initialize observation state
     PreviousObservation = FObservation();
     CurrentObservation = GatherStateObservation();
+
+    // === DIAGNOSTIC: Log full pipeline state at startup ===
+    UE_LOG(LogTemp, Warning, TEXT("========== [MocTrainer] BeginPlay DIAGNOSTIC =========="));
+    UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Trainer: %s"), *GetName());
+    UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Pawn: %s"), GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"));
+    UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] ControlledCharacter: %s"), ControlledCharacter ? *ControlledCharacter->GetName() : TEXT("NULL"));
+    UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] MocAgent: %s"), MocAgent ? *MocAgent->GetName() : TEXT("NULL"));
+    UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Pawn == ControlledCharacter? %s"),
+        (GetPawn() == ControlledCharacter) ? TEXT("YES") : TEXT("NO - ACTIONS WILL NOT REACH THIS TRAINER!"));
+    if (ControlledCharacter)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Character's Controller: %s"),
+            ControlledCharacter->GetController() ? *ControlledCharacter->GetController()->GetName() : TEXT("NULL"));
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Character's Controller == this? %s"),
+            (ControlledCharacter->GetController() == this) ? TEXT("YES") : TEXT("NO - POSSESSION MISMATCH!"));
+    }
+    UE_LOG(LogTemp, Warning, TEXT("========================================================"));
 }
 
 void AMocTrainer::Tick(float DeltaTime)
@@ -203,13 +220,21 @@ void AMocTrainer::Tick(float DeltaTime)
 
             // Diagnose why weights are not arriving
             UE_LOG(LogTemp, Warning,
-                TEXT("[MocTrainer] FREEZE DIAG: %s — AIController=%s | Health=%.1f%% | LastAction=[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
+                TEXT("[MocTrainer] FREEZE DIAG: %s — Controller=%s | Pawn=%s | MocAgent=%s | Health=%.1f%%"),
                 *ControlledCharacter->GetName(),
-                ControlledCharacter->GetController() ? TEXT("Valid") : TEXT("NULL"),
-                ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f,
-                LastAction.EnemyObjectiveProximity, LastAction.AllyObjectiveProximity,
-                LastAction.CoverDensity, LastAction.EnemyVisibility,
-                LastAction.AllyProximity, LastAction.CombatRange);
+                ControlledCharacter->GetController() ? *ControlledCharacter->GetController()->GetName() : TEXT("NULL"),
+                GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
+                MocAgent ? *MocAgent->GetName() : TEXT("NULL"),
+                ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f);
+
+            // Check if this trainer is actually possessing the character
+            UE_LOG(LogTemp, Warning,
+                TEXT("[MocTrainer] FREEZE DIAG: %s — Trainer(%s) Pawn==%s? %s | ControlledChar==%s"),
+                *ControlledCharacter->GetName(),
+                *GetName(),
+                GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
+                (GetPawn() == ControlledCharacter) ? TEXT("YES") : TEXT("NO - MISMATCH!"),
+                *ControlledCharacter->GetName());
         }
     }
 

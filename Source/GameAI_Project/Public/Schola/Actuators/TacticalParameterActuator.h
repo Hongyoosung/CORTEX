@@ -1,5 +1,5 @@
 // TacticalParameterActuator.h - v10.2 Schola actuator for EQS weight outputs
-// Box actuator outputting 7-dimensional EQS weights for spatial reasoning
+// Box actuator outputting 6-dimensional EQS weights for spatial reasoning
 
 #pragma once
 
@@ -17,7 +17,7 @@ class AAbstractTrainer;
 /** //============================================================
  * v10.2 Schola actuator - Pure action-to-weight translator.
  *
- * Action Space: Box([-1, 1]^7)
+ * Action Space: Box([-1, 1]^6)
  * - [0]: EnemyObjectiveProximity  (-1=avoid, +1=approach)
  * - [1]: AllyObjectiveProximity   (-1=avoid, +1=defend)
  * - [2]: CoverDensity             (-1=ignore, +1=prioritize)
@@ -125,7 +125,7 @@ private:
 
 	/**
 	 * Convert Box action to EQS weight parameters.
-	 * Maps 7-dim Box([-1,1]) to FEQSWeightParameters struct.
+	 * Maps 6-dim Box([-1,1]) to FEQSWeightParameters struct.
 	 */
 	FEQSWeightParameters ActionToEQSWeights(const FBoxPoint& Action) const;
 
