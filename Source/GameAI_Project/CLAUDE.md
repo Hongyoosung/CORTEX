@@ -18,9 +18,6 @@
 For all detailed implementation specifications, formulas, and parameters, please refer to the linked documents below.
 
 | Document Category | File Name | Main Content |
-| :--- | :--- | :--- |
-| **Game Environment** | `MocGameEnvSpecification.md` | Game Rules, Map (150x150m), Occupation Method, Reward Function, Agent Specification |
-| **v10.1 Architecture** | `v10.0Architecture.md` | Decentralized MCTS, Multi-Head Policy, Individual Agent Planning |
 | **v10.2 Architecture** | `v10.2Architecture.md` | Centralized Commander-Executor, Tactical Plays, Team-Level Planning |
 
 ---

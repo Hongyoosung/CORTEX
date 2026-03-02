@@ -21,7 +21,10 @@ enum class ERewardEventType : uint8
     DistanceShaping,
     TeamVictory,
     StrategyDiversity,
-    HealAlly
+    HealAlly,
+    ZoneDurability,
+    ZoneGuardKill,
+    TeamWipe
 };
 
 /**
@@ -68,7 +71,7 @@ struct FAssaultRewardSettings
     //========== Combat Properties =============
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float SurvivalRewardScale = 0.8f;
+    float SurvivalRewardScale = 1.5f;
 
     /** Assault: +10 per kill (base KillReward=10 × 1.0) */
     UPROPERTY(EditAnywhere, Category = "Combat")
@@ -99,10 +102,15 @@ struct FAssaultRewardSettings
     float LossCaptureRewardScale = 0.25f;
 
     UPROPERTY(EditAnywhere, Category = "Capture")
-    float ObjectiveProgressReward = 0.01f;
+    float ObjectiveProgressReward = 0.05f;
 
     UPROPERTY(EditAnywhere, Category = "Capture")
-    float ZonePresenceBonus = 1.5f;
+    float ZonePresenceBonus = 3.0f;
+
+    /** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point.
+     *  Rewards staying in the zone during the conversion, not just touching it. */
+    UPROPERTY(EditAnywhere, Category = "Capture")
+    float ActiveCappingBonus = 3.5f;
 
     UPROPERTY(EditAnywhere, Category = "Capture")
     float PostCaptureMomentumBonus = 1.0f;
@@ -118,9 +126,6 @@ struct FAssaultRewardSettings
 
     UPROPERTY(EditAnywhere, Category = "Movement")
     float PenaltyPerMeterScale = 1.0f;
-
-    UPROPERTY(EditAnywhere, Category = "Movement")
-    float MovementReward = 0.01f;
 };
 
 
@@ -132,7 +137,7 @@ struct FDefendRewardSettings
     //========== Combat Properties =============
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float SurvivalRewardScale = 0.8f;
+    float SurvivalRewardScale = 1.5f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
     float PositionReward = 1.0f;
@@ -140,9 +145,9 @@ struct FDefendRewardSettings
     UPROPERTY(EditAnywhere, Category = "Combat")
     float HealthBonus = 1.0f;
 
-    /** Defend: +5 per kill (base KillReward=10 × 0.5) */
+    /** Defend: +1 per kill (base KillReward=10 × 0.1) — kills are incidental, not the objective */
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float KillRewardScale = 0.5f;
+    float KillRewardScale = 0.1f;
 
     /** Defend: -15 per death (base DeathPenaltyReward=100 × 0.15) */
     UPROPERTY(EditAnywhere, Category = "Combat")
@@ -160,14 +165,38 @@ struct FDefendRewardSettings
 
     /** Flat bonus awarded each step the agent is physically inside a friendly capture zone */
     UPROPERTY(EditAnywhere, Category = "Capture")
-    float ZonePresenceBonus = 1.5f;
+    float ZonePresenceBonus = 3.0f;
+
+    /** Additional bonus per step when an enemy is actively contesting a friendly zone.
+     *  Rewards the agent for being in the right place when it actually matters. */
+    UPROPERTY(EditAnywhere, Category = "Capture")
+    float ThreatResponseBonus = 3.5f;
 
     /** Per-cm shaping reward for approaching the nearest friendly capture zone (when outside it).
      *  FIX (Issue 3): Raised from 0.002 to 0.01 (= 1.0 per metre).
      *  At 0.002/cm the approach gradient was dominated by PositionReward (2.0 flat for
      *  standing still anywhere), so the agent learned to idle instead of navigating to zone. */
     UPROPERTY(EditAnywhere, Category = "Capture")
-    float ZoneApproachReward = 0.01f;
+    float ZoneApproachReward = 0.025f;
+
+
+    //========== Zone Defense Skills =============
+
+    /** Reward per normalized HP absorbed (0–1) while standing inside a friendly capture zone.
+     *  Incentivises tanking damage at the zone instead of retreating when shot. */
+    UPROPERTY(EditAnywhere, Category = "ZoneDefense")
+    float ZoneDurabilityBonus = 2.5f;
+
+    /** Extra kill reward when the killed enemy was within ZoneGuardRadius × CaptureRadius
+     *  of any friendly capture point the step before the kill.
+     *  Gives a directional kill signal: eliminate threats *to your zone*, not random enemies. */
+    UPROPERTY(EditAnywhere, Category = "ZoneDefense")
+    float ZoneGuardKillBonus = 3.0f;
+
+    /** Multiplier on CaptureRadius used to define "near the zone" for ZoneGuardKillBonus.
+     *  Default 2.0 → enemies within 2× capture radius count as zone threats. */
+    UPROPERTY(EditAnywhere, Category = "ZoneDefense")
+    float ZoneGuardRadius = 2.0f;
 
 
     //========== Movement Properties =============
@@ -185,7 +214,7 @@ struct FSupportRewardSettings
     //========== Combat Properties =============
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float SurvivalRewardScale = 0.8f;
+    float SurvivalRewardScale = 1.5f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
     float PositionReward = 0.5f;
@@ -193,9 +222,14 @@ struct FSupportRewardSettings
     UPROPERTY(EditAnywhere, Category = "Combat")
     float HealthBonus = 0.8f;
 
-    /** Support: +3 per kill (base KillReward=10 × 0.3) */
+    /** Support: 0 per kill — kills are irrelevant to role; heal rewards are the objective */
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float KillRewardScale = 0.3f;
+    float KillRewardScale = 0.0f;
+
+    /** Penalty applied when support agent gets a kill while any ally is below 50% HP.
+     *  Discourages role-breaking combat at the expense of healing duty. */
+    UPROPERTY(EditAnywhere, Category = "Combat")
+    float RoleBreakPenalty = 3.0f;
 
     /** Support: -10 per death (base DeathPenaltyReward=100 × 0.10) */
     UPROPERTY(EditAnywhere, Category = "Combat")
@@ -206,7 +240,7 @@ struct FSupportRewardSettings
 
     /** Flat bonus per step for being within SupportAllyProximityThreshold of the most-injured ally */
     UPROPERTY(EditAnywhere, Category = "AllyProximity")
-    float AllyProximityBonus = 1.0f;
+    float AllyProximityBonus = 0.6f;
 
     /** Per-cm shaping reward for approaching the most-injured ally.
      *  FIX (Issue 3): Raised from 0.001 to 0.01 (= 1.0 per metre).
@@ -231,21 +265,19 @@ struct FSupportRewardSettings
 
     /** Per-tick reward when actively healing an ally */
     UPROPERTY(EditAnywhere, Category = "Heal")
-    float HealTickReward = 0.6f;
-
-    /** Cumulative HP healed on one ally required to trigger the burst bonus */
-    UPROPERTY(EditAnywhere, Category = "Heal")
-    float HealBurstThreshold = 40.0f;
-
-    /** One-time bonus awarded when cumulative heal reaches HealBurstThreshold */
-    UPROPERTY(EditAnywhere, Category = "Heal")
-    float HealBurstBonus = 3.0f;
+    float HealTickReward = 0.5f;
 
     //========== Positioning Properties =============
 
-    /** Per-step bonus for being farther from the nearest visible enemy than the nearest ally */
+    /** Per-step bonus for being farther from the nearest visible enemy than the nearest ally.
+     *  Only fires when the enemy is within RearGuardMaxEnemyDist — prevents rewarding far-corner hiding. */
     UPROPERTY(EditAnywhere, Category = "Positioning")
     float RearGuardBonus = 0.3f;
+
+    /** Maximum distance to nearest visible enemy (cm) for RearGuardBonus to fire.
+     *  Enemies beyond this range don't count as "threatening the backline". Default 3000cm = 30m. */
+    UPROPERTY(EditAnywhere, Category = "Positioning")
+    float RearGuardMaxEnemyDist = 3000.0f;
 
 
     //========== Movement Properties =============

@@ -50,6 +50,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateDeathPenalty(EStrategyType ActiveStrategy);
 
+	/** Additional penalty when the entire team is wiped. Called by TeamManager when ActiveAgents reaches 0. */
+	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
+	float CalculateTeamWipePenalty(EStrategyType ActiveStrategy);
+
 	/** Assault: +15, Defend: +20 (core objective), Support: +10 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateCaptureReward(EStrategyType ActiveStrategy);
@@ -68,7 +72,7 @@ public:
 
 	/** Match victory: +100 */
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
-	float CalculateVictoryBonus() const { return 100.0f; }
+	float CalculateVictoryBonus() const { return 10.0f; }
 
 	// ==================== Dense Per-Step Reward ====================
 
@@ -161,6 +165,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float DeathPenaltyReward = 100.0f;
 
+	/** Additional one-time penalty applied to every agent on a team when the entire team is wiped.
+	 *  Stacks with each agent's individual CalculateDeathPenalty. Scaled by per-strategy DeathScale. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float TeamWipePenalty = 50.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float KillReward = 10.0f;
 
@@ -179,9 +188,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float SurvivalHPThreshold = 0.3f;
 
-	/** Assault: minimum health loss (normalized) to apply the per-step health penalty */
+	/** Assault: minimum health loss (normalized) to apply the per-step health penalty.
+	 *  FIX: Lowered from 0.5 to 0.05 — at 0.5 the penalty almost never fired (only one-shots). */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float AssaultHealthLossThreshold = 0.5f;
+	float AssaultHealthLossThreshold = 0.05f;
 
 	/** Assault: movement below this distance (cm) triggers idle penalty when not in zone */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
@@ -215,17 +225,23 @@ public:
 
 	/** Global reward scale applied to all step rewards before clamping.
 	 *  Reduces reward magnitude so the value function can fit discounted returns.
-	 *  Default 0.1 ⇒ per-step rewards land in ~[-0.5, 0.5] range. */
+	 *  Raised from 0.01 to 0.05 so dense signals are stronger (baseline 0.03→0.0015). */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float GlobalRewardScale = 0.1f;
+	float GlobalRewardScale = 0.05f;
+
+	/** Scale applied to sparse rewards (kills, deaths, captures) BEFORE they're added to dense step reward.
+	 *  Reduces the magnitude gap between dense (~1.0) and sparse (~20-100) rewards so the
+	 *  value function can fit both. Applied inside DrainSparseReward(). */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
+	float SparseRewardScale = 0.1f;
 
 	/** Minimum per-step reward (after scaling) */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMin = -2.0f;
+	float StepRewardClampMin = -1.0f;
 
 	/** Maximum per-step reward (after scaling) */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMax = 2.0f;
+	float StepRewardClampMax = 1.0f;
 
 	// ==================== Capture Loss Cooldown (B4) ====================
 
@@ -236,14 +252,35 @@ public:
 
 	// ==================== Strategy Baselines (B1/B2) ====================
 
+	/** Unconditional per-step baseline for Assault so random policies don't diverge to -inf.
+	 *  FIX: Assault previously had no baseline while Defend/Support both had 0.3,
+	 *  creating systematic negative bias (time penalty with no offset). */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	float AssaultBaselineReward = 0.02f;
+
 	/** Unconditional per-step baseline for Defend so random policies don't diverge to -inf.
 	 *  Offsets the expected distance penalty for an untrained agent. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float DefendBaselineReward = 0.3f;
+	float DefendBaselineReward = 0.03f;
 
 	/** Unconditional per-step baseline for Support. Same purpose as DefendBaselineReward. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float SupportBaselineReward = 0.3f;
+	float SupportBaselineReward = 0.03f;
+
+	// ==================== Isolation Mode (last survivor) ====================
+
+	/** Multiplier on the objective approach reward when the agent is the last survivor
+	 *  (all allies dead). Creates a stronger directional gradient toward capture points
+	 *  to prevent corner-hiding. Applied to Assault and Support; Defend uses it for
+	 *  the zone approach reward. Default 5× means ~0.05/cm instead of ~0.01/cm. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Isolation")
+	float IsolationApproachMultiplier = 5.0f;
+
+	/** Number of consecutive steps all allies must be dead before isolation mode activates.
+	 *  Prevents false positives during normal respawn windows (typically 3-8 seconds).
+	 *  At 10 steps/s a value of 30 ≈ 3 seconds of sustained isolation. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Isolation")
+	int32 IsolationDebounceSteps = 30;
 
 
 protected:
@@ -292,8 +329,14 @@ protected:
 	// B4: Per-capture-point cooldown for loss penalties (keyed by PointID)
 	TMap<ECapturePointID, float> LastCaptureLossPenaltyTime;
 
-	// B5: Death masking — once an agent dies, zero all rewards for the rest of the episode.
-	// This prevents baseline rewards (0.3/step) from drowning out the death penalty signal.
-	// Reset in ResetEpisodeState().
-	bool bAgentDiedThisEpisode = false;
+	// B6: Per-step flag set by CalculateKillReward(), read and cleared in ComputeStepReward().
+	// Fixes the RoleBreakPenalty bug where scanning the append-only EventLog caused the
+	// penalty to fire every step after the first kill for the rest of the episode.
+	bool bSparseKillFiredThisStep = false;
+
+	bool bInFriendlyZone = false;
+
+	// Isolation debounce: incremented each step all allies are dead, reset when any ally is alive.
+	// Isolation mode only activates once this reaches IsolationDebounceSteps.
+	int32 IsolatedConsecutiveSteps = 0;
 };

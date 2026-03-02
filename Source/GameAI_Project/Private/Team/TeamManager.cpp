@@ -1,9 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Team/TeamManager.h"
+#include "RL/Rewards/MocRewardCalculator.h"
 #include "Team/FogOfWarManager.h"
 #include "Team/SquadManager.h"  // USquadManager
 #include "Characters/MocCharacter.h"
+#include "Combat/Components/HealthComponent.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Data/TeamData.h"
 #include "Engine/World.h"
@@ -316,6 +318,19 @@ void ATeamManager::QueueRespawn(AMocCharacter* Agent, int32 TeamID)
 		TeamRespawnTimers[TeamID] = RespawnDelay;
 		UE_LOG(LogTemp, Log, TEXT("TeamManager: Team %d fully eliminated! Group respawn in %.1fs (%d agents)"),
 			TeamID, RespawnDelay, TeamState.RespawnQueue.Num());
+
+		// Fire team-wipe penalty on every agent in the queue (the whole team is now dead).
+		// Stacks with each agent's individual death penalty already queued this frame.
+		for (AMocCharacter* DeadAgent : TeamState.RespawnQueue)
+		{
+			if (DeadAgent)
+			{
+				if (UMocRewardCalculator* RC = DeadAgent->FindComponentByClass<UMocRewardCalculator>())
+				{
+					RC->CalculateTeamWipePenalty(DeadAgent->GetCommandedStrategy());
+				}
+			}
+		}
 	}
 }
 
@@ -368,6 +383,20 @@ void ATeamManager::ProcessRespawnQueue(float DeltaTime)
 			// Respawn at team location
 			FVector SpawnLoc = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
 			Agent->SetActorLocation(SpawnLoc);
+
+			// Grant respawn invincibility
+			if (RespawnInvincibilityDuration > 0.0f && Agent->GetHealthComponent())
+			{
+				Agent->GetHealthComponent()->SetInvulnerable(true);
+				FTimerHandle InvincibilityTimer;
+				GetWorldTimerManager().SetTimer(InvincibilityTimer, [Agent]()
+				{
+					if (IsValid(Agent) && Agent->GetHealthComponent())
+					{
+						Agent->GetHealthComponent()->SetInvulnerable(false);
+					}
+				}, RespawnInvincibilityDuration, false);
+			}
 
 			// Broadcast event
 			OnAgentSpawned.Broadcast(TeamID, Agent);

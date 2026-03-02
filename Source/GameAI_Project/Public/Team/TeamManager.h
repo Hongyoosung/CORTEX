@@ -253,7 +253,11 @@ public:
 
 	/** Respawn delay after death (seconds) */
 	UPROPERTY(EditAnywhere, Category = "TeamManager|Respawn")
-	float RespawnDelay = 5.0f;
+	float RespawnDelay = 7.0f;
+
+	/** Duration of invincibility granted after respawn (seconds) */
+	UPROPERTY(EditAnywhere, Category = "TeamManager|Respawn")
+	float RespawnInvincibilityDuration = 3.0f;
 	
 
 	/** Show debug visualization */

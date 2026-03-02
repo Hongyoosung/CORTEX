@@ -54,7 +54,7 @@ void UMocRewardCalculator::AddReward(float Value)
 
 float UMocRewardCalculator::DrainSparseReward()
 {
-	const float Drained = CumulativeReward;
+	const float Drained = CumulativeReward * SparseRewardScale;
 	CumulativeReward = 0.0f;
 	return Drained;
 }
@@ -102,6 +102,7 @@ void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapt
 
 float UMocRewardCalculator::CalculateKillReward(EStrategyType ActiveStrategy)
 {
+	bSparseKillFiredThisStep = true;
 	float Scale = GetStrategyScale(ActiveStrategy,
 		AssaultReward.KillRewardScale, DefendReward.KillRewardScale, SupportReward.KillRewardScale);
 	return ApplyAndLogReward(ERewardEventType::Kill, ActiveStrategy, KillReward * Scale);
@@ -121,6 +122,13 @@ float UMocRewardCalculator::CalculateDeathPenalty(EStrategyType ActiveStrategy)
 	float Scale = GetStrategyScale(ActiveStrategy,
 		AssaultReward.DeathScale, DefendReward.DeathScale, SupportReward.DeathScale);
 	return ApplyAndLogReward(ERewardEventType::Death, ActiveStrategy, -DeathPenaltyReward * Scale);
+}
+
+float UMocRewardCalculator::CalculateTeamWipePenalty(EStrategyType ActiveStrategy)
+{
+	float Scale = GetStrategyScale(ActiveStrategy,
+		AssaultReward.DeathScale, DefendReward.DeathScale, SupportReward.DeathScale);
+	return ApplyAndLogReward(ERewardEventType::TeamWipe, ActiveStrategy, -TeamWipePenalty * Scale);
 }
 
 float UMocRewardCalculator::CalculateCaptureReward(EStrategyType ActiveStrategy)
@@ -166,23 +174,6 @@ float UMocRewardCalculator::ComputeStepReward(
 	const FObservation& Current,
 	const FEQSWeightParameters& Action)
 {
-	// B5: Death masking — if agent already died this episode, return 0.
-	// Sparse rewards (kill callbacks from other agents) are still drained to prevent
-	// accumulation, but not forwarded. This ensures the death penalty isn't drowned
-	// out by 200+ steps of baseline reward post-respawn.
-	if (bAgentDiedThisEpisode)
-	{
-		DrainSparseReward(); // drain and discard
-		return 0.0f;
-	}
-
-	// Detect death on THIS step → set flag for all future steps
-	if (Prev.bIsAlive && !Current.bIsAlive)
-	{
-		bAgentDiedThisEpisode = true;
-		// Still compute this step's reward (includes the death penalty from sparse drain)
-	}
-
 	float Reward = 0.0f;
 	const float PositionChange = FVector::Dist(Prev.Position, Current.Position);
 	const int32 MyTeamID = (OwnerCharacter) ? OwnerCharacter->GetTeamID_Implementation() : -1;
@@ -194,15 +185,29 @@ float UMocRewardCalculator::ComputeStepReward(
 	// step would produce a spurious ±80 spike per step.
 	const bool bIsRespawnStep = !Prev.bIsAlive;
 
+	// Isolation: true only after all allies have been dead for IsolationDebounceSteps
+	// consecutive steps. Filters out normal respawn windows where AllyHealths briefly
+	// reads all-zero between death and respawn, which would otherwise corrupt rewards.
+	{
+		bool bAllAlliesDead = true;
+		for (const float HP : Current.AllyHealths)
+		{
+			if (HP > 0.0f) { bAllAlliesDead = false; break; }
+		}
+		if (bAllAlliesDead)
+			IsolatedConsecutiveSteps = FMath::Min(IsolatedConsecutiveSteps + 1, IsolationDebounceSteps);
+		else
+			IsolatedConsecutiveSteps = 0;
+	}
+	const bool bIsolated = (IsolatedConsecutiveSteps >= IsolationDebounceSteps);
+
 	switch (Strategy)
 	{
 	case EStrategyType::Assault:
 		{
-			// Movement reward — skip on respawn (teleport distance, not real movement)
-			if (!bIsRespawnStep)
-			{
-				Reward += AssaultReward.MovementReward * PositionChange;
-			}
+			// B6: Unconditional baseline — same rationale as Defend/Support.
+			// Previously missing, causing systematic negative bias for Assault.
+			Reward += AssaultBaselineReward;
 
 			// Health loss penalty
 			float HealthLoss = Prev.Health - Current.Health;
@@ -263,16 +268,29 @@ float UMocRewardCalculator::ComputeStepReward(
 					}
 				}
 
-				// Objective progress: approaching nearest non-friendly CP
+				// Objective progress: reward approaching nearest non-friendly CP (clamp to 0 — no penalty for retreating).
+				// Amplified when isolated — stronger directional gradient toward objectives.
 				if (PrevNearestDist < FLT_MAX && CurrNearestDist < FLT_MAX)
 				{
-					Reward += AssaultReward.ObjectiveProgressReward * (PrevNearestDist - CurrNearestDist);
+					const float ApproachScale = bIsolated ? IsolationApproachMultiplier : 1.0f;
+					Reward += AssaultReward.ObjectiveProgressReward * ApproachScale * FMath::Max(PrevNearestDist - CurrNearestDist, 0.0f);
 				}
 
-				// Zone presence bonus
+				// Zone presence bonus + active capping reward
 				if (bInNonFriendlyZone)
 				{
 					Reward += AssaultReward.ZonePresenceBonus;
+
+					// Scale reward by how far along the capture is — incentivises staying in zone
+					for (ACapturePoint* CP : CachedCapturePoints)
+					{
+						if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+						if (FVector::Dist(Current.Position, CP->GetActorLocation()) <= CP->CaptureRadius)
+						{
+							Reward += AssaultReward.ActiveCappingBonus * CP->GetCaptureProgress();
+							break; // only award for one point per step
+						}
+					}
 				}
 
 				// Post-capture momentum bonus for advancing away from captured point
@@ -289,11 +307,12 @@ float UMocRewardCalculator::ComputeStepReward(
 					}
 				}
 
-				// Idle penalty: stationary and not contesting a zone
+				// Idle penalty: stationary and not contesting a zone.
+				// When isolated the 0.5x softening is removed — full penalty applies
+				// regardless of target distance to prevent corner-hiding.
 				if (PositionChange < AssaultIdleMovementThreshold && !bInNonFriendlyZone)
 				{
-					// Stronger penalty when no target in range; lighter when target is just far away
-					float IdlePenalty = (CurrNearestDist == FLT_MAX)
+					float IdlePenalty = (CurrNearestDist == FLT_MAX || bIsolated)
 						? AssaultReward.IdlePenalty
 						: AssaultReward.IdlePenalty * 0.5f;
 					Reward -= IdlePenalty;
@@ -313,7 +332,7 @@ float UMocRewardCalculator::ComputeStepReward(
 			{
 				float CurrNearestFriendlyDist = FLT_MAX;
 				float PrevNearestFriendlyDist = FLT_MAX;
-				bool bInFriendlyZone = false;
+				bInFriendlyZone = false;
 
 				for (ACapturePoint* CP : CachedCapturePoints)
 				{
@@ -348,6 +367,24 @@ float UMocRewardCalculator::ComputeStepReward(
 				{
 					Reward += DefendReward.HealthBonus;
 				}
+
+				// Threat response: bonus for being in zone when an enemy is actively contesting it
+				for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
+				{
+					if (i < Current.EnemyVisible.Num() && Current.EnemyVisible[i])
+					{
+						for (ACapturePoint* CP : CachedCapturePoints)
+						{
+							if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+							if (FVector::Dist(Current.EnemyPositions[i], CP->GetActorLocation()) <= CP->CaptureRadius)
+							{
+								Reward += DefendReward.ThreatResponseBonus;
+								goto ThreatResponseApplied; // only award once per step
+							}
+						}
+					}
+				}
+				ThreatResponseApplied:;
 			}
 			else if (CurrNearestFriendlyDist < FLT_MAX)
 			{
@@ -361,8 +398,10 @@ float UMocRewardCalculator::ComputeStepReward(
 					{
 						// Outside zone: only reward APPROACHING, clamp negative to 0.
 						// This prevents random movement from accumulating massive negatives.
+						// Amplified when isolated to push the last survivor back to zone faster.
 						const float ApproachDelta = PrevNearestFriendlyDist - CurrNearestFriendlyDist;
-						Reward += DefendReward.ZoneApproachReward * FMath::Max(ApproachDelta, 0.0f);
+						const float DefendApproachScale = bIsolated ? IsolationApproachMultiplier : 1.0f;
+						Reward += DefendReward.ZoneApproachReward * DefendApproachScale * FMath::Max(ApproachDelta, 0.0f);
 					}
 
 					// Softened distance penalty: reduced magnitude so it doesn't dominate.
@@ -370,6 +409,49 @@ float UMocRewardCalculator::ComputeStepReward(
 					// New: 0.2 * min(dist/10000, 1.0) → up to -0.2/step (baseline absorbs this).
 					const float DistPenalty = FMath::Min(CurrNearestFriendlyDist / 10000.0f, 1.0f) * 0.2f;
 					Reward -= DistPenalty;
+				}
+			}
+			// --- Zone Durability Bonus ---
+			// Reward for absorbing damage while physically inside a friendly zone.
+			// Prevents the agent from fleeing the zone when under fire.
+			if (!bIsRespawnStep && bInFriendlyZone)
+			{
+				const float DamageTaken = Prev.Health - Current.Health;
+				if (DamageTaken > 0.0f)
+				{
+					const float DurabilityReward = DefendReward.ZoneDurabilityBonus * DamageTaken;
+					Reward += DurabilityReward;
+					LogRewardEvent(ERewardEventType::ZoneDurability, Strategy, DurabilityReward);
+				}
+			}
+
+			// --- Zone Guard Kill Bonus ---
+			// Extra kill reward if the enemy was threatening a friendly zone the step before the kill.
+			// Uses Prev positions (enemy is dead in Current) to check zone proximity.
+			// Awards once per step regardless of how many zone-threats were present.
+			if (bSparseKillFiredThisStep)
+			{
+				bool bEnemyWasNearZone = false;
+				for (int32 i = 0; i < Prev.EnemyPositions.Num() && !bEnemyWasNearZone; ++i)
+				{
+					if (i < Prev.EnemyVisible.Num() && Prev.EnemyVisible[i])
+					{
+						for (ACapturePoint* CP : CachedCapturePoints)
+						{
+							if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+							const float EnemyDistToZone = FVector::Dist(Prev.EnemyPositions[i], CP->GetActorLocation());
+							if (EnemyDistToZone <= CP->CaptureRadius * DefendReward.ZoneGuardRadius)
+							{
+								bEnemyWasNearZone = true;
+								break;
+							}
+						}
+					}
+				}
+				if (bEnemyWasNearZone)
+				{
+					Reward += DefendReward.ZoneGuardKillBonus;
+					LogRewardEvent(ERewardEventType::ZoneGuardKill, Strategy, DefendReward.ZoneGuardKillBonus);
 				}
 			}
 		}
@@ -445,6 +527,28 @@ float UMocRewardCalculator::ComputeStepReward(
 					Reward += SupportReward.AllyApproachReward * FMath::Max(ApproachDelta, 0.0f);
 				}
 			}
+			else if (bIsolated && !bIsRespawnStep)
+			{
+				// All allies dead: redirect to objective approach instead of passive baseline.
+				// Prevents the support agent from idling with no healing target.
+				float PrevNearestObjDist = FLT_MAX;
+				float CurrNearestObjDist = FLT_MAX;
+				for (ACapturePoint* CP : CachedCapturePoints)
+				{
+					if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+					PrevNearestObjDist = FMath::Min(PrevNearestObjDist, FVector::Dist(Prev.Position, CP->GetActorLocation()));
+					CurrNearestObjDist = FMath::Min(CurrNearestObjDist, FVector::Dist(Current.Position, CP->GetActorLocation()));
+				}
+				if (PrevNearestObjDist < FLT_MAX && CurrNearestObjDist < FLT_MAX)
+				{
+					Reward += AssaultReward.ObjectiveProgressReward * IsolationApproachMultiplier
+						* (PrevNearestObjDist - CurrNearestObjDist);
+				}
+				if (PositionChange < AssaultIdleMovementThreshold)
+				{
+					Reward -= AssaultReward.IdlePenalty;
+				}
+			}
 			else
 			{
 				// No valid ally target (all dead or no allies): provide a small baseline
@@ -458,11 +562,30 @@ float UMocRewardCalculator::ComputeStepReward(
 				LogRewardEvent(ERewardEventType::HealAlly, Strategy, SupportReward.HealTickReward);
 			}
 
-			// --- Heal burst bonus (sparse) ---
-			if (OwnerCharacter && OwnerCharacter->ConsumeHealBurst(SupportReward.HealBurstThreshold))
+			// --- Role-break penalty: killed an enemy while an ally needed healing ---
+			// Fires when a Kill event was logged THIS STEP and at least one ally is below 50% HP.
+			// FIX: Only check the latest sparse reward drain, not the full EventLog history.
+			// Previous code scanned the append-only EventLog, causing the penalty to fire
+			// every step after the first kill for the rest of the episode.
 			{
-				Reward += SupportReward.HealBurstBonus;
-				LogRewardEvent(ERewardEventType::HealAlly, Strategy, SupportReward.HealBurstBonus);
+				bool bKilledThisStep = bSparseKillFiredThisStep;
+				if (bKilledThisStep)
+				{
+					bool bAllyInjured = false;
+					for (float AllyHP : Current.AllyHealths)
+					{
+						if (AllyHP > 0.0f && AllyHP < 0.5f)
+						{
+							bAllyInjured = true;
+							break;
+						}
+					}
+					if (bAllyInjured)
+					{
+						Reward -= SupportReward.RoleBreakPenalty;
+						LogRewardEvent(ERewardEventType::Kill, Strategy, -SupportReward.RoleBreakPenalty);
+					}
+				}
 			}
 
 			// --- Rear-guard positioning bonus ---
@@ -484,7 +607,8 @@ float UMocRewardCalculator::ComputeStepReward(
 					}
 				}
 
-				if (NearestEnemyDist < FLT_MAX)
+				// Only fire when enemy is within RearGuardMaxEnemyDist — prevents rewarding far-corner hiding.
+				if (NearestEnemyDist < FLT_MAX && NearestEnemyDist <= SupportReward.RearGuardMaxEnemyDist)
 				{
 					float NearestAllyToEnemyDist = FLT_MAX;
 					for (const FVector& AllyPos : Current.AllyPositions)
@@ -517,6 +641,9 @@ float UMocRewardCalculator::ComputeStepReward(
 	// B3: Clamp total step reward to prevent catastrophic accumulation.
 	Reward = FMath::Clamp(Reward, StepRewardClampMin, StepRewardClampMax);
 
+	// Reset per-step sparse flags (set by callbacks between ComputeStepReward calls)
+	bSparseKillFiredThisStep = false;
+
 	return Reward;
 }
 
@@ -535,7 +662,7 @@ FRewardBreakdown UMocRewardCalculator::ComputeRewardBreakdown(
 	switch (Strategy)
 	{
 	case EStrategyType::Assault:
-		Breakdown.PositionComponent = AssaultReward.MovementReward * PositionChange;
+		Breakdown.PositionComponent = 0.0f; // MovementReward removed; approach shaping handled in ComputeStepReward
 		if (HealthLoss > AssaultHealthLossThreshold)
 		{
 			Breakdown.HealthComponent = -AssaultReward.HealthPenalty * HealthLoss;
@@ -586,7 +713,7 @@ void UMocRewardCalculator::ResetEpisodeState()
 	CachedInjuredAllyIdx = -1;
 	InjuredAllyStalenessCounter = 0;
 	LastCaptureLossPenaltyTime.Empty();
-	bAgentDiedThisEpisode = false;
+	bSparseKillFiredThisStep = false;
 }
 
 // ==================== Event Log ====================

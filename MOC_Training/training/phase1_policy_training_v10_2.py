@@ -86,6 +86,9 @@ class SingleHeadPolicy_v10_2(nn.Module):
     - Learnable log_std: (6,)
     """
 
+    LOG_STD_MIN = -2.5   # σ_min ≈ 0.08   (allows tighter convergence)
+    LOG_STD_MAX = -0.7   # σ_max ≈ 0.50   (raised from -1.2/σ=0.30 — wider exploration before convergence)
+
     def __init__(
         self,
         obs_dim: int = 49,
@@ -132,7 +135,7 @@ class SingleHeadPolicy_v10_2(nn.Module):
         )
 
         # Learnable log standard deviation
-        self.log_std = nn.Parameter(torch.zeros(eqs_dim) - 0.5)  # init std ≈ 0.6
+        self.log_std = nn.Parameter(torch.zeros(eqs_dim) - 1.5)  # init std ≈ 0.22 (mid-range of [-2.5, -1.2])
 
         total_params = sum(p.numel() for p in self.parameters())
         print(f"[v10.2.1 Policy ({strategy_name})] {input_dim}-dim → {eqs_dim}-dim EQS, "
@@ -159,7 +162,8 @@ class SingleHeadPolicy_v10_2(nn.Module):
 
     def get_std(self) -> torch.Tensor:
         """Return current standard deviation (eqs_dim,)."""
-        return torch.exp(self.log_std).clamp(min=1e-6)
+        clamped_log_std = torch.clamp(self.log_std, self.LOG_STD_MIN, self.LOG_STD_MAX)
+        return torch.exp(clamped_log_std)
 
     def sample_action(
         self,
@@ -314,11 +318,11 @@ class PPOTrainer_v10_2:
     def __init__(
         self,
         policy: SingleHeadPolicy_v10_2,
-        learning_rate: float = 3e-4,
-        critic_lr_scale: float = 0.3,
+        learning_rate: float = 1.5e-4,
+        critic_lr_scale: float = 1.0,
         clip_epsilon: float = 0.2,
         value_coef: float = 0.5,
-        entropy_coef: float = 0.01,
+        entropy_coef: float = 0.005,
         max_grad_norm: float = 0.5,
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
     ):
@@ -573,8 +577,13 @@ if RLLIB_AVAILABLE:
             # Single head — no routing needed
             eqs_weights = self.policy(base_obs, strategy_idx)  # (B, 6)
 
-            # Broadcast single learned log_std to batch
-            log_stds = self.policy.log_std.unsqueeze(0).expand_as(eqs_weights)  # (B, 6)
+            # Broadcast clamped log_std to batch (prevents entropy spiral)
+            clamped_log_std = torch.clamp(
+                self.policy.log_std,
+                SingleHeadPolicy_v10_2.LOG_STD_MIN,
+                SingleHeadPolicy_v10_2.LOG_STD_MAX,
+            )
+            log_stds = clamped_log_std.unsqueeze(0).expand_as(eqs_weights)  # (B, 6)
 
             output = torch.cat([eqs_weights, log_stds], dim=-1)  # (B, 12)
             return output, state
@@ -613,17 +622,17 @@ class MOCv10_2TrainingConfig:
     HIDDEN_DIMS = [256, 256]
 
     # PPO hyperparameters
-    LEARNING_RATE = 3e-4
-    TRAIN_BATCH_SIZE = 4000           # Reduced: shorter episodes (100 steps) × fewer agents per policy
-    SGD_MINIBATCH_SIZE = 256          # ~16 minibatches per epoch (4000 ÷ 256)
-    NUM_SGD_ITER = 10
+    LEARNING_RATE = 5e-5          
+    TRAIN_BATCH_SIZE = 12000          
+    SGD_MINIBATCH_SIZE = 1024        
+    NUM_SGD_ITER = 4                  
     GAMMA = 0.99
-    GAE_LAMBDA = 0.95
-    CLIP_PARAM = 0.2
-    ENTROPY_COEFF = 0.02  # Higher initial entropy for more exploration with separate policies
-    VF_LOSS_COEFF = 1.0               # was 0.5 — give critic loss equal weight to actor
+    GAE_LAMBDA = 0.90              
+    CLIP_PARAM = 0.2                  
+    ENTROPY_COEFF = 0.003             
+    VF_LOSS_COEFF = 1.0              
     GRAD_CLIP = 0.5
-    VF_CLIP_PARAM = 10.0
+    VF_CLIP_PARAM = 0.2             
 
     # Training
     NUM_WORKERS = int(os.environ.get('NUM_WORKERS', 0))
@@ -631,9 +640,9 @@ class MOCv10_2TrainingConfig:
     NUM_ITERATIONS = int(os.environ.get('NUM_ITERATIONS', 100))
     CHECKPOINT_FREQ = 10
 
-    # Schedules — adjusted for shorter episodes and smaller batches
-    LR_SCHEDULE = [[0, 3e-4], [200000, 1e-4], [500000, 5e-5]]
-    ENTROPY_COEFF_SCHEDULE = [[0, 0.02], [200000, 0.01], [500000, 0.005]]
+    # Schedules — hold longer at peak before decaying; entropy decays slower
+    LR_SCHEDULE = [[0, 8e-5], [300000, 5e-5], [500000, 2e-5], [700000, 1e-5]]
+    ENTROPY_COEFF_SCHEDULE = [[0, 0.003], [200000, 0.002], [400000, 0.001], [600000, 0.0005]]
 
     # Paths
     OUTPUT_DIR = "training_results_v10_2"
