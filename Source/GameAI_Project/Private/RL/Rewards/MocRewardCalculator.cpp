@@ -3,6 +3,7 @@
 #include "RL/Rewards/MocRewardCalculator.h"
 #include "Characters/MocCharacter.h"
 #include "Actors/CapturePoint.h"
+#include "Team/TeamManager.h"
 #include "Kismet/GameplayStatics.h"
 
 
@@ -24,6 +25,12 @@ void UMocRewardCalculator::BeginPlay()
 		{
 			CP->OnPointCaptured.AddDynamic(this, &UMocRewardCalculator::OnCapturePointCaptured);
 		}
+	}
+
+	// Subscribe to match state changes for win/loss terminal reward
+	if (AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld())))
+	{
+		GameMode->OnMatchStateChanged.AddDynamic(this, &UMocRewardCalculator::OnMatchStateChanged);
 	}
 }
 
@@ -119,6 +126,58 @@ void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapt
 	}
 }
 
+void UMocRewardCalculator::OnMatchStateChanged(EMocMatchState NewState)
+{
+	if (!OwnerCharacter) return;
+
+	const int32 MyTeam = OwnerCharacter->GetTeamID_Implementation();
+
+	bool bTeamWon = false;
+	bool bMatchOver = false;
+
+	switch (NewState)
+	{
+	case EMocMatchState::RedTeamWon:
+		bTeamWon = (MyTeam == 0);
+		bMatchOver = true;
+		break;
+	case EMocMatchState::BlueTeamWon:
+		bTeamWon = (MyTeam == 1);
+		bMatchOver = true;
+		break;
+	case EMocMatchState::TimeExpired:
+		{
+			// On time expiry, check scores to determine winner
+			AMocGameMode* GM = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+			if (GM)
+			{
+				const int32 MyScore = GM->GetTeamScore(MyTeam);
+				const int32 EnemyScore = GM->GetTeamScore(MyTeam == 0 ? 1 : 0);
+				bTeamWon = (MyScore > EnemyScore);
+			}
+			bMatchOver = true;
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (bMatchOver)
+	{
+		ApplyMatchEndReward(bTeamWon);
+	}
+}
+
+void UMocRewardCalculator::ApplyMatchEndReward(bool bTeamWon)
+{
+	const float Reward = bTeamWon ? MatchWinReward : MatchLossReward;
+	const EStrategyType Strategy = OwnerCharacter ? OwnerCharacter->GetCommandedStrategy() : EStrategyType::Assault;
+	ApplyAndLogReward(ERewardEventType::TeamVictory, Strategy, Reward);
+
+	UE_LOG(LogTemp, Log, TEXT("[MocRewardCalculator] Match end reward: %.1f (%s)"),
+		Reward, bTeamWon ? TEXT("WIN") : TEXT("LOSS"));
+}
+
 // ==================== Event-Driven Sparse Rewards ====================
 
 float UMocRewardCalculator::CalculateKillReward(EStrategyType ActiveStrategy)
@@ -169,11 +228,7 @@ float UMocRewardCalculator::CalculateLosePointPenalty(EStrategyType ActiveStrate
 
 float UMocRewardCalculator::CalculateSurvivalReward(EStrategyType ActiveStrategy, float CurrentHP, float MaxHP)
 {
-	if (MaxHP <= 0.0f || (CurrentHP / MaxHP) > SurvivalHPThreshold) return 0.0f;
-
-	float Scale = GetStrategyScale(ActiveStrategy,
-		AssaultReward.SurvivalRewardScale, DefendReward.SurvivalRewardScale, SupportReward.SurvivalRewardScale);
-	return ApplyAndLogReward(ERewardEventType::Survival, ActiveStrategy, SurvivalReward * Scale);
+	return 0.0f;
 }
 
 float UMocRewardCalculator::CalculateDistanceShaping(EStrategyType ActiveStrategy, float DistanceToTarget)
@@ -298,8 +353,11 @@ float UMocRewardCalculator::ComputeStepReward(
 				}
 
 				// Zone presence bonus + active capping reward
+				// Zone-decay: once a CP becomes friendly, decay the zone bonus over
+				// AssaultCapturedZoneDecaySteps so the agent doesn't camp captured points.
 				if (bInNonFriendlyZone)
 				{
+					AssaultZoneStepsAfterCapture = 0; // actively capping — reset decay
 					Reward += AssaultReward.ZonePresenceBonus;
 
 					// Scale reward by how far along the capture is — incentivises staying in zone
@@ -311,6 +369,32 @@ float UMocRewardCalculator::ComputeStepReward(
 							Reward += AssaultReward.ActiveCappingBonus * CP->GetCaptureProgress();
 							break; // only award for one point per step
 						}
+					}
+				}
+				else
+				{
+					// Check if standing inside a friendly zone (post-capture camping)
+					bool bInFriendlyZoneAssault = false;
+					for (ACapturePoint* CP : CachedCapturePoints)
+					{
+						if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+						if (FVector::Dist(Current.Position, CP->GetActorLocation()) <= CP->CaptureRadius)
+						{
+							bInFriendlyZoneAssault = true;
+							break;
+						}
+					}
+
+					if (bInFriendlyZoneAssault && AssaultCapturedZoneDecaySteps > 0.0f)
+					{
+						// Decaying zone bonus: full → 0 over AssaultCapturedZoneDecaySteps
+						AssaultZoneStepsAfterCapture++;
+						const float DecayFactor = FMath::Max(0.0f, 1.0f - (float)AssaultZoneStepsAfterCapture / AssaultCapturedZoneDecaySteps);
+						Reward += AssaultReward.ZonePresenceBonus * DecayFactor;
+					}
+					else
+					{
+						AssaultZoneStepsAfterCapture = 0;
 					}
 				}
 
@@ -427,11 +511,8 @@ float UMocRewardCalculator::ComputeStepReward(
 				}
 				ThreatResponseApplied:;
 			}
-			else if (CurrNearestFriendlyDist < FLT_MAX)
-			{
-				// Outside zone but within ramp radius: partial zone bonus
-				Reward += DefendReward.ZonePresenceBonus * ZoneProximityFactor * 0.5f;
-			}
+			// Removed: partial zone bonus for being near but outside zone.
+			// It rewarded loitering outside the zone without actually entering.
 
 			if (!bInFriendlyZone && CurrNearestFriendlyDist < FLT_MAX && PrevNearestFriendlyDist < FLT_MAX)
 				{
@@ -445,10 +526,8 @@ float UMocRewardCalculator::ComputeStepReward(
 						Reward += DefendReward.ZoneApproachReward * DefendApproachScale * FMath::Max(ApproachDelta, 0.0f);
 					}
 
-					// Softened distance penalty: reduced magnitude so it doesn't dominate.
-					// Original: 0.5 * min(dist/10000, 1.0) → up to -0.5/step.
-					// New: 0.2 * min(dist/10000, 1.0) → up to -0.2/step (baseline absorbs this).
-					const float DistPenalty = FMath::Min(CurrNearestFriendlyDist / 10000.0f, 1.0f) * 0.2f;
+					// Distance penalty: stronger pull toward zone (0.3 from 0.2).
+					const float DistPenalty = FMath::Min(CurrNearestFriendlyDist / 10000.0f, 1.0f) * 0.3f;
 					Reward -= DistPenalty;
 				}
 			}
@@ -668,6 +747,29 @@ float UMocRewardCalculator::ComputeStepReward(
 		break;
 	}
 
+	// Zone control reward: per-step signal proportional to (friendly_bases - enemy_bases).
+	// Positive when the team holds more territory, negative when the enemy dominates.
+	// The competitive differential discourages passive corner-hiding — an agent idling
+	// in a corner while the enemy captures bases will accumulate a negative signal here,
+	// creating pressure to engage. Scale differs by role: Defend agents benefit most from
+	// retaining zones; Assault agents are primarily driven by the capture/approach rewards.
+	if (MyTeamID >= 0 && CachedCapturePoints.Num() > 0)
+	{
+		int32 FriendlyBases = 0;
+		int32 EnemyBases = 0;
+		for (const ACapturePoint* CP : CachedCapturePoints)
+		{
+			if (!CP) continue;
+			const int32 OwnerTeam = CP->GetOwningTeamID();
+			if (OwnerTeam == MyTeamID) FriendlyBases++;
+			else if (OwnerTeam >= 0)   EnemyBases++;
+		}
+		const float NetControl = static_cast<float>(FriendlyBases - EnemyBases);
+		const float ZoneControlScale = GetStrategyScale(Strategy,
+			ZoneControlAssaultScale, ZoneControlDefendScale, ZoneControlSupportScale);
+		Reward += ZoneControlRewardPerBase * ZoneControlScale * NetControl;
+	}
+
 	// Time penalty (higher for Assault to discourage camping)
 	float EffectiveTimePenalty = (Strategy == EStrategyType::Assault) ? AssaultReward.TimePenalty : TimePenalty;
 	Reward -= EffectiveTimePenalty;
@@ -684,6 +786,37 @@ float UMocRewardCalculator::ComputeStepReward(
 
 	// Reset per-step sparse flags (set by callbacks between ComputeStepReward calls)
 	bSparseKillFiredThisStep = false;
+
+	// Team reward mixing: blend individual reward with teammates' previous-step average.
+	// Uses 1-step lag to avoid ordering dependency (all agents compute in same frame).
+	const float CurrentIndividualReward = Reward;
+	if (TeamRewardMixingRatio > 0.0f && OwnerCharacter)
+	{
+		ATeamManager* TeamMgr = OwnerCharacter->GetTeamManager();
+		if (TeamMgr)
+		{
+			const int32 MyTeamID = OwnerCharacter->GetTeamID_Implementation();
+			TArray<AMocCharacter*> Teammates = TeamMgr->GetTeamAgents(MyTeamID);
+
+			float TeamRewardSum = 0.0f;
+			int32 TeamCount = 0;
+			for (AMocCharacter* Mate : Teammates)
+			{
+				if (Mate && Mate->GetRewardCalculator())
+				{
+					TeamRewardSum += Mate->GetRewardCalculator()->GetLastIndividualStepReward();
+					TeamCount++;
+				}
+			}
+
+			if (TeamCount > 0)
+			{
+				const float TeamAvg = TeamRewardSum / static_cast<float>(TeamCount);
+				Reward = (1.0f - TeamRewardMixingRatio) * CurrentIndividualReward + TeamRewardMixingRatio * TeamAvg;
+			}
+		}
+	}
+	LastIndividualStepReward = CurrentIndividualReward;
 
 	return Reward;
 }
@@ -751,10 +884,12 @@ void UMocRewardCalculator::ResetEpisodeState()
 	ResetCumulativeReward();
 	PostCaptureMomentumStepsRemaining = 0;
 	LastCapturedPointLocation = FVector::ZeroVector;
+	AssaultZoneStepsAfterCapture = 0;
 	CachedInjuredAllyIdx = -1;
 	InjuredAllyStalenessCounter = 0;
 	LastCaptureLossPenaltyTime.Empty();
 	bSparseKillFiredThisStep = false;
+	LastIndividualStepReward = 0.0f;
 }
 
 // ==================== Event Log ====================

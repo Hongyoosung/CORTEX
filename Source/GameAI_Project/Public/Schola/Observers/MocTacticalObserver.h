@@ -22,9 +22,9 @@ class UScholaMocAgent;
  * - Layer 1 (Squad Commander): Uses FTeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
- * Observation Space (52-dim):
- * - Base State (49-dim): Agent's local observation (FObservation)
- *   • Self  (8): Position/7500(3), Health(1), Velocity/600(3), Cooldown(1)
+ * Observation Space (51-dim):
+ * - Base State (48-dim): Agent's local observation (FObservation)
+ *   • Self  (7): Position/7500(3), Health(1), Velocity/600(3)
  *   • Allies(16): 4 agents × [RelPos/8000(3), Health(1)]  — always known
  *   • Enemies(20): 5 agents × [RelPos/8000_if_visible(3), Visible(1)]  — LoS only
  *   • Map   (5): PointStatus×5 (+1=friendly / 0=neutral / -1=enemy)
@@ -45,7 +45,7 @@ class UScholaMocAgent;
  * Integration:
  * - Owner: AMocTrainer (Schola trainer)
  * - Data Source: AMocCharacter (via trainer reference)
- * - Output: FBoxPoint with 52 continuous values
+ * - Output: FBoxPoint with 51 continuous values
  */
 UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "MOC Tactical Observer v10.2"))
 class GAMEAI_PROJECT_API UMocTacticalObserver : public UBoxObserver
@@ -61,13 +61,13 @@ public:
 
 	/**
 	 * Define observation space bounds
-	 * @return FBoxSpace with 55 dimensions, normalized ranges
+	 * @return FBoxSpace with 51 dimensions, normalized ranges
 	 */
 	virtual FBoxSpace GetObservationSpace() const override;
 
 	/**
 	 * Collect current observation from character
-	 * @param OutObservations - FBoxPoint to fill with 55-dim observation vector
+	 * @param OutObservations - FBoxPoint to fill with 51-dim observation vector
 	 */
 	virtual void CollectObservations(FBoxPoint& OutObservations) override;
 
@@ -113,7 +113,7 @@ protected:
 	//========================================
 
 	/**
-	 * Gather 52-dim base observation from character
+	 * Gather 48-dim base observation from character
 	 * @return FObservation with normalized values
 	 */
 	FObservation GatherBaseObservation() const;

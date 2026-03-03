@@ -7,13 +7,15 @@
 #include "ObservationTypes.generated.h"
 
 /**
- * MOC v10.2: Individual Agent Observation (49-dim base)
+ * MOC v10.2: Individual Agent Observation (48-dim base)
  *
  * Layout:
- *   Self      (8):  pos/7500(3), health(1), vel/600(3), cooldown(1)
+ *   Self      (7):  pos/7500(3), health(1), vel/600(3)
  *   Allies   (16):  4 × [rel_pos/8000(3), health(1)]
  *   Enemies  (20):  5 × [rel_pos/8000_if_visible(3), visible(1)]
  *   Map       (5):  capture_point_status×5 (+1=friendly, 0=neutral, -1=enemy)
+ *
+ * Note: WeaponCooldown is kept in struct for gameplay but excluded from ToArray().
  *
  * Positions are agent-relative (ally/enemy pos minus self pos) so the same
  * tactical geometry always produces the same feature values regardless of
@@ -95,7 +97,7 @@ struct GAMEAI_PROJECT_API FObservation
 	//========================================
 
 	/**
-	 * Convert to flat float array for neural network input (49-dim).
+	 * Convert to flat float array for neural network input (48-dim).
 	 * Ally and enemy positions are expressed relative to self position
 	 * and normalized by vision range (8000 cm) so spatial relationships
 	 * are map-position invariant.
@@ -103,9 +105,9 @@ struct GAMEAI_PROJECT_API FObservation
 	TArray<float> ToArray() const
 	{
 		TArray<float> Result;
-		Result.Reserve(49);
+		Result.Reserve(48);
 
-		// Self state (8-dim)
+		// Self state (7-dim) — WeaponCooldown excluded (not useful for NN)
 		// Position: map-normalized (150m map = 15000cm half-width = 7500)
 		Result.Add(Position.X / 7500.0f);
 		Result.Add(Position.Y / 7500.0f);
@@ -115,7 +117,6 @@ struct GAMEAI_PROJECT_API FObservation
 		Result.Add(Velocity.X / 600.0f);
 		Result.Add(Velocity.Y / 600.0f);
 		Result.Add(Velocity.Z / 600.0f);
-		Result.Add(WeaponCooldown);
 		// CurrentStrategy and bIsAlive intentionally excluded:
 		//   Strategy → appended as one-hot by MocTacticalObserver
 		//   bIsAlive  → always 1 when a real observation is gathered
@@ -168,7 +169,7 @@ struct GAMEAI_PROJECT_API FObservation
 			Result.Add(i < CapturePointStatuses.Num() ? CapturePointStatuses[i] : 0.0f);
 		}
 
-		ensure(Result.Num() == 49);
+		ensure(Result.Num() == 48);
 		return Result;
 	}
 

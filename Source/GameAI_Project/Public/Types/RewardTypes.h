@@ -78,14 +78,14 @@ struct FAssaultRewardSettings
     float KillRewardScale = 1.0f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float HealthPenalty = 5.0f;
+    float HealthPenalty = 0.0f;
 
     /** Assault: -20 per death (base DeathPenaltyReward=100 × 0.2) */
     UPROPERTY(EditAnywhere, Category = "Combat")
     float DeathScale = 0.2f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float IdlePenalty = 0.5f;
+    float IdlePenalty = 1.5f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
     float TimePenalty = 0.01f;
@@ -102,7 +102,7 @@ struct FAssaultRewardSettings
     float LossCaptureRewardScale = 0.25f;
 
     UPROPERTY(EditAnywhere, Category = "Capture")
-    float ObjectiveProgressReward = 0.05f;
+    float ObjectiveProgressReward = 0.15f;
 
     UPROPERTY(EditAnywhere, Category = "Capture")
     float ZonePresenceBonus = 3.0f;
@@ -113,7 +113,7 @@ struct FAssaultRewardSettings
     float ActiveCappingBonus = 3.5f;
 
     UPROPERTY(EditAnywhere, Category = "Capture")
-    float PostCaptureMomentumBonus = 1.0f;
+    float PostCaptureMomentumBonus = 3.0f;
 
     UPROPERTY(EditAnywhere, Category = "Capture")
     int32 PostCaptureMomentumDuration = 30;
@@ -177,7 +177,7 @@ struct FDefendRewardSettings
      *  At 0.002/cm the approach gradient was dominated by PositionReward (2.0 flat for
      *  standing still anywhere), so the agent learned to idle instead of navigating to zone. */
     UPROPERTY(EditAnywhere, Category = "Capture")
-    float ZoneApproachReward = 0.025f;
+    float ZoneApproachReward = 0.05f;
 
 
     //========== Zone Defense Skills =============
@@ -217,10 +217,10 @@ struct FSupportRewardSettings
     float SurvivalRewardScale = 1.5f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float PositionReward = 0.5f;
+    float PositionReward = 0.2f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float HealthBonus = 0.8f;
+    float HealthBonus = 0.3f;
 
     /** Support: 0 per kill — kills are irrelevant to role; heal rewards are the objective */
     UPROPERTY(EditAnywhere, Category = "Combat")
@@ -240,14 +240,14 @@ struct FSupportRewardSettings
 
     /** Flat bonus per step for being within SupportAllyProximityThreshold of the most-injured ally */
     UPROPERTY(EditAnywhere, Category = "AllyProximity")
-    float AllyProximityBonus = 0.6f;
+    float AllyProximityBonus = 2.0f;
 
     /** Per-cm shaping reward for approaching the most-injured ally.
      *  FIX (Issue 3): Raised from 0.001 to 0.01 (= 1.0 per metre).
      *  At 0.001/cm the approach gradient was too weak to overcome the flat
      *  PositionReward, so the agent never learned to navigate toward allies. */
     UPROPERTY(EditAnywhere, Category = "AllyProximity")
-    float AllyApproachReward = 0.01f;
+    float AllyApproachReward = 0.05f;
 
 
     //========== Capture Properties =============

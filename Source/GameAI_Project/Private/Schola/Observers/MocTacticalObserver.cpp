@@ -4,6 +4,7 @@
 #include "Schola/Trainers/MocTrainer.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Characters/MocCharacter.h"
+#include "Team/TeamManager.h"
 #include "Core/MocGameMode.h"
 #include "Actors/CapturePoint.h"
 #include "Common/Spaces/BoxSpace.h"
@@ -12,15 +13,24 @@
 
 UMocTacticalObserver::UMocTacticalObserver()
 {
-	// Build observation space (52 continuous features: 49 base + 3 strategy one-hot)
+	// Build observation space (54 continuous features: 48 base + 3 team composition + 3 strategy one-hot)
 	TArray<FBoxSpaceDimension> Dimensions;
-	Dimensions.Reserve(52);
+	Dimensions.Reserve(54);
 
-	// 49 base features: normalized to [-1, 1] or [0, 1]
-	for (int32 i = 0; i < 49; ++i)
+	// 48 base features: normalized to [-1, 1] or [0, 1]
+	for (int32 i = 0; i < 48; ++i)
 	{
 		FBoxSpaceDimension Dim;
 		Dim.Low = -1.0f;
+		Dim.High = 1.0f;
+		Dimensions.Add(Dim);
+	}
+
+	// 3 team composition features: [0, 1] (num_assault/5, num_defend/5, num_support/5)
+	for (int32 i = 0; i < 3; ++i)
+	{
+		FBoxSpaceDimension Dim;
+		Dim.Low = 0.0f;
 		Dim.High = 1.0f;
 		Dimensions.Add(Dim);
 	}
@@ -89,8 +99,8 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			GetControlledCharacter() ? *GetControlledCharacter()->GetName() : TEXT("NULL"));
 	}
 
-	// Initialize output with correct size (52-dim: 49 base + 3 strategy one-hot)
-	OutObservations.Values.SetNum(52);
+	// Initialize output with correct size (54-dim: 48 base + 3 team composition + 3 strategy one-hot)
+	OutObservations.Values.SetNum(54);
 
 	// Safety check: Verify trainer and character are valid
 	AMocCharacter* Character = GetControlledCharacter();
@@ -101,40 +111,65 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			UE_LOG(LogTemp, Warning, TEXT("[MocTacticalObserver] Character invalid at observation #%d - returning zeros"), ObservationCallCount);
 		}
 
-		for (int32 i = 0; i < 52; ++i)
+		for (int32 i = 0; i < 54; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
 		return;
 	}
 
-	// 1. Gather 49-dim base observation
+	// 1. Gather 48-dim base observation
 	FObservation BaseObs = GatherBaseObservation();
 	TArray<float> BaseFeatures = BaseObs.ToArray();
 
-	if (BaseFeatures.Num() != 49)
+	if (BaseFeatures.Num() != 48)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Base observation size mismatch! Expected 49, got %d"), BaseFeatures.Num());
-		for (int32 i = 0; i < 52; ++i)
+		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Base observation size mismatch! Expected 48, got %d"), BaseFeatures.Num());
+		for (int32 i = 0; i < 54; ++i)
 		{
 			OutObservations.Values[i] = 0.0f;
 		}
 		return;
 	}
 
-	// Copy base features (49-dim)
-	for (int32 i = 0; i < 49; ++i)
+	// Copy base features (48-dim)
+	for (int32 i = 0; i < 48; ++i)
 	{
 		OutObservations.Values[i] = BaseFeatures[i];
 	}
 
-	// 2. Append commanded strategy as one-hot (3-dim)
+	// 2. Append team strategy composition (3-dim at indices 48-50)
+	//    [num_assault/5, num_defend/5, num_support/5]
+	{
+		float CompositionCounts[3] = {0.0f, 0.0f, 0.0f}; // Assault, Defend, Support
+		ATeamManager* TeamMgr = Character->GetTeamManager();
+		if (TeamMgr)
+		{
+			TArray<AMocCharacter*> Teammates = TeamMgr->GetTeamAgents(Character->GetTeamID_Implementation());
+			for (AMocCharacter* Mate : Teammates)
+			{
+				if (!Mate) continue;
+				switch (Mate->GetCommandedStrategy())
+				{
+				case EStrategyType::Assault: CompositionCounts[0] += 1.0f; break;
+				case EStrategyType::Defend:  CompositionCounts[1] += 1.0f; break;
+				case EStrategyType::Support: CompositionCounts[2] += 1.0f; break;
+				default: break;
+				}
+			}
+		}
+		OutObservations.Values[48] = CompositionCounts[0] / 5.0f;
+		OutObservations.Values[49] = CompositionCounts[1] / 5.0f;
+		OutObservations.Values[50] = CompositionCounts[2] / 5.0f;
+	}
+
+	// 3. Append commanded strategy as one-hot (3-dim at indices 51-53)
 	EStrategyType CommandedStrategy = Character->GetCommandedStrategy();
 	TArray<float> StrategyOneHot = EncodeStrategyOneHot(CommandedStrategy);
 
 	for (int32 i = 0; i < 3; ++i)
 	{
-		OutObservations.Values[49 + i] = StrategyOneHot[i];
+		OutObservations.Values[51 + i] = StrategyOneHot[i];
 	}
 
 	// Validate final observation
@@ -320,9 +355,9 @@ TArray<float> UMocTacticalObserver::EncodeStrategyOneHot(EStrategyType Strategy)
 
 bool UMocTacticalObserver::ValidateObservation(const TArray<float>& Observation) const
 {
-	if (Observation.Num() != 52)
+	if (Observation.Num() != 54)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Invalid observation size: %d (expected 52)"), Observation.Num());
+		UE_LOG(LogTemp, Error, TEXT("[MocTacticalObserver] Invalid observation size: %d (expected 54)"), Observation.Num());
 		return false;
 	}
 

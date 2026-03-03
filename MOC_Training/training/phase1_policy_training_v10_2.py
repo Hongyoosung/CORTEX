@@ -5,11 +5,11 @@ Key Changes from v10.1:
 - NO local MCTS - agents are pure executors
 - Receives commanded strategy from Squad Commander (Assault/Defend/Support)
 - Outputs 6-dim EQS weights in range [-1, 1]
-- Local observation only (49-dim base: includes 44 tactical + 5 capture point statuses)
+- Local observation only (48-dim base + 3-dim team composition: includes 43 tactical + 5 capture point statuses + 3 composition)
 
 Architecture (v10.2.1 — Independent Models):
 - 3 independent single-head policies, one per strategy (Assault/Defend/Support)
-- Each policy: Input 52-dim (49 obs + 3 strategy one-hot) → Encoder [256,256] → Single Head → 6-dim EQS
+- Each policy: Input 54-dim (51 obs + 3 strategy one-hot) → Encoder [256,256] → Single Head → 6-dim EQS
 - RLlib multi-agent routes each agent to its strategy's policy via policy_mapping_fn
 - No shared encoder, no gradient interference, full per-strategy tuning
 
@@ -60,11 +60,11 @@ STRATEGY_STR_TO_IDX = {"Assault": 0, "Defend": 1, "Support": 2}
 @dataclass
 class Transition:
     """Single training transition for v10.2."""
-    state: np.ndarray              # (52,) local observation (52 base + 5 capture point statuses)
+    state: np.ndarray              # (51,) local observation (48 base + 3 strategy one-hot)
     commanded_strategy: int        # 0=Assault, 1=Defend, 2=Support
     eqs_weights: np.ndarray        # (7,) in range [-1, 1]
     reward: float
-    next_state: np.ndarray         # (52,)
+    next_state: np.ndarray         # (51,)
     done: bool
     info: Dict
     log_prob: float = 0.0          # Log probability under policy at collection time
@@ -79,7 +79,7 @@ class SingleHeadPolicy_v10_2(nn.Module):
     parameters.
 
     Architecture:
-    - Input: 52-dim (49 local obs + 3 strategy one-hot)
+    - Input: 51-dim (48 local obs + 3 strategy one-hot)
     - Encoder: [256, 256] ReLU + LayerNorm
     - Action Head: 256 → 64 → 6 (tanh)
     - Value Head: 256 → 64 → 1
@@ -91,7 +91,7 @@ class SingleHeadPolicy_v10_2(nn.Module):
 
     def __init__(
         self,
-        obs_dim: int = 49,
+        obs_dim: int = 51,
         strategy_dim: int = 3,
         eqs_dim: int = 6,
         hidden_dims: List[int] = [256, 256],
@@ -478,7 +478,7 @@ def example_training_integration():
     policies = {}
     for strat_idx, strat_name in STRATEGY_NAMES.items():
         policies[strat_name] = SingleHeadPolicy_v10_2(
-            obs_dim=49,
+            obs_dim=51,
             strategy_dim=3,
             eqs_dim=6,
             hidden_dims=[256, 256],
@@ -498,12 +498,12 @@ def example_training_integration():
 
     # Example inference
     print("Example Inference:")
-    dummy_obs = torch.randn(1, 49)
+    dummy_obs = torch.randn(1, 48)
     dummy_strategy = torch.tensor([0], dtype=torch.long)
 
     with torch.no_grad():
         eqs_weights = policies["Assault"](dummy_obs, dummy_strategy)
-        print(f"  Input: obs(1, 49), strategy=Assault")
+        print(f"  Input: obs(1, 48), strategy=Assault")
         print(f"  Output: eqs_weights = {eqs_weights.numpy()[0]}")
         print(f"  Range: [{eqs_weights.min().item():.2f}, {eqs_weights.max().item():.2f}]")
 
@@ -538,7 +538,7 @@ if RLLIB_AVAILABLE:
             nn.Module.__init__(self)
 
             custom_config = model_config.get("custom_model_config", {})
-            obs_dim = custom_config.get("obs_dim", 49)
+            obs_dim = custom_config.get("obs_dim", 51)
             strategy_dim = custom_config.get("strategy_dim", 3)
             eqs_dim = custom_config.get("eqs_dim", 6)
             hidden_dims = custom_config.get("hidden_dims", [256, 256])
@@ -567,8 +567,8 @@ if RLLIB_AVAILABLE:
             """
             obs = input_dict["obs"]
 
-            base_obs = obs[:, :49]
-            strategy_onehot = obs[:, 49:52]
+            base_obs = obs[:, :48]
+            strategy_onehot = obs[:, 48:51]
             strategy_idx = torch.argmax(strategy_onehot, dim=1)
 
             self._last_features = obs
@@ -594,7 +594,7 @@ if RLLIB_AVAILABLE:
             if self._last_features is None or self._last_strategy_idx is None:
                 raise ValueError("Must call forward() before value_function()")
 
-            base_obs = self._last_features[:, :49]
+            base_obs = self._last_features[:, :48]
             return self.policy.get_value(base_obs, self._last_strategy_idx)
 
 
@@ -621,18 +621,18 @@ class MOCv10_2TrainingConfig:
     # Network architecture
     HIDDEN_DIMS = [256, 256]
 
-    # PPO hyperparameters
-    LEARNING_RATE = 5e-5          
-    TRAIN_BATCH_SIZE = 12000          
-    SGD_MINIBATCH_SIZE = 1024        
-    NUM_SGD_ITER = 4                  
-    GAMMA = 0.99
-    GAE_LAMBDA = 0.90              
-    CLIP_PARAM = 0.2                  
-    ENTROPY_COEFF = 0.003             
-    VF_LOSS_COEFF = 1.0              
+    # PPO hyperparameters (fresh from step 0 — rebalanced for v10.2.2 reward changes)
+    LEARNING_RATE = 3e-4              # Standard PPO starting LR (was 5e-5 — too conservative)
+    TRAIN_BATCH_SIZE = 8000           # Slightly smaller for faster iterations (was 12000)
+    SGD_MINIBATCH_SIZE = 512          # Smaller minibatch for more gradient updates (was 1024)
+    NUM_SGD_ITER = 6                  # More passes per batch (was 4)
+    GAMMA = 0.98                      # Shorter effective horizon (was 0.99)
+    GAE_LAMBDA = 0.95                 # Higher for less bias (was 0.90)
+    CLIP_PARAM = 0.2
+    ENTROPY_COEFF = 0.01              # More exploration at start (was 0.003)
+    VF_LOSS_COEFF = 0.5               # Reduce VF influence on shared encoder (was 1.0)
     GRAD_CLIP = 0.5
-    VF_CLIP_PARAM = 0.2             
+    VF_CLIP_PARAM = 10.0              # Was 0.2 — too restrictive, prevents VF adaptation             
 
     # Training
     NUM_WORKERS = int(os.environ.get('NUM_WORKERS', 0))
@@ -640,13 +640,21 @@ class MOCv10_2TrainingConfig:
     NUM_ITERATIONS = int(os.environ.get('NUM_ITERATIONS', 100))
     CHECKPOINT_FREQ = 10
 
-    # Schedules — hold longer at peak before decaying; entropy decays slower
-    LR_SCHEDULE = [[0, 8e-5], [300000, 5e-5], [500000, 2e-5], [700000, 1e-5],
-                   [1200000, 2e-5], [1500000, 1e-5], [2000000, 5e-6]]
-    # Resume bump at 1.2M: entropy rises from 0.0005 back to 0.002 to allow
-    # the Defend policy to re-explore after the reward fix, then decays again.
-    ENTROPY_COEFF_SCHEDULE = [[0, 0.003], [200000, 0.002], [400000, 0.001], [600000, 0.0005],
-                              [1200000, 0.002], [1400000, 0.001], [1600000, 0.0005], [2000000, 0.0002]]
+    # Schedules — fresh from step 0 (no resume bumps needed)
+    LR_SCHEDULE = [
+        [0, 3e-4],
+        [500_000, 2e-4],
+        [1_000_000, 1e-4],
+        [2_000_000, 5e-5],
+        [3_000_000, 2e-5],
+    ]
+    ENTROPY_COEFF_SCHEDULE = [
+        [0, 0.01],
+        [300_000, 0.005],
+        [800_000, 0.003],
+        [1_500_000, 0.001],
+        [2_500_000, 0.0005],
+    ]
 
     # Paths
     OUTPUT_DIR = "training_results_v10_2"
@@ -747,14 +755,14 @@ _STRATEGY_TO_POLICY = {0: "assault_policy", 1: "defend_policy", 2: "support_poli
 def _strategy_policy_mapping_fn(agent_id, episode, worker, **kwargs):
     """Map agents to per-strategy policies based on the strategy one-hot in their observation.
 
-    The env assigns strategies uniformly (round-robin) and encodes them in obs[49:52].
+    The env assigns strategies uniformly (round-robin) and encodes them in obs[51:54].
     We extract the strategy index from the latest observation to route to the correct policy.
     """
     # Try to get the latest observation for this agent
     try:
         obs = episode.last_observation_for(agent_id)
-        if obs is not None and len(obs) >= 52:
-            strategy_onehot = obs[49:52]
+        if obs is not None and len(obs) >= 51:
+            strategy_onehot = obs[51:54]
             strategy_idx = int(np.argmax(strategy_onehot))
             return _STRATEGY_TO_POLICY.get(strategy_idx, "assault_policy")
     except Exception:
@@ -836,6 +844,7 @@ def create_ppo_config():
     config = config.training(
         lr=MOCv10_2TrainingConfig.LEARNING_RATE,
         lr_schedule=MOCv10_2TrainingConfig.LR_SCHEDULE,
+        gamma=MOCv10_2TrainingConfig.GAMMA,
         entropy_coeff_schedule=MOCv10_2TrainingConfig.ENTROPY_COEFF_SCHEDULE,
         train_batch_size=MOCv10_2TrainingConfig.TRAIN_BATCH_SIZE,
         lambda_=MOCv10_2TrainingConfig.GAE_LAMBDA,
@@ -861,7 +870,7 @@ def create_ppo_config():
     config.model = {
         "custom_model": "single_head_policy_v10_2",
         "custom_model_config": {
-            "obs_dim": 49,
+            "obs_dim": 51,
             "strategy_dim": 3,
             "eqs_dim": 6,
             "hidden_dims": MOCv10_2TrainingConfig.HIDDEN_DIMS,
@@ -913,7 +922,7 @@ def export_onnx(algo, output_dir):
         model_path = os.path.join(output_dir, f"moc_policy_v10_2_{strategy_label}.onnx")
         model.export_onnx(model_path, strategy_idx_value=strategy_idx)
 
-    print(f"  Input: observation(B, 49), strategy_index(B)")
+    print(f"  Input: observation(B, 48), strategy_index(B)")
     print(f"  Output: eqs_weights(B, 6) in [-1, 1]")
 
 
@@ -1144,11 +1153,11 @@ def run_validation():
     policies = {}
     for strat_idx, strat_name in STRATEGY_NAMES.items():
         policies[strat_name] = SingleHeadPolicy_v10_2(
-            obs_dim=49, strategy_dim=3, eqs_dim=6, strategy_name=strat_name
+            obs_dim=51, strategy_dim=3, eqs_dim=6, strategy_name=strat_name
         )
 
     batch = 8
-    obs = torch.randn(batch, 49)
+    obs = torch.randn(batch, 48)
 
     # --- Test 1: Forward pass shapes (each policy independently) ---
     print("[Test 1] Forward pass shape (all 3 policies)")
@@ -1160,7 +1169,7 @@ def run_validation():
     # --- Test 2: Output range [-1, 1] ---
     print("[Test 2] Output range")
     with torch.no_grad():
-        large_obs = torch.randn(256, 49)
+        large_obs = torch.randn(256, 48)
         for strat_idx, strat_name in STRATEGY_NAMES.items():
             strat = torch.full((256,), strat_idx, dtype=torch.long)
             out = policies[strat_name](large_obs, strat)
@@ -1171,7 +1180,7 @@ def run_validation():
     # --- Test 3: Independent policies produce different outputs ---
     print("[Test 3] Independent policies produce different outputs")
     with torch.no_grad():
-        test_obs = torch.randn(1, 49)
+        test_obs = torch.randn(1, 48)
         outputs = []
         for strat_idx, strat_name in STRATEGY_NAMES.items():
             strat = torch.full((1,), strat_idx, dtype=torch.long)
@@ -1214,9 +1223,9 @@ def run_validation():
     for s in range(3):
         for _ in range(1000):
             t = Transition(
-                state=np.zeros(49), commanded_strategy=s,
+                state=np.zeros(48), commanded_strategy=s,
                 eqs_weights=np.zeros(6), reward=0.0,
-                next_state=np.zeros(49), done=False, info={}, log_prob=0.0
+                next_state=np.zeros(48), done=False, info={}, log_prob=0.0
             )
             buf.add(t)
     sample = buf.sample(300)
@@ -1283,13 +1292,13 @@ def evaluate_checkpoint(checkpoint_path: str):
     if checkpoint_path.endswith(".pt") or checkpoint_path.endswith(".pth"):
         # Single PyTorch model file — load as one policy and evaluate
         print(f"Loading PyTorch checkpoint: {checkpoint_path}")
-        policy = SingleHeadPolicy_v10_2(obs_dim=49, strategy_dim=3, eqs_dim=6, strategy_name="loaded")
+        policy = SingleHeadPolicy_v10_2(obs_dim=51, strategy_dim=3, eqs_dim=6, strategy_name="loaded")
         state_dict = torch.load(checkpoint_path, map_location="cpu")
         policy.load_state_dict(state_dict)
         policy.eval()
 
         num_samples = 100
-        test_obs = torch.randn(num_samples, 49)
+        test_obs = torch.randn(num_samples, 48)
         with torch.no_grad():
             strat_tensor = torch.zeros(num_samples, dtype=torch.long)
             outputs = policy(test_obs, strat_tensor)
@@ -1317,7 +1326,7 @@ def evaluate_checkpoint(checkpoint_path: str):
             algo.restore(checkpoint_path)
 
             num_samples = 100
-            test_obs = torch.randn(num_samples, 49)
+            test_obs = torch.randn(num_samples, 48)
 
             print("\nPer-Strategy EQS Weight Profiles:")
             print("-"*70)

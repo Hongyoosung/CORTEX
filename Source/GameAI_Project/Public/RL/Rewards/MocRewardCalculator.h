@@ -9,9 +9,11 @@
 #include "Types/EQSTypes.h"
 #include "Types/StrategyTypes.h"
 #include "Actors/CapturePoint.h"
+#include "Core/MocGameMode.h"
 #include "MocRewardCalculator.generated.h"
 
 class AMocCharacter;
+class ATeamManager;
 
 
 /**
@@ -74,6 +76,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MOC|Rewards")
 	float CalculateVictoryBonus() const { return 10.0f; }
 
+	/** Apply match end reward (win or loss). Called by OnMatchStateChanged handler. */
+	void ApplyMatchEndReward(bool bTeamWon);
+
+	/** Returns the last fully-computed individual step reward (before team mixing).
+	 *  Used by teammates to compute team average with 1-step lag. */
+	float GetLastIndividualStepReward() const { return LastIndividualStepReward; }
+
 	// ==================== Dense Per-Step Reward ====================
 
 	/**
@@ -113,6 +122,10 @@ public:
 	UFUNCTION()
 	void OnCapturePointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner);
 
+	/** Match state change handler. Bound to AMocGameMode::OnMatchStateChanged in BeginPlay. */
+	UFUNCTION()
+	void OnMatchStateChanged(EMocMatchState NewState);
+
 	// ==================== Cumulative Reward ====================
 
 	UFUNCTION(BlueprintPure, Category = "MOC|Rewards")
@@ -148,6 +161,19 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float TimePenalty = 0.001f;
+
+	/** Terminal reward for winning the match (applied as sparse reward) */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float MatchWinReward = 50.0f;
+
+	/** Terminal reward for losing the match (applied as sparse reward) */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float MatchLossReward = -50.0f;
+
+	/** Fraction of team average reward mixed into individual reward.
+	 *  FinalReward = (1-α)*Individual + α*TeamAvg. Uses 1-step lag to avoid ordering issues. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float TeamRewardMixingRatio = 0.2f;
 
 	/** Enable distance-shaping dense rewards */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rewards|Common")
@@ -227,21 +253,21 @@ public:
 	 *  Reduces reward magnitude so the value function can fit discounted returns.
 	 *  Raised from 0.01 to 0.05 so dense signals are stronger (baseline 0.03→0.0015). */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float GlobalRewardScale = 0.05f;
+	float GlobalRewardScale = 0.1f;
 
 	/** Scale applied to sparse rewards (kills, deaths, captures) BEFORE they're added to dense step reward.
 	 *  Reduces the magnitude gap between dense (~1.0) and sparse (~20-100) rewards so the
 	 *  value function can fit both. Applied inside DrainSparseReward(). */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float SparseRewardScale = 0.1f;
+	float SparseRewardScale = 0.2f;
 
 	/** Minimum per-step reward (after scaling) */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMin = -1.0f;
+	float StepRewardClampMin = -2.0f;
 
 	/** Maximum per-step reward (after scaling) */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMax = 1.0f;
+	float StepRewardClampMax = 2.0f;
 
 	// ==================== Capture Loss Cooldown (B4) ====================
 
@@ -253,19 +279,42 @@ public:
 	// ==================== Strategy Baselines (B1/B2) ====================
 
 	/** Unconditional per-step baseline for Assault so random policies don't diverge to -inf.
-	 *  FIX: Assault previously had no baseline while Defend/Support both had 0.3,
-	 *  creating systematic negative bias (time penalty with no offset). */
+	 *  Reduced from 0.02: zone control reward now provides the primary per-step income
+	 *  once bases are held, so this only serves as a safety floor for untrained agents. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float AssaultBaselineReward = 0.02f;
+	float AssaultBaselineReward = 0.01f;
 
-	/** Unconditional per-step baseline for Defend so random policies don't diverge to -inf.
-	 *  Offsets the expected distance penalty for an untrained agent. */
+	/** Unconditional per-step baseline for Defend.
+	 *  Reduced from 0.03 for the same reason — zone control reward is the dominant signal. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float DefendBaselineReward = 0.03f;
+	float DefendBaselineReward = 0.01f;
 
 	/** Unconditional per-step baseline for Support. Same purpose as DefendBaselineReward. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float SupportBaselineReward = 0.03f;
+	float SupportBaselineReward = 0.01f;
+
+	// ==================== Zone Control Reward ====================
+
+	/** Per-step reward = ZoneControlRewardPerBase × Scale × (FriendlyBases - EnemyBases).
+	 *  Creates a continuous dense signal aligned with the domination objective:
+	 *  positive when the team holds more bases, negative when the enemy dominates.
+	 *  The negative case discourages passive corner-hiding by penalising inaction
+	 *  while the enemy controls the map. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
+	float ZoneControlRewardPerBase = 0.2f;
+
+	/** Assault scale: smaller because capture events and approach rewards are the
+	 *  primary gradient; zone control is a secondary alignment signal. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
+	float ZoneControlAssaultScale = 0.1f;
+
+	/** Defend scale: larger because retaining friendly zones is the core objective. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
+	float ZoneControlDefendScale = 1.5f;
+
+	/** Support scale: neutral — zone state matters but is not the primary role objective. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
+	float ZoneControlSupportScale = 1.0f;
 
 	// ==================== Isolation Mode (last survivor) ====================
 
@@ -317,6 +366,14 @@ protected:
 	int32 PostCaptureMomentumStepsRemaining = 0;
 	FVector LastCapturedPointLocation = FVector::ZeroVector;
 
+	/** Assault zone-decay: steps since the nearest CP became friendly (for decaying zone bonus).
+	 *  Reset when a non-friendly CP is nearest again. */
+	int32 AssaultZoneStepsAfterCapture = 0;
+
+	/** Number of steps over which zone presence bonus decays to 0 after CP becomes friendly */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	float AssaultCapturedZoneDecaySteps = 30.0f;
+
 	// FIX (Issue 3 — Support): Cache the target ally index so the approach-delta
 	// is always computed against the SAME ally across consecutive steps.
 	// Without this, if a different ally becomes most-injured between steps,
@@ -335,6 +392,10 @@ protected:
 	bool bSparseKillFiredThisStep = false;
 
 	bool bInFriendlyZone = false;
+
+	/** Last fully-computed individual step reward (before team mixing).
+	 *  Teammates read this with 1-step lag for team reward mixing. */
+	float LastIndividualStepReward = 0.0f;
 
 	// Isolation debounce: incremented each step all allies are dead, reset when any ally is alive.
 	// Isolation mode only activates once this reaches IsolationDebounceSteps.

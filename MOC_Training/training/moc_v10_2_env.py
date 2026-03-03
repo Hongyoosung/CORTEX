@@ -2,7 +2,7 @@
 MOC v10.2 Synchronous Multi-Agent Environment
 
 - 3 strategies (Assault, Defend, Support)
-- 49-dim base observation + 3-dim strategy one-hot = 52-dim total
+- 48-dim base observation + 3-dim team composition + 3-dim strategy one-hot = 54-dim total
 - Action space: Box([-1, 1]^6) for EQS weights
 - Commanders assign strategies; executors output EQS weights
 
@@ -37,14 +37,16 @@ except ImportError:
 
 class MOCv10_2Config:
     """Configuration for MOC v10.2 environment."""
-    # Observation layout (49 base + 3 strategy one-hot = 52 total):
-    #   Self      (8):  pos/7500(3), health(1), vel/600(3), cooldown(1)
+    # Observation layout (48 base + 3 team composition + 3 strategy one-hot = 54 total):
+    #   Self      (7):  pos/7500(3), health(1), vel/600(3)
     #   Allies   (16):  4 × [rel_pos/8000(3), health(1)]
     #   Enemies  (20):  5 × [rel_pos/8000_if_visible(3), visible(1)]
     #   Map       (5):  capture_point_status×5
-    OBSERVATION_BASE_SIZE = 49
+    #   Composition(3): [num_assault/5, num_defend/5, num_support/5]
+    #   Strategy  (3):  one-hot [Assault, Defend, Support]
+    OBSERVATION_BASE_SIZE = 48
     NUM_STRATEGIES = 3  # Assault, Defend, Support
-    OBSERVATION_SIZE = 52  # 49 + 3 strategy one-hot
+    OBSERVATION_SIZE = 54  # 48 base + 3 composition + 3 strategy one-hot
     NUM_EQS_WEIGHTS = 6  # EQS weight outputs
 
 
@@ -76,7 +78,7 @@ if SCHOLA_AVAILABLE:
             print(f"[MOC v10.2] Connecting to {host}:{port}...")
             print(f"[MOC v10.2] Multi-environment: {self.num_envs} parallel UE5 envs")
             print(f"[MOC v10.2] Architecture: Command-Driven Executor (3 strategies)")
-            print(f"[MOC v10.2] Obs Space: {MOCv10_2Config.OBSERVATION_SIZE}-dim (49 base + 3 strategy one-hot)")
+            print(f"[MOC v10.2] Obs Space: {MOCv10_2Config.OBSERVATION_SIZE}-dim (48 base + 3 composition + 3 strategy one-hot)")
             print(f"[MOC v10.2] Action Space: Box([-1, 1]^{MOCv10_2Config.NUM_EQS_WEIGHTS}) EQS weights")
 
             # Connect to UE5
@@ -111,7 +113,7 @@ if SCHOLA_AVAILABLE:
                 self._update_agent_map()
 
             # Observation/Action Spaces
-            # v10.2: 52-dim input (49 local + 3 strategy one-hot)
+            # v10.2: 54-dim input (48 local + 3 composition + 3 strategy one-hot)
             self._obs_space = spaces.Box(
                 low=-np.inf, high=np.inf,
                 shape=(MOCv10_2Config.OBSERVATION_SIZE,),
@@ -272,15 +274,19 @@ if SCHOLA_AVAILABLE:
                     obs_val = agent_obs_data
                 full_obs = np.array(obs_val, dtype=np.float32).flatten()
             else:
-                full_obs = np.zeros(52, dtype=np.float32)
+                full_obs = np.zeros(54, dtype=np.float32)
 
-            # Split into base obs + strategy
-            if len(full_obs) >= 52:
-                base_obs = full_obs[:49]
-                strategy_onehot = full_obs[49:52]
+            # Split into base obs (48) + composition (3) + strategy one-hot (3)
+            # Layout from C++: [base(48) | composition(3) | strategy(3)] = 54
+            if len(full_obs) >= 54:
+                base_obs = full_obs[:51]  # 48 base + 3 composition = 51
+                strategy_onehot = full_obs[51:54]
                 ue5_strategy_idx = int(np.argmax(strategy_onehot))
+            elif len(full_obs) >= 51:
+                base_obs = full_obs[:51]
+                ue5_strategy_idx = 0
             else:
-                base_obs = full_obs[:49] if len(full_obs) >= 49 else np.pad(full_obs, (0, 49 - len(full_obs)))
+                base_obs = full_obs[:51] if len(full_obs) >= 51 else np.pad(full_obs, (0, 51 - len(full_obs)))
                 ue5_strategy_idx = 0
 
             # Apply uniform strategy override if enabled
@@ -299,18 +305,18 @@ if SCHOLA_AVAILABLE:
             return obs, info, strategy_idx
 
         def _build_observation(self, base_obs, strategy_idx=0):
-            """Build 52-dim observation: 49 base + 3 strategy one-hot.
+            """Build 54-dim observation: 51 base (48 + 3 composition) + 3 strategy one-hot.
 
             Args:
-                base_obs: 49-dim observation vector from UE5
+                base_obs: 51-dim observation vector (48 base features + 3 team composition)
                 strategy_idx: Strategy index (0=Assault, 1=Defend, 2=Support)
 
             Returns:
-                52-dim observation array
+                54-dim observation array
             """
-            TARGET_BASE_SIZE = 49
+            TARGET_BASE_SIZE = 51  # 48 base + 3 team composition
 
-            # Pad/truncate to 49 dimensions
+            # Pad/truncate to 51 dimensions
             if len(base_obs) < TARGET_BASE_SIZE:
                 base_obs = np.pad(base_obs[:TARGET_BASE_SIZE], (0, TARGET_BASE_SIZE - len(base_obs)), mode='constant')
             else:
@@ -334,7 +340,7 @@ if SCHOLA_AVAILABLE:
                 dist_str = " | ".join([f"{n}={p}" for n, p in zip(names, pct)])
                 print(f"[STRATEGY DIST] {dist_str}")
 
-            # Final result: 49(Base) + 3(Strategy) = 52 floats
+            # Final result: 51(Base+Composition) + 3(Strategy) = 54 floats
             return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
 
         @property
@@ -577,7 +583,17 @@ if SCHOLA_AVAILABLE:
         # ============================================================================
 
         def _parse_step_result(self, step_result):
-            """Parse step result into observations and info (for reset)."""
+            """Parse step result into observations and info (for reset).
+
+            IMPORTANT: Also syncs _prev_cumulative_rewards so the soft-reset dummy step
+            does not produce a phantom delta at the first step of the next episode.
+            Assault agents end episodes near enemy objectives; after UE5 resets them to
+            spawn, the dummy step computes a reward (Δ_reset) that advances
+            CumulativeLifetimeReward in C++. Without syncing here, _prev_cumulative_rewards
+            stays at the end-of-episode value, so episode N+1 step 1 sees
+            info_step_reward = Δ_reset + real_step_reward instead of just real_step_reward.
+            For Assault agents Δ_reset is large and negative, zeroing out their episode reward.
+            """
             if len(step_result) == 5:
                 obs_nested, _, _, _, info_nested = step_result
             elif len(step_result) == 4:
@@ -592,6 +608,19 @@ if SCHOLA_AVAILABLE:
                 obs_dict[flat_id], info_dict[flat_id], _ = self._extract_agent_observation(
                     flat_id, obs_nested, info_nested
                 )
+
+            # Sync _prev_cumulative_rewards to consume the soft-reset step's reward
+            # so it doesn't bleed into episode N+1 step 1 as a phantom delta.
+            if not hasattr(self, '_prev_cumulative_rewards'):
+                self._prev_cumulative_rewards = {}
+            for flat_id in self._agent_ids:
+                info = info_dict.get(flat_id, {})
+                if 'CumulativeLifetimeReward' in info:
+                    try:
+                        self._prev_cumulative_rewards[flat_id] = float(info['CumulativeLifetimeReward'])
+                    except (ValueError, TypeError):
+                        pass
+
             return obs_dict, info_dict
 
         def _parse_step_result_full(self, step_result):
@@ -768,7 +797,7 @@ if SCHOLA_AVAILABLE:
             obs_dict = {}
             for flat_id in self._agent_ids:
                 strategy_idx = self._agent_strategies.get(flat_id, 0)
-                obs_dict[flat_id] = self._build_observation(np.zeros(49, dtype=np.float32), strategy_idx)
+                obs_dict[flat_id] = self._build_observation(np.zeros(51, dtype=np.float32), strategy_idx)
 
             reward_dict = {flat_id: 0.0 for flat_id in self._agent_ids}
             terminated_dict = {flat_id: False for flat_id in self._agent_ids}
@@ -784,7 +813,7 @@ if SCHOLA_AVAILABLE:
             fallback_obs = {}
             for flat_id in self._agent_ids:
                 strategy_idx = self._agent_strategies.get(flat_id, 0)
-                fallback_obs[flat_id] = self._build_observation(np.zeros(49, dtype=np.float32), strategy_idx)
+                fallback_obs[flat_id] = self._build_observation(np.zeros(51, dtype=np.float32), strategy_idx)
 
             terminated_fallback = {flat_id: True for flat_id in self._agent_ids}
             terminated_fallback['__all__'] = True
