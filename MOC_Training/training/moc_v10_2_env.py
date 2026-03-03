@@ -134,6 +134,8 @@ if SCHOLA_AVAILABLE:
             self._env_episodes_completed = {i: 0 for i in range(self.num_envs)}
             self._env_done_flags = {i: False for i in range(self.num_envs)}
             self._agent_episode_rewards = {}  # Cumulative rewards per agent per episode
+            self._prev_cumulative_rewards = {}  # Per-agent lifetime reward baseline for delta computation
+            self._reward_debug_count = 0
 
             # Episode timeout (backup mechanism - will sync from UE5)
             self._max_episode_steps = 100  # Shorter episodes improve credit assignment; 100 = ~50s at 2Hz
@@ -611,8 +613,6 @@ if SCHOLA_AVAILABLE:
 
             # Sync _prev_cumulative_rewards to consume the soft-reset step's reward
             # so it doesn't bleed into episode N+1 step 1 as a phantom delta.
-            if not hasattr(self, '_prev_cumulative_rewards'):
-                self._prev_cumulative_rewards = {}
             for flat_id in self._agent_ids:
                 info = info_dict.get(flat_id, {})
                 if 'CumulativeLifetimeReward' in info:
@@ -672,13 +672,17 @@ if SCHOLA_AVAILABLE:
             terminated_dict['__all__'] = False
             truncated_dict['__all__'] = False
 
-            # v10.2 REWARD FIX: Use CumulativeLifetimeReward from info as fallback.
+            # v10.2 REWARD FIX: Use CumulativeLifetimeReward from info as primary reward source.
             # Schola calls ComputeReward() multiple times per step; only the last call's
             # return value is sent to Python. With idempotent ComputeReward(), all calls
             # now return the same cached value. But as a safety net, we also extract
             # rewards from the info channel using a monotonic cumulative counter.
-            if not hasattr(self, '_prev_cumulative_rewards'):
-                self._prev_cumulative_rewards = {}
+            #
+            # SAME_STEP note: With AutoResetType.SAME_STEP, an agent death+respawn within
+            # one Python step causes CumulativeLifetimeReward to increment TWICE (death step
+            # + respawn step 0). The delta therefore captures both rewards. Schola only
+            # sends the final ComputeReward() return (the respawn step). Using the delta
+            # is intentional: it correctly accounts for the death penalty that Schola drops.
 
             info_reward_used = False
             for flat_id in list(reward_dict.keys()):
@@ -686,25 +690,34 @@ if SCHOLA_AVAILABLE:
                 if 'CumulativeLifetimeReward' in info:
                     try:
                         curr_cumulative = float(info['CumulativeLifetimeReward'])
-                        prev_cumulative = self._prev_cumulative_rewards.get(flat_id, 0.0)
+                        prev_cumulative = self._prev_cumulative_rewards.get(flat_id, None)
+
+                        if prev_cumulative is None:
+                            # First step ever for this agent — delta is undefined, use Schola reward.
+                            self._prev_cumulative_rewards[flat_id] = curr_cumulative
+                            continue
+
                         info_step_reward = curr_cumulative - prev_cumulative
+
+                        # Note: CumulativeLifetimeReward CAN decrease (negative step rewards
+                        # such as time/death penalties are valid). No drop detection needed —
+                        # the delta is always the correct signed step reward.
                         self._prev_cumulative_rewards[flat_id] = curr_cumulative
 
                         schola_reward = reward_dict[flat_id]
-                        # Use info reward if Schola reward looks wrong (near-zero when info shows real reward)
-                        if abs(schola_reward) < 1e-4 and abs(info_step_reward) > 1e-4:
+                        # Prefer info-channel delta when non-trivial.
+                        # This captures rewards that Schola may have dropped (e.g., intermediate
+                        # ComputeReward() calls discarded by the gRPC layer).
+                        if abs(info_step_reward) > 1e-4:
                             reward_dict[flat_id] = info_step_reward
                             if not info_reward_used:
                                 info_reward_used = True
-                        elif abs(info_step_reward) > 1e-4:
-                            # Both have values - prefer info channel (more reliable)
-                            reward_dict[flat_id] = info_step_reward
+                        # else: info delta ≈ 0 → keep Schola reward (handles first step of
+                        # a new in-episode respawn before C++ computes the new step reward)
                     except (ValueError, TypeError):
                         pass  # Keep Schola reward
 
             # Debug logging (first few steps)
-            if not hasattr(self, '_reward_debug_count'):
-                self._reward_debug_count = 0
             self._reward_debug_count += 1
             if self._reward_debug_count <= 3:
                 sample_id = next(iter(reward_dict.keys()))
@@ -753,8 +766,8 @@ if SCHOLA_AVAILABLE:
             print(f"🏁 [ENV {env_idx} EPISODE COMPLETE] Episode {self._env_episodes_completed[env_idx]} - {end_type}")
             print(f"  Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
             print(f"  Total Reward: {env_total_reward:.2f}")
-            print(f"  Agent Rewards (sample):")
-            for aid in list(env_agents)[:4]:
+            print(f"  Agent Rewards:")
+            for aid in sorted(env_agents):
                 agent_reward = self._agent_episode_rewards.get(aid, 0.0)
                 print(f"    {aid}: {agent_reward:.2f}")
             print("=" * 80)
@@ -776,7 +789,7 @@ if SCHOLA_AVAILABLE:
                 env_agents = self._get_agents_for_env(env_idx)
                 env_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
 
-                sample_agents = list(env_agents)[:2]
+                sample_agents = sorted(env_agents)
                 sample_rewards_str = ", ".join([f"{aid}={self._agent_episode_rewards.get(aid, 0.0):.1f}" for aid in sample_agents])
 
                 status = "⚡" if episode_time < 60 else "🔥"

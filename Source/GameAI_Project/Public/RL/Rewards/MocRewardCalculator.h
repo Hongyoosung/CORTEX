@@ -361,6 +361,7 @@ protected:
 
 	/** Shared capture radius (taken from first cached point; assumes uniform radius) */
 	float CaptureRadius_Cached = 500.0f;
+	float CaptureRadiusSq_Cached = 250000.0f;
 
 	// Momentum state (per-episode, reset in ResetEpisodeState)
 	int32 PostCaptureMomentumStepsRemaining = 0;
@@ -400,4 +401,6 @@ protected:
 	// Isolation debounce: incremented each step all allies are dead, reset when any ally is alive.
 	// Isolation mode only activates once this reaches IsolationDebounceSteps.
 	int32 IsolatedConsecutiveSteps = 0;
+
+	
 };

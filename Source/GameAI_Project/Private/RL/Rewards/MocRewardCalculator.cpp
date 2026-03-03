@@ -86,18 +86,18 @@ void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapt
 
 	if (NewOwnerTeam == MyTeam)
 	{
-		// Defend: only award capture bonus when physically in or near a zone.
-		// Without this gate, Defend receives capture rewards for team captures at enemy
-		// objectives, creating a spurious gradient that drives Defend toward enemy bases
-		// (identical to Assault behavior).
 		bool bAwardCapture = true;
 		if (Strategy == EStrategyType::Defend && OwnerCharacter)
 		{
 			bAwardCapture = false;
+			// [수정] 1.5배 반경의 제곱 값으로 비교 연산 최적화
+			const float ThresholdSq = FMath::Square(CaptureRadius_Cached * 1.5f);
+			const FVector AgentLoc = OwnerCharacter->GetActorLocation();
+
 			for (ACapturePoint* CP : CachedCapturePoints)
 			{
 				if (!CP) continue;
-				if (FVector::Dist(OwnerCharacter->GetActorLocation(), CP->GetActorLocation()) <= CP->CaptureRadius * 1.5f)
+				if (FVector::DistSquared(AgentLoc, CP->GetActorLocation()) <= ThresholdSq)
 				{
 					bAwardCapture = true;
 					break;
@@ -281,21 +281,16 @@ float UMocRewardCalculator::ComputeStepReward(
 	{
 	case EStrategyType::Assault:
 		{
-			// B6: Unconditional baseline — same rationale as Defend/Support.
-			// Previously missing, causing systematic negative bias for Assault.
 			Reward += AssaultBaselineReward;
 
-			// Health loss penalty
 			float HealthLoss = Prev.Health - Current.Health;
 			if (HealthLoss > AssaultHealthLossThreshold)
 			{
 				Reward -= AssaultReward.HealthPenalty * HealthLoss;
 			}
 
-			// Objective shaping: capture point progress (skip on respawn — position delta is meaningless)
 			if (!bIsRespawnStep && OwnerCharacter && CachedCapturePoints.Num() > 0)
 			{
-				// Friendly point counts from observation snapshots (consistent source)
 				int32 PrevFriendlyPoints = 0;
 				int32 CurrFriendlyPoints = 0;
 				for (int32 i = 0; i < Prev.CapturePointStatuses.Num(); ++i)
@@ -304,90 +299,73 @@ float UMocRewardCalculator::ComputeStepReward(
 					if (i < Current.CapturePointStatuses.Num() && Current.CapturePointStatuses[i] > 0.5f) CurrFriendlyPoints++;
 				}
 
-				// Distances to nearest non-friendly CP and zone presence (from world state)
-				float PrevNearestDist = FLT_MAX;
-				float CurrNearestDist = FLT_MAX;
+				// 단일 루프로 통합 및 DistSquared 사용
+				float PrevNearestDistSq = FLT_MAX;
+				float CurrNearestDistSq = FLT_MAX;
 				bool  bInNonFriendlyZone = false;
+				bool  bInFriendlyZoneAssault = false;
+				float ActiveCappingProgress = 0.0f;
 
 				for (ACapturePoint* CP : CachedCapturePoints)
 				{
-					if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+					if (!CP) continue;
 
-					float PrevDist = FVector::Dist(Prev.Position, CP->GetActorLocation());
-					float CurrDist = FVector::Dist(Current.Position, CP->GetActorLocation());
-					PrevNearestDist = FMath::Min(PrevNearestDist, PrevDist);
-					CurrNearestDist = FMath::Min(CurrNearestDist, CurrDist);
+					float PrevDistSq = FVector::DistSquared(Prev.Position, CP->GetActorLocation());
+					float CurrDistSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
 
-					if (CurrDist <= CP->CaptureRadius)
+					if (CP->GetOwningTeamID() != MyTeamID)
 					{
-						bInNonFriendlyZone = true;
+						PrevNearestDistSq = FMath::Min(PrevNearestDistSq, PrevDistSq);
+						CurrNearestDistSq = FMath::Min(CurrNearestDistSq, CurrDistSq);
+
+						if (CurrDistSq <= CaptureRadiusSq_Cached)
+						{
+							bInNonFriendlyZone = true;
+							ActiveCappingProgress = FMath::Max(ActiveCappingProgress, CP->GetCaptureProgress());
+						}
+					}
+					else if (CurrDistSq <= CaptureRadiusSq_Cached)
+					{
+						bInFriendlyZoneAssault = true;
 					}
 				}
 
-				// New captures: trigger momentum window (sparse reward fires via OnCapturePointCaptured)
 				int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
 				if (NewCaptures > 0)
 				{
 					PostCaptureMomentumStepsRemaining = AssaultReward.PostCaptureMomentumDuration;
-
-					// Store location of nearest newly-friendly CP for momentum direction
-					float NearestFriendlyDist = FLT_MAX;
+					float NearestFriendlyDistSq = FLT_MAX;
 					for (ACapturePoint* CP : CachedCapturePoints)
 					{
 						if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
-						float D = FVector::Dist(Current.Position, CP->GetActorLocation());
-						if (D < NearestFriendlyDist)
+						float DSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
+						if (DSq < NearestFriendlyDistSq)
 						{
-							NearestFriendlyDist = D;
+							NearestFriendlyDistSq = DSq;
 							LastCapturedPointLocation = CP->GetActorLocation();
 						}
 					}
 				}
 
-				// Objective progress: reward approaching nearest non-friendly CP (clamp to 0 — no penalty for retreating).
-				// Amplified when isolated — stronger directional gradient toward objectives.
-				if (PrevNearestDist < FLT_MAX && CurrNearestDist < FLT_MAX)
+				// 루프가 끝난 뒤에만 Sqrt를 적용하여 정확한 스칼라 거리 보상 부여
+				if (PrevNearestDistSq < FLT_MAX && CurrNearestDistSq < FLT_MAX)
 				{
 					const float ApproachScale = bIsolated ? IsolationApproachMultiplier : 1.0f;
-					Reward += AssaultReward.ObjectiveProgressReward * ApproachScale * FMath::Max(PrevNearestDist - CurrNearestDist, 0.0f);
+					float ApproachDelta = FMath::Sqrt(PrevNearestDistSq) - FMath::Sqrt(CurrNearestDistSq);
+					Reward += AssaultReward.ObjectiveProgressReward * ApproachScale * FMath::Max(ApproachDelta, 0.0f);
 				}
 
-				// Zone presence bonus + active capping reward
-				// Zone-decay: once a CP becomes friendly, decay the zone bonus over
-				// AssaultCapturedZoneDecaySteps so the agent doesn't camp captured points.
+				// 루프 통합으로 간결해진 Zone Presence 처리 로직
 				if (bInNonFriendlyZone)
 				{
-					AssaultZoneStepsAfterCapture = 0; // actively capping — reset decay
+					AssaultZoneStepsAfterCapture = 0;
 					Reward += AssaultReward.ZonePresenceBonus;
-
-					// Scale reward by how far along the capture is — incentivises staying in zone
-					for (ACapturePoint* CP : CachedCapturePoints)
-					{
-						if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
-						if (FVector::Dist(Current.Position, CP->GetActorLocation()) <= CP->CaptureRadius)
-						{
-							Reward += AssaultReward.ActiveCappingBonus * CP->GetCaptureProgress();
-							break; // only award for one point per step
-						}
-					}
+					Reward += AssaultReward.ActiveCappingBonus * ActiveCappingProgress;
 				}
 				else
 				{
-					// Check if standing inside a friendly zone (post-capture camping)
-					bool bInFriendlyZoneAssault = false;
-					for (ACapturePoint* CP : CachedCapturePoints)
-					{
-						if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
-						if (FVector::Dist(Current.Position, CP->GetActorLocation()) <= CP->CaptureRadius)
-						{
-							bInFriendlyZoneAssault = true;
-							break;
-						}
-					}
-
 					if (bInFriendlyZoneAssault && AssaultCapturedZoneDecaySteps > 0.0f)
 					{
-						// Decaying zone bonus: full → 0 over AssaultCapturedZoneDecaySteps
 						AssaultZoneStepsAfterCapture++;
 						const float DecayFactor = FMath::Max(0.0f, 1.0f - (float)AssaultZoneStepsAfterCapture / AssaultCapturedZoneDecaySteps);
 						Reward += AssaultReward.ZonePresenceBonus * DecayFactor;
@@ -398,26 +376,21 @@ float UMocRewardCalculator::ComputeStepReward(
 					}
 				}
 
-				// Post-capture momentum bonus for advancing away from captured point
 				if (PostCaptureMomentumStepsRemaining > 0)
 				{
 					PostCaptureMomentumStepsRemaining--;
 					if (PositionChange >= AssaultReward.PostCaptureMomentumMinMove)
 					{
-						float DistFromCaptured = FVector::Dist(Current.Position, LastCapturedPointLocation);
-						if (DistFromCaptured > CaptureRadius_Cached)
+						if (FVector::DistSquared(Current.Position, LastCapturedPointLocation) > CaptureRadiusSq_Cached)
 						{
 							Reward += AssaultReward.PostCaptureMomentumBonus;
 						}
 					}
 				}
 
-				// Idle penalty: stationary and not contesting a zone.
-				// When isolated the 0.5x softening is removed — full penalty applies
-				// regardless of target distance to prevent corner-hiding.
 				if (PositionChange < AssaultIdleMovementThreshold && !bInNonFriendlyZone)
 				{
-					float IdlePenalty = (CurrNearestDist == FLT_MAX || bIsolated)
+					float IdlePenalty = (CurrNearestDistSq == FLT_MAX || bIsolated)
 						? AssaultReward.IdlePenalty
 						: AssaultReward.IdlePenalty * 0.5f;
 					Reward -= IdlePenalty;
@@ -795,8 +768,11 @@ float UMocRewardCalculator::ComputeStepReward(
 		ATeamManager* TeamMgr = OwnerCharacter->GetTeamManager();
 		if (TeamMgr)
 		{
-			const int32 MyTeamID = OwnerCharacter->GetTeamID_Implementation();
-			TArray<AMocCharacter*> Teammates = TeamMgr->GetTeamAgents(MyTeamID);
+			const int32 TeamID = OwnerCharacter->GetTeamID_Implementation();
+			// [수정] 가능하면 const TArray<AMocCharacter*>& 로 반환받도록 처리해야 복사가 발생하지 않습니다.
+			// (만약 TeamManager의 GetTeamAgents가 값 복사(TArray)를 반환한다면 엔진 구조상 메모리 할당이 발생합니다.
+			// 향후 TeamMgr->GetTeamAgents() 반환형 자체를 참조 반환으로 바꾸는 것을 강력히 권장합니다.)
+			const TArray<AMocCharacter*>& Teammates = TeamMgr->GetTeamAgents(TeamID);
 
 			float TeamRewardSum = 0.0f;
 			int32 TeamCount = 0;
@@ -918,7 +894,6 @@ void UMocRewardCalculator::CacheCapturePoints()
 		}
 	}
 
-	// Assumes all capture points share the same radius; warn if none found
 	if (CachedCapturePoints.Num() > 0)
 	{
 		CaptureRadius_Cached = CachedCapturePoints[0]->CaptureRadius;
@@ -927,6 +902,8 @@ void UMocRewardCalculator::CacheCapturePoints()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[MocRewardCalculator] No capture points found — using default radius %.0f"), CaptureRadius_Cached);
 	}
+
+	CaptureRadiusSq_Cached = CaptureRadius_Cached * CaptureRadius_Cached;
 
 	UE_LOG(LogTemp, Log, TEXT("[MocRewardCalculator] Cached %d capture points (radius=%.0f)"),
 		CachedCapturePoints.Num(), CaptureRadius_Cached);

@@ -7,6 +7,10 @@ SET "NUM_ITERATIONS=100"
 SET "DETACH=false"
 SET "NO_BUILD=false"
 SET "RESUME_CHECKPOINT="
+SET "UE5_EXE=C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.exe"
+SET "UPROJECT=C:\Users\Foryoucom\Documents\GitHub\CORTEX\GameAI_Project.uproject"
+SET "SCHOLA_BASE_PORT=50051"
+SET "LAUNCH_UE5=true"
 
 :parse_args
 if "%~1"=="" goto :end_parse
@@ -15,6 +19,7 @@ if "%~1"=="--workers" set "NUM_WORKERS=%~2" & shift & shift & goto :parse_args
 if "%~1"=="--iterations" set "NUM_ITERATIONS=%~2" & shift & shift & goto :parse_args
 if "%~1"=="--detach" set "DETACH=true" & shift & goto :parse_args
 if "%~1"=="--no-build" set "NO_BUILD=true" & shift & goto :parse_args
+if "%~1"=="--no-ue5" set "LAUNCH_UE5=false" & shift & goto :parse_args
 shift & goto :parse_args
 :end_parse
 
@@ -161,6 +166,21 @@ if "%RESUME_CHECKPOINT%"=="" (
     echo  Checkpoint: %SELECTED_CKP%
 )
 echo ========================================
+
+REM ── Launch UE5 ───────────────────────────────────────────────────────────────
+if "%LAUNCH_UE5%"=="true" (
+    echo [0/2] Launching UE5 with %NUM_SCHOLA_ENVS% Schola environments on port %SCHOLA_BASE_PORT%...
+    if not exist "%UE5_EXE%" (
+        echo ERROR: UE5 not found at: %UE5_EXE%
+        pause
+        exit /b 1
+    )
+    start "" "%UE5_EXE%" "%UPROJECT%" -game -nullrhi -nosound -notexturestreaming -nopause -ScholaPort=%SCHOLA_BASE_PORT%~%NUM_SCHOLA_ENVS% -log
+    echo Waiting 20s for UE5 to initialize...
+    timeout /t 20 /nobreak >nul
+    echo UE5 ready.
+    echo.
+)
 
 if "%NO_BUILD%"=="false" (
     echo [1/2] Building training image...

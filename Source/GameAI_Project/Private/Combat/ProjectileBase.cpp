@@ -2,6 +2,7 @@
 
 #include "Combat/ProjectileBase.h"
 #include "Combat/Components/HealthComponent.h"
+#include "Characters/MocCharacter.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Particles/ParticleSystemComponent.h"
@@ -310,7 +311,15 @@ bool AProjectileBase::ValidateHit(AActor* HitActor) const
 		return false;
 	}
 
-	
+	if (!bAllowFriendlyFire)
+	{
+		const AMocCharacter* HitChar = Cast<AMocCharacter>(HitActor);
+		const AMocCharacter* OwnerChar = Cast<AMocCharacter>(OwnerActor);
+		if (HitChar && OwnerChar && HitChar->TeamID == OwnerChar->TeamID)
+		{
+			return false;
+		}
+	}
 
 	return true;
 }

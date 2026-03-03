@@ -567,8 +567,9 @@ if RLLIB_AVAILABLE:
             """
             obs = input_dict["obs"]
 
-            base_obs = obs[:, :48]
-            strategy_onehot = obs[:, 48:51]
+            base_obs = obs[:, :51]
+            strategy_onehot = obs[:, 51:54]
+
             strategy_idx = torch.argmax(strategy_onehot, dim=1)
 
             self._last_features = obs
@@ -594,7 +595,7 @@ if RLLIB_AVAILABLE:
             if self._last_features is None or self._last_strategy_idx is None:
                 raise ValueError("Must call forward() before value_function()")
 
-            base_obs = self._last_features[:, :48]
+            base_obs = self._last_features[:, :51]
             return self.policy.get_value(base_obs, self._last_strategy_idx)
 
 
@@ -671,6 +672,7 @@ def create_env_config():
 
 
 if RLLIB_AVAILABLE:
+    from ray.rllib.policy.policy import PolicySpec
     from ray.rllib.algorithms.callbacks import DefaultCallbacks
 
     class MOCv10_2Callbacks(DefaultCallbacks):
@@ -796,6 +798,13 @@ def create_ppo_config():
 
     # Framework and Runner
     config = config.framework("torch")
+
+    # TorchModelV2 requires the old API stack (new stack uses RLModule instead).
+    config = config.api_stack(
+        enable_rl_module_and_learner=False,
+        enable_env_runner_and_connector_v2=False,
+    )
+
     config = config.env_runners(
         num_env_runners=MOCv10_2TrainingConfig.NUM_WORKERS,
         num_envs_per_env_runner=MOCv10_2TrainingConfig.NUM_ENVS_PER_WORKER,
@@ -803,28 +812,14 @@ def create_ppo_config():
         batch_mode="truncate_episodes",
     )
 
-    # On Windows, Ray's Learner actor hangs during inter-process weight sync.
-    # Force local learner on Windows; on Linux (Docker) both modes work.
-    import platform
-    if platform.system() == "Windows":
-        try:
-            config = config.learners(num_learners=0)
-            print("[v10.2] Windows: using num_learners=0 (local learner)")
-        except Exception:
-            config = config.api_stack(
-                enable_rl_module_and_learner=False,
-                enable_env_runner_and_connector_v2=False,
-            )
-            print("[v10.2] Windows fallback: using old API stack")
-
     # Multi-agent: 3 independent per-strategy policies.
     # Each policy is a separate SingleHeadPolicy_v10_2 instance — no shared weights,
     # no gradient interference, full per-strategy tuning.
     config = config.multi_agent(
         policies={
-            "assault_policy",
-            "defend_policy",
-            "support_policy",
+            "assault_policy": PolicySpec(),
+            "defend_policy": PolicySpec(),
+            "support_policy": PolicySpec(),
         },
         policy_mapping_fn=_strategy_policy_mapping_fn,
         count_steps_by="agent_steps",
@@ -847,6 +842,8 @@ def create_ppo_config():
         gamma=MOCv10_2TrainingConfig.GAMMA,
         entropy_coeff_schedule=MOCv10_2TrainingConfig.ENTROPY_COEFF_SCHEDULE,
         train_batch_size=MOCv10_2TrainingConfig.TRAIN_BATCH_SIZE,
+        minibatch_size=MOCv10_2TrainingConfig.SGD_MINIBATCH_SIZE,
+        num_epochs=MOCv10_2TrainingConfig.NUM_SGD_ITER,
         lambda_=MOCv10_2TrainingConfig.GAE_LAMBDA,
         clip_param=MOCv10_2TrainingConfig.CLIP_PARAM,
         vf_clip_param=MOCv10_2TrainingConfig.VF_CLIP_PARAM,
@@ -859,11 +856,6 @@ def create_ppo_config():
         kl_coeff=0.2,
         kl_target=0.01,
     )
-
-    # PPO-specific
-    config.num_epochs = MOCv10_2TrainingConfig.NUM_SGD_ITER
-    config.minibatch_size = MOCv10_2TrainingConfig.SGD_MINIBATCH_SIZE
-    config.shuffle_batch_per_epoch = True
 
     # Model configuration — each policy uses the same single-head architecture
     # but trains independently.  strategy_name is cosmetic (for logging).
@@ -947,13 +939,6 @@ def train_with_rllib(args):
     except:
         pass
 
-    # Windows multiprocessing fix
-    import multiprocessing
-    try:
-        multiprocessing.set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass
-
     # Initialize Ray
     import tempfile
     ray_temp_dir = os.path.join(tempfile.gettempdir(), "ray_moc_v10_2")
@@ -985,17 +970,21 @@ def train_with_rllib(args):
     latest_dir = os.path.join(output_dir, "latest")
     print(f"Output: {output_dir}")
 
-    # Create logger
-    from ray.tune.logger import UnifiedLogger, TBXLogger, JsonLogger, CSVLogger
+    # Create logger (UnifiedLogger is deprecated in newer Ray; fall back gracefully)
+    logger_creator = None
+    try:
+        from ray.tune.logger import UnifiedLogger, TBXLogger, JsonLogger, CSVLogger
 
-    def logger_creator(config_dict):
-        return UnifiedLogger(config_dict, output_dir, loggers=[JsonLogger, CSVLogger, TBXLogger])
+        def logger_creator(config_dict):
+            return UnifiedLogger(config_dict, output_dir, loggers=[JsonLogger, CSVLogger, TBXLogger])
+    except ImportError:
+        print("[v10.2] UnifiedLogger not available; Ray will use its default logger")
 
     # Build algorithm
     print("\nConnecting to UE5...")
     config = create_ppo_config()
     try:
-        algo = config.build(logger_creator=logger_creator)
+        algo = config.build(logger_creator=logger_creator) if logger_creator else config.build()
         print("Connected!\n")
     except Exception as e:
         print(f"[ERROR] Failed to connect: {e}")

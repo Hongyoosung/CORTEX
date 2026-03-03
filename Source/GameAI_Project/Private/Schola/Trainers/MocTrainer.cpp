@@ -904,6 +904,10 @@ void AMocTrainer::ResetTrainer()
                 TotalEpisodes + 1,
                 StrategyPhase);
             MocAgent->TrainingStrategyOverride = NewStrategy;
+            if (ControlledCharacter)
+            {
+                ControlledCharacter->SetCommandedStrategy(NewStrategy);
+            }
         }
     }
 
