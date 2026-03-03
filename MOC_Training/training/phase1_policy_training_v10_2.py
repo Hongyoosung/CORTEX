@@ -641,8 +641,12 @@ class MOCv10_2TrainingConfig:
     CHECKPOINT_FREQ = 10
 
     # Schedules — hold longer at peak before decaying; entropy decays slower
-    LR_SCHEDULE = [[0, 8e-5], [300000, 5e-5], [500000, 2e-5], [700000, 1e-5]]
-    ENTROPY_COEFF_SCHEDULE = [[0, 0.003], [200000, 0.002], [400000, 0.001], [600000, 0.0005]]
+    LR_SCHEDULE = [[0, 8e-5], [300000, 5e-5], [500000, 2e-5], [700000, 1e-5],
+                   [1200000, 2e-5], [1500000, 1e-5], [2000000, 5e-6]]
+    # Resume bump at 1.2M: entropy rises from 0.0005 back to 0.002 to allow
+    # the Defend policy to re-explore after the reward fix, then decays again.
+    ENTROPY_COEFF_SCHEDULE = [[0, 0.003], [200000, 0.002], [400000, 0.001], [600000, 0.0005],
+                              [1200000, 0.002], [1400000, 0.001], [1600000, 0.0005], [2000000, 0.0002]]
 
     # Paths
     OUTPUT_DIR = "training_results_v10_2"

@@ -79,7 +79,28 @@ void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapt
 
 	if (NewOwnerTeam == MyTeam)
 	{
-		CalculateCaptureReward(Strategy);
+		// Defend: only award capture bonus when physically in or near a zone.
+		// Without this gate, Defend receives capture rewards for team captures at enemy
+		// objectives, creating a spurious gradient that drives Defend toward enemy bases
+		// (identical to Assault behavior).
+		bool bAwardCapture = true;
+		if (Strategy == EStrategyType::Defend && OwnerCharacter)
+		{
+			bAwardCapture = false;
+			for (ACapturePoint* CP : CachedCapturePoints)
+			{
+				if (!CP) continue;
+				if (FVector::Dist(OwnerCharacter->GetActorLocation(), CP->GetActorLocation()) <= CP->CaptureRadius * 1.5f)
+				{
+					bAwardCapture = true;
+					break;
+				}
+			}
+		}
+		if (bAwardCapture)
+		{
+			CalculateCaptureReward(Strategy);
+		}
 	}
 	else if (PrevOwnerTeam == MyTeam)
 	{
@@ -346,6 +367,26 @@ float UMocRewardCalculator::ComputeStepReward(
 					if (CurrDist <= CP->CaptureRadius)
 					{
 						bInFriendlyZone = true;
+					}
+				}
+
+				// Cold-start: no friendly CPs exist yet (all neutral or enemy at episode start).
+				// Approach the nearest neutral CP as a pre-defend staging position.
+				// This provides a directional gradient from step 0, preventing the policy from
+				// drifting toward enemy objectives when there is nothing friendly to defend yet.
+				if (CurrNearestFriendlyDist == FLT_MAX && !bIsRespawnStep)
+				{
+					float PrevNeutralDist = FLT_MAX;
+					float CurrNeutralDist = FLT_MAX;
+					for (ACapturePoint* NeutralCP : CachedCapturePoints)
+					{
+						if (!NeutralCP || NeutralCP->GetOwnership() != ECapturePointOwnership::Neutral) continue;
+						PrevNeutralDist = FMath::Min(PrevNeutralDist, FVector::Dist(Prev.Position, NeutralCP->GetActorLocation()));
+						CurrNeutralDist = FMath::Min(CurrNeutralDist, FVector::Dist(Current.Position, NeutralCP->GetActorLocation()));
+					}
+					if (PrevNeutralDist < FLT_MAX && CurrNeutralDist < FLT_MAX)
+					{
+						Reward += DefendReward.ZoneApproachReward * FMath::Max(PrevNeutralDist - CurrNeutralDist, 0.0f);
 					}
 				}
 
