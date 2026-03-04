@@ -111,7 +111,7 @@ AMocCharacter* ATeamManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	ASpawnArea* SpawnArea = (TeamID == 0) ? RedSpawnArea : BlueSpawnArea;
 	if (SpawnArea)
 	{
-		SpawnLocation = SpawnArea->GetRandomSpawnPoint();
+		SpawnLocation = SpawnArea->GetRandomSpawnPoint(EnvRandomStream);
 		SpawnRotation = SpawnArea->GetSpawnRotation();
 	}
 	else
@@ -384,26 +384,23 @@ void ATeamManager::ProcessRespawnQueue(float DeltaTime)
 
 FVector ATeamManager::GetTeamSpawnLocation(int32 TeamID) const
 {
-	// Use SpawnArea if assigned (parallel environment setup)
 	if (TeamID == 0 && RedSpawnArea)
 	{
-		return RedSpawnArea->GetRandomSpawnPoint();
+		return RedSpawnArea->GetRandomSpawnPoint(EnvRandomStream); // 스트림 전달
 	}
 	if (TeamID == 1 && BlueSpawnArea)
 	{
-		return BlueSpawnArea->GetRandomSpawnPoint();
+		return BlueSpawnArea->GetRandomSpawnPoint(EnvRandomStream); // 스트림 전달
 	}
-
-	return FVector3d::ZeroVector;
+	return FVector::ZeroVector;
 }
 
 FVector ATeamManager::GetRandomSpawnPoint(FVector BaseLocation, float Radius) const
 {
-	FVector RandomOffset = FVector(
-		FMath::RandRange(-Radius, Radius),
-		FMath::RandRange(-Radius, Radius),
-		0.0f
-	);
+	float RandX = EnvRandomStream.FRandRange(-Radius, Radius);
+	float RandY = EnvRandomStream.FRandRange(-Radius, Radius);
+
+	FVector RandomOffset = FVector(RandX, RandY, 0.0f);
 	return BaseLocation + RandomOffset;
 }
 

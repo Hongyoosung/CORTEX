@@ -24,7 +24,7 @@ public:
 
 	/** Get a random spawn point within the box volume */
 	UFUNCTION(BlueprintPure, Category = "SpawnArea")
-	FVector GetRandomSpawnPoint() const;
+	FVector GetRandomSpawnPoint(const FRandomStream& RandomStream) const;
 
 	/** Get spawn rotation (faces toward center of map by default) */
 	UFUNCTION(BlueprintPure, Category = "SpawnArea")

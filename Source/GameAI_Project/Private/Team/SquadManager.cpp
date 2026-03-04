@@ -271,8 +271,14 @@ void USquadManager::Initialize(int32 InTeamID, ATeamManager* InTeamManager)
 	DataCollector = NewObject<UTeamDataCollector>(this);
 	if (DataCollector)
 	{
-		DataCollector->bIsRecording = true;
-		DataCollector->BeginRecording(FMath::RandRange(1000, 9999));
+		if (TeamManager)
+		{
+			DataCollector->BeginRecording(TeamManager->GetEnvRandomStream().RandRange(1000, 9999));
+		}
+		else
+		{
+			DataCollector->BeginRecording(FMath::RandRange(1000, 9999));
+		}
 		UE_LOG(LogTemp, Log, TEXT("Team %d: Data collector initialized and recording started"), TeamID);
 	}
 
@@ -356,13 +362,6 @@ void USquadManager::Reset()
 
 TArray<ETacticalPlay> USquadManager::GetFeasiblePlays(const FTeamWorldState& State) const
 {
-	// Precondition: Defend requires ≥1 friendly capture point
-	bool bHasFriendlyPoint = false;
-	for (int32 Ownership : State.CapturePointOwnership)
-	{
-		if (Ownership == 1) { bHasFriendlyPoint = true; break; }
-	}
-
 	// Precondition: Support requires ≥2 alive allies (support agent needs someone to support)
 	int32 AliveCount = 0;
 	for (bool bAlive : State.FriendlyAlive)
@@ -372,6 +371,7 @@ TArray<ETacticalPlay> USquadManager::GetFeasiblePlays(const FTeamWorldState& Sta
 	const bool bCanSupport = (AliveCount >= 2);
 
 	// Build feasible set — check each play's role composition
+	// Note: Defend is always feasible (agents can defend/contest neutral points too)
 	static const ETacticalPlay AllPlays[10] = {
 		ETacticalPlay::AllOutRush,     // 5A
 		ETacticalPlay::AggressivePush, // 4A 1S
@@ -390,11 +390,9 @@ TArray<ETacticalPlay> USquadManager::GetFeasiblePlays(const FTeamWorldState& Sta
 	{
 		TArray<EStrategyType> Roles = DecodeTacticalPlay(Play);
 
-		bool bNeedsDefend  = Roles.Contains(EStrategyType::Defend);
 		bool bNeedsSupport = Roles.Contains(EStrategyType::Support);
 
-		if (bNeedsDefend  && !bHasFriendlyPoint) continue;
-		if (bNeedsSupport && !bCanSupport)        continue;
+		if (bNeedsSupport && !bCanSupport) continue;
 
 		Feasible.Add(Play);
 	}
@@ -424,7 +422,7 @@ void USquadManager::SampleRandomTacticalPlay()
 	}
 
 	ETacticalPlay RandomPlay = FeasiblePlays[0];
-	const float R = FMath::FRand() * TotalWeight;
+	const float R = (TeamManager ? TeamManager->GetEnvRandomStream().FRand() : FMath::FRand()) * TotalWeight;
 	float Cumulative = 0.0f;
 	for (ETacticalPlay Play : FeasiblePlays)
 	{
@@ -840,7 +838,7 @@ ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& Te
 		return FeasiblePlays[0]; // guaranteed non-empty by GetFeasiblePlays
 	};
 
-	float RandomValue = FMath::FRand();
+	float RandomValue = (TeamManager) ? TeamManager->GetEnvRandomStream().FRand() : FMath::FRand();
 
 	if (RandomValue < TeamManager->ExplorationRate)
 	{
@@ -851,7 +849,7 @@ ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& Te
 			TotalWeight += PlayWeights[static_cast<int32>(Play)];
 		}
 
-		const float R = FMath::FRand() * TotalWeight;
+		const float R = (TeamManager ? TeamManager->GetEnvRandomStream().FRand() : FMath::FRand()) * TotalWeight;
 		float Cumulative = 0.0f;
 		for (ETacticalPlay Play : FeasiblePlays)
 		{
@@ -886,7 +884,8 @@ ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& Te
 				ETacticalPlay::StandardComp, ETacticalPlay::HealerComp,
 				ETacticalPlay::PincerManeuver, ETacticalPlay::BaitStrategy
 			};
-			const ETacticalPlay Prefs[] = { MidCandidates[FMath::RandRange(0, 3)], ETacticalPlay::StandardComp, ETacticalPlay::AllOutRush };
+			int32 RandomCandidateIdx = TeamManager ? TeamManager->GetEnvRandomStream().RandRange(0, 3) : FMath::RandRange(0, 3);
+			const ETacticalPlay Prefs[] = { MidCandidates[RandomCandidateIdx], ETacticalPlay::StandardComp, ETacticalPlay::AllOutRush };
 			return PickFeasible(Prefs);
 		}
 	}

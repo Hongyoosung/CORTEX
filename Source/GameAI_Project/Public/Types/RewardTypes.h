@@ -140,7 +140,7 @@ struct FDefendRewardSettings
     float SurvivalRewardScale = 1.5f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float PositionReward = 1.0f;
+    float PositionReward = 0.01f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
     float HealthBonus = 1.0f;
@@ -217,7 +217,7 @@ struct FSupportRewardSettings
     float SurvivalRewardScale = 1.5f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
-    float PositionReward = 0.2f;
+    float PositionReward = 0.0f;
 
     UPROPERTY(EditAnywhere, Category = "Combat")
     float HealthBonus = 0.3f;

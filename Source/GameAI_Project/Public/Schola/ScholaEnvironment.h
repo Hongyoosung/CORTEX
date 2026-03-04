@@ -124,6 +124,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Schola")
 	TArray<ACapturePoint*> GetAllCapturePoints() const { return OwnedCapturePoints; }
 
+	/** 외부 액터(TeamManager, SpawnArea, Trainer 등)에서 난수 스트림 접근 시 사용 */
+	UFUNCTION(BlueprintPure, Category = "Schola|Random")
+	FRandomStream& GetRandomStream() { return EnvRandomStream; }
+
 
 private:
 	/** Cache Squad Commander references from OwnedTeamManager */
@@ -171,6 +175,8 @@ public:
 	/** Episode Manager Component - manages episode lifecycle */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Schola|Components")
 	UEpisodeManagerComponent* EpisodeManager;
+
+	
 
 
 	//==========================================================================
@@ -301,4 +307,8 @@ protected:
 
 	float PassiveIncomeAccumulator = 0.0f;
 	bool bMatchEnded = false;
+
+	/** 각 환경 인스턴스에 종속된 독립적인 난수 스트림 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Random")
+	FRandomStream EnvRandomStream;
 };

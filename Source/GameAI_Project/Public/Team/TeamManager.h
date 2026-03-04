@@ -174,12 +174,18 @@ public:
 
 
 	//========================================
-	// v10.2 Squad Commander Access
+	// Squad Commander Access
 	//========================================
 
-	/** Get Squad Planner for team (v10.2 centralized planning) */
+	/** Get Squad Planner for team (centralized planning) */
 	UFUNCTION(BlueprintPure, Category = "TeamManager")
 	USquadManager* GetSquadCommander(int32 TeamID) const;
+
+
+	FORCEINLINE void SetEnvRandomStream(const FRandomStream& InStream) { EnvRandomStream = InStream; }
+	FORCEINLINE FRandomStream& GetEnvRandomStream() { return EnvRandomStream; }
+	FORCEINLINE const FRandomStream& GetEnvRandomStream() const { return EnvRandomStream; }
+
 
 protected:
 	//========================================
@@ -242,8 +248,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "TeamManager|Debug")
 	bool bShowDebugInfo = false;
 
+
+
 	//========================================
-	// v10.2 Squad Planner Configuration
+	// Squad Planner Configuration
 	// One USquadManager is created per team automatically in BeginPlay.
 	// All MCTS and data-collection settings are configured here.
 	//========================================
@@ -323,5 +331,11 @@ protected:
 
 	UPROPERTY()
 	USquadManager* BlueTeamCommander;
+
+	//========================================
+	// RNG Isolation
+	//========================================
+	/** 환경으로부터 주입받는 격리된 난수 스트림 */
+	FRandomStream EnvRandomStream;
 
 };

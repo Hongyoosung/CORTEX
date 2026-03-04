@@ -14,7 +14,7 @@ ASpawnArea::ASpawnArea()
 	RootComponent = SpawnVolume;
 }
 
-FVector ASpawnArea::GetRandomSpawnPoint() const
+FVector ASpawnArea::GetRandomSpawnPoint(const FRandomStream& RandomStream) const
 {
 	if (!SpawnVolume)
 	{
@@ -22,11 +22,11 @@ FVector ASpawnArea::GetRandomSpawnPoint() const
 	}
 
 	const FVector Extent = SpawnVolume->GetScaledBoxExtent();
-	const FVector RandomOffset(
-		FMath::RandRange(-Extent.X, Extent.X),
-		FMath::RandRange(-Extent.Y, Extent.Y),
-		0.0f
-	);
+
+	float RandX = RandomStream.FRandRange(-Extent.X, Extent.X);
+	float RandY = RandomStream.FRandRange(-Extent.Y, Extent.Y);
+
+	const FVector RandomOffset(RandX, RandY, 0.0f);
 
 	return GetActorLocation() + GetActorRotation().RotateVector(RandomOffset);
 }

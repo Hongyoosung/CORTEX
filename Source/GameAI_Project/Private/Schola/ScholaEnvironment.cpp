@@ -523,7 +523,15 @@ void AScholaEnvironment::SetEnvironmentOptions(const TMap<FString, FString>& Opt
 
 void AScholaEnvironment::SeedEnvironment(int Seed)
 {
-	FMath::RandInit(Seed);
+	int32 UniqueSeed = Seed + (ScholaEnvID * 1337);
+	EnvRandomStream.Initialize(UniqueSeed);
+
+	if (OwnedTeamManager)
+	{
+		OwnedTeamManager->SetEnvRandomStream(EnvRandomStream);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] SeedEnvironment: EnvID %d initialized RandomStream with seed %d"), ScholaEnvID, UniqueSeed);
 }
 
 //------------------------------------------------------------------------------

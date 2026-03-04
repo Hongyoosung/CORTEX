@@ -563,13 +563,9 @@ float UMocRewardCalculator::ComputeStepReward(
 
 	case EStrategyType::Support:
 		{
-			// B2: Unconditional baseline — same rationale as Defend.
+			// B2: Unconditional baseline
 			Reward += SupportBaselineReward;
 
-			if (Current.Health > SupportHealthThreshold)
-			{
-				Reward += SupportReward.HealthBonus;
-			}
 			if (PositionChange > SupportMinMoveThreshold && PositionChange < SupportMaxMoveThreshold)
 			{
 				Reward += SupportReward.PositionReward;
@@ -581,7 +577,7 @@ float UMocRewardCalculator::ComputeStepReward(
 				(CachedInjuredAllyIdx < 0) ||
 				(InjuredAllyStalenessCounter >= InjuredAllyReevalInterval) ||
 				(CachedInjuredAllyIdx < Current.AllyHealths.Num() &&
-				 Current.AllyHealths[CachedInjuredAllyIdx] <= 0.0f); // cached ally died
+					Current.AllyHealths[CachedInjuredAllyIdx] <= 0.0f); // cached ally died
 
 			if (bShouldReevalTarget)
 			{
@@ -607,10 +603,17 @@ float UMocRewardCalculator::ComputeStepReward(
 			{
 				const float CurrAllyDist = FVector::Dist(Current.Position, Current.AllyPositions[InjuredAllyIdx]);
 
+				// 체력 보너스를 아군 근처에 있을 때만 주도록 변경
 				if (CurrAllyDist <= SupportAllyProximityThreshold)
 				{
 					// Flat proximity bonus when within support range
 					Reward += SupportReward.AllyProximityBonus;
+
+					// 아군을 돕기 위해 교전 구역에 있으면서 체력을 잘 유지했으므로 헬스 보너스 지급
+					if (Current.Health > SupportHealthThreshold)
+					{
+						Reward += SupportReward.HealthBonus;
+					}
 
 					// Extra bonus for being next to a critically injured ally (HP < 30%)
 					const float AllyHP = Current.AllyHealths[InjuredAllyIdx];
@@ -619,9 +622,7 @@ float UMocRewardCalculator::ComputeStepReward(
 						Reward += SupportReward.AllyProximityBonus * 0.5f;
 					}
 				}
-				// B2: Removed distance penalty for being far from allies.
-				// Baseline reward provides the offset; approach shaping provides the gradient.
-				// No need to punish distance — just reward approaching.
+				// 아군과 너무 멀리 떨어져서 꿀을 빨고 있다면, 체력 보너스는 없고 오히려 접근 보상만 존재하게 됨
 
 				// Approach shaping: only reward APPROACHING (clamp negative to 0).
 				if (!bIsRespawnStep && InjuredAllyIdx < Prev.AllyPositions.Num())
@@ -633,8 +634,13 @@ float UMocRewardCalculator::ComputeStepReward(
 			}
 			else if (bIsolated && !bIsRespawnStep)
 			{
+				// 고립 시 체력 보너스를 절반만 지급하여 생존은 격려하되 숨는 것보다 목표로 가는 것을 우선시함
+				if (Current.Health > SupportHealthThreshold)
+				{
+					Reward += SupportReward.HealthBonus * 0.5f;
+				}
+
 				// All allies dead: redirect to objective approach instead of passive baseline.
-				// Prevents the support agent from idling with no healing target.
 				float PrevNearestObjDist = FLT_MAX;
 				float CurrNearestObjDist = FLT_MAX;
 				for (ACapturePoint* CP : CachedCapturePoints)
@@ -658,6 +664,7 @@ float UMocRewardCalculator::ComputeStepReward(
 				// No valid ally target (all dead or no allies): provide a small baseline
 				Reward += SupportReward.PositionReward * 0.5f;
 			}
+
 
 			// --- Heal tick reward ---
 			if (OwnerCharacter && OwnerCharacter->GetLastTickHealAmount() > 0.0f)
