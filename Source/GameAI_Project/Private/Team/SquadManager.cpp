@@ -8,6 +8,7 @@
 #include "AI/Training/TeamDataCollector.h"
 #include "Types/RewardTypes.h"
 #include "Core/MocGameMode.h"
+#include "Schola/ScholaEnvironment.h"
 #include "Actors/CapturePoint.h"
 #include "Actors/PickupBase.h"
 #include "DrawDebugHelpers.h"
@@ -286,22 +287,8 @@ void USquadManager::Initialize(int32 InTeamID, ATeamManager* InTeamManager)
 	TeamManager->OnAgentKilled.AddDynamic(this, &USquadManager::OnAgentKilledHandler);
 	UE_LOG(LogTemp, Log, TEXT("Team %d: Bound OnAgentKilled delegate"), TeamID);
 
-	// Capture point events — bind to all capture points via GameMode
-	if (UWorld* World = GetWorld())
-	{
-		if (AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
-		{
-			TArray<ACapturePoint*> CapturePoints = GameMode->GetAllCapturePoints();
-			for (ACapturePoint* Point : CapturePoints)
-			{
-				if (Point)
-				{
-					Point->OnPointCaptured.AddDynamic(this, &USquadManager::OnPointCapturedHandler);
-				}
-			}
-			UE_LOG(LogTemp, Log, TEXT("Team %d: Bound OnPointCaptured to %d capture points"), TeamID, CapturePoints.Num());
-		}
-	}
+	// Capture point events are scoped per environment.
+	// AScholaEnvironment calls BindCapturePoints() + SetScholaEnvironment() after Initialize().
 
 	// Register as debug target
 	GDebugSquadManager = this;
@@ -310,6 +297,25 @@ void USquadManager::Initialize(int32 InTeamID, ATeamManager* InTeamManager)
 		TeamID,
 		bModelLoaded ? TEXT("Enabled") : TEXT("Disabled"),
 		TeamManager->bDataCollectionMode ? TEXT("Enabled") : TEXT("Disabled"));
+}
+
+void USquadManager::SetScholaEnvironment(AScholaEnvironment* InEnvironment)
+{
+	OwningEnvironment = InEnvironment;
+}
+
+void USquadManager::BindCapturePoints(const TArray<ACapturePoint*>& CapturePoints)
+{
+	CachedCapturePoints = CapturePoints;
+
+	for (ACapturePoint* Point : CapturePoints)
+	{
+		if (Point)
+		{
+			Point->OnPointCaptured.AddUniqueDynamic(this, &USquadManager::OnPointCapturedHandler);
+		}
+	}
+	UE_LOG(LogTemp, Log, TEXT("Team %d: Bound OnPointCaptured to %d capture points (via BindCapturePoints)"), TeamID, CapturePoints.Num());
 }
 
 bool USquadManager::ShouldReplan() const
@@ -599,34 +605,32 @@ FTeamWorldState USquadManager::CollectTeamState() const
 		}
 	}
 
-	if (UWorld* World = GetWorld())
+	// Capture points are always provided by the owning ScholaEnvironment via CachedCapturePoints
+	const TArray<ACapturePoint*>& CapturePoints = CachedCapturePoints;
+
+	for (int32 i = 0; i < FMath::Min(5, CapturePoints.Num()); ++i)
 	{
-		if (AMocGameMode* GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
+		if (CapturePoints[i])
 		{
-			TArray<ACapturePoint*> CapturePoints = GameMode->GetAllCapturePoints();
-			for (int32 i = 0; i < FMath::Min(5, CapturePoints.Num()); ++i)
+			ECapturePointOwnership Ownership = CapturePoints[i]->GetOwnership();
+			if (Ownership == ECapturePointOwnership::Neutral)
 			{
-				if (CapturePoints[i])
-				{
-					ECapturePointOwnership Ownership = CapturePoints[i]->GetOwnership();
-					if (Ownership == ECapturePointOwnership::Neutral)
-					{
-						State.CapturePointOwnership[i] = 0;
-					}
-					else
-					{
-						int32 OwningTeamID = CapturePoints[i]->GetOwningTeamID();
-						State.CapturePointOwnership[i] = (OwningTeamID == TeamID) ? 1 : -1;
-					}
-				}
+				State.CapturePointOwnership[i] = 0;
 			}
-
-
-			float MaxDuration = GameMode->MaxMatchDuration;
-			if (MaxDuration > 0.0f)
+			else
 			{
-				State.TimeRemaining = FMath::Clamp(GameMode->GetTimeRemaining() / MaxDuration, 0.0f, 1.0f);
+				int32 OwningTeamID = CapturePoints[i]->GetOwningTeamID();
+				State.CapturePointOwnership[i] = (OwningTeamID == TeamID) ? 1 : -1;
 			}
+		}
+	}
+
+	if (OwningEnvironment)
+	{
+		float MaxDuration = OwningEnvironment->MaxMatchDuration;
+		if (MaxDuration > 0.0f)
+		{
+			State.TimeRemaining = FMath::Clamp(OwningEnvironment->GetTimeRemaining() / MaxDuration, 0.0f, 1.0f);
 		}
 	}
 

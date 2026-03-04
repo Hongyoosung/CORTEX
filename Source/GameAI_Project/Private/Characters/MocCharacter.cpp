@@ -9,8 +9,9 @@
 #include "Schola/Actuators/TacticalParameterActuator.h"
 #include "AI/EQS/MocEQSExecutor.h"
 #include "Navigation/PathFollowingComponent.h"
-#include "Core/MocGameMode.h"
 #include "Team/TeamManager.h"
+#include "Schola/ScholaEnvironment.h"
+#include "EngineUtils.h"
 #include "Team/SquadManager.h"
 #include "Team/FogOfWarManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -47,7 +48,6 @@ AMocCharacter::AMocCharacter()
 	, LastEQSTargetLocation(FVector::ZeroVector)
 	, SquadCommander(nullptr)
 	, SpawnTime(0.0f)
-	, GameMode(nullptr)
 	, TM(nullptr)
 	, BaseAttackDamage(0.0f)
 	, BaseAttackRange(0.0f)
@@ -110,27 +110,31 @@ void AMocCharacter::BeginPlay()
 	}
 
 
-	if (UWorld* World = GetWorld())
+	// Get TeamManager: prefer direct reference (set by TeamManager::SpawnAgent),
+	// fall back to ScholaEnvironment lookup for multi-env parallel architecture
+	if (!TM)
 	{
-		if (GameMode = Cast<AMocGameMode>(World->GetAuthGameMode()))
+		if (UWorld* World = GetWorld())
 		{
-			if (TM = GameMode->GetTeamManager())
+			for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
 			{
-				int32 MyTeamID = GetTeamID_Implementation();
-				SquadCommander = TM->GetSquadCommander(MyTeamID);
-			}
-
-			TM = GameMode->GetTeamManager();
-			if (!TM)
-			{
-				UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetTeamManager"));
-				return;
+				if ((*It)->GetEnvId() == EnvID)
+				{
+					TM = (*It)->GetTeamManager();
+					break;
+				}
 			}
 		}
 	}
-	else
+
+	// Cache SquadCommander (may be null if TeamID not yet assigned)
+	if (TM)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[MocCharacter] Failed GetWorld"));
+		int32 MyTeamID = GetTeamID_Implementation();
+		if (MyTeamID >= 0)
+		{
+			SquadCommander = TM->GetSquadCommander(MyTeamID);
+		}
 	}
 
 	// Setup Niagara VFX

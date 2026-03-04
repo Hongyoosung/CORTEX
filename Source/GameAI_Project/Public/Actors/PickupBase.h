@@ -151,6 +151,10 @@ public:
 	// Configuration
 	//========================================
 
+	/** Environment ID for parallel environment isolation */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
+	int32 EnvID = 0;
+
 	/** Pickup type identifier */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup")
 	EPickupType PickupType = EPickupType::Custom;

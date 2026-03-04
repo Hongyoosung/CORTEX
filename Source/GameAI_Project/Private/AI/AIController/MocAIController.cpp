@@ -1,6 +1,7 @@
 
 
 #include "AI/AIController/MocAIController.h"
+#include "Characters/MocCharacter.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISenseConfig_Hearing.h"
 #include "Perception/AISenseConfig_Damage.h"
@@ -79,17 +80,34 @@ void AMocAIController::OnUnPossess()
 void AMocAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
 {
     // 적 감지 시 즉시 Blackboard 업데이트
-    TArray<AActor*> Enemies;
+    TArray<AActor*> PerceivedActors;
     AIPerception->GetCurrentlyPerceivedActors(
         UAISense_Sight::StaticClass(),
-        Enemies
+        PerceivedActors
     );
 
     UBlackboardComponent* BB = GetBlackboardComponent();
 
-    if (Enemies.Num() > 0)
+    // Filter by EnvID and TeamID for parallel environment isolation
+    AMocCharacter* Self = Cast<AMocCharacter>(GetPawn());
+    AActor* BestEnemy = nullptr;
+
+    if (Self)
     {
-        BB->SetValueAsObject(TEXT("TargetEnemy"), Enemies[0]);
+        for (AActor* Actor : PerceivedActors)
+        {
+            AMocCharacter* Other = Cast<AMocCharacter>(Actor);
+            if (Other && Other->EnvID == Self->EnvID && Other->TeamID != Self->TeamID)
+            {
+                BestEnemy = Other;
+                break;
+            }
+        }
+    }
+
+    if (BestEnemy)
+    {
+        BB->SetValueAsObject(TEXT("TargetEnemy"), BestEnemy);
         BB->SetValueAsBool(TEXT("HasTarget"), true);
     }
     else

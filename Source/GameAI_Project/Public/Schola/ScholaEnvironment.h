@@ -4,68 +4,37 @@
 
 #include "CoreMinimal.h"
 #include "Environment/StaticEnvironment.h"
+#include "Core/MocGameMode.h"
+#include "Actors/CapturePoint.h"
 #include "ScholaEnvironment.generated.h"
 
-
-
-class AMocGameMode;
 class USquadManager;
 class UScholaMocAgent;
 class UEpisodeManagerComponent;
 class AMocTrainer;
-
-
+class ATeamManager;
+class ACapturePoint;
+class ASpawnArea;
+class APickupBase;
+class AMocCharacter;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnScholaEnvironmentInitialized);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnvMatchStateChanged, EMocMatchState, NewState);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEnvScoreUpdated, int32, TeamID, int32, NewScore, FString, Reason);
 
-
-/** //==========================================================================
- * Schola Training Environment (v10.2)
+/**
+ * Schola Training Environment (v10.2 Parallel Isolated Architecture)
  *
- * ARCHITECTURE: Centralized Commander-Executor (v10.2)
+ * Each AScholaEnvironment instance owns ALL game logic for one 5v5 arena:
+ * - Match state, scoring, win conditions
+ * - One ATeamManager (editor-assigned)
+ * - 5 ACapturePoints (editor-assigned)
+ * - 2 ASpawnAreas (editor-assigned)
+ * - Pickups (editor-assigned)
  *
- * Coordinates Schola RL training environment for hierarchical team-based AI:
- *
- * [Layer 1] Squad Commander (ASquadManager):
- *   - Centralized MCTS planning (15ms budget)
- *   - Tactical Play selection → Role Distribution
- *   - Input: FTeamState (60-dim team state)
- *   - Output: 5 × EStrategyType (Assault/Defend/Support)
- *   - Frequency: 0.5s or critical events
- *
- * [Layer 2] Executor Agents (AMocCharacter × 5):
- *   - Receive role assignments from commander
- *   - RL Policy → EQS Weights (7-dim spatial reasoning)
- *   - No local MCTS (removed in v10.2)
- *
- * [Layer 3] EQS Spatial Reasoning:
- *   - Query 48 samples, 7 weighted tests
- *   - Output: Best tactical location
- *
- * Component Architecture:
- * - UEpisodeManagerComponent: Episode lifecycle management
- * - Integration with AMocGameMode: Game orchestration
- * - Integration with ASquadManager: Centralized planning
- *
- * Key Changes (v10.1 → v10.2):
- * - Planning: Decentralized (5 MCTS) → Centralized (1 MCTS)
- * - Compute: 75ms → 15ms (5× reduction)
- * - Action Space: 243 combinations → ~10 Tactical Plays
- * - Coordination: Implicit → Explicit command-driven
- * - Agents: AMocCharacter with UScholaMocAgent component
- * - Trainers: AMocTrainer for RL training interface
- *
- * Training Integration:
- * 1. Place this actor in level (or spawn in AMocGameMode)
- * 2. Agents auto-discovered (AMocCharacter with UScholaMocAgent)
- * 3. SquadManager performs centralized planning
- * 4. Start UE5 + run Python training script (train_rllib.py)
- *
- * Multi-Environment Setup:
- * - Each actor instance = 1 physical training environment
- * - For 4 parallel environments, spawn 4 actors
- * - Schola CollectEnvironments() aggregates all actors
- */ //==========================================================================
+ * Multiple environments run in parallel in one level, fully isolated by EnvID.
+ * AMocGameMode is now a minimal shell.
+ */
 UCLASS()
 class GAMEAI_PROJECT_API AScholaEnvironment : public AStaticScholaEnvironment
 {
@@ -76,7 +45,7 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-
+	virtual void Tick(float DeltaTime) override;
 
 
 	//==========================================================================
@@ -87,6 +56,43 @@ public:
 	virtual void RegisterAgents(TArray<APawn*>& OutTrainerControlledPawns) override;
 	virtual void SetEnvironmentOptions(const TMap<FString, FString>& Options) override;
 	virtual void SeedEnvironment(int Seed) override;
+
+
+	//==========================================================================
+	// MATCH MANAGEMENT (absorbed from AMocGameMode)
+	//==========================================================================
+
+	/** Start the match (spawn teams and begin timer) */
+	UFUNCTION(BlueprintCallable, Category = "Schola|Match")
+	void StartMatch();
+
+	/** End the match with specific winner */
+	UFUNCTION(BlueprintCallable, Category = "Schola|Match")
+	void EndMatch(EMocMatchState WinnerState);
+
+	/** Get current match state */
+	UFUNCTION(BlueprintPure, Category = "Schola|Match")
+	EMocMatchState GetMatchState() const { return CurrentMatchState; }
+
+	/** Get match timer */
+	UFUNCTION(BlueprintPure, Category = "Schola|Match")
+	float GetMatchTimer() const { return MatchTimer; }
+
+	/** Get time remaining */
+	UFUNCTION(BlueprintPure, Category = "Schola|Match")
+	float GetTimeRemaining() const { return FMath::Max(0.0f, MaxMatchDuration - MatchTimer); }
+
+	//==========================================================================
+	// SCORING SYSTEM
+	//==========================================================================
+
+	/** Add score to team */
+	UFUNCTION(BlueprintCallable, Category = "Schola|Scoring")
+	void AddTeamScore(int32 TeamID, int32 Amount, const FString& Reason);
+
+	/** Get team score */
+	UFUNCTION(BlueprintPure, Category = "Schola|Scoring")
+	int32 GetTeamScore(int32 TeamID) const;
 
 
 	//==========================================================================
@@ -102,71 +108,146 @@ public:
 	TArray<USquadManager*> GetAllSquadCommanders() const;
 
 
-
 	//==========================================================================
 	// GETTERS
 	//==========================================================================
 
 	/** Get the environment ID assigned by Schola */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
-	FORCEINLINE		int32	GetEnvId() const { return ScholaEnvID; }
+	FORCEINLINE int32 GetEnvId() const { return ScholaEnvID; }
 
+	/** Get owned TeamManager */
+	UFUNCTION(BlueprintPure, Category = "Schola")
+	ATeamManager* GetTeamManager() const { return OwnedTeamManager; }
+
+	/** Get all owned capture points */
+	UFUNCTION(BlueprintPure, Category = "Schola")
+	TArray<ACapturePoint*> GetAllCapturePoints() const { return OwnedCapturePoints; }
 
 
 private:
-	/** Cache Squad Commander references for each team */
+	/** Cache Squad Commander references from OwnedTeamManager */
 	void CacheSquadCommanders();
 
+	/** Subscribe to owned CapturePoint and TeamManager events */
+	void SubscribeToEvents();
+
+	/** Update passive income from owned capture points */
+	void UpdatePassiveIncome(float DeltaTime);
+
+	/** Check if any team has won */
+	void CheckWinConditions();
+
+	/** Count owned capture points per team */
+	void CountOwnedPoints(int32& OutRedOwned, int32& OutBlueOwned) const;
+
+	//==========================================================================
+	// EVENT HANDLERS
+	//==========================================================================
+
+	UFUNCTION()
+	void OnPointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner);
+
+	UFUNCTION()
+	void OnAgentKilled(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim);
 
 
 public:
-	//=========================== Delegated ===============================
+	//=========================== Delegates ===============================
 	FOnScholaEnvironmentInitialized OnScholaEnvironmentInitialized_Delegate;
 
+	UPROPERTY(BlueprintAssignable, Category = "Schola|Events")
+	FOnEnvMatchStateChanged OnEnvMatchStateChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Schola|Events")
+	FOnEnvScoreUpdated OnEnvScoreUpdated;
 
 
 public:
 	//==========================================================================
-	// COMPONENTS (v10.2 REFACTOR)
+	// COMPONENTS
 	//==========================================================================
 
 	/** Episode Manager Component - manages episode lifecycle */
-	UPROPERTY(VisibleAnywhere,	BlueprintReadOnly, Category = "Schola|Components")
-	UEpisodeManagerComponent*	EpisodeManager;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Schola|Components")
+	UEpisodeManagerComponent* EpisodeManager;
 
 
 	//==========================================================================
-	// CONFIGURATION
+	// OWNED ACTORS (editor-assignable per environment)
 	//==========================================================================
 
-	/**
-	 * Enable RL training mode.
-	 * TRUE  → Schola spawns AMocTrainer controllers and connects to Python via gRPC.
-	 * FALSE → Inference mode: agents are controlled by AMocAIController (BT + ONNX).
-	 *          RegisterAgents() is skipped; no trainers are spawned.
-	 */
+	/** TeamManager for this environment (assign in editor) */
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
+	ATeamManager* OwnedTeamManager = nullptr;
+
+	/** Capture points for this environment (assign in editor) */
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
+	TArray<ACapturePoint*> OwnedCapturePoints;
+
+	/** Red team spawn area (assign in editor) */
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
+	ASpawnArea* RedSpawnArea = nullptr;
+
+	/** Blue team spawn area (assign in editor) */
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
+	ASpawnArea* BlueSpawnArea = nullptr;
+
+	/** Pickups for this environment (assign in editor) */
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
+	TArray<APickupBase*> OwnedPickups;
+
+
+	//==========================================================================
+	// MATCH CONFIGURATION
+	//==========================================================================
+
+	/** Maximum match duration (seconds) */
+	UPROPERTY(EditAnywhere, Category = "Schola|Match")
+	float MaxMatchDuration = 600.0f;
+
+	/** Score required to win */
+	UPROPERTY(EditAnywhere, Category = "Schola|Match")
+	int32 WinningScore = 300;
+
+	/** Points awarded for capturing a point */
+	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
+	int32 CaptureReward = 25;
+
+	/** Points awarded for killing an enemy */
+	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
+	int32 KillPoints = 5;
+
+	/** Passive income rate (points per second per owned point) */
+	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
+	float PassiveIncomeRate = 1.0f;
+
+	/** Auto-start match on BeginPlay */
+	UPROPERTY(EditAnywhere, Category = "Schola|Match")
+	bool bAutoStartMatch = true;
+
+
+	//==========================================================================
+	// TRAINING CONFIGURATION
+	//==========================================================================
+
+	/** Enable RL training mode */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bTrainingMode = true;
 
-	/** Auto-discover agents in level (finds all AMocCharacter with ScholaAgentComponents) */
+	/** Auto-discover agents from OwnedTeamManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoDiscoverAgents = true;
 
-	/**
-	 * Trainer class to use (can be Blueprint subclass of AMocTrainer)
-	 * If not set, defaults to AMocTrainer::StaticClass()
-	 */
+	/** Trainer class to use */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	TSubclassOf<AMocTrainer> TrainerClass;
 
-	/**
-	 * Auto-spawn trainers for agents that don't have one
-	 * If false, expects trainers to already exist in level
-	 */
+	/** Auto-spawn trainers for agents that don't have one */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoSpawnTrainers = true;
 
-	/** Phase 1 RL Training: fix strategy per episode (random sample at reset) */
+	/** Phase 1 RL Training: fix strategy per episode */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
 	bool bPhase1RLTraining = false;
 
@@ -187,10 +268,6 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	TArray<UScholaMocAgent*> RegisteredAgents;
 
-	/** Reference to MOC game mode */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	AMocGameMode* GameMode;
-
 	/** Cached Squad Commander references per team (v10.2) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State|v10.2")
 	TMap<int32, USquadManager*> SquadCommanders;
@@ -199,20 +276,29 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	bool bServerRunning;
 
-	/** Has InternalRegisterAgents been called this session? */
 	bool bAgentsRegistered;
-
-	/** Has InitializeEnvironment been called this session? */
 	bool bEnvironmentInitialized = false;
 
-	/** Has environment been reset by Python? (indicates training is active) */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	bool bTrainingActive;
 
-	/** Spawned trainers (for cleanup on EndPlay) */
 	UPROPERTY()
 	TArray<AMocTrainer*> SpawnedTrainers;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	int32 ScholaEnvID;
+
+protected:
+	//==========================================================================
+	// MATCH RUNTIME STATE
+	//==========================================================================
+
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|Match|State")
+	EMocMatchState CurrentMatchState = EMocMatchState::WaitingToStart;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Schola|Match|State")
+	float MatchTimer = 0.0f;
+
+	float PassiveIncomeAccumulator = 0.0f;
+	bool bMatchEnded = false;
 };

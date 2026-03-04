@@ -4,7 +4,9 @@
 #include "Characters/MocCharacter.h"
 #include "Actors/CapturePoint.h"
 #include "Team/TeamManager.h"
+#include "Schola/ScholaEnvironment.h"
 #include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"
 
 
 UMocRewardCalculator::UMocRewardCalculator()
@@ -27,10 +29,15 @@ void UMocRewardCalculator::BeginPlay()
 		}
 	}
 
-	// Subscribe to match state changes for win/loss terminal reward
-	if (AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld())))
+	// Subscribe to match state changes for win/loss terminal reward (multi-env: bind to owning ScholaEnvironment)
+	const int32 MyEnvID = OwnerCharacter ? OwnerCharacter->EnvID : 0;
+	for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
 	{
-		GameMode->OnMatchStateChanged.AddDynamic(this, &UMocRewardCalculator::OnMatchStateChanged);
+		if ((*It)->ScholaEnvID == MyEnvID)
+		{
+			(*It)->OnEnvMatchStateChanged.AddDynamic(this, &UMocRewardCalculator::OnMatchStateChanged);
+			break;
+		}
 	}
 }
 
@@ -147,13 +154,17 @@ void UMocRewardCalculator::OnMatchStateChanged(EMocMatchState NewState)
 		break;
 	case EMocMatchState::TimeExpired:
 		{
-			// On time expiry, check scores to determine winner
-			AMocGameMode* GM = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
-			if (GM)
+			// On time expiry, check scores via the owning ScholaEnvironment
+			const int32 MyEnvID2 = OwnerCharacter ? OwnerCharacter->EnvID : 0;
+			for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
 			{
-				const int32 MyScore = GM->GetTeamScore(MyTeam);
-				const int32 EnemyScore = GM->GetTeamScore(MyTeam == 0 ? 1 : 0);
-				bTeamWon = (MyScore > EnemyScore);
+				if ((*It)->ScholaEnvID == MyEnvID2)
+				{
+					const int32 MyScore = (*It)->GetTeamScore(MyTeam);
+					const int32 EnemyScore = (*It)->GetTeamScore(MyTeam == 0 ? 1 : 0);
+					bTeamWon = (MyScore > EnemyScore);
+					break;
+				}
 			}
 			bMatchOver = true;
 		}
@@ -886,11 +897,17 @@ void UMocRewardCalculator::CacheCapturePoints()
 	TArray<AActor*> Found;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACapturePoint::StaticClass(), Found);
 
+	// Filter by EnvID for parallel environment isolation
+	const int32 MyEnvID = OwnerCharacter ? OwnerCharacter->EnvID : 0;
+
 	for (AActor* Actor : Found)
 	{
 		if (ACapturePoint* CP = Cast<ACapturePoint>(Actor))
 		{
-			CachedCapturePoints.Add(CP);
+			if (CP->EnvID == MyEnvID)
+			{
+				CachedCapturePoints.Add(CP);
+			}
 		}
 	}
 

@@ -5,11 +5,11 @@
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Characters/MocCharacter.h"
 #include "Team/TeamManager.h"
-#include "Core/MocGameMode.h"
 #include "Actors/CapturePoint.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
 #include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"
 
 UMocTacticalObserver::UMocTacticalObserver()
 {
@@ -291,8 +291,7 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 	}
 
 	// Map state: per-point capture ownership
-	AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(Character->GetWorld()));
-	if (GameMode)
+	// Find capture points matching this character's EnvID
 	{
 		static const ECapturePointID PointOrder[] = {
 			ECapturePointID::PointA,
@@ -302,12 +301,24 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 			ECapturePointID::PointE
 		};
 
+		// Build a map of PointID -> CapturePoint for this environment
+		TMap<ECapturePointID, const ACapturePoint*> EnvCapturePoints;
+
+		// Scan world for capture points matching this agent's EnvID
+		for (TActorIterator<ACapturePoint> It(Character->GetWorld()); It; ++It)
+		{
+			ACapturePoint* Point = *It;
+			if (Point && Point->EnvID == Character->EnvID)
+			{
+				EnvCapturePoints.Add(Point->PointID, Point);
+			}
+		}
+
 		for (int32 i = 0; i < 5; ++i)
 		{
-			const ACapturePoint* Point = GameMode->GetCapturePoint(PointOrder[i]);
-			if (Point)
+			if (const ACapturePoint* const* FoundPoint = EnvCapturePoints.Find(PointOrder[i]))
 			{
-				const int32 PointOwner = Point->GetOwningTeamID();
+				const int32 PointOwner = (*FoundPoint)->GetOwningTeamID();
 				if (PointOwner == MyTeamID)
 				{
 					Obs.CapturePointStatuses[i] = 1.0f;
@@ -323,7 +334,7 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 			}
 		}
 	}
-	// CapturePointStatuses defaults to all 0.0 (neutral) from constructor if GameMode unavailable
+	// CapturePointStatuses defaults to all 0.0 (neutral) from constructor if no CPs found
 
 	return Obs;
 }

@@ -226,6 +226,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CapturePoint|Strategy")
 	FString StrategicBonus = TEXT("Standard Position");
 
+	/** Environment ID for parallel environment isolation */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CapturePoint")
+	int32 EnvID = 0;
+
 	/** Show debug visualization */
 	UPROPERTY(EditAnywhere, Category = "CapturePoint|Debug")
 	bool bShowDebugInfo = true;

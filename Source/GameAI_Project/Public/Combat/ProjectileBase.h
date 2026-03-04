@@ -253,6 +253,10 @@ public:
 	// STATE
 	//--------------------------------------------------------------------------
 
+	/** Environment ID for parallel environment isolation. Set from owner on init. */
+	UPROPERTY(BlueprintReadOnly, Category = "Combat|State")
+	int32 EnvID = 0;
+
 	/** Who fired this projectile */
 	UPROPERTY(BlueprintReadOnly, Category = "Combat|State")
 	AActor* OwnerActor = nullptr;

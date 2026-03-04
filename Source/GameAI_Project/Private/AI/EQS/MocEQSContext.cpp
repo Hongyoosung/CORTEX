@@ -5,8 +5,9 @@
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"
 #include "AIController.h"
 #include "Characters/MocCharacter.h"
-#include "Core/MocGameMode.h"
 #include "Team/TeamManager.h"
+#include "Schola/ScholaEnvironment.h"
+#include "EngineUtils.h"
 #include "Actors/CapturePoint.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -53,34 +54,60 @@ void UEnvQueryContext_MocEnemies::ProvideContext(FEnvQueryInstance& QueryInstanc
 		return;
 	}
 
-	AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(World));
-	if (!GameMode)
+	// Get TeamManager from character (multi-env safe) or ScholaEnvironment fallback
+	ATeamManager* TeamManager = MocChar->GetTeamManager();
+	if (!TeamManager)
 	{
-		return;
+		for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
+		{
+			if ((*It)->GetEnvId() == MocChar->EnvID)
+			{
+				TeamManager = (*It)->GetTeamManager();
+				break;
+			}
+		}
 	}
-
-	ATeamManager* TeamManager = GameMode->GetTeamManager();
 	if (!TeamManager)
 	{
 		return;
 	}
 
 	int32 MyTeamID = MocChar->GetTeamID_Implementation();
+	const FVector MyLocation = MocChar->GetActorLocation();
 
-	// Get enemy positions from enemy team agents
+	// Get enemy positions — scoped to this env via TeamManager, filtered by direct line-of-sight
 	TArray<FVector> EnemyPositions;
 	TArray<AMocCharacter*> EnemyAgents = TeamManager->GetEnemyAgents(MyTeamID);
 
 	for (AMocCharacter* Enemy : EnemyAgents)
 	{
-		if (Enemy && Enemy->IsAlive_Implementation())
+		if (!Enemy || !Enemy->IsAlive_Implementation())
 		{
-			// Use FogOfWarManager to check if enemy is visible
-			AFogOfWarManager* FogManager = TeamManager->GetFogOfWarManager();
-			if (FogManager && TeamManager->IsEnemyPositionValid(MyTeamID, Enemy))
-			{
-				EnemyPositions.Add(TeamManager->GetLastKnownEnemyPosition(MyTeamID, Enemy));
-			}
+			continue;
+		}
+
+		const float Distance = FVector::Dist(MyLocation, Enemy->GetActorLocation());
+		if (Distance >= 8000.0f)
+		{
+			continue;
+		}
+
+		FHitResult HitResult;
+		FCollisionQueryParams QueryParams;
+		QueryParams.AddIgnoredActor(MocChar);
+		QueryParams.AddIgnoredActor(Enemy);
+
+		const bool bBlocked = World->LineTraceSingleByChannel(
+			HitResult,
+			MyLocation + FVector(0, 0, 90),
+			Enemy->GetActorLocation() + FVector(0, 0, 90),
+			ECC_Visibility,
+			QueryParams
+		);
+
+		if (!bBlocked)
+		{
+			EnemyPositions.Add(Enemy->GetActorLocation());
 		}
 	}
 
@@ -116,13 +143,19 @@ void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance
 		return;
 	}
 
-	AMocGameMode* GameMode = Cast<AMocGameMode>(UGameplayStatics::GetGameMode(World));
-	if (!GameMode)
+	// Get TeamManager from character (multi-env safe) or ScholaEnvironment fallback
+	ATeamManager* TeamManager = MocChar->GetTeamManager();
+	if (!TeamManager)
 	{
-		return;
+		for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
+		{
+			if ((*It)->GetEnvId() == MocChar->EnvID)
+			{
+				TeamManager = (*It)->GetTeamManager();
+				break;
+			}
+		}
 	}
-
-	ATeamManager* TeamManager = GameMode->GetTeamManager();
 	if (!TeamManager)
 	{
 		return;
@@ -159,16 +192,25 @@ void UEnvQueryContext_MocCapturePoints::ProvideContext(FEnvQueryInstance& QueryI
 		return;
 	}
 
-	// Get all capture points by tag
-	TArray<AActor*> FoundCapturePoints;
-	UGameplayStatics::GetAllActorsWithTag(World, FName("CapturePoint"), FoundCapturePoints);
+	// Resolve querier's EnvID for multi-env isolation
+	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryOwner);
+	if (!MocChar)
+	{
+		AAIController* AIC = Cast<AAIController>(QueryOwner);
+		if (AIC)
+		{
+			MocChar = Cast<AMocCharacter>(AIC->GetPawn());
+		}
+	}
+	const int32 EnvID = MocChar ? MocChar->EnvID : -1;
 
 	TArray<FVector> PointPositions;
-	for (AActor* Point : FoundCapturePoints)
+	for (TActorIterator<ACapturePoint> It(World); It; ++It)
 	{
-		if (Point)
+		ACapturePoint* CP = *It;
+		if (CP && (EnvID == -1 || CP->EnvID == EnvID))
 		{
-			PointPositions.Add(Point->GetActorLocation());
+			PointPositions.Add(CP->GetActorLocation());
 		}
 	}
 
@@ -208,24 +250,28 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 	int32 MyTeamID = MocChar->GetTeamID_Implementation();
 	FVector AgentPos = MocChar->GetActorLocation();
 
-	// Find the NEAREST non-friendly capture point instead of only the enemy base.
-	// This aligns EQS objective-seeking with the reward function, which rewards
-	// progress toward the closest non-friendly point.
-	TArray<AActor*> AllCapturePoints;
-	UGameplayStatics::GetAllActorsOfClass(World, ACapturePoint::StaticClass(), AllCapturePoints);
-
+	// Find the NEAREST non-friendly capture point in this environment.
+	// Scoped to MocChar->EnvID for multi-env parallel isolation.
 	ACapturePoint* NearestNonFriendly = nullptr;
 	float NearestDist = FLT_MAX;
+	ACapturePoint* EnemyBaseFallback = nullptr;
 
-	for (AActor* Actor : AllCapturePoints)
+	const int32 EnemyTeamID = (MyTeamID == 0) ? 1 : 0;
+	const ECapturePointID EnemyBaseID = (EnemyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
+
+	for (TActorIterator<ACapturePoint> It(World); It; ++It)
 	{
-		ACapturePoint* CP = Cast<ACapturePoint>(Actor);
-		if (!CP) continue;
+		ACapturePoint* CP = *It;
+		if (!CP || CP->EnvID != MocChar->EnvID) continue;
 
-		// Skip points already owned by this agent's team
+		if (CP->PointID == EnemyBaseID)
+		{
+			EnemyBaseFallback = CP;
+		}
+
 		if (CP->GetOwningTeamID() == MyTeamID) continue;
 
-		float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
+		const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
 		if (Dist < NearestDist)
 		{
 			NearestDist = Dist;
@@ -239,21 +285,14 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 		return;
 	}
 
-	// Fallback: all points are friendly — target enemy base as push target
-	int32 EnemyTeamID = (MyTeamID == 0) ? 1 : 0;
-	ECapturePointID EnemyBaseID = (EnemyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
-
-	for (AActor* Actor : AllCapturePoints)
+	// Fallback: all points are friendly — push toward enemy base
+	if (EnemyBaseFallback)
 	{
-		ACapturePoint* CP = Cast<ACapturePoint>(Actor);
-		if (CP && CP->PointID == EnemyBaseID)
-		{
-			UEnvQueryItemType_Point::SetContextHelper(ContextData, CP->GetActorLocation());
-			return;
-		}
+		UEnvQueryItemType_Point::SetContextHelper(ContextData, EnemyBaseFallback->GetActorLocation());
+		return;
 	}
 
-	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] No non-friendly objective found for team %d"), MyTeamID);
+	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] No non-friendly objective found for team %d (EnvID %d)"), MyTeamID, MocChar->EnvID);
 }
 
 void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
@@ -293,23 +332,19 @@ void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryI
 	// Red team base = PointA, Blue team base = PointE
 	ECapturePointID AllyBaseID = (MyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
 
-	// Find the specific capture point
-	TArray<AActor*> AllCapturePoints;
-	UGameplayStatics::GetAllActorsOfClass(World, ACapturePoint::StaticClass(), AllCapturePoints);
-
-	for (AActor* Actor : AllCapturePoints)
+	// Find the specific capture point — scoped to this env via EnvID
+	for (TActorIterator<ACapturePoint> It(World); It; ++It)
 	{
-		ACapturePoint* CapturePoint = Cast<ACapturePoint>(Actor);
-		if (CapturePoint && CapturePoint->PointID == AllyBaseID)
+		ACapturePoint* CapturePoint = *It;
+		if (CapturePoint && CapturePoint->EnvID == MocChar->EnvID && CapturePoint->PointID == AllyBaseID)
 		{
 			UEnvQueryItemType_Point::SetContextHelper(ContextData, CapturePoint->GetActorLocation());
 			return;
 		}
 	}
 
-	// If not found, log warning
-	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Ally objective not found (Point %d) for team %d"),
-		static_cast<int32>(AllyBaseID), MyTeamID);
+	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Ally objective not found (Point %d) for team %d (EnvID %d)"),
+		static_cast<int32>(AllyBaseID), MyTeamID, MocChar->EnvID);
 }
 
 void UEnvQueryContext_MocCoverPoints::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const

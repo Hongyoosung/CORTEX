@@ -7,6 +7,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/Character.h"
+#include "Characters/MocCharacter.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 
@@ -483,6 +484,15 @@ void ACapturePoint::OnCaptureZoneBeginOverlap(
 		return;
 	}
 
+	// EnvID isolation: reject agents from different environments
+	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
+	{
+		if (MocChar->EnvID != EnvID)
+		{
+			return;
+		}
+	}
+
 	// Get team ID
 	int32 TeamID = GetAgentTeamID(OtherActor);
 
@@ -506,6 +516,15 @@ void ACapturePoint::OnCaptureZoneEndOverlap(
 	if (!OtherActor)
 	{
 		return;
+	}
+
+	// EnvID isolation: reject agents from different environments
+	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
+	{
+		if (MocChar->EnvID != EnvID)
+		{
+			return;
+		}
 	}
 
 	// Remove from both sets (safe if not present)

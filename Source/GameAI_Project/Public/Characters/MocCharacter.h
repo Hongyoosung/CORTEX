@@ -24,7 +24,6 @@ class UAIPerceptionStimuliSourceComponent;
 class UEnvQuery;
 class UMocEQSExecutor;
 class USquadManager;
-class AMocGameMode;
 class ATeamManager;
 class AFogOfWarManager;
 class UNiagaraComponent;
@@ -120,6 +119,9 @@ public:
 	/** Get TeamManager reference (for Trainer observation gathering) */
 	UFUNCTION(BlueprintPure, Category = "Character|Team")
 	ATeamManager* GetTeamManager() const { return TM; }
+
+	/** Set TeamManager directly (called by TeamManager::SpawnAgent for multi-env support) */
+	void SetTeamManager(ATeamManager* InTM) { TM = InTM; }
 
 	// ==================== Reward Interface (forwarding to RewardCalculator) ====================
 
@@ -314,6 +316,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 TeamID;
 
+	/** Environment ID for parallel environment isolation. Set by TeamManager on spawn. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
+	int32 EnvID = 0;
+
 protected:
 	//========================================
 	// Runtime State
@@ -345,8 +351,6 @@ protected:
 
 	/** Time when character was last spawned/reset (for death diagnostics) */
 	float SpawnTime;
-
-	TObjectPtr<AMocGameMode> GameMode;
 
 	TObjectPtr<ATeamManager> TM;
 

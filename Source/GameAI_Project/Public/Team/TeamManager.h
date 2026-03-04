@@ -9,9 +9,9 @@
 class AMocCharacter;
 class UScholaMocAgent;
 class ACapturePoint;
-class AFogOfWarManager;
 class USquadManager;
 class UTeamData;
+class ASpawnArea;
 
 /**
  * Team configuration for customization (v10.2: Now data-driven)
@@ -76,7 +76,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTeamScoreChanged, int32, TeamID,
  * - Spawn and manage 5v5 team composition
  * - Handle agent respawning (5-second delay)
  * - Track team scores and match state
- * - Coordinate with FogOfWarManager for team knowledge
  * - Coordinate team-level rewards and events
  *
  * Usage:
@@ -172,25 +171,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TeamManager")
 	void RegisterKill(int32 KillerTeamID, int32 VictimTeamID, AMocCharacter* Victim);
 
-	//========================================
-	// Fog of War Integration (Delegates to FogOfWarManager)
-	//========================================
 
-	/** Report enemy sighting to team (delegates to FogOfWarManager) */
-	UFUNCTION(BlueprintCallable, Category = "TeamManager")
-	void ReportEnemySighting(int32 ReportingTeamID, AActor* Enemy, FVector Location);
-
-	/** Get last known enemy position (delegates to FogOfWarManager) */
-	UFUNCTION(BlueprintPure, Category = "TeamManager")
-	FVector GetLastKnownEnemyPosition(int32 TeamID, AActor* Enemy) const;
-
-	/** Check if enemy position is still valid (delegates to FogOfWarManager) */
-	UFUNCTION(BlueprintPure, Category = "TeamManager")
-	bool IsEnemyPositionValid(int32 TeamID, AActor* Enemy) const;
-
-	/** Get FogOfWarManager reference */
-	UFUNCTION(BlueprintPure, Category = "TeamManager")
-	AFogOfWarManager* GetFogOfWarManager() const { return FogOfWarManager; }
 
 	//========================================
 	// v10.2 Squad Commander Access
@@ -231,21 +212,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Teams")
 	FTeamConfiguration BlueTeamConfig;
 
-	/** Fog of War Manager reference (set in level or spawned in BeginPlay) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|References")
-	TSubclassOf<AFogOfWarManager> FogOfWarManagerClass;
+	/** Environment ID for parallel environment isolation */
+	int32 EnvID = 0;
+
+	/** Red team spawn area (editor-assignable, overrides RedTeamSpawnLocation) */
+	ASpawnArea* RedSpawnArea = nullptr;
+
+	/** Blue team spawn area (editor-assignable, overrides BlueTeamSpawnLocation) */
+	ASpawnArea* BlueSpawnArea = nullptr;
 
 	/** Number of agents per team */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager")
 	int32 AgentsPerTeam = 5;
-
-	/** Red team spawn location */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Spawn")
-	FVector RedTeamSpawnLocation = FVector(-5000.0f, 0.0f, 100.0f);
-
-	/** Blue team spawn location */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TeamManager|Spawn")
-	FVector BlueTeamSpawnLocation = FVector(5000.0f, 0.0f, 100.0f);
 
 	/** Spawn radius (random offset from base location) */
 	UPROPERTY(EditAnywhere, Category = "TeamManager|Spawn")
@@ -323,8 +301,6 @@ protected:
 	//========================================
 	// Runtime State
 	//========================================
-
-	TObjectPtr<AFogOfWarManager> FogOfWarManager;
 
 	/** Red team state */
 	UPROPERTY(BlueprintReadOnly, Category = "TeamManager|State")

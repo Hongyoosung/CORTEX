@@ -3,10 +3,11 @@
 #include "Team/TeamManager.h"
 #include "RL/Rewards/MocRewardCalculator.h"
 #include "Team/FogOfWarManager.h"
-#include "Team/SquadManager.h"  // USquadManager
+#include "Team/SquadManager.h"  
 #include "Characters/MocCharacter.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Schola/Components/ScholaMocAgent.h"
+#include "Actors/SpawnArea.h"
 #include "Data/TeamData.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -34,20 +35,6 @@ void ATeamManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-
-	// Find or spawn FogOfWarManager
-	if (!FogOfWarManager)
-	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		// Spawn FogOfWarManager
-		FogOfWarManager = GetWorld()->SpawnActor<AFogOfWarManager>(
-			FogOfWarManagerClass,
-			SpawnParams
-		);
-	}
-
 	// Create Squad Planners programmatically (one per team)
 	RedTeamCommander = NewObject<USquadManager>(this);
 	RedTeamCommander->Initialize(0, this);
@@ -67,22 +54,6 @@ void ATeamManager::Tick(float DeltaTime)
 	if (RedTeamCommander)  RedTeamCommander->TickPlanner(DeltaTime);
 	if (BlueTeamCommander) BlueTeamCommander->TickPlanner(DeltaTime);
 
-	// Debug visualization
-	if (bShowDebugInfo)
-	{
-		// Draw spawn locations
-		DrawDebugSphere(GetWorld(), RedTeamSpawnLocation, SpawnRadius, 16, FColor::Red, false, -1.0f, 0, 2.0f);
-		DrawDebugSphere(GetWorld(), BlueTeamSpawnLocation, SpawnRadius, 16, FColor::Blue, false, -1.0f, 0, 2.0f);
-
-		// Draw team info
-		FString RedInfo = FString::Printf(TEXT("Red Team\nScore: %d\nActive: %d\nRespawning: %d"),
-			RedTeamState.Score, RedTeamState.ActiveAgents.Num(), RedTeamState.RespawnQueue.Num());
-		FString BlueInfo = FString::Printf(TEXT("Blue Team\nScore: %d\nActive: %d\nRespawning: %d"),
-			BlueTeamState.Score, BlueTeamState.ActiveAgents.Num(), BlueTeamState.RespawnQueue.Num());
-
-		DrawDebugString(GetWorld(), RedTeamSpawnLocation + FVector(0, 0, 300), RedInfo, nullptr, FColor::Red, 0.0f, true);
-		DrawDebugString(GetWorld(), BlueTeamSpawnLocation + FVector(0, 0, 300), BlueInfo, nullptr, FColor::Blue, 0.0f, true);
-	}
 }
 
 void ATeamManager::SpawnTeams()
@@ -133,19 +104,19 @@ AMocCharacter* ATeamManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 		return nullptr;
 	}
 
-	// Get spawn location
-	FVector BaseLocation = GetTeamSpawnLocation(TeamID);
-	FVector SpawnLocation = GetRandomSpawnPoint(BaseLocation, SpawnRadius);
-	FRotator SpawnRotation = FRotator::ZeroRotator;
+	// Get spawn location and rotation
+	FVector SpawnLocation;
+	FRotator SpawnRotation;
 
-	// Face towards center of map
-	if (TeamID == 0) // Red team
+	ASpawnArea* SpawnArea = (TeamID == 0) ? RedSpawnArea : BlueSpawnArea;
+	if (SpawnArea)
 	{
-		SpawnRotation.Yaw = 0.0f; // Face right
+		SpawnLocation = SpawnArea->GetRandomSpawnPoint();
+		SpawnRotation = SpawnArea->GetSpawnRotation();
 	}
-	else // Blue team
+	else
 	{
-		SpawnRotation.Yaw = 180.0f; // Face left
+		UE_LOG(LogTemp, Warning, TEXT("TeamManager: No SpawnArea assigned for Team %d"), TeamID);
 	}
 
 	// Spawn parameters
@@ -162,8 +133,12 @@ AMocCharacter* ATeamManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 
 	if (Agent)
 	{
-		// Set team ID directly
+		// Set team and environment IDs
 		Agent->TeamID = TeamID;
+		Agent->EnvID = this->EnvID;
+
+		// Set TeamManager reference directly (multi-env support)
+		Agent->SetTeamManager(this);
 
 		// Get team configuration
 		FTeamConfiguration TeamConfig = GetTeamConfiguration(TeamID);
@@ -255,12 +230,8 @@ void ATeamManager::ResetTeams()
 		}
 	}
 
-	if (FogOfWarManager)
-	{
-		FogOfWarManager->Reset();
-	}
 
-	// 3. Reset Squad Commanders (v10.2)
+	// 3. Reset Squad Commanders
 	if (RedTeamCommander)
 	{
 		RedTeamCommander->Reset();
@@ -413,7 +384,17 @@ void ATeamManager::ProcessRespawnQueue(float DeltaTime)
 
 FVector ATeamManager::GetTeamSpawnLocation(int32 TeamID) const
 {
-	return TeamID == 0 ? RedTeamSpawnLocation : BlueTeamSpawnLocation;
+	// Use SpawnArea if assigned (parallel environment setup)
+	if (TeamID == 0 && RedSpawnArea)
+	{
+		return RedSpawnArea->GetRandomSpawnPoint();
+	}
+	if (TeamID == 1 && BlueSpawnArea)
+	{
+		return BlueSpawnArea->GetRandomSpawnPoint();
+	}
+
+	return FVector3d::ZeroVector;
 }
 
 FVector ATeamManager::GetRandomSpawnPoint(FVector BaseLocation, float Radius) const
@@ -491,37 +472,6 @@ void ATeamManager::RegisterKill(int32 KillerTeamID, int32 VictimTeamID, AMocChar
 		KillerTeamID, VictimTeamID);
 }
 
-void ATeamManager::ReportEnemySighting(int32 ReportingTeamID, AActor* Enemy, FVector Location)
-{
-	if (!FogOfWarManager)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TeamManager: FogOfWarManager not available for enemy sighting report"));
-		return;
-	}
-
-	FogOfWarManager->ReportEnemy(ReportingTeamID, Enemy, Location);
-}
-
-
-FVector ATeamManager::GetLastKnownEnemyPosition(int32 TeamID, AActor* Enemy) const
-{
-	if (!FogOfWarManager)
-	{
-		return FVector::ZeroVector;
-	}
-
-	return FogOfWarManager->GetLastKnownEnemyPosition(TeamID, Enemy);
-}
-
-bool ATeamManager::IsEnemyPositionValid(int32 TeamID, AActor* Enemy) const
-{
-	if (!FogOfWarManager)
-	{
-		return false;
-	}
-
-	return FogOfWarManager->IsEnemyPositionValid(TeamID, Enemy);
-}
 
 //========================================
 // v10.2 Squad Commander Access

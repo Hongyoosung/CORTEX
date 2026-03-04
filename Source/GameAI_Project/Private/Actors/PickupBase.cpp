@@ -9,6 +9,7 @@
 #include "TimerManager.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/Character.h"
+#include "Characters/MocCharacter.h"
 
 APickupBase::APickupBase()
 {
@@ -264,6 +265,15 @@ void APickupBase::OnCollectionSphereBeginOverlap(
 	if (!OtherActor || !OtherActor->IsA(ACharacter::StaticClass()))
 	{
 		return;
+	}
+
+	// EnvID isolation: reject agents from different environments
+	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
+	{
+		if (MocChar->EnvID != EnvID)
+		{
+			return;
+		}
 	}
 
 	// Try to collect

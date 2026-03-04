@@ -9,7 +9,6 @@
 #include "Types/EQSTypes.h"
 #include "Types/StrategyTypes.h"
 #include "Actors/CapturePoint.h"
-#include "Core/MocGameMode.h"
 #include "MocRewardCalculator.generated.h"
 
 class AMocCharacter;

@@ -15,6 +15,7 @@
 class UTeamMCTS;
 class AMocCharacter;
 class ATeamManager;
+class AScholaEnvironment;
 class UTeamDataCollector;
 class ACapturePoint;
 
@@ -55,6 +56,15 @@ public:
 	 * @param InTeamManager  - Owning TeamManager (config + agent queries)
 	 */
 	void Initialize(int32 InTeamID, ATeamManager* InTeamManager);
+
+	/**
+	 * Bind capture point events for this environment's capture points.
+	 * Called by ScholaEnvironment after initialization to scope events to owned CPs.
+	 */
+	void BindCapturePoints(const TArray<ACapturePoint*>& CapturePoints);
+
+	/** Set owning ScholaEnvironment so match state is read from it, not AMocGameMode */
+	void SetScholaEnvironment(AScholaEnvironment* InEnvironment);
 
 	//========================================
 	// Planner Tick (called by ATeamManager::Tick)
@@ -169,6 +179,10 @@ protected:
 	UPROPERTY()
 	ATeamManager* TeamManager;
 
+	/** Owning ScholaEnvironment — source of match timer and capture points (replaces AMocGameMode) */
+	UPROPERTY()
+	AScholaEnvironment* OwningEnvironment = nullptr;
+
 	//========================================
 	// Runtime State
 	//========================================
@@ -188,6 +202,9 @@ protected:
 	bool bHealthCriticalTriggered = false;
 	float LastPlanningDurationMs = 0.0f;
 	float ValidationTickCounter = 0.0f;
+
+	/** Scoped capture points for this environment (set via BindCapturePoints) */
+	TArray<ACapturePoint*> CachedCapturePoints;
 
 private:
 	FCompositeReward CalculateTeamReward(const FTeamWorldState& OldState, const FTeamWorldState& NewState) const;

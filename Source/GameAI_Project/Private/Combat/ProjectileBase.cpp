@@ -137,6 +137,12 @@ void AProjectileBase::InitializeProjectile(AActor* InOwner, AActor* InInstigator
 	InstigatorActor = InInstigator;
 	BaseDamage = InBaseDamage;
 
+	// Copy EnvID from owner for parallel environment isolation
+	if (AMocCharacter* OwnerChar = Cast<AMocCharacter>(InOwner))
+	{
+		EnvID = OwnerChar->EnvID;
+	}
+
 	if (CollisionComponent)
 	{
 		// 투사체가 이동할 때 Owner(캐릭터)를 무시하도록 설정
@@ -311,14 +317,29 @@ bool AProjectileBase::ValidateHit(AActor* HitActor) const
 		return false;
 	}
 
-	if (!bAllowFriendlyFire)
+	// EnvID isolation: reject hits on agents from different environments
+	if (const AMocCharacter* HitChar = Cast<AMocCharacter>(HitActor))
 	{
-		const AMocCharacter* HitChar = Cast<AMocCharacter>(HitActor);
-		const AMocCharacter* OwnerChar = Cast<AMocCharacter>(OwnerActor);
-		if (HitChar && OwnerChar && HitChar->TeamID == OwnerChar->TeamID)
+		if (HitChar->EnvID != EnvID)
 		{
 			return false;
 		}
+
+		// Friendly fire check
+		if (!bAllowFriendlyFire)
+		{
+			const AMocCharacter* OwnerChar = Cast<AMocCharacter>(OwnerActor);
+			if (OwnerChar && HitChar->TeamID == OwnerChar->TeamID)
+			{
+				return false;
+			}
+		}
+	}
+	else if (!bAllowFriendlyFire)
+	{
+		// Non-MocCharacter target: legacy friendly fire check
+		const AMocCharacter* OwnerChar = Cast<AMocCharacter>(OwnerActor);
+		// No team comparison possible — allow hit
 	}
 
 	return true;
