@@ -19,7 +19,6 @@
 
 class UHealthComponent;
 class UScholaMocAgent;
-class UMocRewardCalculator;
 class UAIPerceptionStimuliSourceComponent;
 class UEnvQuery;
 class UMocEQSExecutor;
@@ -77,9 +76,12 @@ public:
 
 
 	//========================================
-	// Team Interfaces Implementions
+	// ID Interfaces Implementions
 	//========================================
 	virtual int32 	GetTeamID_Implementation() const override;
+	virtual int32 	GetEnvID_Implementation() const override;
+	virtual void 	SetTeamID_Implementation(int32 NewTeamID) override;
+	virtual void 	SetEnvID_Implementation(int32 NewEnvID) override;
 
 
 	//========================================
@@ -111,10 +113,6 @@ public:
 	/** Get ScholaMocAgent */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
 	UScholaMocAgent* GetScholaAgent() const { return ScholaAgent; }
-
-	/** Get RewardCalculator */
-	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UMocRewardCalculator* GetRewardCalculator() const { return RewardCalculator; }
 
 	/** Get TeamManager reference (for Trainer observation gathering) */
 	UFUNCTION(BlueprintPure, Category = "Character|Team")
@@ -184,6 +182,17 @@ protected:
 	void OnDeath(const FDeathEventData& DeathEvent);
 
 public:
+
+	//========================================
+	// Reward System
+	//========================================
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Rewards")
+	URewardSettingsDataAsset* RewardSettings;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Rewards")
+	FRewardState RewardState;
+
+
 	//========================================
 	// Components
 	//========================================
@@ -195,10 +204,6 @@ public:
 	/** RL training interface */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UScholaMocAgent* ScholaAgent;
-
-	/** Strategy-conditioned reward calculator */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UMocRewardCalculator* RewardCalculator;
 
 	/** AI perception registration */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -312,6 +317,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 AgentID;
 
+
+protected:
 	/** Team ID (0 = Red, 1 = Blue) - Assigned by TeamManager on spawn, or set directly in editor for test maps */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 TeamID;
@@ -320,7 +327,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 EnvID = 0;
 
-protected:
 	//========================================
 	// Runtime State
 	//========================================

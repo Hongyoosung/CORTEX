@@ -30,7 +30,7 @@ void UMocRewardCalculator::BeginPlay()
 	}
 
 	// Subscribe to match state changes for win/loss terminal reward (multi-env: bind to owning ScholaEnvironment)
-	const int32 MyEnvID = OwnerCharacter ? OwnerCharacter->EnvID : 0;
+	const int32 MyEnvID = OwnerCharacter ? OwnerCharacter->GetEnvID_Implementation() : 0;
 	for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
 	{
 		if ((*It)->ScholaEnvID == MyEnvID)
@@ -73,21 +73,13 @@ float UMocRewardCalculator::DrainSparseReward()
 	return Drained;
 }
 
-void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
+void UMocRewardCalculator::OnCapturePointCaptured(int32 EnvID, ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
 {
-	if (!OwnerCharacter) return;
+	if (!OwnerCharacter || EnvID != OwnerCharacter->GetEnvID_Implementation()) return;
 
 	const int32 MyTeam = OwnerCharacter->GetTeamID_Implementation();
-
-	auto ToTeam = [](ECapturePointOwnership O) -> int32
-	{
-		if (O == ECapturePointOwnership::RedTeam)  return 0;
-		if (O == ECapturePointOwnership::BlueTeam) return 1;
-		return -1;
-	};
-
-	const int32 NewOwnerTeam  = ToTeam(NewOwner);
-	const int32 PrevOwnerTeam = ToTeam(PreviousOwner);
+	const int32 NewOwnerTeam = ACapturePoint::ConvertOwnershipToTeamID(NewOwner);
+	const int32 PrevOwnerTeam = ACapturePoint::ConvertOwnershipToTeamID(PreviousOwner);
 
 	const EStrategyType Strategy = OwnerCharacter->GetCommandedStrategy();
 
@@ -97,7 +89,7 @@ void UMocRewardCalculator::OnCapturePointCaptured(ECapturePointID PointID, ECapt
 		if (Strategy == EStrategyType::Defend && OwnerCharacter)
 		{
 			bAwardCapture = false;
-			// [수정] 1.5배 반경의 제곱 값으로 비교 연산 최적화
+			
 			const float ThresholdSq = FMath::Square(CaptureRadius_Cached * 1.5f);
 			const FVector AgentLoc = OwnerCharacter->GetActorLocation();
 
@@ -155,7 +147,7 @@ void UMocRewardCalculator::OnMatchStateChanged(EMocMatchState NewState)
 	case EMocMatchState::TimeExpired:
 		{
 			// On time expiry, check scores via the owning ScholaEnvironment
-			const int32 MyEnvID2 = OwnerCharacter ? OwnerCharacter->EnvID : 0;
+			const int32 MyEnvID2 = OwnerCharacter ? OwnerCharacter->GetEnvID_Implementation() : 0;
 			for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
 			{
 				if ((*It)->ScholaEnvID == MyEnvID2)
@@ -384,10 +376,6 @@ float UMocRewardCalculator::ComputeStepReward(
 						AssaultZoneStepsAfterCapture++;
 						const float DecayFactor = FMath::Max(0.0f, 1.0f - (float)AssaultZoneStepsAfterCapture / AssaultCapturedZoneDecaySteps);
 						Reward += AssaultReward.ZonePresenceBonus * DecayFactor;
-					}
-					else
-					{
-						AssaultZoneStepsAfterCapture = 0;
 					}
 				}
 
@@ -946,34 +934,25 @@ void UMocRewardCalculator::CacheCapturePoints()
 {
 	CachedCapturePoints.Empty();
 
-	TArray<AActor*> Found;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ACapturePoint::StaticClass(), Found);
+	// 월드를 순회하지 않고, 에이전트가 속한 환경을 찾습니다.
+	if (!OwnerCharacter) return;
 
-	// Filter by EnvID for parallel environment isolation
-	const int32 MyEnvID = OwnerCharacter ? OwnerCharacter->EnvID : 0;
+	const int32 MyEnvID = OwnerCharacter->GetEnvID_Implementation();
 
-	for (AActor* Actor : Found)
+	// 환경을 찾아서 그 환경이 소유한 거점 목록만 가져옵니다.
+	for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
 	{
-		if (ACapturePoint* CP = Cast<ACapturePoint>(Actor))
+		if ((*It)->GetEnvId() == MyEnvID)
 		{
-			if (CP->EnvID == MyEnvID)
-			{
-				CachedCapturePoints.Add(CP);
-			}
+			// ScholaEnvironment가 소유한 거점 목록을 그대로 사용
+			CachedCapturePoints = (*It)->GetAllCapturePoints();
+			break;
 		}
 	}
 
-	if (CachedCapturePoints.Num() > 0)
+	if (CachedCapturePoints.Num() > 0 && CachedCapturePoints[0])
 	{
 		CaptureRadius_Cached = CachedCapturePoints[0]->CaptureRadius;
+		CaptureRadiusSq_Cached = CaptureRadius_Cached * CaptureRadius_Cached;
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[MocRewardCalculator] No capture points found — using default radius %.0f"), CaptureRadius_Cached);
-	}
-
-	CaptureRadiusSq_Cached = CaptureRadius_Cached * CaptureRadius_Cached;
-
-	UE_LOG(LogTemp, Log, TEXT("[MocRewardCalculator] Cached %d capture points (radius=%.0f)"),
-		CachedCapturePoints.Num(), CaptureRadius_Cached);
 }

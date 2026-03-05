@@ -5,6 +5,7 @@
 #include "Schola/Components/EpisodeManagerComponent.h"
 #include "Schola/Trainers/MocTrainer.h"
 #include "Core/MocGameMode.h"
+#include "Core/Subsystems/MocRewardSubsystem.h"
 #include "Characters/MocCharacter.h"
 #include "Team/SquadManager.h"
 #include "Team/TeamManager.h"
@@ -57,9 +58,9 @@ void AScholaEnvironment::BeginPlay()
 	{
 		if (CP)
 		{
-			CP->EnvID = ScholaEnvID;
+			CP->SetEnvID_Implementation(ScholaEnvID);
 			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] CP: %s EnvID=%d PointID=%d"),
-				*CP->GetName(), CP->EnvID, (int32)CP->PointID);
+				*CP->GetName(), CP->GetEnvID_Implementation(), (int32)CP->PointID);
 		}
 			
 	}
@@ -159,6 +160,28 @@ void AScholaEnvironment::EndMatch(EMocMatchState WinnerState)
 	OnEnvMatchStateChanged.Broadcast(CurrentMatchState);
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] %s: Match ended - State: %d"), *GetName(), static_cast<int32>(WinnerState));
+
+	// 전역 매치 종료 보상 라우팅 (Match End Reward Routing)
+	UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>();
+	if (RewardSubsystem && OwnedTeamManager)
+	{
+		int32 WinningTeamID = -1;
+		if (WinnerState == EMocMatchState::RedTeamWon) WinningTeamID = 0;
+		else if (WinnerState == EMocMatchState::BlueTeamWon) WinningTeamID = 1;
+
+		// 양 팀의 에이전트들을 순회하며 승패에 따른 보상 적용
+		for (int32 TeamID = 0; TeamID <= 1; ++TeamID)
+		{
+			bool bTeamWon = (TeamID == WinningTeamID);
+			for (AMocCharacter* Agent : OwnedTeamManager->GetTeamAgents(TeamID))
+			{
+				if (Agent)
+				{
+					RewardSubsystem->ApplyMatchEndReward(Agent->RewardSettings, Agent->RewardState, bTeamWon, Agent);
+				}
+			}
+		}
+	}
 }
 
 void AScholaEnvironment::AddTeamScore(int32 TeamID, int32 Amount, const FString& Reason)
@@ -253,6 +276,7 @@ void AScholaEnvironment::CountOwnedPoints(int32& OutRedOwned, int32& OutBlueOwne
 
 void AScholaEnvironment::OnPointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
 {
+	// 1. 기존 팀 스코어 갱신 로직
 	if (NewOwner == ECapturePointOwnership::RedTeam)
 	{
 		AddTeamScore(0, CaptureReward, TEXT("Point Capture"));
@@ -260,6 +284,40 @@ void AScholaEnvironment::OnPointCaptured(ECapturePointID PointID, ECapturePointO
 	else if (NewOwner == ECapturePointOwnership::BlueTeam)
 	{
 		AddTeamScore(1, CaptureReward, TEXT("Point Capture"));
+	}
+
+	// 2. 보상 라우팅 (Reward Routing)
+	UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>();
+	if (!RewardSubsystem || !OwnedTeamManager)
+	{
+		return;
+	}
+
+	int32 CapturingTeamID = (NewOwner == ECapturePointOwnership::RedTeam) ? 0 : (NewOwner == ECapturePointOwnership::BlueTeam ? 1 : -1);
+	int32 LosingTeamID = (PreviousOwner == ECapturePointOwnership::RedTeam) ? 0 : (PreviousOwner == ECapturePointOwnership::BlueTeam ? 1 : -1);
+
+	// 점령 성공 보상 분배
+	if (CapturingTeamID != -1)
+	{
+		for (AMocCharacter* Agent : OwnedTeamManager->GetTeamAgents(CapturingTeamID))
+		{
+			if (Agent)
+			{
+				RewardSubsystem->CalculateCaptureReward(Agent->RewardSettings, Agent->RewardState, Agent->GetCommandedStrategy(), Agent);
+			}
+		}
+	}
+
+	// 점령 상실 페널티 분배
+	if (LosingTeamID != -1)
+	{
+		for (AMocCharacter* Agent : OwnedTeamManager->GetTeamAgents(LosingTeamID))
+		{
+			if (Agent)
+			{
+				RewardSubsystem->CalculateLosePointPenalty(Agent->RewardSettings, Agent->RewardState, Agent->GetCommandedStrategy(), Agent);
+			}
+		}
 	}
 }
 
@@ -325,7 +383,7 @@ void AScholaEnvironment::InitializeEnvironment()
 				{
 					RegisteredAgents.Add(ScholaAgent);
 					UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2]   Discovered: %s (Team %d, EnvID %d)"),
-						*MocChar->GetName(), TeamID, MocChar->EnvID);
+						*MocChar->GetName(), TeamID, MocChar->GetEnvID_Implementation());
 				}
 			}
 		}

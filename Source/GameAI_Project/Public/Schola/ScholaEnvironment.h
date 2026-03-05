@@ -216,10 +216,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Schola|Match")
 	int32 WinningScore = 300;
 
-	/** Points awarded for capturing a point */
-	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
-	int32 CaptureReward = 25;
-
 	/** Points awarded for killing an enemy */
 	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
 	int32 KillPoints = 5;

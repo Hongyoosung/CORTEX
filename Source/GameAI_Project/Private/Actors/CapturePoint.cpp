@@ -10,6 +10,7 @@
 #include "Characters/MocCharacter.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
+#include "CapturePoint.h"
 
 ACapturePoint::ACapturePoint()
 {
@@ -163,6 +164,11 @@ int32 ACapturePoint::GetTeamID_Implementation() const
     }
 }
 
+int32 ACapturePoint::GetEnvID_Implementation() const
+{
+	return EnvID;
+}
+
 
 void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 {
@@ -200,7 +206,7 @@ void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 			{
 				const ECapturePointOwnership PreviousOwner = CurrentOwner;
 				CurrentOwner = ECapturePointOwnership::Neutral;
-				OnPointCaptured.Broadcast(PointID, PreviousOwner, ECapturePointOwnership::Neutral);
+				OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, ECapturePointOwnership::Neutral);
 				UpdateNiagaraColor();
 			}
 		}
@@ -242,7 +248,7 @@ void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 			{
 				const ECapturePointOwnership PreviousOwner = CurrentOwner;
 				CurrentOwner = ECapturePointOwnership::Neutral;
-				OnPointCaptured.Broadcast(PointID, PreviousOwner, ECapturePointOwnership::Neutral);
+				OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, ECapturePointOwnership::Neutral);
 				UpdateNiagaraColor();
 			}
 		}
@@ -347,7 +353,7 @@ void ACapturePoint::CompleteCaptureSequence()
 	bJustCaptured = true;
 
 	// Broadcast capture event
-	OnPointCaptured.Broadcast(PointID, PreviousOwner, NewOwner);
+	OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, NewOwner);
 
 	// Update Niagara color for new owner
 	UpdateNiagaraColor();
@@ -434,9 +440,13 @@ int32 ACapturePoint::GetOwningTeamID() const
 {
 	switch (CurrentOwner)
 	{
-	case ECapturePointOwnership::RedTeam: return 0;
-	case ECapturePointOwnership::BlueTeam: return 1;
-	default: return -1; // Neutral
+	case ECapturePointOwnership::RedTeam:
+		return 0;
+	case ECapturePointOwnership::BlueTeam:
+		return 1;
+	case ECapturePointOwnership::Neutral:
+	default:
+		return -1;
 	}
 }
 
@@ -457,7 +467,7 @@ void ACapturePoint::SetOwnership(ECapturePointOwnership NewOwner)
 	ECapturePointOwnership PreviousOwner = CurrentOwner;
 	CurrentOwner = NewOwner;
 	CaptureProgress = 0.0f;
-	OnPointCaptured.Broadcast(PointID, PreviousOwner, NewOwner);
+	OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, NewOwner);
 	UpdateVisuals();
 	UpdateNiagaraColor();
 }
@@ -487,7 +497,7 @@ void ACapturePoint::OnCaptureZoneBeginOverlap(
 	// EnvID isolation: reject agents from different environments
 	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
 	{
-		if (MocChar->EnvID != EnvID)
+		if (MocChar->GetEnvID_Implementation() != EnvID)
 		{
 			return;
 		}
@@ -521,7 +531,7 @@ void ACapturePoint::OnCaptureZoneEndOverlap(
 	// EnvID isolation: reject agents from different environments
 	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
 	{
-		if (MocChar->EnvID != EnvID)
+		if (MocChar->GetEnvID_Implementation() != EnvID)
 		{
 			return;
 		}

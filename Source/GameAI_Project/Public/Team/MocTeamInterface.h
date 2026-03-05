@@ -20,8 +20,17 @@ class GAMEAI_PROJECT_API IMocTeamInterface
 
 public:
 	/** 팀 ID 반환 (0: Red, 1: Blue, -1: Neutral/None) */
-	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Team")
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "ID")
 	int32 GetTeamID() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "ID")
+	int32 GetEnvID() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "ID")
+	void SetTeamID(int32 NewTeamID);
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "ID")
+	void SetEnvID(int32 NewEnvID);
 
 
 	/** 상대방이 적인지 확인하는 유틸리티 함수 (기본 구현 제공 가능) */

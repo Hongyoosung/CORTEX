@@ -140,7 +140,7 @@ void AProjectileBase::InitializeProjectile(AActor* InOwner, AActor* InInstigator
 	// Copy EnvID from owner for parallel environment isolation
 	if (AMocCharacter* OwnerChar = Cast<AMocCharacter>(InOwner))
 	{
-		EnvID = OwnerChar->EnvID;
+		EnvID = OwnerChar->GetEnvID_Implementation();
 	}
 
 	if (CollisionComponent)
@@ -320,7 +320,7 @@ bool AProjectileBase::ValidateHit(AActor* HitActor) const
 	// EnvID isolation: reject hits on agents from different environments
 	if (const AMocCharacter* HitChar = Cast<AMocCharacter>(HitActor))
 	{
-		if (HitChar->EnvID != EnvID)
+		if (HitChar->GetEnvID_Implementation() != EnvID)
 		{
 			return false;
 		}
@@ -329,7 +329,7 @@ bool AProjectileBase::ValidateHit(AActor* HitActor) const
 		if (!bAllowFriendlyFire)
 		{
 			const AMocCharacter* OwnerChar = Cast<AMocCharacter>(OwnerActor);
-			if (OwnerChar && HitChar->TeamID == OwnerChar->TeamID)
+			if (OwnerChar && HitChar->GetTeamID_Implementation() == OwnerChar->GetTeamID_Implementation())
 			{
 				return false;
 			}

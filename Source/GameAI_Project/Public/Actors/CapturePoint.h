@@ -39,7 +39,7 @@ enum class ECapturePointID : uint8
 /**
  * Delegate for capture events
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnPointCaptured, ECapturePointID, PointID, ECapturePointOwnership, PreviousOwner, ECapturePointOwnership, NewOwner);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnPointCaptured, int32, EnvID, ECapturePointID, PointID, ECapturePointOwnership, PreviousOwner, ECapturePointOwnership, NewOwner);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCaptureProgressChanged, ECapturePointID, PointID, float, Progress);
 
 /**
@@ -73,6 +73,9 @@ public:
 	// Team Interface Implementations
 	//========================================
 	virtual int32 GetTeamID_Implementation() const override;
+	virtual int32 GetEnvID_Implementation() const override;
+	virtual void SetTeamID_Implementation(int32 NewTeamID) override;
+	virtual void SetEnvID_Implementation(int32 NewEnvID) override;
 
 	
 	//========================================
@@ -129,6 +132,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "CapturePoint")
 	TArray<AActor*> GetAgentsInZone() const;
 
+	
 protected:
 	//========================================
 	// Overlap Handlers
@@ -226,10 +230,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CapturePoint|Strategy")
 	FString StrategicBonus = TEXT("Standard Position");
 
-	/** Environment ID for parallel environment isolation */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CapturePoint")
-	int32 EnvID = 0;
-
 	/** Show debug visualization */
 	UPROPERTY(EditAnywhere, Category = "CapturePoint|Debug")
 	bool bShowDebugInfo = true;
@@ -258,6 +258,10 @@ protected:
 	//========================================
 	// Runtime State
 	//========================================
+
+	/** Environment ID for parallel environment isolation */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CapturePoint")
+	int32 EnvID = 0;
 
 	/** Current ownership state */
 	UPROPERTY(BlueprintReadOnly, Category = "CapturePoint|State")
@@ -288,4 +292,17 @@ protected:
 	/** Dynamic material instance for visual feedback */
 	UPROPERTY()
 	UMaterialInstanceDynamic* DynamicMaterial;
+
+
+public:
+	UFUNCTION(BlueprintPure, Category = "CapturePoint")
+	static int32 ConvertOwnershipToTeamID(ECapturePointOwnership Ownership)
+	{
+		switch (Ownership)
+		{
+		case ECapturePointOwnership::RedTeam:  return 0;
+		case ECapturePointOwnership::BlueTeam: return 1;
+		default: return -1;
+		}
+	}
 };

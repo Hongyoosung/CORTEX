@@ -30,7 +30,6 @@ AMocCharacter::AMocCharacter()
 	: Super()
 	, HealthComponent(nullptr)
 	, ScholaAgent(nullptr)
-	, RewardCalculator(nullptr)
 	, StimuliSource(nullptr)
 	, TeamColorVFX(nullptr)
 	, VisionRange(3000.0f)
@@ -58,7 +57,6 @@ AMocCharacter::AMocCharacter()
 	// Create components
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
 	ScholaAgent = CreateDefaultSubobject<UScholaMocAgent>(TEXT("ScholaAgent"));
-	RewardCalculator = CreateDefaultSubobject<UMocRewardCalculator>(TEXT("RewardCalculator"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 	EQSExecutor = CreateDefaultSubobject<UMocEQSExecutor>(TEXT("EQSExecutor"));
 	AttackAbility = CreateDefaultSubobject<UAttackAbility>(TEXT("AttackAbility"));
@@ -202,6 +200,22 @@ int32 AMocCharacter::GetTeamID_Implementation() const
 	return TeamID;
 }
 
+int32 AMocCharacter::GetEnvID_Implementation() const
+{
+	return EnvID;
+}
+
+void AMocCharacter::SetTeamID_Implementation(int32 NewTeamID)
+{
+	TeamID = NewTeamID;
+	UpdateTeamColorVFX();
+}
+
+void AMocCharacter::SetEnvID_Implementation(int32 NewEnvID)
+{
+	EnvID = NewEnvID;
+}
+
 bool AMocCharacter::IsAlive_Implementation() const
 {
 	return bIsAlive;
@@ -264,16 +278,19 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 		}
 	}
 
-	// Sparse RL rewards for death/kill
-	if (RewardCalculator)
+	if (UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>())
 	{
-		RewardCalculator->CalculateDeathPenalty(CommandedStrategy);
-	}
-	if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
-	{
-		if (Killer->RewardCalculator)
+		if (RewardSettings)
 		{
-			Killer->RewardCalculator->CalculateKillReward(Killer->CommandedStrategy);
+			RewardSubsystem->CalculateDeathPenalty(RewardSettings, RewardState, CommandedStrategy);
+		}
+
+		if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
+		{
+			if (Killer->RewardSettings)
+			{
+				RewardSubsystem->CalculateKillReward(Killer->RewardSettings, Killer->RewardState, Killer->CommandedStrategy);
+			}
 		}
 	}
 
@@ -306,10 +323,7 @@ void AMocCharacter::ResetCharacter()
 		HealthComponent->ResetHealth();
 	}
 
-	if (RewardCalculator)
-	{
-		RewardCalculator->ResetEpisodeState();
-	}
+	RewardState.Reset();
 
 	if (AttackAbility)
 	{
@@ -384,7 +398,7 @@ void AMocCharacter::ResetCharacter()
 }
 
 //========================================
-// v10.2 EQS Weight Storage & Execution
+// QS Weight Storage & Execution
 //========================================
 
 void AMocCharacter::UpdateTacticalWeights(const FEQSWeightParameters& NewWeights)
@@ -626,8 +640,12 @@ float AMocCharacter::ComputeStepReward(
 	const FObservation& Current,
 	const FEQSWeightParameters& Action)
 {
-	if (!RewardCalculator) return 0.0f;
-	return RewardCalculator->ComputeStepReward(Strategy, Prev, Current, Action);
+	if (UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>())
+	{
+		// DataAsset과 내 상태를 넘겨서 보상을 계산 (Stateless 호출)
+		return RewardSubsystem->ComputeStepReward(this, RewardSettings, RewardState, Strategy, Prev, Current, Action);
+	}
+	return 0.0f;
 }
 
 FRewardBreakdown AMocCharacter::ComputeRewardBreakdown(

@@ -97,7 +97,7 @@ void AMocAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
         for (AActor* Actor : PerceivedActors)
         {
             AMocCharacter* Other = Cast<AMocCharacter>(Actor);
-            if (Other && Other->EnvID == Self->EnvID && Other->TeamID != Self->TeamID)
+            if (Other && Other->GetEnvID_Implementation() == Self->GetEnvID_Implementation() && Other->GetTeamID_Implementation() != Self->GetTeamID_Implementation())
             {
                 BestEnemy = Other;
                 break;

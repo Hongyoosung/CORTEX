@@ -60,7 +60,7 @@ void UEnvQueryContext_MocEnemies::ProvideContext(FEnvQueryInstance& QueryInstanc
 	{
 		for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
 		{
-			if ((*It)->GetEnvId() == MocChar->EnvID)
+			if ((*It)->GetEnvId() == MocChar->GetEnvID_Implementation())
 			{
 				TeamManager = (*It)->GetTeamManager();
 				break;
@@ -149,7 +149,7 @@ void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance
 	{
 		for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
 		{
-			if ((*It)->GetEnvId() == MocChar->EnvID)
+			if ((*It)->GetEnvId() == MocChar->GetEnvID_Implementation())
 			{
 				TeamManager = (*It)->GetTeamManager();
 				break;
@@ -202,13 +202,13 @@ void UEnvQueryContext_MocCapturePoints::ProvideContext(FEnvQueryInstance& QueryI
 			MocChar = Cast<AMocCharacter>(AIC->GetPawn());
 		}
 	}
-	const int32 EnvID = MocChar ? MocChar->EnvID : -1;
+	const int32 EnvID = MocChar ? MocChar->GetEnvID_Implementation() : -1;
 
 	TArray<FVector> PointPositions;
 	for (TActorIterator<ACapturePoint> It(World); It; ++It)
 	{
 		ACapturePoint* CP = *It;
-		if (CP && (EnvID == -1 || CP->EnvID == EnvID))
+		if (CP && (EnvID == -1 || CP->GetEnvID_Implementation() == EnvID))
 		{
 			PointPositions.Add(CP->GetActorLocation());
 		}
@@ -247,29 +247,32 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 		return;
 	}
 
-	int32 MyTeamID = MocChar->GetTeamID_Implementation();
+	const int32 MyEnvID = MocChar->GetEnvID_Implementation();
+	const int32 MyTeamID = MocChar->GetTeamID_Implementation();
 	FVector AgentPos = MocChar->GetActorLocation();
 
-	// Find the NEAREST non-friendly capture point in this environment.
-	// Scoped to MocChar->EnvID for multi-env parallel isolation.
+	AScholaEnvironment* MyEnv = nullptr;
+	for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
+	{
+		if ((*It)->GetEnvId() == MyEnvID)
+		{
+			MyEnv = *It;
+			break;
+		}
+	}
+
+	if (!MyEnv) return;
+
+	// 환경이 소유한 거점들 중에서만 탐색
+	TArray<ACapturePoint*> EnvPoints = MyEnv->GetAllCapturePoints();
+
 	ACapturePoint* NearestNonFriendly = nullptr;
 	float NearestDist = FLT_MAX;
-	ACapturePoint* EnemyBaseFallback = nullptr;
 
-	const int32 EnemyTeamID = (MyTeamID == 0) ? 1 : 0;
-	const ECapturePointID EnemyBaseID = (EnemyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
-
-	for (TActorIterator<ACapturePoint> It(World); It; ++It)
+	// Enum 매핑 주의: CP->GetOwningTeamID()가 에이전트의 TeamID 체계와 맞는지 반드시 확인 필요
+	for (ACapturePoint* CP : EnvPoints)
 	{
-		ACapturePoint* CP = *It;
-		if (!CP || CP->EnvID != MocChar->EnvID) continue;
-
-		if (CP->PointID == EnemyBaseID)
-		{
-			EnemyBaseFallback = CP;
-		}
-
-		if (CP->GetOwningTeamID() == MyTeamID) continue;
+		if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
 
 		const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
 		if (Dist < NearestDist)
@@ -282,17 +285,7 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 	if (NearestNonFriendly)
 	{
 		UEnvQueryItemType_Point::SetContextHelper(ContextData, NearestNonFriendly->GetActorLocation());
-		return;
 	}
-
-	// Fallback: all points are friendly — push toward enemy base
-	if (EnemyBaseFallback)
-	{
-		UEnvQueryItemType_Point::SetContextHelper(ContextData, EnemyBaseFallback->GetActorLocation());
-		return;
-	}
-
-	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] No non-friendly objective found for team %d (EnvID %d)"), MyTeamID, MocChar->EnvID);
 }
 
 void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
@@ -336,7 +329,7 @@ void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryI
 	for (TActorIterator<ACapturePoint> It(World); It; ++It)
 	{
 		ACapturePoint* CapturePoint = *It;
-		if (CapturePoint && CapturePoint->EnvID == MocChar->EnvID && CapturePoint->PointID == AllyBaseID)
+		if (CapturePoint && CapturePoint->GetEnvID_Implementation() == MocChar->GetEnvID_Implementation() && CapturePoint->PointID == AllyBaseID)
 		{
 			UEnvQueryItemType_Point::SetContextHelper(ContextData, CapturePoint->GetActorLocation());
 			return;
@@ -344,7 +337,7 @@ void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryI
 	}
 
 	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Ally objective not found (Point %d) for team %d (EnvID %d)"),
-		static_cast<int32>(AllyBaseID), MyTeamID, MocChar->EnvID);
+		static_cast<int32>(AllyBaseID), MyTeamID, MocChar->GetEnvID_Implementation());
 }
 
 void UEnvQueryContext_MocCoverPoints::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const

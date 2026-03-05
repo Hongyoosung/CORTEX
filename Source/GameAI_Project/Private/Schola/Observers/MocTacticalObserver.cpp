@@ -308,7 +308,7 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 		for (TActorIterator<ACapturePoint> It(Character->GetWorld()); It; ++It)
 		{
 			ACapturePoint* Point = *It;
-			if (Point && Point->EnvID == Character->EnvID)
+			if (Point && Point->GetEnvID_Implementation() == Character->GetEnvID_Implementation())
 			{
 				EnvCapturePoints.Add(Point->PointID, Point);
 			}
