@@ -351,9 +351,10 @@ void USquadManager::Reset()
 	PreviousTeamState = FTeamWorldState();
 	PreviousTacticalPlay = ETacticalPlay::StandardComp;
 
-	// Phase 1 RL Training: sample a random tactical play for the new episode
+	// Phase 1 RL Training: round-robin strategy assignment for balanced training
 	if (TeamManager && TeamManager->bRLTrainingMode)
 	{
+		EpisodeCount++;
 		SampleRandomTacticalPlay();
 	}
 
@@ -409,35 +410,34 @@ TArray<ETacticalPlay> USquadManager::GetFeasiblePlays(const FTeamWorldState& Sta
 
 void USquadManager::SampleRandomTacticalPlay()
 {
-	FTeamWorldState CurrentState = CollectTeamState();
-	TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(CurrentState);
+	// Round-robin strategy rotation: agent i gets strategy (i + EpisodeCount) % 3.
+	// Over every 3 episodes, each of the 5 agents rotates through all 3 strategies,
+	// yielding exactly 5 Assault / 5 Defend / 5 Support exposures — equal learning signal.
+	static const EStrategyType StrategyWheel[3] = {
+		EStrategyType::Assault,
+		EStrategyType::Defend,
+		EStrategyType::Support
+	};
 
-	// Weighted random within feasible set using the same per-play weights as epsilon-greedy
-	static const float PlayWeights[10] = { 4.f, 6.f, 16.f, 11.f, 9.f, 7.f, 7.f, 13.f, 14.f, 13.f };
-
-	float TotalWeight = 0.0f;
-	for (ETacticalPlay Play : FeasiblePlays)
+	TArray<EStrategyType> Roles;
+	Roles.SetNum(5);
+	int32 nA = 0, nD = 0, nS = 0;
+	for (int32 i = 0; i < 5; i++)
 	{
-		TotalWeight += PlayWeights[static_cast<int32>(Play)];
+		EStrategyType S = StrategyWheel[(i + EpisodeCount) % 3];
+		Roles[i] = S;
+		if      (S == EStrategyType::Assault) nA++;
+		else if (S == EStrategyType::Defend)  nD++;
+		else                                   nS++;
 	}
 
-	ETacticalPlay RandomPlay = FeasiblePlays[0];
-	const float R = (TeamManager ? TeamManager->GetEnvRandomStream().FRand() : FMath::FRand()) * TotalWeight;
-	float Cumulative = 0.0f;
-	for (ETacticalPlay Play : FeasiblePlays)
-	{
-		Cumulative += PlayWeights[static_cast<int32>(Play)];
-		if (R < Cumulative) { RandomPlay = Play; break; }
-	}
-
-	TArray<EStrategyType> Roles = DecodeTacticalPlay(RandomPlay);
 	DistributeRoles(Roles);
-
-	ActiveTacticalPlay = RandomPlay;
+	ActiveTacticalPlay = ETacticalPlay::StandardComp;
 	CurrentRoleAssignments = Roles;
 
-	UE_LOG(LogTemp, Warning, TEXT("[SquadManager] Phase 1 RL: Sampled tactical play %s for episode (feasible set: %d plays)"),
-		*UEnum::GetValueAsString(RandomPlay), FeasiblePlays.Num());
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SquadManager] Phase 1 RL: Episode %d round-robin → %dA %dD %dS"),
+		EpisodeCount, nA, nD, nS);
 }
 
 //========================================

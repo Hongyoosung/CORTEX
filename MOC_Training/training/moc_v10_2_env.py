@@ -70,6 +70,7 @@ if SCHOLA_AVAILABLE:
             port = self._resolve_port(kwargs)
             self.num_envs = kwargs.get("num_envs", 4)
             self._agent_strategies = {}  # flat_id → strategy_idx (0=Assault, 1=Defend, 2=Support)
+            self._episode_count = 0      # incremented each episode; drives round-robin rotation
 
             # Force uniform strategy distribution: override UE5 SquadCommander assignments
             # so each strategy head sees equal training data.
@@ -125,6 +126,11 @@ if SCHOLA_AVAILABLE:
                 shape=(MOCv10_2Config.NUM_EQS_WEIGHTS,),
                 dtype=np.float32
             )
+
+            # Per-env strategy tracker: each env cycles independently through A/D/S.
+            # Offset by env_idx so envs are staggered and all three strategies are
+            # active simultaneously across parallel envs.
+            self._env_strategy = {i: i % 3 for i in range(self.num_envs)}
 
             # Episode Tracking
             self._first_reset_done = False
@@ -189,12 +195,16 @@ if SCHOLA_AVAILABLE:
         def _assign_uniform_strategies(self):
             """Assign strategies in round-robin across all agents for uniform distribution.
 
-            Called at episode boundaries. Each agent gets a fixed strategy for the episode.
-            Distribution: approximately 33%/33%/33% across Assault/Defend/Support.
+            Called at every episode boundary. Rotates assignments each episode so every
+            agent cycles through all 3 strategies. Over N envs × 3 episodes, every strategy
+            receives exactly equal training exposure (5N agent-episodes each).
+
+            Pattern for 5 agents: episode 0 → [A,D,S,A,D], episode 1 → [D,S,A,D,S], episode 2 → [S,A,D,S,A]
             """
+            self._episode_count += 1
             agents_sorted = sorted(self._agent_ids)
             for i, flat_id in enumerate(agents_sorted):
-                self._agent_strategies[flat_id] = i % 3  # 0=Assault, 1=Defend, 2=Support
+                self._agent_strategies[flat_id] = (i + self._episode_count) % 3
 
         def _get_agent_strategy(self, flat_id, ue5_strategy_idx):
             """Get strategy for an agent, applying uniform override if enabled."""
@@ -292,7 +302,10 @@ if SCHOLA_AVAILABLE:
                 ue5_strategy_idx = 0
 
             # Apply uniform strategy override if enabled
-            strategy_idx = self._get_agent_strategy(flat_id, ue5_strategy_idx)
+            if self._force_uniform_strategy:
+                strategy_idx = self._agent_strategies.get(flat_id, ue5_strategy_idx)
+            else:
+                strategy_idx = ue5_strategy_idx
             self._agent_strategies[flat_id] = strategy_idx
 
             obs = self._build_observation(base_obs, strategy_idx)
@@ -406,6 +419,11 @@ if SCHOLA_AVAILABLE:
             else:
                 # Subsequent resets: UE5 auto-resets are detected via __all__=True in step()
                 print(f"RESET: Soft reset (auto-reset detected)")
+
+                # Rotate strategies for the new episode
+                if self._force_uniform_strategy:
+                    self._assign_uniform_strategies()
+                    print(f"[MOC v10.2] Episode {self._episode_count} strategy rotation: {dict(sorted(self._agent_strategies.items()))}")
 
                 # Send dummy actions to trigger UE5 response
                 allactionkeys = self._get_all_action_keys()
@@ -524,13 +542,22 @@ if SCHOLA_AVAILABLE:
                         if aid in reward_dict:
                             self._agent_episode_rewards[aid] = self._agent_episode_rewards.get(aid, 0.0) + reward_dict[aid]
 
-                    # Force timeout: THE primary mechanism for episode boundaries.
-                    # Individual agent termination from UE5 is suppressed to prevent
-                    # mixed-trajectory batches in RLlib's postprocessing.
-                    if self._force_timeout_enabled and self._env_episode_steps[env_idx] >= self._max_episode_steps:
-                        print(f"[STEP] Episode end: Env {env_idx} completed {self._max_episode_steps} steps")
+                    # UE5 match-end: authoritative episode boundary from SquadCommander/ScholaEnvironment
+                    ue5_match_ended = any(
+                        info_dict.get(aid, {}).get('MatchEnded', 'false') == 'true'
+                        for aid in env_agents
+                    )
+                    # Force timeout: fallback episode boundary when UE5 doesn't signal match end
+                    timeout_hit = self._force_timeout_enabled and self._env_episode_steps[env_idx] >= self._max_episode_steps
+
+                    if ue5_match_ended or timeout_hit:
+                        reason = "UE5 match ended" if ue5_match_ended else f"timeout ({self._max_episode_steps} steps)"
+                        print(f"[STEP] Episode end: Env {env_idx} — {reason}")
                         for aid in env_agents:
-                            truncated_dict[aid] = True
+                            if ue5_match_ended:
+                                terminated_dict[aid] = True
+                            else:
+                                truncated_dict[aid] = True
                         self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
                         self._env_done_flags[env_idx] = True
                         self._env_episodes_completed[env_idx] += 1
@@ -539,9 +566,28 @@ if SCHOLA_AVAILABLE:
                         for aid in env_agents:
                             self._agent_episode_rewards[aid] = 0.0
 
-                        # Shuffle strategy assignments for next episode
+                        # Rotate strategy for next episode and patch the SAME_STEP obs now.
+                        # This must happen here (not in reset()) because AutoResetType.SAME_STEP
+                        # returns the new episode's first obs inside this same step() call.
                         if self._force_uniform_strategy:
-                            self._assign_uniform_strategies()
+                            # 해당 환경의 에피소드 카운트 사용
+                            ep_count = self._env_episodes_completed[env_idx]
+                            
+                            strategy_names = {0: "Assault", 1: "Defend", 2: "Support"}
+                            print(f"[STRATEGY] Env {env_idx} ep {ep_count} Strategy Rotated for 5 Agents")
+                            
+                            for aid in env_agents:
+                                # aid 형태 (예: 'agent_0_2')에서 환경 인덱스와 에이전트 인덱스 추출
+                                _, agent_idx = self.agent_map[aid] 
+                                
+                                # 표와 정확히 일치하는 할당 공식: (Agent Index + Episode Count) % 3
+                                new_strat = (agent_idx + ep_count) % 3
+                                
+                                self._agent_strategies[aid] = new_strat
+                                
+                                if aid in obs_dict:
+                                    obs_dict[aid][51:54] = 0.0
+                                    obs_dict[aid][51 + new_strat] = 1.0
 
                 # Set __all__ after processing all environments
                 all_envs_done = all(self._env_done_flags.get(i, False) for i in range(self.num_envs))
@@ -663,13 +709,17 @@ if SCHOLA_AVAILABLE:
             # within the same step, creating new sub-episodes that mix trajectories.
             # RLlib's postprocessing then receives batches with multiple eps_id values,
             # causing "Batches must only contain steps from a single trajectory" error.
-            # Solution: Only Python's force timeout (in step()) ends episodes,
+            # Solution: Only Python's force timeout OR UE5 match-end ends episodes,
             # ensuring all agents terminate simultaneously with clean boundaries.
+            ue5_match_ended = any(
+                info_dict.get(fid, {}).get('MatchEnded', 'false') == 'true'
+                for fid in info_dict if fid != '__all__'
+            )
             for flat_id in list(terminated_dict.keys()):
                 if flat_id != '__all__':
                     terminated_dict[flat_id] = False
                     truncated_dict[flat_id] = False
-            terminated_dict['__all__'] = False
+            terminated_dict['__all__'] = ue5_match_ended
             truncated_dict['__all__'] = False
 
             # v10.2 REWARD FIX: Use CumulativeLifetimeReward from info as primary reward source.

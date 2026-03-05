@@ -137,9 +137,9 @@ protected:
 	/**
 	 * Returns the subset of all 10 tactical plays that are feasible given the current team state.
 	 * A play is infeasible if it assigns a role whose precondition cannot be met:
-	 *   - Defend: requires at least one friendly-owned capture point
 	 *   - Support: requires at least two alive allies
-	 * If all plays are filtered out, returns { StandardComp } as a safe fallback.
+	 * Defend is always feasible — agents with no friendly base behave like Assault until a base is secured.
+	 * If all plays are filtered out, returns { AllOutRush } as a safe fallback.
 	 * Used by both Phase 1 (random/event sampling) and Phase 3 (MCTS/epsilon-greedy).
 	 */
 	TArray<ETacticalPlay> GetFeasiblePlays(const FTeamWorldState& State) const;
@@ -202,6 +202,9 @@ protected:
 	bool bHealthCriticalTriggered = false;
 	float LastPlanningDurationMs = 0.0f;
 	float ValidationTickCounter = 0.0f;
+
+	/** Incremented each episode; drives round-robin strategy rotation for balanced RL training */
+	int32 EpisodeCount = 0;
 
 	/** Scoped capture points for this environment (set via BindCapturePoints) */
 	TArray<ACapturePoint*> CachedCapturePoints;

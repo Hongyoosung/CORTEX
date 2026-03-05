@@ -363,7 +363,11 @@ float UMocRewardCalculator::ComputeStepReward(
 				{
 					const float ApproachScale = bIsolated ? IsolationApproachMultiplier : 1.0f;
 					float ApproachDelta = FMath::Sqrt(PrevNearestDistSq) - FMath::Sqrt(CurrNearestDistSq);
-					Reward += AssaultReward.ObjectiveProgressReward * ApproachScale * FMath::Max(ApproachDelta, 0.0f);
+					// Bidirectional: reward approach (+), penalise retreat at half-strength (−).
+					// Previously clamped to ≥0 — moving away from objectives gave zero signal,
+					// allowing agents to walk toward walls or corners without any gradient cost.
+					const float EffectiveDelta = ApproachDelta >= 0.0f ? ApproachDelta : ApproachDelta * 0.5f;
+					Reward += AssaultReward.ObjectiveProgressReward * ApproachScale * EffectiveDelta;
 				}
 
 				// 루프 통합으로 간결해진 Zone Presence 처리 로직
@@ -404,6 +408,8 @@ float UMocRewardCalculator::ComputeStepReward(
 					float IdlePenalty = (CurrNearestDistSq == FLT_MAX || bIsolated)
 						? AssaultReward.IdlePenalty
 						: AssaultReward.IdlePenalty * 0.5f;
+					// Do NOT halve the penalty inside a captured friendly zone — camping in
+					// an already-secured zone should be equally discouraged so agents push forward.
 					Reward -= IdlePenalty;
 				}
 			}
@@ -439,22 +445,51 @@ float UMocRewardCalculator::ComputeStepReward(
 				}
 
 				// Cold-start: no friendly CPs exist yet (all neutral or enemy at episode start).
-				// Approach the nearest neutral CP as a pre-defend staging position.
-				// This provides a directional gradient from step 0, preventing the policy from
-				// drifting toward enemy objectives when there is nothing friendly to defend yet.
+				// Behave like Assault — approach and contest the nearest non-friendly CP to
+				// establish a base before switching to pure defense mode.
 				if (CurrNearestFriendlyDist == FLT_MAX && !bIsRespawnStep)
 				{
-					float PrevNeutralDist = FLT_MAX;
-					float CurrNeutralDist = FLT_MAX;
-					for (ACapturePoint* NeutralCP : CachedCapturePoints)
+					float PrevNonFriendlyDist = FLT_MAX;
+					float CurrNonFriendlyDist = FLT_MAX;
+					bool  bInNonFriendlyZone  = false;
+					float ActiveCappingProgress = 0.0f;
+
+					for (ACapturePoint* NonFriendlyCP : CachedCapturePoints)
 					{
-						if (!NeutralCP || NeutralCP->GetOwnership() != ECapturePointOwnership::Neutral) continue;
-						PrevNeutralDist = FMath::Min(PrevNeutralDist, FVector::Dist(Prev.Position, NeutralCP->GetActorLocation()));
-						CurrNeutralDist = FMath::Min(CurrNeutralDist, FVector::Dist(Current.Position, NeutralCP->GetActorLocation()));
+						if (!NonFriendlyCP || NonFriendlyCP->GetOwningTeamID() == MyTeamID) continue;
+						const float PrevDist = FVector::Dist(Prev.Position, NonFriendlyCP->GetActorLocation());
+						const float CurrDist = FVector::Dist(Current.Position, NonFriendlyCP->GetActorLocation());
+						PrevNonFriendlyDist = FMath::Min(PrevNonFriendlyDist, PrevDist);
+						CurrNonFriendlyDist = FMath::Min(CurrNonFriendlyDist, CurrDist);
+						if (CurrDist <= NonFriendlyCP->CaptureRadius)
+						{
+							bInNonFriendlyZone = true;
+							ActiveCappingProgress = FMath::Max(ActiveCappingProgress, NonFriendlyCP->GetCaptureProgress());
+						}
 					}
-					if (PrevNeutralDist < FLT_MAX && CurrNeutralDist < FLT_MAX)
+
+					// Approach reward toward nearest non-friendly CP (bidirectional: half-penalty for retreat)
+					if (PrevNonFriendlyDist < FLT_MAX && CurrNonFriendlyDist < FLT_MAX)
 					{
-						Reward += DefendReward.ZoneApproachReward * FMath::Max(PrevNeutralDist - CurrNeutralDist, 0.0f);
+						const float ApproachDelta = PrevNonFriendlyDist - CurrNonFriendlyDist;
+						const float EffectiveDelta = ApproachDelta >= 0.0f ? ApproachDelta : ApproachDelta * 0.5f;
+						const float ApproachScale = bIsolated ? IsolationApproachMultiplier : 1.0f;
+						Reward += DefendReward.ZoneApproachReward * ApproachScale * EffectiveDelta;
+					}
+
+					// Zone presence and active-capping bonuses while inside a non-friendly CP
+					if (bInNonFriendlyZone)
+					{
+						bInFriendlyZone = false; // not a friendly zone — skip defend-zone-specific logic below
+						Reward += DefendReward.ZonePresenceBonus;
+						// Reuse AssaultReward.ActiveCappingBonus to reward actively converting the point
+						Reward += AssaultReward.ActiveCappingBonus * ActiveCappingProgress;
+					}
+
+					// Idle penalty when outside any zone (mirrors Assault behaviour)
+					if (!bInNonFriendlyZone && PositionChange < AssaultIdleMovementThreshold)
+					{
+						Reward -= AssaultReward.IdlePenalty * 0.5f;
 					}
 				}
 
@@ -606,20 +641,24 @@ float UMocRewardCalculator::ComputeStepReward(
 				// 체력 보너스를 아군 근처에 있을 때만 주도록 변경
 				if (CurrAllyDist <= SupportAllyProximityThreshold)
 				{
-					// Flat proximity bonus when within support range
-					Reward += SupportReward.AllyProximityBonus;
+					// Proximity bonus only fires when ally is actually injured.
+					// Unconditional bonus caused support to camp with healthy allies indefinitely.
+					const float AllyHP = Current.AllyHealths[InjuredAllyIdx];
+					if (AllyHP > 0.0f && AllyHP < SupportReward.AllyInjuryThreshold)
+					{
+						Reward += SupportReward.AllyProximityBonus;
 
-					// 아군을 돕기 위해 교전 구역에 있으면서 체력을 잘 유지했으므로 헬스 보너스 지급
+						// Extra bonus for critically injured ally (HP < 30%)
+						if (AllyHP < 0.3f)
+						{
+							Reward += SupportReward.AllyProximityBonus * 0.5f;
+						}
+					}
+
+					// Health bonus for support staying alive near the team
 					if (Current.Health > SupportHealthThreshold)
 					{
 						Reward += SupportReward.HealthBonus;
-					}
-
-					// Extra bonus for being next to a critically injured ally (HP < 30%)
-					const float AllyHP = Current.AllyHealths[InjuredAllyIdx];
-					if (AllyHP > 0.0f && AllyHP < 0.3f)
-					{
-						Reward += SupportReward.AllyProximityBonus * 0.5f;
 					}
 				}
 				// 아군과 너무 멀리 떨어져서 꿀을 빨고 있다면, 체력 보너스는 없고 오히려 접근 보상만 존재하게 됨
@@ -748,14 +787,20 @@ float UMocRewardCalculator::ComputeStepReward(
 	{
 		int32 FriendlyBases = 0;
 		int32 EnemyBases = 0;
+		int32 NeutralBases = 0;
 		for (const ACapturePoint* CP : CachedCapturePoints)
 		{
 			if (!CP) continue;
 			const int32 OwnerTeam = CP->GetOwningTeamID();
-			if (OwnerTeam == MyTeamID) FriendlyBases++;
-			else if (OwnerTeam >= 0)   EnemyBases++;
+			if (OwnerTeam == MyTeamID)    FriendlyBases++;
+			else if (OwnerTeam >= 0)      EnemyBases++;
+			else                          NeutralBases++; // -1 = neutral
 		}
-		const float NetControl = static_cast<float>(FriendlyBases - EnemyBases);
+		// Treat uncaptured neutral CPs as 0.5 enemy so capturing a neutral gives the
+		// same ZoneControl incentive as capturing an enemy point (both swing NetControl by +1.5 net).
+		// Previously neutral=+1 vs enemy=+2 caused agents to skip nearby neutrals in favour of
+		// routing to enemy-held points for the larger reward swing.
+		const float NetControl = static_cast<float>(FriendlyBases - EnemyBases) - NeutralBases * 0.5f;
 		const float ZoneControlScale = GetStrategyScale(Strategy,
 			ZoneControlAssaultScale, ZoneControlDefendScale, ZoneControlSupportScale);
 		Reward += ZoneControlRewardPerBase * ZoneControlScale * NetControl;

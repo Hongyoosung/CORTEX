@@ -238,9 +238,17 @@ struct FSupportRewardSettings
 
     //========== Ally Proximity Properties =============
 
-    /** Flat bonus per step for being within SupportAllyProximityThreshold of the most-injured ally */
+    /** Flat bonus per step for being within SupportAllyProximityThreshold of the most-injured ally.
+     *  Only fires when the target ally's HP is below AllyInjuryThreshold (normalized 0-1).
+     *  Prevents support from permanently camping with fully-healthy allies. */
     UPROPERTY(EditAnywhere, Category = "AllyProximity")
     float AllyProximityBonus = 2.0f;
+
+    /** HP fraction (0-1) below which the most-injured ally is considered to need support.
+     *  AllyProximityBonus only fires when AllyHP < this threshold.
+     *  Default 0.9 means proximity bonus fires unless the ally is nearly full health. */
+    UPROPERTY(EditAnywhere, Category = "AllyProximity")
+    float AllyInjuryThreshold = 0.9f;
 
     /** Per-cm shaping reward for approaching the most-injured ally.
      *  FIX (Issue 3): Raised from 0.001 to 0.01 (= 1.0 per metre).

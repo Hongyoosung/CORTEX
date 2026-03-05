@@ -4,6 +4,7 @@
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Schola/Logging/ScholaTransitionLogger.h"
 #include "Schola/Logging/MocTransitionLogger.h"
+#include "Schola/ScholaEnvironment.h"
 #include "Characters/MocCharacter.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
@@ -76,6 +77,27 @@ void AMocTrainer::InitializeMocTrainer(UScholaMocAgent* InAgent)
     if (!CachedTeamManager)
     {
         UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] TeamManager not yet available — GatherStateObservation will fall back to world scan"));
+    }
+
+    // Cache ScholaEnvironment — find the one whose OwnedTeamManager matches ours
+    {
+        TArray<AActor*> EnvActors;
+        UGameplayStatics::GetAllActorsOfClass(GetWorld(), AScholaEnvironment::StaticClass(), EnvActors);
+        for (AActor* Actor : EnvActors)
+        {
+            if (AScholaEnvironment* Env = Cast<AScholaEnvironment>(Actor))
+            {
+                if (Env->GetTeamManager() == CachedTeamManager)
+                {
+                    CachedScholaEnvironment = Env;
+                    break;
+                }
+            }
+        }
+        if (!CachedScholaEnvironment)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Could not find owning AScholaEnvironment — match termination signal unavailable"));
+        }
     }
 
     // Cache capture point references (static actors — populated once)
@@ -264,12 +286,9 @@ TArray<float> AMocTrainer::GetObservation()
 
     TArray<float> Observation = CurrentObservation.ToArray();
 
-    // 차원 검증
-    if (Observation.Num() != 49)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[MocTrainer] Observation dimension mismatch: %d (expected 49)"),
-            Observation.Num());
-    }
+    // NOTE: This returns FObservation::ToArray() = 48-dim base only.
+    // Schola uses MocTacticalObserver which outputs 54-dim (48 base + 3 composition + 3 strategy one-hot).
+    // This path is unused by Schola but kept for legacy/debug use.
 
     return Observation;
 }
@@ -772,6 +791,16 @@ EAgentTrainingStatus AMocTrainer::ComputeStatus()
 
 void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
 {
+    // Match termination signal — Python reads this to end the episode when UE5 decides match is over
+    bool bMatchOver = CachedScholaEnvironment && IsValid(CachedScholaEnvironment) &&
+                      (CachedScholaEnvironment->GetMatchState() != EMocMatchState::InProgress &&
+                       CachedScholaEnvironment->GetMatchState() != EMocMatchState::WaitingToStart);
+    Info.Add(TEXT("MatchEnded"), bMatchOver ? TEXT("true") : TEXT("false"));
+    if (bMatchOver)
+    {
+        Info.Add(TEXT("MatchResult"), FString::FromInt(static_cast<int32>(CachedScholaEnvironment->GetMatchState())));
+    }
+
     // Provide comprehensive debug/training information
     Info.Add(TEXT("TotalEpisodes"), FString::FromInt(TotalEpisodes));
     Info.Add(TEXT("CurrentSteps"), FString::FromInt(CurrentEpisodeSteps));
@@ -881,35 +910,6 @@ void AMocTrainer::ResetTrainer()
 
     // Reset observations
     PreviousObservation = FObservation();
-
-    // Round-Robin Curriculum (A-2): Cycle strategy every EpisodesPerStrategy episodes.
-    // All agents in the same environment rotate together (TotalEpisodes increments
-    // simultaneously for all agents due to Python's force timeout).
-    if (bRoundRobinStrategy && MocAgent && MocAgent->bUseTrainingStrategyOverride)
-    {
-        const int32 StrategyPhase = (TotalEpisodes / EpisodesPerStrategy) % 3;
-        EStrategyType NewStrategy;
-        switch (StrategyPhase)
-        {
-        case 0:  NewStrategy = EStrategyType::Assault; break;
-        case 1:  NewStrategy = EStrategyType::Defend;  break;
-        default: NewStrategy = EStrategyType::Support; break;
-        }
-
-        if (MocAgent->TrainingStrategyOverride != NewStrategy)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] Round-Robin: Cycling strategy %s -> %s (Episode %d, Phase %d)"),
-                *UEnum::GetValueAsString(MocAgent->TrainingStrategyOverride),
-                *UEnum::GetValueAsString(NewStrategy),
-                TotalEpisodes + 1,
-                StrategyPhase);
-            MocAgent->TrainingStrategyOverride = NewStrategy;
-            if (ControlledCharacter)
-            {
-                ControlledCharacter->SetCommandedStrategy(NewStrategy);
-            }
-        }
-    }
 
     if (ControlledCharacter && IsValid(ControlledCharacter))
     {

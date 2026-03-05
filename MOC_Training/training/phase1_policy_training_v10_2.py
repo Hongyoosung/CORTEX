@@ -667,7 +667,7 @@ def create_env_config():
         "host": MOCv10_2TrainingConfig.HOST,
         "base_port": MOCv10_2TrainingConfig.PORT,
         "num_envs": MOCv10_2TrainingConfig.NUM_UE5_ENVIRONMENTS,
-        "force_uniform_strategy": True,  # Override UE5 SquadCommander for balanced training
+        "force_uniform_strategy": True,   # Python-side round-robin override; ensures equal A/D/S training exposure
     }
 
 
@@ -682,73 +682,44 @@ if RLLIB_AVAILABLE:
             episode.user_data["strategy_rewards"] = {0: [], 1: [], 2: []}
             episode.user_data["strategy_counts"] = {0: 0, 1: 0, 2: 0}
 
+        # on_episode_step은 완전히 삭제(또는 pass)합니다. 수동 누적은 버그의 원인입니다.
         def on_episode_step(self, *, episode, **kwargs):
-            # EpisodeV2 API: use get_agents() + last_info_for()
-            # Info dict contains 'Strategy' (UEnum string) and 'LastStepReward' directly
-            for agent_id in episode.get_agents():
-                info = episode.last_info_for(agent_id)
-                if not info:
-                    continue
-                raw_strategy = info.get('Strategy')
-                if raw_strategy is None:
-                    continue
-                # UEnum::GetValueAsString returns 'EStrategyType::Assault' - extract name after '::'
-                strategy_name = raw_strategy.split('::')[-1]
-                if strategy_name not in STRATEGY_STR_TO_IDX:
-                    raise ValueError(
-                        f"[on_episode_step] Unrecognized strategy value '{raw_strategy}'."
-                    )
-                strategy_idx = STRATEGY_STR_TO_IDX[strategy_name]
-                reward = float(info.get('LastStepReward', 0.0))
-                episode.user_data["strategy_rewards"][strategy_idx].append(reward)
-                episode.user_data["strategy_counts"][strategy_idx] += 1
+            pass
 
         def on_episode_end(self, *, episode, **kwargs):
-            for strat_idx, name in STRATEGY_NAMES.items():
-                rewards = episode.user_data["strategy_rewards"][strat_idx]
-                count = episode.user_data["strategy_counts"][strat_idx]
-                name_lower = name.lower()
-                episode.custom_metrics[f"strategy_{name_lower}_reward_mean"] = (
-                    np.mean(rewards) if rewards else 0.0
-                )
-                episode.custom_metrics[f"strategy_{name_lower}_reward_std"] = (
-                    np.std(rewards) if len(rewards) > 1 else 0.0
-                )
-                episode.custom_metrics[f"strategy_{name_lower}_count"] = count
-
-            total = sum(episode.user_data["strategy_counts"].values())
-            if total > 0:
-                for strat_idx, name in STRATEGY_NAMES.items():
-                    episode.custom_metrics[f"strategy_{name.lower()}_frac"] = (
-                        episode.user_data["strategy_counts"][strat_idx] / total
-                    )
-
-                # Round-robin detection: log which strategy is dominant this episode
-                dominant_strat = max(
-                    episode.user_data["strategy_counts"],
-                    key=episode.user_data["strategy_counts"].get
-                )
-                episode.custom_metrics["round_robin_active_strategy"] = dominant_strat
-
-        def on_train_result(self, *, algorithm, result, **kwargs):
-            """Extract per-policy loss metrics from learner_stats and re-publish
-            them as top-level custom_metrics so TensorBoard writes them to
-            ray/tune/custom_metrics/* alongside the per-strategy reward curves."""
-            learner_info = result.get("info", {}).get("learner", {})
-
-            for policy_name, strategy_label in [
-                ("assault_policy", "assault"),
-                ("defend_policy", "defend"),
-                ("support_policy", "support"),
-            ]:
-                policy_stats = learner_info.get(policy_name, {}).get("learner_stats", {})
-                if not policy_stats:
+            strategy_rewards = {0: [], 1: [], 2: []}
+            
+            # Ray 버전에 상관없이 agent_rewards를 안전하게 순회
+            for key, reward in episode.agent_rewards.items():
+                # key가 튜플 (agent_id, policy_id)일 수도 있고, 그냥 agent_id 문자열일 수도 있음
+                agent_id = key[0] if isinstance(key, tuple) else key
+                
+                policy_id = None
+                if isinstance(key, tuple) and len(key) > 1:
+                    policy_id = key[1]
+                if not policy_id:
+                    try:
+                        policy_id = episode.policy_for(agent_id)
+                    except Exception:
+                        pass
+                        
+                if not policy_id:
                     continue
-                for key in ["policy_loss", "vf_loss", "entropy", "total_loss"]:
-                    if key in policy_stats:
-                        result.setdefault("custom_metrics", {})[
-                            f"train_{key}_{strategy_label}"
-                        ] = policy_stats[key]
+                    
+                if "assault" in policy_id.lower():
+                    strategy_rewards[0].append(reward)
+                elif "defend" in policy_id.lower():
+                    strategy_rewards[1].append(reward)
+                elif "support" in policy_id.lower():
+                    strategy_rewards[2].append(reward)
+
+            # Custom Metrics 기록
+            for strat_idx, name in STRATEGY_NAMES.items():
+                rewards = strategy_rewards[strat_idx]
+                name_lower = name.lower()
+                
+                if rewards:
+                    episode.custom_metrics[f"strategy_{name_lower}_reward_mean"] = float(np.mean(rewards))
 
 
 _STRATEGY_TO_POLICY = {0: "assault_policy", 1: "defend_policy", 2: "support_policy"}
@@ -762,7 +733,10 @@ def _strategy_policy_mapping_fn(agent_id, episode, worker, **kwargs):
     """
     # Try to get the latest observation for this agent
     try:
-        obs = episode.last_observation_for(agent_id)
+        try:
+            obs = episode.last_obs_for(agent_id)
+        except AttributeError:
+            obs = None
         if obs is not None and len(obs) >= 51:
             strategy_onehot = obs[51:54]
             strategy_idx = int(np.argmax(strategy_onehot))
@@ -970,6 +944,9 @@ def train_with_rllib(args):
     latest_dir = os.path.join(output_dir, "latest")
     print(f"Output: {output_dir}")
 
+    # Manual TensorBoard writer (guarantees reward metrics are logged regardless of Ray version)
+    tb_writer = SummaryWriter(log_dir=os.path.join(output_dir, "tb"))
+
     # Create logger (UnifiedLogger is deprecated in newer Ray; fall back gracefully)
     logger_creator = None
     try:
@@ -1038,6 +1015,47 @@ def train_with_rllib(args):
         # Update cumulative counters
         cumulative_episodes += episodes
         cumulative_steps += agent_steps
+
+        # --- Manual TensorBoard logging ---
+        step = cumulative_steps  # use total agent steps as x-axis
+
+        # Episode reward
+        tb_writer.add_scalar("reward/episode_mean", reward, step)
+        if episodes > 0:
+            tb_writer.add_scalar("reward/episode_min", env_results.get("episode_reward_min", 0.0), step)
+            tb_writer.add_scalar("reward/episode_max", env_results.get("episode_reward_max", 0.0), step)
+        tb_writer.add_scalar("reward/episode_len_mean", ep_len, step)
+
+        # Gather all custom metrics reliably (Ray 1.x ~ 2.x 호환)
+        custom = result.get("custom_metrics", {}).copy()
+        if "env_runners" in result and "custom_metrics" in result["env_runners"]:
+            custom.update(result["env_runners"]["custom_metrics"])
+            
+        # 첫 10번의 이터레이션 동안 실제 어떤 키가 있는지 콘솔에 출력 (디버깅용)
+        if i < 10:
+            print(f"  [DEBUG] Custom Metrics Keys: {list(custom.keys())}")
+
+        # "strategy_"로 시작하는 모든 지표를 자동으로 찾아 TensorBoard에 기록
+        for key, value in custom.items():
+            if key.startswith("strategy_") and isinstance(value, (int, float, np.number)):
+                # 이름 최적화 (예: strategy_assault_reward_mean_mean -> assault_mean)
+                clean_name = key.replace("strategy_", "").replace("_reward", "").replace("_mean_mean", "_mean")
+                tb_writer.add_scalar(f"reward/{clean_name}", value, step)
+
+        # Per-policy learner stats 수정안
+        learner_all = result.get("info", {}).get("learner", {})
+        for pol_name, strat_label in [("assault_policy", "assault"), ("defend_policy", "defend"), ("support_policy", "support")]:
+            pol_data = learner_all.get(pol_name, {})
+            # "learner_stats" 키가 있으면 쓰고, 없으면 pol_data 자체를 사용
+            pol_stats = pol_data.get("learner_stats", pol_data) 
+            
+            if pol_stats:
+                for metric in ("policy_loss", "vf_loss", "entropy", "total_loss", "explained_variance", "entropy_coeff"):
+                    if metric in pol_stats and isinstance(pol_stats[metric], (float, int)):
+                        tb_writer.add_scalar(f"train/{metric}_{strat_label}", pol_stats[metric], step)
+
+        tb_writer.flush()
+        # --- End TensorBoard logging ---
 
         # Print progress
         current_iter = i + 1
@@ -1108,6 +1126,7 @@ def train_with_rllib(args):
         algo.restore(os.path.abspath(best_dir))
     export_onnx(algo, output_dir)
 
+    tb_writer.close()
     algo.stop()
     ray.shutdown()
 

@@ -370,9 +370,11 @@ protected:
 	 *  Reset when a non-friendly CP is nearest again. */
 	int32 AssaultZoneStepsAfterCapture = 0;
 
-	/** Number of steps over which zone presence bonus decays to 0 after CP becomes friendly */
+	/** Number of steps over which zone presence bonus decays to 0 after CP becomes friendly.
+	 *  Keep short (≤10) — a long decay lets agents linger in captured zones instead of
+	 *  advancing to the next objective. PostCaptureMomentum is the intended push signal. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float AssaultCapturedZoneDecaySteps = 30.0f;
+	float AssaultCapturedZoneDecaySteps = 5.0f;
 
 	// FIX (Issue 3 — Support): Cache the target ally index so the approach-delta
 	// is always computed against the SAME ally across consecutive steps.
