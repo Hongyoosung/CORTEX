@@ -3,7 +3,7 @@
 #include "RL/Rewards/MocRewardCalculator.h"
 #include "Characters/MocCharacter.h"
 #include "Actors/CapturePoint.h"
-#include "Team/TeamManager.h"
+#include "Team/MatchManager.h"
 #include "Schola/ScholaEnvironment.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
@@ -20,14 +20,6 @@ void UMocRewardCalculator::BeginPlay()
 	OwnerCharacter = Cast<AMocCharacter>(GetOwner());
 	CacheCapturePoints();
 
-	// Bind to every capture point's ownership-change event so sparse rewards fire automatically
-	for (ACapturePoint* CP : CachedCapturePoints)
-	{
-		if (CP)
-		{
-			CP->OnPointCaptured.AddDynamic(this, &UMocRewardCalculator::OnCapturePointCaptured);
-		}
-	}
 
 	// Subscribe to match state changes for win/loss terminal reward (multi-env: bind to owning ScholaEnvironment)
 	const int32 MyEnvID = OwnerCharacter ? OwnerCharacter->GetEnvID_Implementation() : 0;
@@ -56,7 +48,6 @@ float UMocRewardCalculator::GetStrategyScale(EStrategyType Strategy, float Assau
 
 float UMocRewardCalculator::ApplyAndLogReward(ERewardEventType EventType, EStrategyType Strategy, float RewardValue)
 {
-	LogRewardEvent(EventType, Strategy, RewardValue);
 	AddReward(RewardValue);
 	return RewardValue;
 }
@@ -73,57 +64,7 @@ float UMocRewardCalculator::DrainSparseReward()
 	return Drained;
 }
 
-void UMocRewardCalculator::OnCapturePointCaptured(int32 EnvID, ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
-{
-	if (!OwnerCharacter || EnvID != OwnerCharacter->GetEnvID_Implementation()) return;
 
-	const int32 MyTeam = OwnerCharacter->GetTeamID_Implementation();
-	const int32 NewOwnerTeam = ACapturePoint::ConvertOwnershipToTeamID(NewOwner);
-	const int32 PrevOwnerTeam = ACapturePoint::ConvertOwnershipToTeamID(PreviousOwner);
-
-	const EStrategyType Strategy = OwnerCharacter->GetCommandedStrategy();
-
-	if (NewOwnerTeam == MyTeam)
-	{
-		bool bAwardCapture = true;
-		if (Strategy == EStrategyType::Defend && OwnerCharacter)
-		{
-			bAwardCapture = false;
-			
-			const float ThresholdSq = FMath::Square(CaptureRadius_Cached * 1.5f);
-			const FVector AgentLoc = OwnerCharacter->GetActorLocation();
-
-			for (ACapturePoint* CP : CachedCapturePoints)
-			{
-				if (!CP) continue;
-				if (FVector::DistSquared(AgentLoc, CP->GetActorLocation()) <= ThresholdSq)
-				{
-					bAwardCapture = true;
-					break;
-				}
-			}
-		}
-		if (bAwardCapture)
-		{
-			CalculateCaptureReward(Strategy);
-		}
-	}
-	else if (PrevOwnerTeam == MyTeam)
-	{
-		// B4: Cooldown — prevent flip-flop scenarios from flooding sparse penalties.
-		// Max 1 loss penalty per capture point per CaptureLossCooldownSeconds.
-		const float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-		const float* LastPenaltyTime = LastCaptureLossPenaltyTime.Find(PointID);
-		if (LastPenaltyTime && (CurrentTime - *LastPenaltyTime) < CaptureLossCooldownSeconds)
-		{
-			UE_LOG(LogTemp, Verbose, TEXT("[MocRewardCalculator] Capture loss cooldown active for CP %d (%.1fs remaining)"),
-				static_cast<int32>(PointID), CaptureLossCooldownSeconds - (CurrentTime - *LastPenaltyTime));
-			return;
-		}
-		LastCaptureLossPenaltyTime.Add(PointID, CurrentTime);
-		CalculateLosePointPenalty(Strategy);
-	}
-}
 
 void UMocRewardCalculator::OnMatchStateChanged(EMocMatchState NewState)
 {
@@ -150,13 +91,7 @@ void UMocRewardCalculator::OnMatchStateChanged(EMocMatchState NewState)
 			const int32 MyEnvID2 = OwnerCharacter ? OwnerCharacter->GetEnvID_Implementation() : 0;
 			for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
 			{
-				if ((*It)->ScholaEnvID == MyEnvID2)
-				{
-					const int32 MyScore = (*It)->GetTeamScore(MyTeam);
-					const int32 EnemyScore = (*It)->GetTeamScore(MyTeam == 0 ? 1 : 0);
-					bTeamWon = (MyScore > EnemyScore);
-					break;
-				}
+
 			}
 			bMatchOver = true;
 		}
@@ -165,21 +100,8 @@ void UMocRewardCalculator::OnMatchStateChanged(EMocMatchState NewState)
 		break;
 	}
 
-	if (bMatchOver)
-	{
-		ApplyMatchEndReward(bTeamWon);
-	}
 }
 
-void UMocRewardCalculator::ApplyMatchEndReward(bool bTeamWon)
-{
-	const float Reward = bTeamWon ? MatchWinReward : MatchLossReward;
-	const EStrategyType Strategy = OwnerCharacter ? OwnerCharacter->GetCommandedStrategy() : EStrategyType::Assault;
-	ApplyAndLogReward(ERewardEventType::TeamVictory, Strategy, Reward);
-
-	UE_LOG(LogTemp, Log, TEXT("[MocRewardCalculator] Match end reward: %.1f (%s)"),
-		Reward, bTeamWon ? TEXT("WIN") : TEXT("LOSS"));
-}
 
 // ==================== Event-Driven Sparse Rewards ====================
 
@@ -236,7 +158,6 @@ float UMocRewardCalculator::CalculateSurvivalReward(EStrategyType ActiveStrategy
 
 float UMocRewardCalculator::CalculateDistanceShaping(EStrategyType ActiveStrategy, float DistanceToTarget)
 {
-	if (!bUseDenseRewards) return 0.0f;
 
 	float Scale = GetStrategyScale(ActiveStrategy,
 		AssaultReward.PenaltyPerMeterScale, DefendReward.PenaltyPerMeterScale, SupportReward.PenaltyPerMeterScale);
@@ -316,7 +237,7 @@ float UMocRewardCalculator::ComputeStepReward(
 					float PrevDistSq = FVector::DistSquared(Prev.Position, CP->GetActorLocation());
 					float CurrDistSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
 
-					if (CP->GetOwningTeamID() != MyTeamID)
+					if (CP->GetTeamID_Implementation() != MyTeamID)
 					{
 						PrevNearestDistSq = FMath::Min(PrevNearestDistSq, PrevDistSq);
 						CurrNearestDistSq = FMath::Min(CurrNearestDistSq, CurrDistSq);
@@ -340,7 +261,7 @@ float UMocRewardCalculator::ComputeStepReward(
 					float NearestFriendlyDistSq = FLT_MAX;
 					for (ACapturePoint* CP : CachedCapturePoints)
 					{
-						if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+						if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 						float DSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
 						if (DSq < NearestFriendlyDistSq)
 						{
@@ -419,7 +340,7 @@ float UMocRewardCalculator::ComputeStepReward(
 
 				for (ACapturePoint* CP : CachedCapturePoints)
 				{
-					if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+					if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 
 					const float CurrDist = FVector::Dist(Current.Position, CP->GetActorLocation());
 					const float PrevDist = FVector::Dist(Prev.Position, CP->GetActorLocation());
@@ -444,7 +365,7 @@ float UMocRewardCalculator::ComputeStepReward(
 
 					for (ACapturePoint* NonFriendlyCP : CachedCapturePoints)
 					{
-						if (!NonFriendlyCP || NonFriendlyCP->GetOwningTeamID() == MyTeamID) continue;
+						if (!NonFriendlyCP || NonFriendlyCP->GetTeamID_Implementation() == MyTeamID) continue;
 						const float PrevDist = FVector::Dist(Prev.Position, NonFriendlyCP->GetActorLocation());
 						const float CurrDist = FVector::Dist(Current.Position, NonFriendlyCP->GetActorLocation());
 						PrevNonFriendlyDist = FMath::Min(PrevNonFriendlyDist, PrevDist);
@@ -507,7 +428,7 @@ float UMocRewardCalculator::ComputeStepReward(
 					{
 						for (ACapturePoint* CP : CachedCapturePoints)
 						{
-							if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+							if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 							if (FVector::Dist(Current.EnemyPositions[i], CP->GetActorLocation()) <= CP->CaptureRadius)
 							{
 								Reward += DefendReward.ThreatResponseBonus;
@@ -548,7 +469,7 @@ float UMocRewardCalculator::ComputeStepReward(
 				{
 					const float DurabilityReward = DefendReward.ZoneDurabilityBonus * DamageTaken;
 					Reward += DurabilityReward;
-					LogRewardEvent(ERewardEventType::ZoneDurability, Strategy, DurabilityReward);
+					
 				}
 			}
 
@@ -565,7 +486,7 @@ float UMocRewardCalculator::ComputeStepReward(
 					{
 						for (ACapturePoint* CP : CachedCapturePoints)
 						{
-							if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+							if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 							const float EnemyDistToZone = FVector::Dist(Prev.EnemyPositions[i], CP->GetActorLocation());
 							if (EnemyDistToZone <= CP->CaptureRadius * DefendReward.ZoneGuardRadius)
 							{
@@ -578,7 +499,7 @@ float UMocRewardCalculator::ComputeStepReward(
 				if (bEnemyWasNearZone)
 				{
 					Reward += DefendReward.ZoneGuardKillBonus;
-					LogRewardEvent(ERewardEventType::ZoneGuardKill, Strategy, DefendReward.ZoneGuardKillBonus);
+					
 				}
 			}
 		}
@@ -672,7 +593,7 @@ float UMocRewardCalculator::ComputeStepReward(
 				float CurrNearestObjDist = FLT_MAX;
 				for (ACapturePoint* CP : CachedCapturePoints)
 				{
-					if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+					if (!CP || CP->GetTeamID_Implementation() == MyTeamID) continue;
 					PrevNearestObjDist = FMath::Min(PrevNearestObjDist, FVector::Dist(Prev.Position, CP->GetActorLocation()));
 					CurrNearestObjDist = FMath::Min(CurrNearestObjDist, FVector::Dist(Current.Position, CP->GetActorLocation()));
 				}
@@ -697,7 +618,7 @@ float UMocRewardCalculator::ComputeStepReward(
 			if (OwnerCharacter && OwnerCharacter->GetLastTickHealAmount() > 0.0f)
 			{
 				Reward += SupportReward.HealTickReward;
-				LogRewardEvent(ERewardEventType::HealAlly, Strategy, SupportReward.HealTickReward);
+				
 			}
 
 			// --- Role-break penalty: killed an enemy while an ally needed healing ---
@@ -721,7 +642,7 @@ float UMocRewardCalculator::ComputeStepReward(
 					if (bAllyInjured)
 					{
 						Reward -= SupportReward.RoleBreakPenalty;
-						LogRewardEvent(ERewardEventType::Kill, Strategy, -SupportReward.RoleBreakPenalty);
+						
 					}
 				}
 			}
@@ -779,7 +700,7 @@ float UMocRewardCalculator::ComputeStepReward(
 		for (const ACapturePoint* CP : CachedCapturePoints)
 		{
 			if (!CP) continue;
-			const int32 OwnerTeam = CP->GetOwningTeamID();
+			const int32 OwnerTeam = CP->GetTeamID_Implementation();
 			if (OwnerTeam == MyTeamID)    FriendlyBases++;
 			else if (OwnerTeam >= 0)      EnemyBases++;
 			else                          NeutralBases++; // -1 = neutral
@@ -816,25 +737,18 @@ float UMocRewardCalculator::ComputeStepReward(
 	const float CurrentIndividualReward = Reward;
 	if (TeamRewardMixingRatio > 0.0f && OwnerCharacter)
 	{
-		ATeamManager* TeamMgr = OwnerCharacter->GetTeamManager();
-		if (TeamMgr)
+		AMatchManager* MatchMgr = OwnerCharacter->GetMatchManager();
+		if (MatchMgr)
 		{
 			const int32 TeamID = OwnerCharacter->GetTeamID_Implementation();
 			// [수정] 가능하면 const TArray<AMocCharacter*>& 로 반환받도록 처리해야 복사가 발생하지 않습니다.
-			// (만약 TeamManager의 GetTeamAgents가 값 복사(TArray)를 반환한다면 엔진 구조상 메모리 할당이 발생합니다.
+			// (만약 MatchManager의 GetTeamAgents가 값 복사(TArray)를 반환한다면 엔진 구조상 메모리 할당이 발생합니다.
 			// 향후 TeamMgr->GetTeamAgents() 반환형 자체를 참조 반환으로 바꾸는 것을 강력히 권장합니다.)
-			const TArray<AMocCharacter*>& Teammates = TeamMgr->GetTeamAgents(TeamID);
+			const TArray<AMocCharacter*>& Teammates = MatchMgr->GetTeamAgents(TeamID);
 
 			float TeamRewardSum = 0.0f;
 			int32 TeamCount = 0;
-			for (AMocCharacter* Mate : Teammates)
-			{
-				if (Mate && Mate->GetRewardCalculator())
-				{
-					TeamRewardSum += Mate->GetRewardCalculator()->GetLastIndividualStepReward();
-					TeamCount++;
-				}
-			}
+
 
 			if (TeamCount > 0)
 			{
@@ -908,7 +822,6 @@ FRewardBreakdown UMocRewardCalculator::ComputeRewardBreakdown(
 
 void UMocRewardCalculator::ResetEpisodeState()
 {
-	ResetCumulativeReward();
 	PostCaptureMomentumStepsRemaining = 0;
 	LastCapturedPointLocation = FVector::ZeroVector;
 	AssaultZoneStepsAfterCapture = 0;
@@ -919,14 +832,8 @@ void UMocRewardCalculator::ResetEpisodeState()
 	LastIndividualStepReward = 0.0f;
 }
 
-// ==================== Event Log ====================
 
-void UMocRewardCalculator::LogRewardEvent(ERewardEventType EventType, EStrategyType Strategy, float Reward)
-{
-	float Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	int32 AgentID = OwnerCharacter ? OwnerCharacter->AgentID : -1;
-	EventLog.Add(FRewardEvent(EventType, Strategy, Reward, Timestamp, AgentID));
-}
+
 
 // ==================== Internals ====================
 
@@ -945,7 +852,7 @@ void UMocRewardCalculator::CacheCapturePoints()
 		if ((*It)->GetEnvId() == MyEnvID)
 		{
 			// ScholaEnvironment가 소유한 거점 목록을 그대로 사용
-			CachedCapturePoints = (*It)->GetAllCapturePoints();
+			
 			break;
 		}
 	}

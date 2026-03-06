@@ -1,22 +1,27 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Team/SquadManager.h"
-#include "Team/TeamManager.h"
 #include "Characters/MocCharacter.h"
 #include "AI/MCTS/TeamMCTS.h"
 #include "AI/Models/TeamWorldModel.h"
 #include "AI/Training/TeamDataCollector.h"
 #include "Types/RewardTypes.h"
-#include "Core/MocGameMode.h"
-#include "Schola/ScholaEnvironment.h"
 #include "Actors/CapturePoint.h"
-#include "Actors/PickupBase.h"
 #include "DrawDebugHelpers.h"
-#include "Kismet/GameplayStatics.h"
 #include "HAL/IConsoleManager.h"
 
-// Static reference for console commands (Team 0 by default)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Debug helper — a module-local weak pointer to the most-recently created
+// USquadManager (Team 0 by convention) for console commands.
+// ─────────────────────────────────────────────────────────────────────────────
+
 static TWeakObjectPtr<USquadManager> GDebugSquadManager;
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constructor — default role assignments + one-time console command registration
+// ─────────────────────────────────────────────────────────────────────────────
 
 USquadManager::USquadManager()
 {
@@ -28,7 +33,8 @@ USquadManager::USquadManager()
 		EStrategyType::Support
 	};
 
-	// Debug console commands
+	// ── Debug console commands ──────────────────────────────────────────────
+
 	static FAutoConsoleCommand CmdSquadState(
 		TEXT("moc.debug.squadstate"),
 		TEXT("Print current tactical play, role assignments, confidence, and MCTS stats"),
@@ -39,18 +45,18 @@ USquadManager::USquadManager()
 				UE_LOG(LogTemp, Display, TEXT("=== Squad Commander State (Team %d) ==="), SM->TeamID);
 				UE_LOG(LogTemp, Display, TEXT("  Tactical Play: %s"), *UEnum::GetValueAsString(SM->ActiveTacticalPlay));
 				UE_LOG(LogTemp, Display, TEXT("  Confidence: %.2f"), SM->PlanConfidence);
-				UE_LOG(LogTemp, Display, TEXT("  Planning Cycles: %d (Event Replans: %d)"), SM->PlanningCycleCount, SM->EventDrivenReplanCount);
-				if (SM->TeamManager)
-				{
-					UE_LOG(LogTemp, Display, TEXT("  Data Collection Mode: %s"), SM->TeamManager->bDataCollectionMode ? TEXT("Yes") : TEXT("No"));
-				}
+				UE_LOG(LogTemp, Display, TEXT("  Planning Cycles: %d  (Event Replans: %d)"),
+					SM->PlanningCycleCount, SM->EventDrivenReplanCount);
+
 				for (int32 i = 0; i < SM->CurrentRoleAssignments.Num(); ++i)
 				{
-					UE_LOG(LogTemp, Display, TEXT("  Agent %d: %s"), i, *UEnum::GetValueAsString(SM->CurrentRoleAssignments[i]));
+					UE_LOG(LogTemp, Display, TEXT("  Agent %d: %s"),
+						i, *UEnum::GetValueAsString(SM->CurrentRoleAssignments[i]));
 				}
 				if (SM->TeamMCTSPlanner)
 				{
-					UE_LOG(LogTemp, Display, TEXT("  MCTS Last Iterations: %d"), SM->TeamMCTSPlanner->GetLastIterationCount());
+					UE_LOG(LogTemp, Display, TEXT("  MCTS Last Iterations: %d"),
+						SM->TeamMCTSPlanner->GetLastIterationCount());
 				}
 			}
 			else
@@ -62,59 +68,15 @@ USquadManager::USquadManager()
 
 	static FAutoConsoleCommand CmdForceReplan(
 		TEXT("moc.debug.forcereplan"),
-		TEXT("Trigger immediate tactical replanning"),
+		TEXT("Trigger immediate tactical replanning (uses cached state — no live agents required)"),
 		FConsoleCommandDelegate::CreateLambda([]()
 		{
 			if (USquadManager* SM = GDebugSquadManager.Get())
 			{
 				UE_LOG(LogTemp, Display, TEXT("Forcing replan for Team %d"), SM->TeamID);
-				SM->PerformTacticalPlanning();
+				// Called without live agent arrays for debug convenience; will use empty lists.
+				SM->PerformTacticalPlanning({}, {});
 				SM->TimeSinceLastPlan = 0.0f;
-			}
-		})
-	);
-
-	static FAutoConsoleCommand CmdToggleViz(
-		TEXT("moc.debug.toggleviz"),
-		TEXT("Toggle 3D debug visualization"),
-		FConsoleCommandDelegate::CreateLambda([]()
-		{
-			if (USquadManager* SM = GDebugSquadManager.Get())
-			{
-				if (SM->TeamManager)
-				{
-					SM->TeamManager->bShowDebugInfo = !SM->TeamManager->bShowDebugInfo;
-					SM->TeamManager->bDrawRoleAssignments = SM->TeamManager->bShowDebugInfo;
-					UE_LOG(LogTemp, Display, TEXT("Debug visualization: %s"), SM->TeamManager->bShowDebugInfo ? TEXT("ON") : TEXT("OFF"));
-				}
-			}
-		})
-	);
-
-	static FAutoConsoleCommand CmdObserver(
-		TEXT("moc.debug.observer"),
-		TEXT("Print current 60-dim observation tensor"),
-		FConsoleCommandDelegate::CreateLambda([]()
-		{
-			if (USquadManager* SM = GDebugSquadManager.Get())
-			{
-				FTeamWorldState State = SM->CollectTeamState();
-				TArray<float> Tensor = State.ToTensor();
-				UE_LOG(LogTemp, Display, TEXT("=== Team State Tensor (%d dims) ==="), Tensor.Num());
-				FString TensorStr;
-				for (int32 i = 0; i < Tensor.Num(); ++i)
-				{
-					TensorStr += FString::Printf(TEXT("%.3f "), Tensor[i]);
-					if ((i + 1) % 10 == 0)
-					{
-						UE_LOG(LogTemp, Display, TEXT("  [%d-%d]: %s"), i - 9, i, *TensorStr);
-						TensorStr.Empty();
-					}
-				}
-				if (!TensorStr.IsEmpty())
-				{
-					UE_LOG(LogTemp, Display, TEXT("  [%d+]: %s"), Tensor.Num() - (Tensor.Num() % 10), *TensorStr);
-				}
 			}
 		})
 	);
@@ -127,292 +89,345 @@ USquadManager::USquadManager()
 			if (USquadManager* SM = GDebugSquadManager.Get())
 			{
 				UE_LOG(LogTemp, Display, TEXT("=== Timing Stats (Team %d) ==="), SM->TeamID);
-				if (SM->TeamManager)
-				{
-					UE_LOG(LogTemp, Display, TEXT("  MCTS Time Budget: %.1f ms"), SM->TeamManager->MCTSTimeBudget * 1000.0f);
-				}
 				if (SM->TeamWorldModel)
 				{
-					UE_LOG(LogTemp, Display, TEXT("  World Model Avg Latency: %.2f ms"), SM->TeamWorldModel->GetAverageLatency());
+					UE_LOG(LogTemp, Display, TEXT("  World Model Avg Latency: %.2f ms"),
+						SM->TeamWorldModel->GetAverageLatency());
 				}
-				else
+				else 
 				{
 					UE_LOG(LogTemp, Display, TEXT("  World Model: Not initialized"));
 				}
-				UE_LOG(LogTemp, Display, TEXT("  Last Planning Duration: %.2f ms"), SM->LastPlanningDurationMs);
+					
+				UE_LOG(LogTemp, Display, TEXT("  Last Planning Duration: %.2f ms"),
+					SM->LastPlanningDurationMs);
 			}
 		})
 	);
 }
 
-UWorld* USquadManager::GetWorld() const
-{
-	if (TeamManager)
-	{
-		return TeamManager->GetWorld();
-	}
-	return nullptr;
-}
 
-void USquadManager::TickPlanner(float DeltaTime)
-{
-	TimeSinceLastPlan += DeltaTime;
+// ─────────────────────────────────────────────────────────────────────────────
+// Initialization
+// ─────────────────────────────────────────────────────────────────────────────
 
-	// Phase 1 RL Training: strategies are fixed per episode, skip all replanning
-	if (!TeamManager || !TeamManager->bRLTrainingMode)
-	{
-		// Check if replanning needed (interval-based)
-		if (ShouldReplan())
-		{
-			PerformTacticalPlanning();
-			TimeSinceLastPlan = 0.0f;
-		}
-
-		// Health-critical event detection
-		if (TeamManager)
-		{
-			FTeamWorldState CurrentState = CollectTeamState();
-			bool bIsCritical = CurrentState.IsTeamHealthCritical();
-
-			if (bIsCritical && !bHealthCriticalTriggered)
-			{
-				bHealthCriticalTriggered = true;
-				ReplanMCTSOnCriticalEvent(ECriticalEventType::HealthCritical, nullptr);
-			}
-			else if (!bIsCritical)
-			{
-				bHealthCriticalTriggered = false;
-			}
-		}
-	}
-
-	// End-to-end validation logging (behind debug flag)
-	if (TeamManager && TeamManager->bShowDebugInfo)
-	{
-		ValidationTickCounter += DeltaTime;
-		if (ValidationTickCounter >= 2.0f)
-		{
-			ValidationTickCounter = 0.0f;
-
-			FTeamWorldState ValidationState = CollectTeamState();
-			TArray<float> Tensor = ValidationState.ToTensor();
-			UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: Observer tensor dims=%d (expected ~60)"), TeamID, Tensor.Num());
-
-			int32 AssignedCount = CurrentRoleAssignments.Num();
-			if (AssignedCount != 5)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[Validation] Team %d: Role assignments=%d (expected 5)"), TeamID, AssignedCount);
-			}
-
-			UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: LastPlanning=%.2fms, WorldModel=%.2fms"),
-				TeamID, LastPlanningDurationMs,
-				TeamWorldModel ? TeamWorldModel->GetAverageLatency() : 0.0f);
-		}
-	}
-
-	// Draw debug visualization
-	if (TeamManager && TeamManager->bShowDebugInfo && TeamManager->bDrawRoleAssignments)
-	{
-		DrawDebugVisualization();
-	}
-}
-
-void USquadManager::Initialize(int32 InTeamID, ATeamManager* InTeamManager)
+void USquadManager::Initialize(int32 InTeamID)
 {
 	TeamID = InTeamID;
-	TeamManager = InTeamManager;
 
-	// Initialize Team World Model
+	// World model (ONNX) — path is pushed later via Configure().
 	TeamWorldModel = NewObject<UTeamWorldModel>(this);
-	bool bModelLoaded = false;
 
-	if (TeamWorldModel && !TeamManager->TeamWorldModelPath.IsEmpty())
-	{
-		bModelLoaded = TeamWorldModel->InitModel(TeamManager->TeamWorldModelPath);
-
-		if (bModelLoaded)
-		{
-			UE_LOG(LogTemp, Log, TEXT("Team %d: World model loaded from %s"), TeamID, *TeamManager->TeamWorldModelPath);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("Team %d: Failed to load world model from %s - using data collection mode"),
-				TeamID, *TeamManager->TeamWorldModelPath);
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Team %d: No world model path specified - using data collection mode"), TeamID);
-	}
-
-	// Initialize Team MCTS planner
+	// MCTS planner
 	TeamMCTSPlanner = NewObject<UTeamMCTS>(this);
-
 	if (TeamMCTSPlanner && TeamWorldModel)
 	{
 		FTeamMCTSConfig MCTSConfig;
-		MCTSConfig.TimeBudgetSeconds = TeamManager->MCTSTimeBudget;
-		MCTSConfig.BatchSize = TeamManager->MCTSBatchSize;
 		MCTSConfig.MaxIterations = 50;
-
+		// TimeBudget and BatchSize are updated when Configure() is called.
 		TeamMCTSPlanner->Setup(TeamWorldModel, MCTSConfig);
 
-		if (bModelLoaded)
-		{
-			UE_LOG(LogTemp, Log, TEXT("Team %d: Team MCTS initialized with loaded world model"), TeamID);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("Team %d: Team MCTS initialized but world model not loaded - MCTS will not work until model is trained"), TeamID);
-		}
+		UE_LOG(LogTemp, Log, TEXT("[SquadManager] Team %d: MCTS initialized (world model not yet loaded)"), TeamID);
 	}
 
-	// Initialize training data collector
+	// Training data collector
 	DataCollector = NewObject<UTeamDataCollector>(this);
-	if (DataCollector)
-	{
-		if (TeamManager)
-		{
-			DataCollector->BeginRecording(TeamManager->GetEnvRandomStream().RandRange(1000, 9999));
-		}
-		else
-		{
-			DataCollector->BeginRecording(FMath::RandRange(1000, 9999));
-		}
-		UE_LOG(LogTemp, Log, TEXT("Team %d: Data collector initialized and recording started"), TeamID);
-	}
+	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Team %d: Data collector created"), TeamID);
 
-	// Automatically enable data collection mode if no model is loaded
-	if (!bModelLoaded)
-	{
-		TeamManager->bDataCollectionMode = true;
-		UE_LOG(LogTemp, Display, TEXT("Team %d: Auto-enabled data collection mode (no world model available)"), TeamID);
-	}
-
-	// Wire critical event delegates
-	TeamManager->OnAgentKilled.AddDynamic(this, &USquadManager::OnAgentKilledHandler);
-	UE_LOG(LogTemp, Log, TEXT("Team %d: Bound OnAgentKilled delegate"), TeamID);
-
-	// Capture point events are scoped per environment.
-	// AScholaEnvironment calls BindCapturePoints() + SetScholaEnvironment() after Initialize().
-
-	// Register as debug target
+	// Register as the debug target (last-created wins — fine for single-env sessions)
 	GDebugSquadManager = this;
-
-	UE_LOG(LogTemp, Log, TEXT("Squad Planner initialized for Team %d (MCTS=%s, DataCollection=%s)"),
-		TeamID,
-		bModelLoaded ? TEXT("Enabled") : TEXT("Disabled"),
-		TeamManager->bDataCollectionMode ? TEXT("Enabled") : TEXT("Disabled"));
 }
 
-void USquadManager::SetScholaEnvironment(AScholaEnvironment* InEnvironment)
+void USquadManager::Configure(const FSquadConfig& InConfig)
 {
-	OwningEnvironment = InEnvironment;
+	Config = InConfig;
+
+	// Re-apply time budget to MCTS if already constructed
+	if (TeamMCTSPlanner)
+	{
+		FTeamMCTSConfig MCTSConfig;
+		MCTSConfig.MaxIterations = 50;
+		// Caller may expose BatchSize via Config in the future
+		TeamMCTSPlanner->Setup(TeamWorldModel, MCTSConfig);
+	}
 }
 
 void USquadManager::BindCapturePoints(const TArray<ACapturePoint*>& CapturePoints)
 {
 	CachedCapturePoints = CapturePoints;
-
-	for (ACapturePoint* Point : CapturePoints)
-	{
-		if (Point)
-		{
-			Point->OnPointCaptured.AddUniqueDynamic(this, &USquadManager::OnPointCapturedHandler);
-		}
-	}
-	UE_LOG(LogTemp, Log, TEXT("Team %d: Bound OnPointCaptured to %d capture points (via BindCapturePoints)"), TeamID, CapturePoints.Num());
+	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Team %d: Bound %d capture points"),
+		TeamID, CapturePoints.Num());
 }
 
-bool USquadManager::ShouldReplan() const
-{
-	return TimeSinceLastPlan >= TeamManager->PlanningInterval;
-}
 
-//========================================
+// ─────────────────────────────────────────────────────────────────────────────
 // Episode Management
-//========================================
+// ─────────────────────────────────────────────────────────────────────────────
 
-void USquadManager::Reset()
+void USquadManager::Reset(const TArray<AMocCharacter*>& TeamAgents)
 {
-	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Resetting squad planner for Team %d"), TeamID);
+	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Resetting planner for Team %d"), TeamID);
 
-	TimeSinceLastPlan = 0.0f;
-	PlanConfidence = 0.0f;
-	PlanningCycleCount = 0;
-	EventDrivenReplanCount = 0;
+	TimeSinceLastPlan       = 0.0f;
+	PlanConfidence          = 0.0f;
+	PlanningCycleCount      = 0;
+	EventDrivenReplanCount  = 0;
+	bHasPreviousState       = false;
+	bHealthCriticalTriggered = false;
+	ValidationTickCounter   = 0.0f;
+	LastPlanningDurationMs  = 0.0f;
 
-	ActiveTacticalPlay = ETacticalPlay::StandardComp;
+	ActiveTacticalPlay    = ETacticalPlay::StandardComp;
+	PreviousTacticalPlay  = ETacticalPlay::StandardComp;
+	PreviousTeamState     = FTeamWorldState();
 
 	CurrentRoleAssignments.Empty();
 	CurrentRoleAssignments.Init(EStrategyType::Assault, 5);
 
-	bHasPreviousState = false;
-	PreviousTeamState = FTeamWorldState();
-	PreviousTacticalPlay = ETacticalPlay::StandardComp;
+	EpisodeCount++;
+	SampleRandomTacticalPlay(TeamAgents);
 
-	// Phase 1 RL Training: round-robin strategy assignment for balanced training
-	if (TeamManager && TeamManager->bRLTrainingMode)
-	{
-		EpisodeCount++;
-		SampleRandomTacticalPlay();
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Reset complete - default assignments restored"));
+	UE_LOG(LogTemp, Log, TEXT("[SquadManager] Team %d reset complete"), TeamID);
 }
 
-TArray<ETacticalPlay> USquadManager::GetFeasiblePlays(const FTeamWorldState& State) const
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tick
+// ─────────────────────────────────────────────────────────────────────────────
+
+void USquadManager::TickPlanner(float DeltaTime,
+                                const TArray<AMocCharacter*>& TeamAgents,
+                                const TArray<AMocCharacter*>& EnemyAgents)
 {
-	// Precondition: Support requires ≥2 alive allies (support agent needs someone to support)
-	int32 AliveCount = 0;
-	for (bool bAlive : State.FriendlyAlive)
+	TimeSinceLastPlan += DeltaTime;
+
+	if (ShouldReplan())
 	{
-		if (bAlive) AliveCount++;
-	}
-	const bool bCanSupport = (AliveCount >= 2);
-
-	// Build feasible set — check each play's role composition
-	// Note: Defend is always feasible (agents can defend/contest neutral points too)
-	static const ETacticalPlay AllPlays[10] = {
-		ETacticalPlay::AllOutRush,     // 5A
-		ETacticalPlay::AggressivePush, // 4A 1S
-		ETacticalPlay::Phalanx,        // 2D 3S
-		ETacticalPlay::StandardComp,   // 2A 2D 1S
-		ETacticalPlay::FortressDefense,// 1A 4D
-		ETacticalPlay::TurtleFormation,// 5D
-		ETacticalPlay::BaitStrategy,   // 1A 4D
-		ETacticalPlay::PincerManeuver, // 3A 2S
-		ETacticalPlay::HealerComp,     // 2A 1D 2S
-		ETacticalPlay::ResourceDeny,   // 2A 3S
-	};
-
-	TArray<ETacticalPlay> Feasible;
-	for (ETacticalPlay Play : AllPlays)
-	{
-		TArray<EStrategyType> Roles = DecodeTacticalPlay(Play);
-
-		bool bNeedsSupport = Roles.Contains(EStrategyType::Support);
-
-		if (bNeedsSupport && !bCanSupport) continue;
-
-		Feasible.Add(Play);
+		PerformTacticalPlanning(TeamAgents, EnemyAgents);
+		TimeSinceLastPlan = 0.0f;
 	}
 
-	if (Feasible.IsEmpty())
+	// Critical-health check
+	const FTeamWorldState CurrentState = BuildTeamWorldState(TeamAgents, EnemyAgents);
+	const bool bIsCritical = CurrentState.IsTeamHealthCritical();
+
+	if (bIsCritical && !bHealthCriticalTriggered)
 	{
-		// Ultimate fallback: pure assault is always valid
-		UE_LOG(LogTemp, Warning, TEXT("[SquadManager] Team %d: No feasible plays — falling back to AllOutRush"), TeamID);
-		Feasible.Add(ETacticalPlay::AllOutRush);
+		bHealthCriticalTriggered = true;
+		ReplanOnCriticalEvent(ECriticalEventType::HealthCritical, nullptr, TeamAgents, EnemyAgents);
+	}
+	else if (!bIsCritical)
+	{
+		bHealthCriticalTriggered = false;
 	}
 
-	return Feasible;
+	// Periodic validation log
+	ValidationTickCounter += DeltaTime;
+	if (ValidationTickCounter >= 2.0f)
+	{
+		ValidationTickCounter = 0.0f;
+
+		const TArray<float> Tensor = CurrentState.ToTensor();
+		UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: tensor dims=%d (expected ~60)"),
+			TeamID, Tensor.Num());
+
+		if (CurrentRoleAssignments.Num() != 5)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Validation] Team %d: role count=%d (expected 5)"),
+				TeamID, CurrentRoleAssignments.Num());
+		}
+		UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: lastPlan=%.2f ms, worldModel=%.2f ms"),
+			TeamID, LastPlanningDurationMs,
+			TeamWorldModel ? TeamWorldModel->GetAverageLatency() : 0.0f);
+	}
 }
 
-void USquadManager::SampleRandomTacticalPlay()
+bool USquadManager::ShouldReplan() const
 {
-	// Round-robin strategy rotation: agent i gets strategy (i + EpisodeCount) % 3.
-	// Over every 3 episodes, each of the 5 agents rotates through all 3 strategies,
-	// yielding exactly 5 Assault / 5 Defend / 5 Support exposures — equal learning signal.
+	return TimeSinceLastPlan >= Config.PlanningInterval;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Centralized Planning
+// ─────────────────────────────────────────────────────────────────────────────
+
+void USquadManager::PerformTacticalPlanning(const TArray<AMocCharacter*>& TeamAgents,
+                                            const TArray<AMocCharacter*>& EnemyAgents)
+{
+	const float StartTime = FPlatformTime::Seconds();
+
+	// 1. Build team state from caller-supplied agent lists
+	const FTeamWorldState GlobalState = BuildTeamWorldState(TeamAgents, EnemyAgents);
+
+	// 2. Record transition for data collection
+	if (bHasPreviousState && DataCollector && DataCollector->bIsRecording)
+	{
+		const FCompositeReward Reward = CalculateTeamReward(PreviousTeamState, GlobalState);
+		DataCollector->RecordTransition(PreviousTeamState, PreviousTacticalPlay, GlobalState, Reward);
+	}
+
+	// 3. Select tactical play
+	const TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(GlobalState);
+	ETacticalPlay BestPlay = ETacticalPlay::StandardComp;
+
+	if (Config.bDataCollectionMode)
+	{
+		BestPlay = SelectEpsilonGreedyAction(GlobalState, FeasiblePlays);
+
+		if (Config.bShowDebugInfo)
+		{
+			const float Elapsed = (FPlatformTime::Seconds() - StartTime) * 1000.0f;
+			UE_LOG(LogTemp, Display,
+				TEXT("[SquadManager] Team %d ε-Greedy: %s (%.3f ms, ε=%.2f, feasible=%d)"),
+				TeamID, *UEnum::GetValueAsString(BestPlay), Elapsed,
+				Config.ExplorationRate, FeasiblePlays.Num());
+		}
+	}
+	else if (TeamMCTSPlanner && TeamWorldModel && TeamWorldModel->IsModelLoaded())
+	{
+		BestPlay = TeamMCTSPlanner->FindBestTacticalPlay(GlobalState, FeasiblePlays);
+
+		if (Config.bShowDebugInfo)
+		{
+			const float Elapsed = (FPlatformTime::Seconds() - StartTime) * 1000.0f;
+			UE_LOG(LogTemp, Display,
+				TEXT("[SquadManager] Team %d MCTS: %.2f ms, %d iters, feasible=%d"),
+				TeamID, Elapsed, TeamMCTSPlanner->GetLastIterationCount(), FeasiblePlays.Num());
+
+			if (Elapsed > Config.MCTSTimeBudget * 1000.0f)
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[SquadManager] Team %d MCTS exceeded budget: %.2f ms > %.2f ms"),
+					TeamID, Elapsed, Config.MCTSTimeBudget * 1000.0f);
+			}
+		}
+	}
+	else
+	{
+		// Heuristic fallback: pick by average team health
+		const float AvgHealth = GlobalState.GetAverageHealth();
+		const ETacticalPlay Preferred =
+			(AvgHealth < 0.3f) ? ETacticalPlay::FortressDefense :
+			(AvgHealth > 0.7f) ? ETacticalPlay::AggressivePush :
+			                     ETacticalPlay::StandardComp;
+
+		BestPlay = FeasiblePlays.Contains(Preferred) ? Preferred : FeasiblePlays[0];
+
+		if (Config.bShowDebugInfo)
+		{
+			UE_LOG(LogTemp, Display,
+				TEXT("[SquadManager] Team %d: Heuristic fallback (no model), feasible=%d"),
+				TeamID, FeasiblePlays.Num());
+		}
+	}
+
+	// 4. Decode play → role array and push to agents
+	const TArray<EStrategyType> NewRoles = DecodeTacticalPlay(BestPlay);
+	DistributeRoles(NewRoles, TeamAgents);
+
+	// 5. Update state
+	ActiveTacticalPlay      = BestPlay;
+	CurrentRoleAssignments  = NewRoles;
+	PlanConfidence          = 0.8f;
+	PlanningCycleCount++;
+
+	PreviousTeamState       = GlobalState;
+	PreviousTacticalPlay    = BestPlay;
+	bHasPreviousState       = true;
+	LastPlanningDurationMs  = (FPlatformTime::Seconds() - StartTime) * 1000.0f;
+
+	LogPlanningDecision(BestPlay, PlanConfidence);
+}
+
+FTeamWorldState USquadManager::BuildTeamWorldState(
+	const TArray<AMocCharacter*>& TeamAgents,
+	const TArray<AMocCharacter*>& EnemyAgents) const
+{
+	FTeamWorldState State;
+
+	for (int32 i = 0; i < FMath::Min(5, TeamAgents.Num()); ++i)
+	{
+		if (AMocCharacter* A = TeamAgents[i])
+		{
+			State.FriendlyPositions[i] = A->GetActorLocation();
+			State.FriendlyHealths[i]   = A->GetHealthPercentage_Implementation();
+			State.FriendlyCooldowns[i] = A->GetWeaponCooldown_Implementation();
+			State.FriendlyAlive[i]     = A->IsAlive_Implementation();
+		}
+	}
+
+	for (int32 i = 0; i < FMath::Min(5, EnemyAgents.Num()); ++i)
+	{
+		if (AMocCharacter* A = EnemyAgents[i])
+		{
+			State.EnemyPositions[i]   = A->GetActorLocation();
+			State.EnemyHealths[i]     = A->GetHealthPercentage_Implementation();
+			State.EnemyAlive[i]       = A->IsAlive_Implementation();
+			State.EnemyConfidences[i] = 1.0f;
+		}
+	}
+
+
+	return State;
+}
+
+
+
+EStrategyType USquadManager::GetAgentStrategy(int32 AgentIndex) const
+{
+	return (AgentIndex >= 0 && AgentIndex < CurrentRoleAssignments.Num())
+		? CurrentRoleAssignments[AgentIndex]
+		: EStrategyType::Assault;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Event-Driven Replanning
+// ─────────────────────────────────────────────────────────────────────────────
+
+void USquadManager::ReplanOnCriticalEvent(ECriticalEventType EventType,
+                                          AActor* InstigatorActor,
+                                          const TArray<AMocCharacter*>& TeamAgents,
+                                          const TArray<AMocCharacter*>& EnemyAgents)
+{
+	if (Config.bRLTrainingMode)
+	{
+		// Phase 1 RL: don't replan — but check feasibility and resample if needed.
+		const FTeamWorldState CurrentState = BuildTeamWorldState(TeamAgents, EnemyAgents);
+		if (!GetFeasiblePlays(CurrentState).Contains(ActiveTacticalPlay))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[SquadManager] Phase 1 RL Team %d: play %s no longer feasible after event %s — resampling"),
+				TeamID, *UEnum::GetValueAsString(ActiveTacticalPlay),
+				*UEnum::GetValueAsString(EventType));
+			SampleRandomTacticalPlay(TeamAgents);
+			EventDrivenReplanCount++;
+		}
+		return;
+	}
+
+	if (InstigatorActor)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[SquadManager] Team %d: Critical event %s by %s — replanning"),
+			TeamID, *UEnum::GetValueAsString(EventType), *InstigatorActor->GetName());
+	}
+
+	PerformTacticalPlanning(TeamAgents, EnemyAgents);
+	EventDrivenReplanCount++;
+	TimeSinceLastPlan = 0.0f;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+void USquadManager::SampleRandomTacticalPlay(const TArray<AMocCharacter*>& TeamAgents)
+{
+	// Round-robin strategy wheel: agent i → StrategyWheel[(i + EpisodeCount) % 3].
+	// Over every 3 episodes each agent rotates through all 3 strategies
+	// for balanced RL training signal.
 	static const EStrategyType StrategyWheel[3] = {
 		EStrategyType::Assault,
 		EStrategyType::Defend,
@@ -424,294 +439,93 @@ void USquadManager::SampleRandomTacticalPlay()
 	int32 nA = 0, nD = 0, nS = 0;
 	for (int32 i = 0; i < 5; i++)
 	{
-		EStrategyType S = StrategyWheel[(i + EpisodeCount) % 3];
+		const EStrategyType S = StrategyWheel[(i + EpisodeCount) % 3];
 		Roles[i] = S;
 		if      (S == EStrategyType::Assault) nA++;
 		else if (S == EStrategyType::Defend)  nD++;
 		else                                   nS++;
 	}
 
-	DistributeRoles(Roles);
-	ActiveTacticalPlay = ETacticalPlay::StandardComp;
+	DistributeRoles(Roles, TeamAgents);
+	ActiveTacticalPlay     = ETacticalPlay::StandardComp;
 	CurrentRoleAssignments = Roles;
 
-	UE_LOG(LogTemp, Warning,
+	UE_LOG(LogTemp, Log,
 		TEXT("[SquadManager] Phase 1 RL: Episode %d round-robin → %dA %dD %dS"),
 		EpisodeCount, nA, nD, nS);
 }
 
-//========================================
-// Centralized Planning
-//========================================
-
-void USquadManager::PerformTacticalPlanning()
+TArray<ETacticalPlay> USquadManager::GetFeasiblePlays(const FTeamWorldState& State) const
 {
-	if (!TeamManager)
+	// Count alive allies
+	int32 AliveCount = 0;
+	for (bool bAlive : State.FriendlyAlive) { if (bAlive) AliveCount++; }
+	const bool bCanSupport = (AliveCount >= 2);
+
+	static const ETacticalPlay AllPlays[10] = {
+		ETacticalPlay::AllOutRush,
+		ETacticalPlay::AggressivePush,
+		ETacticalPlay::Phalanx,
+		ETacticalPlay::StandardComp,
+		ETacticalPlay::FortressDefense,
+		ETacticalPlay::TurtleFormation,
+		ETacticalPlay::BaitStrategy,
+		ETacticalPlay::PincerManeuver,
+		ETacticalPlay::HealerComp,
+		ETacticalPlay::ResourceDeny,
+	};
+
+	TArray<ETacticalPlay> Feasible;
+	for (ETacticalPlay Play : AllPlays)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Squad Planner: TeamManager not set, cannot plan"));
-		return;
-	}
-
-	// 1. Collect global team state
-	FTeamWorldState GlobalState = CollectTeamState();
-
-	// Record transition from previous planning cycle (Data Collection)
-	if (bHasPreviousState && DataCollector && DataCollector->bIsRecording)
-	{
-		FCompositeReward Reward = CalculateTeamReward(PreviousTeamState, GlobalState);
-		DataCollector->RecordTransition(PreviousTeamState, PreviousTacticalPlay, GlobalState, Reward);
-	}
-
-	// 2. Select tactical play: ε-greedy (data collection) OR MCTS (production)
-	ETacticalPlay BestPlay = ETacticalPlay::StandardComp;
-	float PlanningStartTime = FPlatformTime::Seconds();
-
-	// Pre-compute feasible plays once — shared by all selection paths
-	TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(GlobalState);
-
-	if (TeamManager->bDataCollectionMode)
-	{
-		BestPlay = SelectEpsilonGreedyAction(GlobalState, FeasiblePlays);
-
-		float SelectionTime = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
-
-		if (TeamManager->bShowDebugInfo)
+		// Support-role plays require ≥2 alive allies
+		if (DecodeTacticalPlay(Play).Contains(EStrategyType::Support) && !bCanSupport)
 		{
-			UE_LOG(LogTemp, Display, TEXT("Team %d ε-Greedy Selection: %s (%.3f ms, ExplorationRate=%.2f, feasible=%d)"),
-				TeamID, *UEnum::GetValueAsString(BestPlay), SelectionTime, TeamManager->ExplorationRate, FeasiblePlays.Num());
+			continue;
 		}
+		Feasible.Add(Play);
 	}
-	else if (TeamMCTSPlanner && TeamWorldModel && TeamWorldModel->IsModelLoaded())
+
+	if (Feasible.IsEmpty())
 	{
-		BestPlay = TeamMCTSPlanner->FindBestTacticalPlay(GlobalState, FeasiblePlays);
-
-		float PlanningTime = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
-
-		if (TeamManager->bShowDebugInfo)
-		{
-			UE_LOG(LogTemp, Display, TEXT("Team %d MCTS Planning: %.2f ms, %d iterations, feasible=%d"),
-				TeamID, PlanningTime, TeamMCTSPlanner->GetLastIterationCount(), FeasiblePlays.Num());
-		}
-
-		if (PlanningTime > TeamManager->MCTSTimeBudget * 1000.0f)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("Team %d MCTS exceeded budget: %.2f ms > %.2f ms"),
-				TeamID, PlanningTime, TeamManager->MCTSTimeBudget * 1000.0f);
-		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[SquadManager] Team %d: No feasible plays — falling back to AllOutRush"), TeamID);
+		Feasible.Add(ETacticalPlay::AllOutRush);
 	}
-	else
-	{
-		// Fallback heuristic if MCTS not available — constrained to feasible set
-		float AvgHealth = GlobalState.GetAverageHealth();
-		ETacticalPlay Preferred = (AvgHealth < 0.3f) ? ETacticalPlay::FortressDefense
-			: (AvgHealth > 0.7f) ? ETacticalPlay::AggressivePush
-			: ETacticalPlay::StandardComp;
-
-		BestPlay = FeasiblePlays.Contains(Preferred) ? Preferred : FeasiblePlays[0];
-
-		if (TeamManager->bShowDebugInfo)
-		{
-			UE_LOG(LogTemp, Display, TEXT("Team %d: Using fallback heuristic (world model not loaded), feasible=%d"), TeamID, FeasiblePlays.Num());
-		}
-	}
-
-	// 3. Convert to role distribution
-	TArray<EStrategyType> NewRoles = DecodeTacticalPlay(BestPlay);
-
-	// 4. Broadcast to agents
-	DistributeRoles(NewRoles);
-
-	// 5. Update state
-	ActiveTacticalPlay = BestPlay;
-	CurrentRoleAssignments = NewRoles;
-	PlanConfidence = 0.8f;
-	PlanningCycleCount++;
-
-	// 6. Store current state for next transition recording
-	PreviousTeamState = GlobalState;
-	PreviousTacticalPlay = BestPlay;
-	bHasPreviousState = true;
-
-	LastPlanningDurationMs = (FPlatformTime::Seconds() - PlanningStartTime) * 1000.0f;
-
-	LogPlanningDecision(BestPlay, PlanConfidence);
-}
-
-void USquadManager::ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AActor* InstigatorActor)
-{
-	// Phase 1 RL Training: no tactical replanning, but DO enforce feasibility.
-	// If the current play has become impossible (e.g. all friendly points lost → Defend invalid),
-	// resample within the feasible set so agents always have an achievable objective.
-	if (TeamManager && TeamManager->bRLTrainingMode)
-	{
-		FTeamWorldState CurrentState = CollectTeamState();
-		TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(CurrentState);
-
-		if (!FeasiblePlays.Contains(ActiveTacticalPlay))
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[SquadManager] Phase 1 RL Team %d: Active play %s is no longer feasible after event %s — resampling"),
-				TeamID, *UEnum::GetValueAsString(ActiveTacticalPlay), *UEnum::GetValueAsString(EventType));
-			SampleRandomTacticalPlay();
-			EventDrivenReplanCount++;
-		}
-		return;
-	}
-
-	if (InstigatorActor)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Squad Planner: Critical event %s by %s - triggering replan"),
-			*UEnum::GetValueAsString(EventType), *InstigatorActor->GetName());
-	}
-
-	PerformTacticalPlanning();
-	EventDrivenReplanCount++;
-	TimeSinceLastPlan = 0.0f;
-}
-
-FTeamWorldState USquadManager::CollectTeamState() const
-{
-	FTeamWorldState State;
-
-	if (!TeamManager)
-	{
-		return State;
-	}
-
-	TArray<AMocCharacter*> TeamAgents = TeamManager->GetTeamAgents(TeamID);
-	TArray<AMocCharacter*> EnemyAgents = TeamManager->GetEnemyAgents(TeamID);
-
-	for (int32 i = 0; i < FMath::Min(5, TeamAgents.Num()); ++i)
-	{
-		if (TeamAgents[i])
-		{
-			State.FriendlyPositions[i] = TeamAgents[i]->GetActorLocation();
-			State.FriendlyHealths[i] = TeamAgents[i]->GetHealthPercentage_Implementation();
-			State.FriendlyCooldowns[i] = TeamAgents[i]->GetWeaponCooldown_Implementation();
-			State.FriendlyAlive[i] = TeamAgents[i]->IsAlive_Implementation();
-		}
-	}
-
-	for (int32 i = 0; i < FMath::Min(5, EnemyAgents.Num()); ++i)
-	{
-		if (EnemyAgents[i])
-		{
-			State.EnemyPositions[i] = EnemyAgents[i]->GetActorLocation();
-			State.EnemyHealths[i] = EnemyAgents[i]->GetHealthPercentage_Implementation();
-			State.EnemyAlive[i] = EnemyAgents[i]->IsAlive_Implementation();
-			State.EnemyConfidences[i] = 1.0f;
-		}
-	}
-
-	// Capture points are always provided by the owning ScholaEnvironment via CachedCapturePoints
-	const TArray<ACapturePoint*>& CapturePoints = CachedCapturePoints;
-
-	for (int32 i = 0; i < FMath::Min(5, CapturePoints.Num()); ++i)
-	{
-		if (CapturePoints[i])
-		{
-			ECapturePointOwnership Ownership = CapturePoints[i]->GetOwnership();
-			if (Ownership == ECapturePointOwnership::Neutral)
-			{
-				State.CapturePointOwnership[i] = 0;
-			}
-			else
-			{
-				int32 OwningTeamID = CapturePoints[i]->GetOwningTeamID();
-				State.CapturePointOwnership[i] = (OwningTeamID == TeamID) ? 1 : -1;
-			}
-		}
-	}
-
-	if (OwningEnvironment)
-	{
-		float MaxDuration = OwningEnvironment->MaxMatchDuration;
-		if (MaxDuration > 0.0f)
-		{
-			State.TimeRemaining = FMath::Clamp(OwningEnvironment->GetTimeRemaining() / MaxDuration, 0.0f, 1.0f);
-		}
-	}
-
-	return State;
-}
-
-FTeamWorldState USquadManager::GetGlobalTeamState() const
-{
-	return CollectTeamState();
-}
-
-EStrategyType USquadManager::GetAgentStrategy(int32 AgentIndex) const
-{
-	if (AgentIndex >= 0 && AgentIndex < CurrentRoleAssignments.Num())
-	{
-		return CurrentRoleAssignments[AgentIndex];
-	}
-
-	return EStrategyType::Assault;
+	return Feasible;
 }
 
 TArray<EStrategyType> USquadManager::DecodeTacticalPlay(ETacticalPlay Play) const
 {
-	TArray<EStrategyType> Roles;
-
 	switch (Play)
 	{
-	case ETacticalPlay::AllOutRush:
-		Roles = { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault };
-		break;
-	case ETacticalPlay::AggressivePush:
-		Roles = { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Support };
-		break;
-	case ETacticalPlay::Phalanx:
-		Roles = { EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Support, EStrategyType::Support, EStrategyType::Support };
-		break;
-	case ETacticalPlay::StandardComp:
-		Roles = { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Support };
-		break;
-	case ETacticalPlay::FortressDefense:
-		Roles = { EStrategyType::Assault, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Defend };
-		break;
-	case ETacticalPlay::TurtleFormation:
-		Roles = { EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Defend };
-		break;
-	case ETacticalPlay::BaitStrategy:
-		Roles = { EStrategyType::Assault, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Defend };
-		break;
-	case ETacticalPlay::PincerManeuver:
-		Roles = { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Support, EStrategyType::Support };
-		break;
-	case ETacticalPlay::HealerComp:
-		Roles = { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Defend, EStrategyType::Support, EStrategyType::Support };
-		break;
-	case ETacticalPlay::ResourceDeny:
-		Roles = { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Support, EStrategyType::Support, EStrategyType::Support };
-		break;
-	default:
-		Roles = { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Defend, EStrategyType::Defend, EStrategyType::Support };
-		break;
+	case ETacticalPlay::AllOutRush:      return { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault };
+	case ETacticalPlay::AggressivePush:  return { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Support };
+	case ETacticalPlay::Phalanx:         return { EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Support, EStrategyType::Support, EStrategyType::Support };
+	case ETacticalPlay::StandardComp:    return { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Support };
+	case ETacticalPlay::FortressDefense: return { EStrategyType::Assault, EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Defend  };
+	case ETacticalPlay::TurtleFormation: return { EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Defend  };
+	case ETacticalPlay::BaitStrategy:    return { EStrategyType::Assault, EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Defend  };
+	case ETacticalPlay::PincerManeuver:  return { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Support, EStrategyType::Support };
+	case ETacticalPlay::HealerComp:      return { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Defend,  EStrategyType::Support, EStrategyType::Support };
+	case ETacticalPlay::ResourceDeny:    return { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Support, EStrategyType::Support, EStrategyType::Support };
+	default:                             return { EStrategyType::Assault, EStrategyType::Assault, EStrategyType::Defend,  EStrategyType::Defend,  EStrategyType::Support };
 	}
-
-	return Roles;
 }
 
-void USquadManager::DistributeRoles(const TArray<EStrategyType>& Roles)
+void USquadManager::DistributeRoles(const TArray<EStrategyType>& Roles,
+                                    const TArray<AMocCharacter*>& TeamAgents) const
 {
-	if (!TeamManager)
-	{
-		return;
-	}
-
-	TArray<AMocCharacter*> TeamAgents = TeamManager->GetTeamAgents(TeamID);
-
 	for (int32 i = 0; i < FMath::Min(Roles.Num(), TeamAgents.Num()); ++i)
 	{
-		if (TeamAgents[i] && TeamAgents[i]->IsAlive_Implementation())
+		AMocCharacter* Agent = TeamAgents[i];
+		if (Agent && Agent->IsAlive_Implementation())
 		{
-			TeamAgents[i]->SetCommandedStrategy(Roles[i]);
+			Agent->SetCommandedStrategy(Roles[i]);
 
-			if (TeamManager->bShowDebugInfo)
+			if (Config.bShowDebugInfo)
 			{
-				UE_LOG(LogTemp, Log, TEXT("Team %d Agent %d assigned: %s"),
+				UE_LOG(LogTemp, Log, TEXT("[SquadManager] Team %d Agent %d → %s"),
 					TeamID, i, *UEnum::GetValueAsString(Roles[i]));
 			}
 		}
@@ -720,92 +534,83 @@ void USquadManager::DistributeRoles(const TArray<EStrategyType>& Roles)
 
 void USquadManager::LogPlanningDecision(ETacticalPlay Play, float Confidence) const
 {
-	if (TeamManager && TeamManager->bShowDebugInfo)
+	if (Config.bShowDebugInfo)
 	{
 		UE_LOG(LogTemp, Display,
-			TEXT("Squad Planner Team %d: Tactical Play=%s, Confidence=%.2f, Cycle=%d"),
-			TeamID,
-			*UEnum::GetValueAsString(Play),
-			Confidence,
-			PlanningCycleCount);
+			TEXT("[SquadManager] Team %d: Play=%s, Confidence=%.2f, Cycle=%d"),
+			TeamID, *UEnum::GetValueAsString(Play), Confidence, PlanningCycleCount);
 	}
 }
 
-void USquadManager::DrawDebugVisualization() const
+void USquadManager::DrawDebugVisualization(const TArray<AMocCharacter*>& TeamAgents) const
 {
-	if (!GetWorld() || !TeamManager)
-	{
-		return;
-	}
-
-	TArray<AMocCharacter*> TeamAgents = TeamManager->GetTeamAgents(TeamID);
+	UWorld* World = GetWorld();
+	if (!World) { return; }
 
 	for (int32 i = 0; i < FMath::Min(CurrentRoleAssignments.Num(), TeamAgents.Num()); ++i)
 	{
-		if (TeamAgents[i] && TeamAgents[i]->IsAlive_Implementation())
+		AMocCharacter* Agent = TeamAgents[i];
+		if (!Agent || !Agent->IsAlive_Implementation()) { continue; }
+
+		FColor RoleColor = FColor::White;
+		switch (CurrentRoleAssignments[i])
 		{
-			FVector LabelLocation = TeamAgents[i]->GetActorLocation() + FVector(0, 0, 150);
-
-			FColor RoleColor = FColor::White;
-			switch (CurrentRoleAssignments[i])
-			{
-			case EStrategyType::Assault: RoleColor = FColor::Red;   break;
-			case EStrategyType::Defend:  RoleColor = FColor::Blue;  break;
-			case EStrategyType::Support: RoleColor = FColor::Green; break;
-			}
-
-			DrawDebugString(GetWorld(), LabelLocation, UEnum::GetValueAsString(CurrentRoleAssignments[i]),
-				nullptr, RoleColor, 0.0f, true);
+		case EStrategyType::Assault: RoleColor = FColor::Red;   break;
+		case EStrategyType::Defend:  RoleColor = FColor::Blue;  break;
+		case EStrategyType::Support: RoleColor = FColor::Green; break;
 		}
-	}
 
-	DrawDebugString(GetWorld(),
-		TeamManager->GetActorLocation() + FVector(0, 0, 300),
-		FString::Printf(TEXT("Tactical Play: %s"), *UEnum::GetValueAsString(ActiveTacticalPlay)),
-		nullptr, FColor::Yellow, 0.0f, true);
+		DrawDebugString(World,
+			Agent->GetActorLocation() + FVector(0, 0, 150),
+			UEnum::GetValueAsString(CurrentRoleAssignments[i]),
+			nullptr, RoleColor, 0.0f, true);
+	}
 }
 
-FCompositeReward USquadManager::CalculateTeamReward(const FTeamWorldState& OldState, const FTeamWorldState& NewState) const
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reward
+// ─────────────────────────────────────────────────────────────────────────────
+
+FCompositeReward USquadManager::CalculateTeamReward(const FTeamWorldState& OldState,
+                                                    const FTeamWorldState& NewState) const
 {
 	FCompositeReward Reward;
 
+	// Health delta sum
 	float HealthDeltaSum = 0.0f;
 	int32 AliveCount = 0;
-
 	for (int32 i = 0; i < 5; ++i)
 	{
 		if (OldState.FriendlyAlive[i] || NewState.FriendlyAlive[i])
 		{
-			float OldHealth = OldState.FriendlyAlive[i] ? OldState.FriendlyHealths[i] : 0.0f;
-			float NewHealth = NewState.FriendlyAlive[i] ? NewState.FriendlyHealths[i] : 0.0f;
-			HealthDeltaSum += (NewHealth - OldHealth);
+			const float OldH = OldState.FriendlyAlive[i] ? OldState.FriendlyHealths[i] : 0.0f;
+			const float NewH = NewState.FriendlyAlive[i] ? NewState.FriendlyHealths[i] : 0.0f;
+			HealthDeltaSum += (NewH - OldH);
 		}
 		if (NewState.FriendlyAlive[i]) AliveCount++;
 	}
-
 	Reward.HealthDelta = HealthDeltaSum;
 
+	// Win probability (alive ratio × 0.6 + health ratio × 0.4)
 	int32 EnemyAliveCount = 0;
-	float EnemyHealthSum = 0.0f;
+	float EnemyHealthSum = 0.0f, TeamHealthSum = 0.0f;
 	for (int32 i = 0; i < 5; ++i)
 	{
-		if (NewState.EnemyAlive[i]) { EnemyAliveCount++; EnemyHealthSum += NewState.EnemyHealths[i]; }
+		if (NewState.EnemyAlive[i])   { EnemyAliveCount++; EnemyHealthSum  += NewState.EnemyHealths[i]; }
+		if (NewState.FriendlyAlive[i])                     TeamHealthSum   += NewState.FriendlyHealths[i];
 	}
+	const float AliveRatio  = EnemyAliveCount > 0
+		? float(AliveCount) / float(EnemyAliveCount + AliveCount) : 1.0f;
+	const float HealthRatio = (EnemyHealthSum + TeamHealthSum) > 0.0f
+		? TeamHealthSum / (EnemyHealthSum + TeamHealthSum) : 0.5f;
+	Reward.WinProb = FMath::Clamp(AliveRatio * 0.6f + HealthRatio * 0.4f, 0.0f, 1.0f);
 
-	float TeamHealthSum = 0.0f;
-	for (int32 i = 0; i < 5; ++i)
-	{
-		if (NewState.FriendlyAlive[i]) TeamHealthSum += NewState.FriendlyHealths[i];
-	}
-
-	float AliveRatio = EnemyAliveCount > 0 ? float(AliveCount) / float(EnemyAliveCount + AliveCount) : 1.0f;
-	float HealthRatio = (EnemyHealthSum + TeamHealthSum) > 0.0f ? TeamHealthSum / (EnemyHealthSum + TeamHealthSum) : 0.5f;
-	Reward.WinProb = FMath::Clamp((AliveRatio * 0.6f + HealthRatio * 0.4f), 0.0f, 1.0f);
-
+	// Objective score (friendly points − enemy points, normalised to [-1, 1])
 	int32 FriendlyPoints = 0, EnemyPoints = 0;
 	for (int32 i = 0; i < 5; ++i)
 	{
-		if (NewState.CapturePointOwnership[i] == 1)  FriendlyPoints++;
+		if      (NewState.CapturePointOwnership[i] ==  1) FriendlyPoints++;
 		else if (NewState.CapturePointOwnership[i] == -1) EnemyPoints++;
 	}
 	Reward.ObjectiveScore = (FriendlyPoints - EnemyPoints) / 5.0f;
@@ -813,8 +618,16 @@ FCompositeReward USquadManager::CalculateTeamReward(const FTeamWorldState& OldSt
 	return Reward;
 }
 
-ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& TeamState, const TArray<ETacticalPlay>& FeasiblePlays) const
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Epsilon-Greedy Action Selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+ETacticalPlay USquadManager::SelectEpsilonGreedyAction(
+	const FTeamWorldState& TeamState,
+	const TArray<ETacticalPlay>& FeasiblePlays) const
 {
+	// Sampling weights (per play index, matching ETacticalPlay enum order)
 	// Play             Weight  |  A  D  S
 	// AllOutRush          4    |  5  0  0
 	// AggressivePush      6    |  4  0  1
@@ -826,30 +639,28 @@ ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& Te
 	// PincerManeuver     13    |  3  0  2
 	// HealerComp         14    |  2  1  2
 	// ResourceDeny       13    |  2  0  3  (sum = 100)
-	static const float PlayWeights[10] = { 4.f, 6.f, 16.f, 11.f, 9.f, 7.f, 7.f, 13.f, 14.f, 13.f };
+	static constexpr float PlayWeights[10] = { 4.f, 6.f, 16.f, 11.f, 9.f, 7.f, 7.f, 13.f, 14.f, 13.f };
 
-	// Helper: pick first feasible play from an ordered preference array
-	auto PickFeasible = [&](TArrayView<const ETacticalPlay> Preferences) -> ETacticalPlay
+	// Helper: first feasible play from an ordered preference list
+	auto PickFeasible = [&](TArrayView<const ETacticalPlay> Prefs) -> ETacticalPlay
 	{
-		for (ETacticalPlay P : Preferences)
+		for (ETacticalPlay P : Prefs)
 		{
 			if (FeasiblePlays.Contains(P)) return P;
 		}
-		return FeasiblePlays[0]; // guaranteed non-empty by GetFeasiblePlays
+		return FeasiblePlays[0]; // GetFeasiblePlays guarantees non-empty
 	};
 
-	float RandomValue = (TeamManager) ? TeamManager->GetEnvRandomStream().FRand() : FMath::FRand();
+	const float RandValue = Config.RandomStream.FRand();
 
-	if (RandomValue < TeamManager->ExplorationRate)
+	if (RandValue < Config.ExplorationRate)
 	{
-		// Weighted random within feasible set
+		// Exploration: weighted random within feasible set
 		float TotalWeight = 0.0f;
 		for (ETacticalPlay Play : FeasiblePlays)
-		{
 			TotalWeight += PlayWeights[static_cast<int32>(Play)];
-		}
 
-		const float R = (TeamManager ? TeamManager->GetEnvRandomStream().FRand() : FMath::FRand()) * TotalWeight;
+		const float R = Config.RandomStream.FRand() * TotalWeight;
 		float Cumulative = 0.0f;
 		for (ETacticalPlay Play : FeasiblePlays)
 		{
@@ -858,65 +669,54 @@ ETacticalPlay USquadManager::SelectEpsilonGreedyAction(const FTeamWorldState& Te
 		}
 		return FeasiblePlays[0];
 	}
-	else
-	{
-		float AvgHealth = TeamState.GetAverageHealth();
 
-		if (AvgHealth < 0.25f)
-		{
-			const ETacticalPlay Prefs[] = { ETacticalPlay::FortressDefense, ETacticalPlay::TurtleFormation, ETacticalPlay::BaitStrategy, ETacticalPlay::AllOutRush };
-			return PickFeasible(Prefs);
-		}
-		else if (AvgHealth < 0.5f)
-		{
-			const ETacticalPlay Prefs[] = { ETacticalPlay::StandardComp, ETacticalPlay::Phalanx, ETacticalPlay::HealerComp, ETacticalPlay::AllOutRush };
-			return PickFeasible(Prefs);
-		}
-		else if (AvgHealth > 0.75f)
-		{
-			const ETacticalPlay Prefs[] = { ETacticalPlay::AggressivePush, ETacticalPlay::AllOutRush, ETacticalPlay::PincerManeuver, ETacticalPlay::StandardComp };
-			return PickFeasible(Prefs);
-		}
-		else
-		{
-			// Mid-health: shuffle the preferred candidate, then fall back in order
-			const ETacticalPlay MidCandidates[4] = {
-				ETacticalPlay::StandardComp, ETacticalPlay::HealerComp,
-				ETacticalPlay::PincerManeuver, ETacticalPlay::BaitStrategy
-			};
-			int32 RandomCandidateIdx = TeamManager ? TeamManager->GetEnvRandomStream().RandRange(0, 3) : FMath::RandRange(0, 3);
-			const ETacticalPlay Prefs[] = { MidCandidates[RandomCandidateIdx], ETacticalPlay::StandardComp, ETacticalPlay::AllOutRush };
-			return PickFeasible(Prefs);
-		}
+	// Exploitation: health-based heuristic
+	const float AvgHealth = TeamState.GetAverageHealth();
+	if (AvgHealth < 0.25f)
+	{
+		const ETacticalPlay Prefs[] = { ETacticalPlay::FortressDefense, ETacticalPlay::TurtleFormation, ETacticalPlay::BaitStrategy, ETacticalPlay::AllOutRush };
+		return PickFeasible(Prefs);
 	}
-}
-
-//========================================
-// Critical Event Handlers
-//========================================
-
-void USquadManager::OnAgentKilledHandler(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim)
-{
-	if (VictimTeamID == TeamID)
+	else if (AvgHealth < 0.5f)
 	{
-		ReplanMCTSOnCriticalEvent(ECriticalEventType::AllyKilled, Victim);
+		const ETacticalPlay Prefs[] = { ETacticalPlay::StandardComp, ETacticalPlay::Phalanx, ETacticalPlay::HealerComp, ETacticalPlay::AllOutRush };
+		return PickFeasible(Prefs);
+	}
+	else if (AvgHealth > 0.75f)
+	{
+		const ETacticalPlay Prefs[] = { ETacticalPlay::AggressivePush, ETacticalPlay::AllOutRush, ETacticalPlay::PincerManeuver, ETacticalPlay::StandardComp };
+		return PickFeasible(Prefs);
 	}
 	else
 	{
-		ReplanMCTSOnCriticalEvent(ECriticalEventType::EnemyKilled, Victim);
+		// Mid-health: shuffle the preferred candidate
+		static const ETacticalPlay MidCandidates[4] = {
+			ETacticalPlay::StandardComp, ETacticalPlay::HealerComp,
+			ETacticalPlay::PincerManeuver, ETacticalPlay::BaitStrategy
+		};
+		const int32 Pick = Config.RandomStream.RandRange(0, 3);
+		const ETacticalPlay Prefs[] = { MidCandidates[Pick], ETacticalPlay::StandardComp, ETacticalPlay::AllOutRush };
+		return PickFeasible(Prefs);
 	}
 }
 
-void USquadManager::OnPointCapturedHandler(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
-{
-	ECapturePointOwnership OurOwnership = (TeamID == 0) ? ECapturePointOwnership::RedTeam : ECapturePointOwnership::BlueTeam;
 
-	if (NewOwner == OurOwnership)
-	{
-		ReplanMCTSOnCriticalEvent(ECriticalEventType::ObjectiveCaptured, nullptr);
-	}
-	else if (PreviousOwner == OurOwnership)
-	{
-		ReplanMCTSOnCriticalEvent(ECriticalEventType::ObjectiveLost, nullptr);
-	}
+// ─────────────────────────────────────────────────────────────────────────────
+// Capture Point Event Handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+void USquadManager::OnPointCapturedHandler(ECapturePointID PointID,
+                                            int32 PreviousTeamID,
+                                            int32 NewTeamID)
+{
+
+
+	ECriticalEventType EventType;
+	if      (NewTeamID      == TeamID) EventType = ECriticalEventType::ObjectiveCaptured;
+	else if (PreviousTeamID == TeamID) EventType = ECriticalEventType::ObjectiveLost;
+	else                                    return; // Not relevant to this team
+
+	// No live agent array available from a delegate; pass empty lists.
+	// MatchManager will push a full replan via TickPlanner next frame.
+	ReplanOnCriticalEvent(EventType, nullptr, {}, {});
 }

@@ -60,9 +60,9 @@ struct FExploredResource
  *
  * Usage:
  * 1. Place in level (one per game, or spawn from GameMode)
- * 2. TeamManager references this manager
+ * 2. MatchManager references this manager
  * 3. MocCharacter calls UpdateVision() every Tick
- * 4. AI queries enemy/resource positions through TeamManager → FogOfWarManager
+ * 4. AI queries enemy/resource positions through MatchManager → FogOfWarManager
  */
 UCLASS()
 class GAMEAI_PROJECT_API AFogOfWarManager : public AActor

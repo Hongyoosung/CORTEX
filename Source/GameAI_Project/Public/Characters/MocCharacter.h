@@ -10,20 +10,20 @@
 #include "Types/EQSTypes.h"
 #include "Types/ObservationTypes.h"
 #include "Types/RewardTypes.h"
+#include "Types/EventTypes.h"
+#include "Combat/Components/MocAbilityComponent.h"
 #include "Combat/CombatStatsInterface.h"
-#include "Combat/Abilities/AttackAbility.h"
-#include "Combat/Abilities/HealAbility.h"
+#include "Team/MatchManager.h"
 #include "MocCharacter.generated.h"
 
 // Forward declarations
 
+class UMocRewardSubsystem;
 class UHealthComponent;
 class UScholaMocAgent;
 class UAIPerceptionStimuliSourceComponent;
 class UEnvQuery;
 class UMocEQSExecutor;
-class USquadManager;
-class ATeamManager;
 class AFogOfWarManager;
 class UNiagaraComponent;
 class UNiagaraSystem;
@@ -41,15 +41,15 @@ struct FMocTeamInfo;
  *
  * Team Identification:
  * - TeamID property: 0 (Red), 1 (Blue)
- * - Assigned by TeamManager on spawn
+ * - Assigned by MatchManager on spawn
  *
  * Death/Respawn Flow:
  * 1. HealthComponent broadcasts OnDeath
  * 2. MocCharacter::OnDeath() called
  * 3. Disable movement, physics ragdoll
- * 4. Notify GameMode → TeamManager
- * 5. TeamManager queues respawn (5 seconds)
- * 6. TeamManager calls ResetCharacter()
+ * 4. Notify GameMode → MatchManager
+ * 5. MatchManager queues respawn (5 seconds)
+ * 6. MatchManager calls ResetCharacter()
  * 7. Re-enable movement, restart AI
  *
  * AI Integration:
@@ -60,9 +60,14 @@ struct FMocTeamInfo;
  *
  * Usage:
  * 1. Set AIControllerClass and BehaviorTree in Blueprint
- * 2. TeamManager spawns and assigns TeamID
+ * 2. MatchManager spawns and assigns TeamID
  * 3. AI takes over automatically
  */
+
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAgentDeathEvent, const FDeathEventData&, DeathEvent);
+
+
 UCLASS()
 class GAMEAI_PROJECT_API AMocCharacter : public ACharacter, public IMocTeamInterface, public ICombatStatsInterface
 {
@@ -106,22 +111,83 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
 	UHealthComponent* GetHealthComponent() const { return HealthComponent; }
 
-	/** Get AttackAbility (weapon + combat logic) */
+	/** Get AbilityComponent (manages all agent abilities) */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UAttackAbility* GetAttackAbility() const { return AttackAbility; }
+	UMocAbilityComponent* GetAbilityComponent() const { return AbilityComponent; }
 
 	/** Get ScholaMocAgent */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
 	UScholaMocAgent* GetScholaAgent() const { return ScholaAgent; }
 
-	/** Get TeamManager reference (for Trainer observation gathering) */
-	UFUNCTION(BlueprintPure, Category = "Character|Team")
-	ATeamManager* GetTeamManager() const { return TM; }
 
-	/** Set TeamManager directly (called by TeamManager::SpawnAgent for multi-env support) */
-	void SetTeamManager(ATeamManager* InTM) { TM = InTM; }
 
-	// ==================== Reward Interface (forwarding to RewardCalculator) ====================
+	//========================================
+	// Tatical Action Interface (EQS weight management and execution)
+	//========================================
+
+	/**
+	 * Update EQS weights from Actuator.
+	 * Stores weights on Character (single source of truth).
+	 * Does NOT trigger execution - call PerformTacticalAction() separately.
+	 *
+	 * @param NewWeights - 7-dim EQS weights from RL policy or ONNX inference
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
+	void UpdateTacticalWeights(const FEQSWeightParameters& NewWeights);
+
+	/**
+	 * Execute tactical action based on current EQS weights.
+	 *
+	 * Training Mode (AIController without Blackboard):
+	 *   Runs EQS query SYNCHRONOUSLY using RunInstantQuery(),
+	 *   then commands AIController->MoveToLocation() to navigate to best position.
+	 *   Movement respects MaxWalkSpeed (600 cm/s) and physics.
+	 *   Agent walks to target using pathfinding (NOT teleportation).
+	 *
+	 * Runtime Mode (AIController with Blackboard/BT):
+	 *   Syncs weights to Blackboard. Behavior Tree handles EQS asynchronously.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
+	void PerformTacticalAction();
+
+	/** Get current EQS weights (read by EQS queries, Trainer, BT tasks) */
+	UFUNCTION(BlueprintPure, Category = "Character|EQS")
+	FEQSWeightParameters GetEQSWeights() const { return CurrentEQSWeights; }
+
+	/** Returns true if weights were updated since last consume, then clears the flag */
+	bool ConsumeNewWeights() { bool b = bWeightsDirty; bWeightsDirty = false; return b; }
+
+	/** Get the last EQS target location (for debugging) */
+	UFUNCTION(BlueprintPure, Category = "Character|EQS")
+	FVector GetLastEQSTargetLocation() const { return LastEQSTargetLocation; }
+
+	UFUNCTION()
+	void ProcessTrainingAbilities();
+
+
+	//========================================
+	// v10.2 Command Interface
+	//========================================
+
+	/**
+	 * Receive strategy command from Squad Commander
+	 * Replaces individual MCTS decision-making in v10.2 architecture
+	 *
+	 * @param NewStrategy - Strategy assigned by centralized commander
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Character|Commands")
+	void SetCommandedStrategy(EStrategyType NewStrategy);
+
+	/**
+	 * Get current commanded strategy (for Blackboard update)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Character|Commands")
+	EStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
+
+
+	//========================================
+	// Reward Interface (forwarding to RewardCalculator)
+	//========================================
 
 	/**
 	 * Compute a single-step reward for the state transition (Prev → Current).
@@ -132,35 +198,26 @@ public:
 		const FObservation& Current,
 		const FEQSWeightParameters& Action);
 
-	/**
-	 * Decompose the per-step reward into labelled components (for debug/logging).
-	 */
-	FRewardBreakdown ComputeRewardBreakdown(EStrategyType Strategy,
-		const FObservation& Prev,
-		const FObservation& Current) const;
-
-	/**
-	 * Reset per-episode reward state (cumulative reward, momentum counters).
-	 * Called by MocTrainer::ResetTrainer().
-	 */
-	void ResetRewardState();
 
 
 	//========================================
-	// Respawn
+	// Match Access
 	//========================================
+	UFUNCTION(BlueprintPure, Category = "Character|Match")
+	AMatchManager* GetMatchManager() const;
 
-
-	/** Reset character state (called by TeamManager on respawn) */
+	/** Reset character state (called by MatchManager on respawn) */
 	UFUNCTION(BlueprintCallable, Category = "Character|Respawn")
 	void ResetCharacter();
 
-	/** Update Niagara VFX color based on team */
-	UFUNCTION(BlueprintCallable, Category = "Character|VFX")
-	void UpdateTeamColorVFX();
+	void Activate();
+	void Deactivate();
 
 
-	// ==================== Heal Interface (for MocRewardCalculator) ====================
+
+	//========================================
+	// Heal Interface (for MocRewardCalculator)
+	//========================================
 
 	/** HP healed on an ally during the most recent heal tick (pass-through to HealAbility) */
 	float GetLastTickHealAmount() const;
@@ -172,6 +229,9 @@ public:
 	bool ConsumeHealBurst(float Threshold);
 
 
+
+
+
 protected:
 	//========================================
 	// Event Handlers
@@ -180,6 +240,16 @@ protected:
 	/** Handle death event from HealthComponent */
 	UFUNCTION()
 	void OnDeath(const FDeathEventData& DeathEvent);
+
+
+	//========================================
+	// Strategy-specific
+	//========================================
+	/** Apply strategy-specific stat multipliers (Support: -50% damage/range, -30% max HP) */
+	void ApplyStrategyStatModifiers(EStrategyType Strategy);
+
+	
+
 
 public:
 
@@ -209,9 +279,7 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UAIPerceptionStimuliSourceComponent* StimuliSource;
 
-	/** Niagara VFX for team color identification */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UNiagaraComponent* TeamColorVFX;
+
 
 	//========================================
 	// Configuration
@@ -221,17 +289,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Vision")
 	float VisionRange; // 30 meters
 
+	/** Agent Info for team coordination */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
+	int32 AgentID;
+
+	FLinearColor TeamColor;
+
+
+
 	//========================================
 	// EQS Configuration
 	//========================================
 
-	/** Attack ability component - encapsulates HandleCombat() logic */
+	/** Unified ability component */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UAttackAbility* AttackAbility;
-
-	/** Heal ability component - encapsulates TickSupportHealing() logic */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UHealAbility* HealAbility;
+	UMocAbilityComponent* AbilityComponent;
 
 	/** EQS Executor component - handles query execution with correct parameter names */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -241,91 +313,30 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
 	float EQSAcceptanceRadius;
 
-	/** Niagara system asset for team identification VFX */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Character|VFX")
-	UNiagaraSystem* TeamColorVFXAsset;
-
-	/** VFX color parameter name */
-	UPROPERTY(EditAnywhere, Category = "Character|VFX")
-	FName VFXColorParameterName;
-
-	//========================================
-	// v10.2 Command Interface
-	//========================================
-
-	/**
-	 * Receive strategy command from Squad Commander
-	 * Replaces individual MCTS decision-making in v10.2 architecture
-	 *
-	 * @param NewStrategy - Strategy assigned by centralized commander
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Character|Commands")
-	void SetCommandedStrategy(EStrategyType NewStrategy);
-
-	/**
-	 * Get current commanded strategy (for Blackboard update)
-	 */
-	UFUNCTION(BlueprintPure, Category = "Character|Commands")
-	EStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
 
 
 	//========================================
-	// v10.2 EQS Weight Storage & Execution
+	// CapturePoints
 	//========================================
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "AI|Environment")
+	TArray<ACapturePoint*> AssignedCapturePoints;
 
-	/**
-	 * Update EQS weights from Actuator.
-	 * Stores weights on Character (single source of truth).
-	 * Does NOT trigger execution - call PerformTacticalAction() separately.
-	 *
-	 * @param NewWeights - 7-dim EQS weights from RL policy or ONNX inference
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
-	void UpdateTacticalWeights(const FEQSWeightParameters& NewWeights);
 
-	/** Get current EQS weights (read by EQS queries, Trainer, BT tasks) */
-	UFUNCTION(BlueprintPure, Category = "Character|EQS")
-	FEQSWeightParameters GetEQSWeights() const { return CurrentEQSWeights; }
 
-	/** Returns true if weights were updated since last consume, then clears the flag */
-	bool ConsumeNewWeights() { bool b = bWeightsDirty; bWeightsDirty = false; return b; }
-
-	/**
-	 * Execute tactical action based on current EQS weights.
-	 *
-	 * Training Mode (AIController without Blackboard):
-	 *   Runs EQS query SYNCHRONOUSLY using RunInstantQuery(),
-	 *   then commands AIController->MoveToLocation() to navigate to best position.
-	 *   Movement respects MaxWalkSpeed (600 cm/s) and physics.
-	 *   Agent walks to target using pathfinding (NOT teleportation).
-	 *
-	 * Runtime Mode (AIController with Blackboard/BT):
-	 *   Syncs weights to Blackboard. Behavior Tree handles EQS asynchronously.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
-	void PerformTacticalAction();
-
-	/** Get the last EQS target location (for debugging) */
-	UFUNCTION(BlueprintPure, Category = "Character|EQS")
-	FVector GetLastEQSTargetLocation() const { return LastEQSTargetLocation; }
-
-	UFUNCTION()
-	void ProcessTrainingAbilities();
-
-public:
-	/** Agent Info for team coordination */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
-	int32 AgentID;
 
 
 protected:
-	/** Team ID (0 = Red, 1 = Blue) - Assigned by TeamManager on spawn, or set directly in editor for test maps */
+	TObjectPtr<UMocRewardSubsystem> RewardSubsystem;
+	
+	/** Team ID (0 = Red, 1 = Blue) - Assigned by MatchManager on spawn, or set directly in editor for test maps */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 TeamID;
 
-	/** Environment ID for parallel environment isolation. Set by TeamManager on spawn. */
+	/** Environment ID for parallel environment isolation. Set by MatchManager on spawn. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 EnvID = 0;
+
+
 
 	//========================================
 	// Runtime State
@@ -339,8 +350,6 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
 	EStrategyType CommandedStrategy;
 
-	
-
 	/** Current EQS weights (set by Actuator, read by EQS/Trainer/BT) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FEQSWeightParameters CurrentEQSWeights;
@@ -352,25 +361,17 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FVector LastEQSTargetLocation;
 
-	/** Reference to Squad Commander (set on spawn) */
-	USquadManager* SquadCommander;
-
 	/** Time when character was last spawned/reset (for death diagnostics) */
 	float SpawnTime;
 
-	TObjectPtr<ATeamManager> TM;
-
 	FTimerHandle TrainingAbilityTimerHandle;
 
-	//========================================
-	// Strategy Stat Modifiers
-	//========================================
 
-	/** Base stats cached at BeginPlay — used to restore after strategy change */
-	float BaseAttackDamage;
-	float BaseAttackRange;
-	float BaseMaxHealth;
+	
 
-	/** Apply strategy-specific stat multipliers (Support: -50% damage/range, -30% max HP) */
-	void ApplyStrategyStatModifiers(EStrategyType Strategy);
+public:
+	//============= Event Delegated ===================
+
+	FOnAgentDeathEvent OnAgentDeathEvent_Delegate;
+
 };

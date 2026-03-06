@@ -7,10 +7,7 @@
 #include "Core/MocGameMode.h"
 #include "Core/Subsystems/MocRewardSubsystem.h"
 #include "Characters/MocCharacter.h"
-#include "Team/SquadManager.h"
-#include "Team/TeamManager.h"
-#include "Actors/SpawnArea.h"
-#include "Actors/PickupBase.h"
+#include "Team/MatchManager.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Pawn.h"
@@ -19,7 +16,6 @@
 AScholaEnvironment::AScholaEnvironment(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, bAutoDiscoverAgents(true)
-	, bEnableCentralizedPlanning(true)
 	, bLogTacticalPlays(false)
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -35,63 +31,17 @@ void AScholaEnvironment::BeginPlay()
 	bAgentsRegistered = false;
 	bEnvironmentInitialized = false;
 
-	// Pass SpawnArea refs to OwnedTeamManager
-	if (OwnedTeamManager)
+	if (OwnedMatchManager)
 	{
-		OwnedTeamManager->EnvID = ScholaEnvID;
-		if (RedSpawnArea)
-		{
-			OwnedTeamManager->RedSpawnArea = RedSpawnArea;
-		}
-		if (BlueSpawnArea)
-		{
-			OwnedTeamManager->BlueSpawnArea = BlueSpawnArea;
-		}
+		OwnedMatchManager->SetEnvID(ScholaEnvID);
+		OwnedMatchManager->CapturePointInitialize();
 	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[ScholaEnv v10.2] OwnedTeamManager not assigned for %s!"), *GetName());
-	}
-
-	// Set EnvID on owned capture points
-	for (ACapturePoint* CP : OwnedCapturePoints)
-	{
-		if (CP)
-		{
-			CP->SetEnvID_Implementation(ScholaEnvID);
-			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] CP: %s EnvID=%d PointID=%d"),
-				*CP->GetName(), CP->GetEnvID_Implementation(), (int32)CP->PointID);
-		}
-			
-	}
-
-	// Set EnvID on owned pickups
-	for (APickupBase* Pickup : OwnedPickups)
-	{
-		if (Pickup)
-		{
-			Pickup->EnvID = ScholaEnvID;
-		}
-	}
-
-	// Cache Squad Commanders
-	if (bEnableCentralizedPlanning)
-	{
-		CacheSquadCommanders();
-	}
-
-	// Subscribe to events
-	SubscribeToEvents();
 
 	// Auto-start match
 	if (bAutoStartMatch)
 	{
 		StartMatch();
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] %s setup complete (EnvID: %d, CPs: %d, TM: %s)"),
-		*GetName(), ScholaEnvID, OwnedCapturePoints.Num(),
-		OwnedTeamManager ? *OwnedTeamManager->GetName() : TEXT("NULL"));
 }
 
 void AScholaEnvironment::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -105,7 +55,6 @@ void AScholaEnvironment::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		}
 	}
 	SpawnedTrainers.Empty();
-	SquadCommanders.Empty();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -120,8 +69,6 @@ void AScholaEnvironment::Tick(float DeltaTime)
 	}
 
 	MatchTimer += DeltaTime;
-	UpdatePassiveIncome(DeltaTime);
-	CheckWinConditions();
 }
 
 //------------------------------------------------------------------------------
@@ -140,9 +87,9 @@ void AScholaEnvironment::StartMatch()
 	CurrentMatchState = EMocMatchState::InProgress;
 	OnEnvMatchStateChanged.Broadcast(CurrentMatchState);
 
-	if (OwnedTeamManager)
+	if (OwnedMatchManager)
 	{
-		OwnedTeamManager->SpawnTeams();
+		OwnedMatchManager->SpawnTeams();
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] %s: Match started (EnvID: %d)"), *GetName(), ScholaEnvID);
@@ -163,189 +110,14 @@ void AScholaEnvironment::EndMatch(EMocMatchState WinnerState)
 
 	// 전역 매치 종료 보상 라우팅 (Match End Reward Routing)
 	UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>();
-	if (RewardSubsystem && OwnedTeamManager)
+	if (RewardSubsystem && OwnedMatchManager)
 	{
 		int32 WinningTeamID = -1;
 		if (WinnerState == EMocMatchState::RedTeamWon) WinningTeamID = 0;
 		else if (WinnerState == EMocMatchState::BlueTeamWon) WinningTeamID = 1;
-
-		// 양 팀의 에이전트들을 순회하며 승패에 따른 보상 적용
-		for (int32 TeamID = 0; TeamID <= 1; ++TeamID)
-		{
-			bool bTeamWon = (TeamID == WinningTeamID);
-			for (AMocCharacter* Agent : OwnedTeamManager->GetTeamAgents(TeamID))
-			{
-				if (Agent)
-				{
-					RewardSubsystem->ApplyMatchEndReward(Agent->RewardSettings, Agent->RewardState, bTeamWon, Agent);
-				}
-			}
-		}
 	}
 }
 
-void AScholaEnvironment::AddTeamScore(int32 TeamID, int32 Amount, const FString& Reason)
-{
-	if (!OwnedTeamManager || (TeamID != 0 && TeamID != 1))
-	{
-		return;
-	}
-
-	OwnedTeamManager->AddTeamScore(TeamID, Amount);
-	int32 NewScore = GetTeamScore(TeamID);
-	OnEnvScoreUpdated.Broadcast(TeamID, NewScore, Reason);
-}
-
-int32 AScholaEnvironment::GetTeamScore(int32 TeamID) const
-{
-	return OwnedTeamManager ? OwnedTeamManager->GetTeamScore(TeamID) : 0;
-}
-
-//------------------------------------------------------------------------------
-// GAME LOGIC
-//------------------------------------------------------------------------------
-
-void AScholaEnvironment::UpdatePassiveIncome(float DeltaTime)
-{
-	int32 RedOwned = 0;
-	int32 BlueOwned = 0;
-	CountOwnedPoints(RedOwned, BlueOwned);
-
-	PassiveIncomeAccumulator += PassiveIncomeRate * DeltaTime;
-
-	if (PassiveIncomeAccumulator >= 1.0f)
-	{
-		int32 Points = FMath::FloorToInt(PassiveIncomeAccumulator);
-		PassiveIncomeAccumulator -= Points;
-
-		if (RedOwned > 0)
-		{
-			AddTeamScore(0, RedOwned * Points, TEXT("Passive Income"));
-		}
-		if (BlueOwned > 0)
-		{
-			AddTeamScore(1, BlueOwned * Points, TEXT("Passive Income"));
-		}
-	}
-}
-
-void AScholaEnvironment::CheckWinConditions()
-{
-	int32 RedScore = GetTeamScore(0);
-	int32 BlueScore = GetTeamScore(1);
-
-	if (RedScore >= WinningScore)
-	{
-		EndMatch(EMocMatchState::RedTeamWon);
-		return;
-	}
-	if (BlueScore >= WinningScore)
-	{
-		EndMatch(EMocMatchState::BlueTeamWon);
-		return;
-	}
-	if (MatchTimer >= MaxMatchDuration)
-	{
-		EndMatch(EMocMatchState::TimeExpired);
-	}
-}
-
-void AScholaEnvironment::CountOwnedPoints(int32& OutRedOwned, int32& OutBlueOwned) const
-{
-	OutRedOwned = 0;
-	OutBlueOwned = 0;
-
-	for (ACapturePoint* Point : OwnedCapturePoints)
-	{
-		if (!Point) continue;
-		ECapturePointOwnership Ownership = Point->GetOwnership();
-		if (Ownership == ECapturePointOwnership::RedTeam)
-		{
-			OutRedOwned++;
-		}
-		else if (Ownership == ECapturePointOwnership::BlueTeam)
-		{
-			OutBlueOwned++;
-		}
-	}
-}
-
-//------------------------------------------------------------------------------
-// EVENT HANDLERS
-//------------------------------------------------------------------------------
-
-void AScholaEnvironment::OnPointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner)
-{
-	// 1. 기존 팀 스코어 갱신 로직
-	if (NewOwner == ECapturePointOwnership::RedTeam)
-	{
-		AddTeamScore(0, CaptureReward, TEXT("Point Capture"));
-	}
-	else if (NewOwner == ECapturePointOwnership::BlueTeam)
-	{
-		AddTeamScore(1, CaptureReward, TEXT("Point Capture"));
-	}
-
-	// 2. 보상 라우팅 (Reward Routing)
-	UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>();
-	if (!RewardSubsystem || !OwnedTeamManager)
-	{
-		return;
-	}
-
-	int32 CapturingTeamID = (NewOwner == ECapturePointOwnership::RedTeam) ? 0 : (NewOwner == ECapturePointOwnership::BlueTeam ? 1 : -1);
-	int32 LosingTeamID = (PreviousOwner == ECapturePointOwnership::RedTeam) ? 0 : (PreviousOwner == ECapturePointOwnership::BlueTeam ? 1 : -1);
-
-	// 점령 성공 보상 분배
-	if (CapturingTeamID != -1)
-	{
-		for (AMocCharacter* Agent : OwnedTeamManager->GetTeamAgents(CapturingTeamID))
-		{
-			if (Agent)
-			{
-				RewardSubsystem->CalculateCaptureReward(Agent->RewardSettings, Agent->RewardState, Agent->GetCommandedStrategy(), Agent);
-			}
-		}
-	}
-
-	// 점령 상실 페널티 분배
-	if (LosingTeamID != -1)
-	{
-		for (AMocCharacter* Agent : OwnedTeamManager->GetTeamAgents(LosingTeamID))
-		{
-			if (Agent)
-			{
-				RewardSubsystem->CalculateLosePointPenalty(Agent->RewardSettings, Agent->RewardState, Agent->GetCommandedStrategy(), Agent);
-			}
-		}
-	}
-}
-
-void AScholaEnvironment::OnAgentKilled(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim)
-{
-	if (KillerTeamID != -1 && KillerTeamID != VictimTeamID)
-	{
-		AddTeamScore(KillerTeamID, KillPoints, TEXT("Kill"));
-	}
-}
-
-void AScholaEnvironment::SubscribeToEvents()
-{
-	// Subscribe to owned capture points
-	for (ACapturePoint* Point : OwnedCapturePoints)
-	{
-		if (Point)
-		{
-			Point->OnPointCaptured.AddDynamic(this, &AScholaEnvironment::OnPointCaptured);
-		}
-	}
-
-	// Subscribe to owned TeamManager events
-	if (OwnedTeamManager)
-	{
-		OwnedTeamManager->OnAgentKilled.AddDynamic(this, &AScholaEnvironment::OnAgentKilled);
-	}
-}
 
 //------------------------------------------------------------------------------
 // SCHOLA ENVIRONMENT INTERFACE
@@ -360,15 +132,15 @@ void AScholaEnvironment::InitializeEnvironment()
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] InitializeEnvironment() called on %s (EnvID: %d)"), *GetName(), ScholaEnvID);
 
-	// v10.2: Discover agents from OwnedTeamManager (scoped, not world-wide)
-	if (bAutoDiscoverAgents && OwnedTeamManager)
+	// v10.2: Discover agents from OwnedMatchManager (scoped, not world-wide)
+	if (bAutoDiscoverAgents && OwnedMatchManager)
 	{
 		RegisteredAgents.Empty();
 
-		// Get agents from both teams via the owned TeamManager
+		// Get agents from both teams via the owned MatchManager
 		for (int32 TeamID = 0; TeamID <= 1; TeamID++)
 		{
-			TArray<AMocCharacter*> TeamAgents = OwnedTeamManager->GetTeamAgents(TeamID);
+			TArray<AMocCharacter*> TeamAgents = OwnedMatchManager->GetTeamAgents(TeamID);
 			for (AMocCharacter* MocChar : TeamAgents)
 			{
 				if (!MocChar) continue;
@@ -392,16 +164,11 @@ void AScholaEnvironment::InitializeEnvironment()
 			RegisteredAgents.Num(), ScholaEnvID);
 	}
 
-	// Ensure Squad Commanders are cached
-	if (bEnableCentralizedPlanning && SquadCommanders.Num() == 0)
-	{
-		CacheSquadCommanders();
-	}
 
 	// Propagate Phase 1 RL training flag
-	if (OwnedTeamManager)
+	if (OwnedMatchManager)
 	{
-		OwnedTeamManager->bRLTrainingMode = bPhase1RLTraining;
+		OwnedMatchManager->bRLTrainingMode = bPhase1RLTraining;
 	}
 
 	bEnvironmentInitialized = true;
@@ -431,38 +198,14 @@ void AScholaEnvironment::ResetEnvironment()
 	bMatchEnded = false;
 	CurrentMatchState = EMocMatchState::InProgress;
 
-	// Reset TeamManager (teams, agents, squad commanders)
-	if (OwnedTeamManager)
+	// Reset MatchManager (teams, agents, squad commanders)
+	if (OwnedMatchManager)
 	{
-		OwnedTeamManager->ResetTeams();
+		OwnedMatchManager->ResetEnvironment();
 	}
 
-	// Reset owned capture points
-	for (ACapturePoint* Point : OwnedCapturePoints)
-	{
-		if (Point)
-		{
-			Point->ResetPoint();
-		}
-	}
 
-	// Reset owned pickups
-	for (APickupBase* Pickup : OwnedPickups)
-	{
-		if (Pickup)
-		{
-			Pickup->Reset();
-		}
-	}
-
-	// Reset Squad Commanders
-	for (auto& Pair : SquadCommanders)
-	{
-		if (Pair.Value)
-		{
-			Pair.Value->Reset();
-		}
-	}
+	// Squad Commanders are reset inside OwnedTeamManager->ResetTeams().
 
 	OnScholaEnvironmentInitialized_Delegate.Broadcast();
 
@@ -564,75 +307,16 @@ void AScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPawn
 	bAgentsRegistered = true;
 }
 
-void AScholaEnvironment::SetEnvironmentOptions(const TMap<FString, FString>& Options)
-{
-	for (const auto& Pair : Options)
-	{
-		if (Pair.Key == TEXT("enable_centralized_planning"))
-		{
-			bEnableCentralizedPlanning = Pair.Value.ToBool();
-		}
-		else if (Pair.Key == TEXT("log_tactical_plays"))
-		{
-			bLogTacticalPlays = Pair.Value.ToBool();
-		}
-	}
-}
 
 void AScholaEnvironment::SeedEnvironment(int Seed)
 {
 	int32 UniqueSeed = Seed + (ScholaEnvID * 1337);
 	EnvRandomStream.Initialize(UniqueSeed);
 
-	if (OwnedTeamManager)
+	if (OwnedMatchManager)
 	{
-		OwnedTeamManager->SetEnvRandomStream(EnvRandomStream);
+		OwnedMatchManager->SetEnvRandomStream(EnvRandomStream);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] SeedEnvironment: EnvID %d initialized RandomStream with seed %d"), ScholaEnvID, UniqueSeed);
-}
-
-//------------------------------------------------------------------------------
-// v10.2 COMMANDER INTEGRATION
-//------------------------------------------------------------------------------
-
-USquadManager* AScholaEnvironment::GetSquadCommander(int32 TeamID) const
-{
-	if (USquadManager* const* Found = SquadCommanders.Find(TeamID))
-	{
-		return *Found;
-	}
-	return nullptr;
-}
-
-TArray<USquadManager*> AScholaEnvironment::GetAllSquadCommanders() const
-{
-	TArray<USquadManager*> Commanders;
-	SquadCommanders.GenerateValueArray(Commanders);
-	return Commanders;
-}
-
-void AScholaEnvironment::CacheSquadCommanders()
-{
-	SquadCommanders.Empty();
-
-	if (!OwnedTeamManager)
-	{
-		return;
-	}
-
-	for (int32 TeamID = 0; TeamID <= 1; TeamID++)
-	{
-		USquadManager* Commander = OwnedTeamManager->GetSquadCommander(TeamID);
-		if (Commander)
-		{
-			SquadCommanders.Add(TeamID, Commander);
-
-			// Bind scoped capture points and environment reference (replaces AMocGameMode queries)
-			Commander->BindCapturePoints(OwnedCapturePoints);
-			Commander->SetScholaEnvironment(this);
-
-			UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] Cached Squad Commander for Team %d"), TeamID);
-		}
-	}
 }

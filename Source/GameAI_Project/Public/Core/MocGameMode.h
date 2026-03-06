@@ -7,7 +7,7 @@
 #include "MocGameMode.generated.h"
 
 // Forward declarations
-class ATeamManager;
+class AMatchManager;
 class AMocCharacter;
 
 /**
@@ -33,14 +33,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnScoreUpdated, int32, TeamID, i
  * AMocGameMode - MOC v10.1 Game Mode Orchestrator
  *
  * Responsibilities:
- * - Spawn and manage all game entities (TeamManager, CapturePoints)
+ * - Spawn and manage all game entities (MatchManager, CapturePoints)
  * - Subscribe to game events (captures, kills)
  * - Manage scoring system (capture, passive income, kills)
  * - Check win conditions (300 points or 600 seconds)
  * - Coordinate match state transitions
  *
  * Match Flow:
- * 1. BeginPlay: Spawn TeamManager, 5 CapturePoints, 12 HealthPacks, 8 AmmoCrates
+ * 1. BeginPlay: Spawn MatchManager, 5 CapturePoints, 12 HealthPacks, 8 AmmoCrates
  * 2. Subscribe to events: OnPointCaptured, OnAgentKilled
  * 3. Tick: Update passive income, check win conditions
  * 4. EndMatch: Broadcast winner, disable gameplay

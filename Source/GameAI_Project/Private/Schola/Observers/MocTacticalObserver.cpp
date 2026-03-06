@@ -4,7 +4,7 @@
 #include "Schola/Trainers/MocTrainer.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Characters/MocCharacter.h"
-#include "Team/TeamManager.h"
+#include "Team/MatchManager.h"
 #include "Actors/CapturePoint.h"
 #include "Common/Spaces/BoxSpace.h"
 #include "Common/Points/BoxPoint.h"
@@ -142,10 +142,10 @@ void UMocTacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 	//    [num_assault/5, num_defend/5, num_support/5]
 	{
 		float CompositionCounts[3] = {0.0f, 0.0f, 0.0f}; // Assault, Defend, Support
-		ATeamManager* TeamMgr = Character->GetTeamManager();
-		if (TeamMgr)
+		AMatchManager* MatchMgr = Character->GetMatchManager();
+		if (MatchMgr)
 		{
-			TArray<AMocCharacter*> Teammates = TeamMgr->GetTeamAgents(Character->GetTeamID_Implementation());
+			TArray<AMocCharacter*> Teammates = MatchMgr->GetTeamAgents(Character->GetTeamID_Implementation());
 			for (AMocCharacter* Mate : Teammates)
 			{
 				if (!Mate) continue;
@@ -318,7 +318,7 @@ FObservation UMocTacticalObserver::GatherBaseObservation() const
 		{
 			if (const ACapturePoint* const* FoundPoint = EnvCapturePoints.Find(PointOrder[i]))
 			{
-				const int32 PointOwner = (*FoundPoint)->GetOwningTeamID();
+				const int32 PointOwner = (*FoundPoint)->GetTeamID_Implementation();
 				if (PointOwner == MyTeamID)
 				{
 					Obs.CapturePointStatuses[i] = 1.0f;

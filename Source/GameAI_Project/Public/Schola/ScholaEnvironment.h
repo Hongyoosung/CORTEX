@@ -5,15 +5,13 @@
 #include "CoreMinimal.h"
 #include "Environment/StaticEnvironment.h"
 #include "Core/MocGameMode.h"
-#include "Actors/CapturePoint.h"
 #include "ScholaEnvironment.generated.h"
 
-class USquadManager;
+
 class UScholaMocAgent;
 class UEpisodeManagerComponent;
 class AMocTrainer;
-class ATeamManager;
-class ACapturePoint;
+class AMatchManager;
 class ASpawnArea;
 class APickupBase;
 class AMocCharacter;
@@ -27,8 +25,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEnvScoreUpdated, int32, TeamID
  *
  * Each AScholaEnvironment instance owns ALL game logic for one 5v5 arena:
  * - Match state, scoring, win conditions
- * - One ATeamManager (editor-assigned)
- * - 5 ACapturePoints (editor-assigned)
+ * - One MatchManager (editor-assigned)
  * - 2 ASpawnAreas (editor-assigned)
  * - Pickups (editor-assigned)
  *
@@ -54,7 +51,6 @@ public:
 	virtual void InitializeEnvironment() override;
 	virtual void ResetEnvironment() override;
 	virtual void RegisterAgents(TArray<APawn*>& OutTrainerControlledPawns) override;
-	virtual void SetEnvironmentOptions(const TMap<FString, FString>& Options) override;
 	virtual void SeedEnvironment(int Seed) override;
 
 
@@ -82,30 +78,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Schola|Match")
 	float GetTimeRemaining() const { return FMath::Max(0.0f, MaxMatchDuration - MatchTimer); }
 
-	//==========================================================================
-	// SCORING SYSTEM
-	//==========================================================================
 
-	/** Add score to team */
-	UFUNCTION(BlueprintCallable, Category = "Schola|Scoring")
-	void AddTeamScore(int32 TeamID, int32 Amount, const FString& Reason);
-
-	/** Get team score */
-	UFUNCTION(BlueprintPure, Category = "Schola|Scoring")
-	int32 GetTeamScore(int32 TeamID) const;
-
-
-	//==========================================================================
-	// v10.2 COMMANDER INTEGRATION
-	//==========================================================================
-
-	/** Get the Squad Commander for a specific team (centralized planner) */
-	UFUNCTION(BlueprintCallable, Category = "Schola|v10.2")
-	USquadManager* GetSquadCommander(int32 TeamID) const;
-
-	/** Get all registered Squad Planners across all teams */
-	UFUNCTION(BlueprintCallable, Category = "Schola|v10.2")
-	TArray<USquadManager*> GetAllSquadCommanders() const;
 
 
 	//==========================================================================
@@ -116,44 +89,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Schola")
 	FORCEINLINE int32 GetEnvId() const { return ScholaEnvID; }
 
-	/** Get owned TeamManager */
+	/** Get owned MatchManager */
 	UFUNCTION(BlueprintPure, Category = "Schola")
-	ATeamManager* GetTeamManager() const { return OwnedTeamManager; }
+	AMatchManager* GetMatchManager() const { return OwnedMatchManager; }
 
-	/** Get all owned capture points */
-	UFUNCTION(BlueprintPure, Category = "Schola")
-	TArray<ACapturePoint*> GetAllCapturePoints() const { return OwnedCapturePoints; }
-
-	/** ø‹∫Œ æ◊≈Õ(TeamManager, SpawnArea, Trainer µÓ)ø°º≠ ≥≠ºˆ Ω∫∆Æ∏≤ ¡¢±Ÿ Ω√ ªÁøÎ */
+	/** Ïô∏Î∂Ä Ïï°ÌÑ∞(MatchManager, SpawnArea, Trainer Îì±)ÏóêÏÑú ÎÇúÏàò Ïä§Ìä∏Î¶º Ï†ëÍ∑º Ïãú ÏÇ¨Ïö© */
 	UFUNCTION(BlueprintPure, Category = "Schola|Random")
 	FRandomStream& GetRandomStream() { return EnvRandomStream; }
 
 
-private:
-	/** Cache Squad Commander references from OwnedTeamManager */
-	void CacheSquadCommanders();
-
-	/** Subscribe to owned CapturePoint and TeamManager events */
-	void SubscribeToEvents();
-
-	/** Update passive income from owned capture points */
-	void UpdatePassiveIncome(float DeltaTime);
-
-	/** Check if any team has won */
-	void CheckWinConditions();
-
-	/** Count owned capture points per team */
-	void CountOwnedPoints(int32& OutRedOwned, int32& OutBlueOwned) const;
-
-	//==========================================================================
-	// EVENT HANDLERS
-	//==========================================================================
-
-	UFUNCTION()
-	void OnPointCaptured(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner);
-
-	UFUNCTION()
-	void OnAgentKilled(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim);
 
 
 public:
@@ -183,25 +127,11 @@ public:
 	// OWNED ACTORS (editor-assignable per environment)
 	//==========================================================================
 
-	/** TeamManager for this environment (assign in editor) */
+	/** MatchManager for this environment (assign in editor) */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
-	ATeamManager* OwnedTeamManager = nullptr;
+	AMatchManager* OwnedMatchManager = nullptr;
 
-	/** Capture points for this environment (assign in editor) */
-	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
-	TArray<ACapturePoint*> OwnedCapturePoints;
 
-	/** Red team spawn area (assign in editor) */
-	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
-	ASpawnArea* RedSpawnArea = nullptr;
-
-	/** Blue team spawn area (assign in editor) */
-	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
-	ASpawnArea* BlueSpawnArea = nullptr;
-
-	/** Pickups for this environment (assign in editor) */
-	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
-	TArray<APickupBase*> OwnedPickups;
 
 
 	//==========================================================================
@@ -253,9 +183,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
 	bool bPhase1RLTraining = false;
 
-	/** Enable centralized planning via Squad Commanders (v10.2) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
-	bool bEnableCentralizedPlanning;
 
 	/** Log tactical play assignments for analysis */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
@@ -269,10 +196,6 @@ public:
 	/** All registered Schola agent components */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
 	TArray<UScholaMocAgent*> RegisteredAgents;
-
-	/** Cached Squad Commander references per team (v10.2) */
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|State|v10.2")
-	TMap<int32, USquadManager*> SquadCommanders;
 
 	/** Is gRPC server running? */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
@@ -304,7 +227,7 @@ protected:
 	float PassiveIncomeAccumulator = 0.0f;
 	bool bMatchEnded = false;
 
-	/** ∞¢ »Ø∞Ê ¿ŒΩ∫≈œΩ∫ø° ¡æº”µ» µ∂∏≥¿˚¿Œ ≥≠ºˆ Ω∫∆Æ∏≤ */
+	/** Í∞Å ÌôòÍ≤Ω Ïù∏Ïä§ÌÑ¥Ïä§Ïóê Ï¢ÖÏÜçÎêú ÎèÖÎ¶ΩÏ†ÅÏù∏ ÎÇúÏàò Ïä§Ìä∏Î¶º */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Random")
 	FRandomStream EnvRandomStream;
 };

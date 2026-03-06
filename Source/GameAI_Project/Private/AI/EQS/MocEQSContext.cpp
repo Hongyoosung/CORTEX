@@ -5,11 +5,12 @@
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"
 #include "AIController.h"
 #include "Characters/MocCharacter.h"
-#include "Team/TeamManager.h"
-#include "Schola/ScholaEnvironment.h"
 #include "EngineUtils.h"
 #include "Actors/CapturePoint.h"
 #include "Kismet/GameplayStatics.h"
+
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AISense_Sight.h"
 
 void UEnvQueryContext_MocQuerier::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
@@ -32,82 +33,64 @@ void UEnvQueryContext_MocEnemies::ProvideContext(FEnvQueryInstance& QueryInstanc
 	}
 
 	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryOwner);
-	if (!MocChar)
+	AAIController* AIC = Cast<AAIController>(QueryOwner);
+
+	if (!MocChar || !AIC)
 	{
-		// Try to get from controller
-		AAIController* AIC = Cast<AAIController>(QueryOwner);
+		// Try to get from controller if not directly possessed
 		if (AIC)
 		{
 			MocChar = Cast<AMocCharacter>(AIC->GetPawn());
 		}
-	}
 
-	if (!MocChar)
-	{
-		return;
-	}
-
-	// Get enemy positions from team manager
-	UWorld* World = QueryOwner->GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	// Get TeamManager from character (multi-env safe) or ScholaEnvironment fallback
-	ATeamManager* TeamManager = MocChar->GetTeamManager();
-	if (!TeamManager)
-	{
-		for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
+		if (!MocChar)
 		{
-			if ((*It)->GetEnvId() == MocChar->GetEnvID_Implementation())
-			{
-				TeamManager = (*It)->GetTeamManager();
-				break;
-			}
+			UE_LOG(LogTemp, Warning, TEXT("[MocEQSContext] Query owner is not a MocCharacter or AIController: %s"), *QueryOwner->GetName())
+
+			return;
 		}
 	}
-	if (!TeamManager)
+
+
+	// 퍼셉션 컴포넌트 가져오기
+	UAIPerceptionComponent* PerceptionComp = AIC->GetAIPerceptionComponent();
+	if (!PerceptionComp)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[MocEQSContext] %s: AIPerceptionComponent is missing on AIController!"), *MocChar->GetName());
 		return;
 	}
 
-	int32 MyTeamID = MocChar->GetTeamID_Implementation();
-	const FVector MyLocation = MocChar->GetActorLocation();
-
-	// Get enemy positions — scoped to this env via TeamManager, filtered by direct line-of-sight
+	const int32 MyTeamID = MocChar->GetTeamID_Implementation();
+	const int32 MyEnvID = MocChar->GetEnvID_Implementation();
 	TArray<FVector> EnemyPositions;
-	TArray<AMocCharacter*> EnemyAgents = TeamManager->GetEnemyAgents(MyTeamID);
 
-	for (AMocCharacter* Enemy : EnemyAgents)
+	// 시각(Sight)으로 인지된 모든 액터 가져오기
+	TArray<AActor*> PerceivedActors;
+	PerceptionComp->GetKnownPerceivedActors(UAISense_Sight::StaticClass(), PerceivedActors);
+
+	for (AActor* Actor : PerceivedActors)
 	{
-		if (!Enemy || !Enemy->IsAlive_Implementation())
+		AMocCharacter* PerceivedChar = Cast<AMocCharacter>(Actor);
+
+		// 1. 대상이 MocCharacter이고, 살아있으며, 적팀이고, 같은 환경(Env)에 있는지 확인
+		if (PerceivedChar &&
+			PerceivedChar->IsAlive_Implementation() &&
+			PerceivedChar->GetTeamID_Implementation() != MyTeamID &&
+			PerceivedChar->GetEnvID_Implementation() == MyEnvID)
 		{
-			continue;
-		}
+			// 2. 현재 시야에 실제로 보이는지 확인 (기억 속에만 있는 위치는 제외)
+			FActorPerceptionBlueprintInfo PerceptionInfo;
+			PerceptionComp->GetActorsPerception(Actor, PerceptionInfo);
 
-		const float Distance = FVector::Dist(MyLocation, Enemy->GetActorLocation());
-		if (Distance >= 8000.0f)
-		{
-			continue;
-		}
-
-		FHitResult HitResult;
-		FCollisionQueryParams QueryParams;
-		QueryParams.AddIgnoredActor(MocChar);
-		QueryParams.AddIgnoredActor(Enemy);
-
-		const bool bBlocked = World->LineTraceSingleByChannel(
-			HitResult,
-			MyLocation + FVector(0, 0, 90),
-			Enemy->GetActorLocation() + FVector(0, 0, 90),
-			ECC_Visibility,
-			QueryParams
-		);
-
-		if (!bBlocked)
-		{
-			EnemyPositions.Add(Enemy->GetActorLocation());
+			for (const FAIStimulus& Stimulus : PerceptionInfo.LastSensedStimuli)
+			{
+				// 시각 정보이며, 성공적으로 인지 중(WasSuccessfullySensed)인 경우에만 추가
+				if (Stimulus.Type == UAISense::GetSenseID<UAISense_Sight>() && Stimulus.WasSuccessfullySensed())
+				{
+					EnemyPositions.Add(PerceivedChar->GetActorLocation());
+					break; // 한 번 확인했으면 다음 액터로 넘어감
+				}
+			}
 		}
 	}
 
@@ -117,10 +100,7 @@ void UEnvQueryContext_MocEnemies::ProvideContext(FEnvQueryInstance& QueryInstanc
 void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
 	AActor* QueryOwner = Cast<AActor>(QueryInstance.Owner.Get());
-	if (!QueryOwner)
-	{
-		return;
-	}
+	if (!QueryOwner) return;
 
 	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryOwner);
 	if (!MocChar)
@@ -132,44 +112,25 @@ void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance
 		}
 	}
 
-	if (!MocChar)
-	{
-		return;
-	}
+	if (!MocChar) return;
 
 	UWorld* World = QueryOwner->GetWorld();
-	if (!World)
-	{
-		return;
-	}
+	if (!World) return;
 
-	// Get TeamManager from character (multi-env safe) or ScholaEnvironment fallback
-	ATeamManager* TeamManager = MocChar->GetTeamManager();
-	if (!TeamManager)
-	{
-		for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
-		{
-			if ((*It)->GetEnvId() == MocChar->GetEnvID_Implementation())
-			{
-				TeamManager = (*It)->GetTeamManager();
-				break;
-			}
-		}
-	}
-	if (!TeamManager)
-	{
-		return;
-	}
-
-	int32 MyTeamID = MocChar->GetTeamID_Implementation();
-
-	// Get ally positions
+	const int32 MyTeamID = MocChar->GetTeamID_Implementation();
+	const int32 MyEnvID = MocChar->GetEnvID_Implementation();
 	TArray<FVector> AllyPositions;
-	TArray<AMocCharacter*> TeamAgents = TeamManager->GetTeamAgents(MyTeamID);
 
-	for (AMocCharacter* Ally : TeamAgents)
+	// MocCharacter를 순회하여 같은 팀 찾기
+	for (TActorIterator<AMocCharacter> It(World); It; ++It)
 	{
-		if (Ally && Ally != MocChar && Ally->IsAlive_Implementation())
+		AMocCharacter* Ally = *It;
+
+		// 본인이 아니며, 살아있고, 같은 팀이며, 같은 환경인 경우 수집
+		if (Ally && Ally != MocChar &&
+			Ally->IsAlive_Implementation() &&
+			Ally->GetTeamID_Implementation() == MyTeamID &&
+			Ally->GetEnvID_Implementation() == MyEnvID)
 		{
 			AllyPositions.Add(Ally->GetActorLocation());
 		}
@@ -178,101 +139,49 @@ void UEnvQueryContext_MocAllies::ProvideContext(FEnvQueryInstance& QueryInstance
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, AllyPositions);
 }
 
+
 void UEnvQueryContext_MocCapturePoints::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
-	AActor* QueryOwner = Cast<AActor>(QueryInstance.Owner.Get());
-	if (!QueryOwner)
-	{
-		return;
-	}
-
-	UWorld* World = QueryOwner->GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	// Resolve querier's EnvID for multi-env isolation
-	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryOwner);
+	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryInstance.Owner.Get());
 	if (!MocChar)
 	{
-		AAIController* AIC = Cast<AAIController>(QueryOwner);
-		if (AIC)
-		{
-			MocChar = Cast<AMocCharacter>(AIC->GetPawn());
-		}
+		AAIController* AIC = Cast<AAIController>(QueryInstance.Owner.Get());
+		if (AIC) MocChar = Cast<AMocCharacter>(AIC->GetPawn());
 	}
-	const int32 EnvID = MocChar ? MocChar->GetEnvID_Implementation() : -1;
+
+	if (!MocChar) return;
 
 	TArray<FVector> PointPositions;
-	for (TActorIterator<ACapturePoint> It(World); It; ++It)
+	for (ACapturePoint* CP : MocChar->AssignedCapturePoints)
 	{
-		ACapturePoint* CP = *It;
-		if (CP && (EnvID == -1 || CP->GetEnvID_Implementation() == EnvID))
-		{
-			PointPositions.Add(CP->GetActorLocation());
-		}
+		if (CP) PointPositions.Add(CP->GetActorLocation());
 	}
 
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, PointPositions);
 }
 
+
 void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
-	AActor* QueryOwner = Cast<AActor>(QueryInstance.Owner.Get());
-	if (!QueryOwner)
-	{
-		return;
-	}
-
-	// Get querier's character
-	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryOwner);
+	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryInstance.Owner.Get());
 	if (!MocChar)
 	{
-		AAIController* AIC = Cast<AAIController>(QueryOwner);
-		if (AIC)
-		{
-			MocChar = Cast<AMocCharacter>(AIC->GetPawn());
-		}
+		AAIController* AIC = Cast<AAIController>(QueryInstance.Owner.Get());
+		if (AIC) MocChar = Cast<AMocCharacter>(AIC->GetPawn());
 	}
 
-	if (!MocChar)
-	{
-		return;
-	}
+	if (!MocChar) return;
 
-	UWorld* World = QueryOwner->GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	const int32 MyEnvID = MocChar->GetEnvID_Implementation();
 	const int32 MyTeamID = MocChar->GetTeamID_Implementation();
-	FVector AgentPos = MocChar->GetActorLocation();
-
-	AScholaEnvironment* MyEnv = nullptr;
-	for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
-	{
-		if ((*It)->GetEnvId() == MyEnvID)
-		{
-			MyEnv = *It;
-			break;
-		}
-	}
-
-	if (!MyEnv) return;
-
-	// 환경이 소유한 거점들 중에서만 탐색
-	TArray<ACapturePoint*> EnvPoints = MyEnv->GetAllCapturePoints();
+	const FVector AgentPos = MocChar->GetActorLocation();
 
 	ACapturePoint* NearestNonFriendly = nullptr;
 	float NearestDist = FLT_MAX;
 
-	// Enum 매핑 주의: CP->GetOwningTeamID()가 에이전트의 TeamID 체계와 맞는지 반드시 확인 필요
-	for (ACapturePoint* CP : EnvPoints)
+
+	for (ACapturePoint* CP : MocChar->AssignedCapturePoints)
 	{
-		if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+		if (!CP || CP->GetTeamID_Implementation() == MyTeamID) continue;
 
 		const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
 		if (Dist < NearestDist)
@@ -288,57 +197,31 @@ void UEnvQueryContext_MocEnemyObjective::ProvideContext(FEnvQueryInstance& Query
 	}
 }
 
+
 void UEnvQueryContext_MocAllyObjective::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
-	AActor* QueryOwner = Cast<AActor>(QueryInstance.Owner.Get());
-	if (!QueryOwner)
-	{
-		return;
-	}
-
-	// Get querier's character
-	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryOwner);
+	AMocCharacter* MocChar = Cast<AMocCharacter>(QueryInstance.Owner.Get());
 	if (!MocChar)
 	{
-		AAIController* AIC = Cast<AAIController>(QueryOwner);
-		if (AIC)
-		{
-			MocChar = Cast<AMocCharacter>(AIC->GetPawn());
-		}
+		AAIController* AIC = Cast<AAIController>(QueryInstance.Owner.Get());
+		if (AIC) MocChar = Cast<AMocCharacter>(AIC->GetPawn());
 	}
 
-	if (!MocChar)
-	{
-		return;
-	}
+	if (!MocChar) return;
 
-	UWorld* World = QueryOwner->GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	// Get my team ID to determine friendly base
-	int32 MyTeamID = MocChar->GetTeamID_Implementation();
-
-	// Find friendly team's base capture point
-	// Red team base = PointA, Blue team base = PointE
+	const int32 MyTeamID = MocChar->GetTeamID_Implementation();
 	ECapturePointID AllyBaseID = (MyTeamID == 0) ? ECapturePointID::PointA : ECapturePointID::PointE;
 
-	// Find the specific capture point — scoped to this env via EnvID
-	for (TActorIterator<ACapturePoint> It(World); It; ++It)
+	for (ACapturePoint* CP : MocChar->AssignedCapturePoints)
 	{
-		ACapturePoint* CapturePoint = *It;
-		if (CapturePoint && CapturePoint->GetEnvID_Implementation() == MocChar->GetEnvID_Implementation() && CapturePoint->PointID == AllyBaseID)
+		if (CP && CP->PointID == AllyBaseID)
 		{
-			UEnvQueryItemType_Point::SetContextHelper(ContextData, CapturePoint->GetActorLocation());
+			UEnvQueryItemType_Point::SetContextHelper(ContextData, CP->GetActorLocation());
 			return;
 		}
 	}
-
-	UE_LOG(LogTemp, Error, TEXT("[MocEQSContext] Ally objective not found (Point %d) for team %d (EnvID %d)"),
-		static_cast<int32>(AllyBaseID), MyTeamID, MocChar->GetEnvID_Implementation());
 }
+
 
 void UEnvQueryContext_MocCoverPoints::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {

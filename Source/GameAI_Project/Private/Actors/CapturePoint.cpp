@@ -10,17 +10,14 @@
 #include "Characters/MocCharacter.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
-#include "CapturePoint.h"
 
 ACapturePoint::ACapturePoint()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Create root component
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
 	RootComponent = RootComp;
 
-	// Create capture zone (cylindrical trigger)
 	CaptureZone = CreateDefaultSubobject<USphereComponent>(TEXT("CaptureZone"));
 	CaptureZone->SetupAttachment(RootComponent);
 	CaptureZone->SetSphereRadius(CaptureRadius);
@@ -29,12 +26,10 @@ ACapturePoint::ACapturePoint()
 	CaptureZone->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	CaptureZone->SetGenerateOverlapEvents(true);
 
-	// Create visual mesh
 	PointMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PointMesh"));
 	PointMesh->SetupAttachment(RootComponent);
 	PointMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	// Create debug text
 	DebugText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("DebugText"));
 	DebugText->SetupAttachment(RootComponent);
 	DebugText->SetRelativeLocation(FVector(0.0f, 0.0f, 200.0f));
@@ -42,7 +37,6 @@ ACapturePoint::ACapturePoint()
 	DebugText->SetHorizontalAlignment(EHTA_Center);
 	DebugText->SetVerticalAlignment(EVRTA_TextCenter);
 
-	// Create Niagara VFX component
 	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
 	TeamColorVFX->SetupAttachment(RootComponent);
 	TeamColorVFX->SetRelativeLocation(FVector(0.0f, 0.0f, 100.0f));
@@ -53,27 +47,22 @@ void ACapturePoint::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Set initial ownership
 	CurrentOwner = InitialOwner;
 
-	// Bind overlap events
 	CaptureZone->OnComponentBeginOverlap.AddDynamic(this, &ACapturePoint::OnCaptureZoneBeginOverlap);
 	CaptureZone->OnComponentEndOverlap.AddDynamic(this, &ACapturePoint::OnCaptureZoneEndOverlap);
 
-	// Create dynamic material for visual feedback
 	if (PointMesh && PointMesh->GetMaterial(0))
 	{
 		DynamicMaterial = PointMesh->CreateAndSetMaterialInstanceDynamic(0);
 	}
 
-	// Setup Niagara VFX
 	if (TeamColorVFX && TeamColorVFXAsset)
 	{
 		TeamColorVFX->SetAsset(TeamColorVFXAsset);
 		TeamColorVFX->Activate();
 	}
 
-	// Update initial visuals
 	UpdateVisuals();
 	UpdateNiagaraColor();
 }
@@ -82,137 +71,110 @@ void ACapturePoint::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Clear just-captured flag
 	bJustCaptured = false;
-
-	// Update capture progress
 	UpdateCaptureProgress(DeltaTime);
-
-	// Update visuals
 	UpdateVisuals();
 
-	// Debug visualization
 	if (bShowDebugInfo)
 	{
-		FString OwnerStr;
-		switch (CurrentOwner)
-		{
-		case ECapturePointOwnership::RedTeam: OwnerStr = TEXT("RED"); break;
-		case ECapturePointOwnership::BlueTeam: OwnerStr = TEXT("BLUE"); break;
-		default: OwnerStr = TEXT("NEUTRAL"); break;
-		}
+		FString OwnerStr = CurrentOwner == -1 ? TEXT("NEUTRAL") : FString::Printf(TEXT("TEAM %d"), CurrentOwner);
 
-		FString StatusStr = FString::Printf(
-			TEXT("%s\nProgress: %.1f%%\nRed: %d | Blue: %d\n%s"),
+		FString DebugStr = FString::Printf(
+			TEXT("%s\nProgress: %.1f%%\n%s\n"),
 			*UEnum::GetValueAsString(PointID),
 			CaptureProgress * 100.0f,
-			RedTeamAgents.Num(),
-			BlueTeamAgents.Num(),
 			*OwnerStr
 		);
 
-		DebugText->SetText(FText::FromString(StatusStr));
+		for (const auto& Pair : AgentsInZoneByTeam)
+		{
+			DebugStr += FString::Printf(TEXT("T%d: %d | "), Pair.Key, Pair.Value.Agents.Num());
+		}
 
-		// Draw capture zone — color reflects owning team when idle, active team when capturing
-		FColor CylinderColor;
-		if (IsContested())
-		{
-			CylinderColor = FColor::Yellow;
-		}
-		else if (CapturingTeam == 0)
-		{
-			CylinderColor = FColor::Red;
-		}
-		else if (CapturingTeam == 1)
-		{
-			CylinderColor = FColor::Blue;
-		}
-		else
-		{
-			switch (CurrentOwner)
-			{
-			case ECapturePointOwnership::RedTeam:  CylinderColor = FColor::Red;   break;
-			case ECapturePointOwnership::BlueTeam: CylinderColor = FColor::Blue;  break;
-			default:                               CylinderColor = FColor::White; break;
-			}
-		}
+		DebugText->SetText(FText::FromString(DebugStr));
+
+		FColor CylinderColor = FColor::White;
+		if (IsContested()) CylinderColor = FColor::Yellow;
+		else if (CapturingTeam != -1) CylinderColor = (CapturingTeam == 0) ? FColor::Red : FColor::Blue; // Adjust fallback colors as needed
+		else CylinderColor = (CurrentOwner == 0) ? FColor::Red : (CurrentOwner == 1) ? FColor::Blue : FColor::White;
 
 		DrawDebugCylinder(
 			GetWorld(),
 			GetActorLocation() - FVector(0, 0, CaptureHeight / 2),
 			GetActorLocation() + FVector(0, 0, CaptureHeight / 2),
-			CaptureRadius,
-			32,
-			CylinderColor,
-			false,
-			-1.0f,
-			0,
-			2.0f
+			CaptureRadius, 32, CylinderColor, false, -1.0f, 0, 2.0f
 		);
 	}
 }
 
-
-int32 ACapturePoint::GetTeamID_Implementation() const
-{
-    // Enum -> Int 변환
-    switch (CurrentOwner)
-    {
-        case ECapturePointOwnership::RedTeam: return 0;
-        case ECapturePointOwnership::BlueTeam: return 1;
-        default: return -1;
-    }
-}
-
-int32 ACapturePoint::GetEnvID_Implementation() const
-{
-	return EnvID;
-}
-
+int32 ACapturePoint::GetTeamID_Implementation() const { return CurrentOwner; }
+int32 ACapturePoint::GetEnvID_Implementation() const { return EnvID; }
+void ACapturePoint::SetTeamID_Implementation(int32 NewTeamID) { CurrentOwner = NewTeamID; }
+void ACapturePoint::SetEnvID_Implementation(int32 NewEnvID) { EnvID = NewEnvID; }
 
 void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 {
 	PreviousProgress = CaptureProgress;
 
-	const int32 RedCount = RedTeamAgents.Num();
-	const int32 BlueCount = BlueTeamAgents.Num();
-	const int32 OwnerTeamID = GetOwningTeamID();
-
-	// Both teams present: pause all progress
-	if (RedCount > 0 && BlueCount > 0)
+	// Clean up empty sets just in case
+	for (auto It = AgentsInZoneByTeam.CreateIterator(); It; ++It)
 	{
+		if (It.Value().Agents.Num() == 0) It.RemoveCurrent();
+	}
+
+	const int32 TeamsPresent = AgentsInZoneByTeam.Num();
+
+	if (TeamsPresent > 1)
+	{
+		// Contested
 		CapturingTeam = -1;
 		return;
 	}
 
-	// Red team only in zone
-	if (RedCount > 0)
+	if (TeamsPresent == 1)
 	{
-		if (OwnerTeamID == 0)
+		// Extract the single team attempting capture
+		int32 ActiveTeamID = -1;
+		int32 AgentCount = 0;
+		for (const auto& Pair : AgentsInZoneByTeam)
 		{
-			// Red owns it — no action needed
+			ActiveTeamID = Pair.Key;
+			AgentCount = Pair.Value.Agents.Num();
+		}
+
+		if (CurrentOwner == ActiveTeamID)
+		{
+			// Owning team is sitting on it; heal progress if it was eroded
 			CapturingTeam = -1;
+			if (CaptureProgress < 1.0f)
+			{
+				CaptureProgress = FMath::Min(1.0f, CaptureProgress + DecayRate * DeltaTime);
+				if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
+				{
+					OnCaptureProgressChanged_Delegate.Broadcast(PointID, CaptureProgress);
+				}
+			}
 			return;
 		}
 
-		CapturingTeam = 0;
-		const float Rate = (1.0f / CaptureTime) * static_cast<float>(RedCount);
+		CapturingTeam = ActiveTeamID;
+		const float Rate = (1.0f / CaptureTime) * static_cast<float>(AgentCount);
 
-		if (OwnerTeamID == 1)
+		if (CurrentOwner != -1)
 		{
-			// Blue owns it — Red erodes ownership proportional to agent count
+			// Erosion phase (Enemy owns it)
 			CaptureProgress = FMath::Max(0.0f, CaptureProgress - Rate * DeltaTime);
 			if (CaptureProgress <= 0.0f)
 			{
-				const ECapturePointOwnership PreviousOwner = CurrentOwner;
-				CurrentOwner = ECapturePointOwnership::Neutral;
-				OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, ECapturePointOwnership::Neutral);
+				const int32 PreviousOwner = CurrentOwner;
+				CurrentOwner = -1; // Goes Neutral first
+				OnPointCaptured_Delegate.Broadcast(PreviousOwner, -1);
 				UpdateNiagaraColor();
 			}
 		}
 		else
 		{
-			// Neutral — Red captures, rate proportional to agent count
+			// Capture phase (Neutral)
 			CaptureProgress = FMath::Min(1.0f, CaptureProgress + Rate * DeltaTime);
 			if (CaptureProgress >= 1.0f)
 			{
@@ -222,49 +184,7 @@ void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 
 		if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
 		{
-			OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
-		}
-		return;
-	}
-
-	// Blue team only in zone
-	if (BlueCount > 0)
-	{
-		if (OwnerTeamID == 1)
-		{
-			// Blue owns it — no action needed
-			CapturingTeam = -1;
-			return;
-		}
-
-		CapturingTeam = 1;
-		const float Rate = (1.0f / CaptureTime) * static_cast<float>(BlueCount);
-
-		if (OwnerTeamID == 0)
-		{
-			// Red owns it — Blue erodes ownership proportional to agent count
-			CaptureProgress = FMath::Max(0.0f, CaptureProgress - Rate * DeltaTime);
-			if (CaptureProgress <= 0.0f)
-			{
-				const ECapturePointOwnership PreviousOwner = CurrentOwner;
-				CurrentOwner = ECapturePointOwnership::Neutral;
-				OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, ECapturePointOwnership::Neutral);
-				UpdateNiagaraColor();
-			}
-		}
-		else
-		{
-			// Neutral — Blue captures, rate proportional to agent count
-			CaptureProgress = FMath::Min(1.0f, CaptureProgress + Rate * DeltaTime);
-			if (CaptureProgress >= 1.0f)
-			{
-				CompleteCaptureSequence();
-			}
-		}
-
-		if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
-		{
-			OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
+			OnCaptureProgressChanged_Delegate.Broadcast(PointID, CaptureProgress);
 		}
 		return;
 	}
@@ -272,182 +192,72 @@ void ACapturePoint::UpdateCaptureProgress(float DeltaTime)
 	// No one in zone
 	CapturingTeam = -1;
 
-	if (OwnerTeamID == -1)
+	if (CurrentOwner == -1)
 	{
-		// Neutral point with partial progress: decay toward 0
-		if (CaptureProgress > 0.0f)
+		if (CaptureProgress > 0.0f) // Neutral point decaying
 		{
 			CaptureProgress = FMath::Max(0.0f, CaptureProgress - DecayRate * DeltaTime);
-
 			if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
 			{
-				OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
+				OnCaptureProgressChanged_Delegate.Broadcast(PointID, CaptureProgress);
 			}
 		}
 	}
 	else if (CaptureProgress < 1.0f)
 	{
-		// Owned point where the enemy had eroded progress: restore toward 1.0
+		// Owned point regenerating
 		CaptureProgress = FMath::Min(1.0f, CaptureProgress + DecayRate * DeltaTime);
-
 		if (FMath::Abs(CaptureProgress - PreviousProgress) > 0.01f)
 		{
-			OnCaptureProgressChanged.Broadcast(PointID, CaptureProgress);
+			OnCaptureProgressChanged_Delegate.Broadcast(PointID, CaptureProgress);
 		}
 	}
-	// Owned point at full progress (1.0) with no one present: no change
-}
-
-void ACapturePoint::DetermineMajorityTeam()
-{
-	int32 RedCount = RedTeamAgents.Num();
-	int32 BlueCount = BlueTeamAgents.Num();
-
-	// Both teams present = contested
-	if (RedCount > 0 && BlueCount > 0)
-	{
-		CapturingTeam = -1;
-		return;
-	}
-
-	// Red has majority
-	if (RedCount > 0)
-	{
-		CapturingTeam = 0;
-		return;
-	}
-
-	// Blue has majority
-	if (BlueCount > 0)
-	{
-		CapturingTeam = 1;
-		return;
-	}
-
-	// No one present
-	CapturingTeam = -1;
 }
 
 void ACapturePoint::CompleteCaptureSequence()
 {
-	ECapturePointOwnership PreviousOwner = CurrentOwner;
-	ECapturePointOwnership NewOwner;
-
-	// Set new owner based on capturing team
-	if (CapturingTeam == 0)
-	{
-		NewOwner = ECapturePointOwnership::RedTeam;
-	}
-	else if (CapturingTeam == 1)
-	{
-		NewOwner = ECapturePointOwnership::BlueTeam;
-	}
-	else
-	{
-		return; // Should not happen
-	}
-
-	// Update ownership — keep progress at 1.0 so visuals stay at full capture
-	CurrentOwner = NewOwner;
+	int32 PreviousOwner = CurrentOwner;
+	CurrentOwner = CapturingTeam;
 	CaptureProgress = 1.0f;
 	bJustCaptured = true;
 
-	// Broadcast capture event
-	OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, NewOwner);
-
-	// Update Niagara color for new owner
+	OnPointCaptured_Delegate.Broadcast(PreviousOwner, CurrentOwner);
 	UpdateNiagaraColor();
 
-	UE_LOG(LogTemp, Log, TEXT("CapturePoint %s captured! %s -> %s"),
-		*UEnum::GetValueAsString(PointID),
-		*UEnum::GetValueAsString(PreviousOwner),
-		*UEnum::GetValueAsString(NewOwner)
-	);
+	UE_LOG(LogTemp, Log, TEXT("CapturePoint %s captured! %d -> %d"),
+		*UEnum::GetValueAsString(PointID), PreviousOwner, CurrentOwner);
 }
 
 void ACapturePoint::UpdateVisuals()
 {
-	if (!DynamicMaterial)
-	{
-		return;
-	}
+	if (!DynamicMaterial) return;
 
-	// Set material color based on ownership
-	FLinearColor TeamColor;
-	switch (CurrentOwner)
-	{
-	case ECapturePointOwnership::RedTeam:
-		TeamColor = FLinearColor::Red;
-		break;
-	case ECapturePointOwnership::BlueTeam:
-		TeamColor = FLinearColor::Blue;
-		break;
-	default:
-		TeamColor = FLinearColor::Gray;
-		break;
-	}
+	// Note: For fully dynamic colors, consider pulling FTeamConfiguration from MatchManager via an Interface or Subsystem.
+	FLinearColor TeamColor = FLinearColor::Gray;
+	if (CurrentOwner == 0) TeamColor = FLinearColor::Red;
+	else if (CurrentOwner == 1) TeamColor = FLinearColor::Blue;
+	else if (CurrentOwner > 1) TeamColor = FLinearColor::Green;
 
-	// Set color parameter
 	DynamicMaterial->SetVectorParameterValue(FName("TeamColor"), TeamColor);
-
-	// Set capture progress parameter (for visual effects)
 	DynamicMaterial->SetScalarParameterValue(FName("CaptureProgress"), CaptureProgress);
-
-	// Set contested parameter
 	DynamicMaterial->SetScalarParameterValue(FName("IsContested"), IsContested() ? 1.0f : 0.0f);
 }
 
 void ACapturePoint::UpdateNiagaraColor()
 {
-	if (!TeamColorVFX)
-	{
-		return;
-	}
+	if (!TeamColorVFX) return;
 
-	// Determine color based on current ownership
-	FLinearColor TeamColor;
-	switch (CurrentOwner)
-	{
-	case ECapturePointOwnership::RedTeam:
-		TeamColor = FLinearColor::Red;
-		break;
-	case ECapturePointOwnership::BlueTeam:
-		TeamColor = FLinearColor::Blue;
-		break;
-	default:
-		TeamColor = FLinearColor::Gray;
-		break;
-	}
+	FLinearColor TeamColor = FLinearColor::Gray;
+	if (CurrentOwner == 0) TeamColor = FLinearColor::Red;
+	else if (CurrentOwner == 1) TeamColor = FLinearColor::Blue;
+	else if (CurrentOwner > 1) TeamColor = FLinearColor::Green;
 
-	// Update Niagara color parameter
 	TeamColorVFX->SetVariableLinearColor(VFXColorParameterName, TeamColor);
-
-	UE_LOG(LogTemp, Verbose, TEXT("CapturePoint %s VFX color updated to: R=%.2f, G=%.2f, B=%.2f"),
-		*UEnum::GetValueAsString(PointID), TeamColor.R, TeamColor.G, TeamColor.B);
 }
 
 bool ACapturePoint::IsContested() const
 {
-	return RedTeamAgents.Num() > 0 && BlueTeamAgents.Num() > 0;
-}
-
-int32 ACapturePoint::GetCapturingTeam() const
-{
-	return CapturingTeam;
-}
-
-int32 ACapturePoint::GetOwningTeamID() const
-{
-	switch (CurrentOwner)
-	{
-	case ECapturePointOwnership::RedTeam:
-		return 0;
-	case ECapturePointOwnership::BlueTeam:
-		return 1;
-	case ECapturePointOwnership::Neutral:
-	default:
-		return -1;
-	}
+	return AgentsInZoneByTeam.Num() > 1;
 }
 
 void ACapturePoint::ResetPoint()
@@ -456,104 +266,81 @@ void ACapturePoint::ResetPoint()
 	CaptureProgress = 0.0f;
 	CapturingTeam = -1;
 	bJustCaptured = false;
-	RedTeamAgents.Empty();
-	BlueTeamAgents.Empty();
+	AgentsInZoneByTeam.Empty();
 	UpdateVisuals();
 	UpdateNiagaraColor();
 }
 
-void ACapturePoint::SetOwnership(ECapturePointOwnership NewOwner)
+void ACapturePoint::SetOwnership(int32 NewOwnerTeamID)
 {
-	ECapturePointOwnership PreviousOwner = CurrentOwner;
-	CurrentOwner = NewOwner;
+	int32 PreviousOwner = CurrentOwner;
+	CurrentOwner = NewOwnerTeamID;
 	CaptureProgress = 0.0f;
-	OnPointCaptured.Broadcast(EnvID, PointID, PreviousOwner, NewOwner);
+	OnPointCaptured_Delegate.Broadcast(PreviousOwner, CurrentOwner);
 	UpdateVisuals();
 	UpdateNiagaraColor();
+}
+
+int32 ACapturePoint::GetTeamCountInZone(int32 TeamID) const
+{
+	if (const FTeamAgentSet* TeamSet = AgentsInZoneByTeam.Find(TeamID))
+	{
+		return TeamSet->Agents.Num();
+	}
+	return 0;
 }
 
 TArray<AActor*> ACapturePoint::GetAgentsInZone() const
 {
 	TArray<AActor*> AllAgents;
-	AllAgents.Append(RedTeamAgents.Array());
-	AllAgents.Append(BlueTeamAgents.Array());
+	for (const auto& Pair : AgentsInZoneByTeam)
+	{
+		AllAgents.Append(Pair.Value.Agents.Array());
+	}
 	return AllAgents;
 }
 
-void ACapturePoint::OnCaptureZoneBeginOverlap(
-	UPrimitiveComponent* OverlappedComponent,
-	AActor* OtherActor,
-	UPrimitiveComponent* OtherComp,
-	int32 OtherBodyIndex,
-	bool bFromSweep,
-	const FHitResult& SweepResult)
+void ACapturePoint::OnCaptureZoneBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-	// Only track characters (agents)
-	if (!OtherActor || !OtherActor->IsA(ACharacter::StaticClass()))
-	{
-		return;
-	}
+	if (!OtherActor || !OtherActor->IsA(ACharacter::StaticClass())) return;
 
-	// EnvID isolation: reject agents from different environments
 	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
 	{
-		if (MocChar->GetEnvID_Implementation() != EnvID)
-		{
-			return;
-		}
+		if (MocChar->GetEnvID_Implementation() != EnvID) return;
 	}
 
-	// Get team ID
 	int32 TeamID = GetAgentTeamID(OtherActor);
-
-	// Add to appropriate team set
-	if (TeamID == 0)
+	if (TeamID != -1)
 	{
-		RedTeamAgents.Add(OtherActor);
-	}
-	else if (TeamID == 1)
-	{
-		BlueTeamAgents.Add(OtherActor);
+		AgentsInZoneByTeam.FindOrAdd(TeamID).Agents.Add(OtherActor);
 	}
 }
 
-void ACapturePoint::OnCaptureZoneEndOverlap(
-	UPrimitiveComponent* OverlappedComponent,
-	AActor* OtherActor,
-	UPrimitiveComponent* OtherComp,
-	int32 OtherBodyIndex)
+void ACapturePoint::OnCaptureZoneEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
-	if (!OtherActor)
-	{
-		return;
-	}
+	if (!OtherActor) return;
 
-	// EnvID isolation: reject agents from different environments
 	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
 	{
-		if (MocChar->GetEnvID_Implementation() != EnvID)
-		{
-			return;
-		}
+		if (MocChar->GetEnvID_Implementation() != EnvID) return;
 	}
 
-	// Remove from both sets (safe if not present)
-	RedTeamAgents.Remove(OtherActor);
-	BlueTeamAgents.Remove(OtherActor);
+	int32 TeamID = GetAgentTeamID(OtherActor);
+	if (TeamID != -1 && AgentsInZoneByTeam.Contains(TeamID))
+	{
+		AgentsInZoneByTeam[TeamID].Agents.Remove(OtherActor);
+		if (AgentsInZoneByTeam[TeamID].Agents.Num() == 0)
+		{
+			AgentsInZoneByTeam.Remove(TeamID);
+		}
+	}
 }
 
 int32 ACapturePoint::GetAgentTeamID(AActor* Agent) const
 {
-	if (!Agent)
-	{
-		return -1;
-	}
-
-	// Use team interface if available
-	if (Agent->Implements<UMocTeamInterface>())
+	if (Agent && Agent->Implements<UMocTeamInterface>())
 	{
 		return IMocTeamInterface::Execute_GetTeamID(Agent);
 	}
-
 	return -1;
 }

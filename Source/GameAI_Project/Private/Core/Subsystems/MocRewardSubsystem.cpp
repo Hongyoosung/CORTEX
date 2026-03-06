@@ -3,8 +3,7 @@
 #include "Core/Subsystems/MocRewardSubsystem.h"
 #include "Characters/MocCharacter.h"
 #include "Actors/CapturePoint.h"
-#include "Team/TeamManager.h"
-#include "Schola/ScholaEnvironment.h"
+#include "Team/MatchManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
 
@@ -21,18 +20,9 @@ float UMocRewardSubsystem::GetStrategyScale(EStrategyType Strategy, float Assaul
 	}
 }
 
-float UMocRewardSubsystem::ApplyAndLogReward(FRewardState& InOutState, ERewardEventType EventType, EStrategyType Strategy, float RewardValue, AMocCharacter* Agent)
-{
-	float Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	int32 AgentID = Agent ? Agent->AgentID : -1;
-	
-	InOutState.EventLog.Add(FRewardEvent(EventType, Strategy, RewardValue, Timestamp, AgentID));
-	InOutState.CumulativeReward += RewardValue;
-	
-	return RewardValue;
-}
 
-float UMocRewardSubsystem::DrainSparseReward(FRewardState& InOutState, const URewardSettingsDataAsset* Settings)
+
+float UMocRewardSubsystem::DrainSparseReward(FRewardState& InOutState, const URewardSettingsDataAsset* Settings, int32 AgentID)
 {
 	if (!Settings) return 0.0f;
 	const float Drained = InOutState.CumulativeReward * Settings->SparseRewardScale;
@@ -42,57 +32,61 @@ float UMocRewardSubsystem::DrainSparseReward(FRewardState& InOutState, const URe
 
 // ==================== Event-Driven Sparse Rewards ====================
 
-float UMocRewardSubsystem::CalculateKillReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, AMocCharacter* Agent)
+float UMocRewardSubsystem::CalculateKillReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, int32 AgentID)
 {
 	if (!Settings) return 0.0f;
 	InOutState.bSparseKillFiredThisStep = true;
 	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.KillRewardScale, Settings->DefendReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
-	return ApplyAndLogReward(InOutState, ERewardEventType::Kill, ActiveStrategy, Settings->KillReward * Scale, Agent);
+	return ApplyAndLogReward(InOutState, ERewardEventType::Kill, ActiveStrategy, Settings->KillReward * Scale, AgentID);
 }
 
-float UMocRewardSubsystem::CalculateAssistReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, float DamageDealt, AMocCharacter* Agent)
+float UMocRewardSubsystem::CalculateAssistReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, float DamageDealt, int32 AgentID)
 {
 	if (!Settings) return 0.0f;
 	float DamageNorm = FMath::Clamp(DamageDealt / 100.0f, 0.0f, 1.0f);
 	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.KillRewardScale, Settings->DefendReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
-	return ApplyAndLogReward(InOutState, ERewardEventType::Assist, ActiveStrategy, Settings->KillReward * Settings->AssistRewardScale * DamageNorm * Scale, Agent);
+	return ApplyAndLogReward(InOutState, ERewardEventType::Assist, ActiveStrategy, Settings->KillReward * Settings->AssistRewardScale * DamageNorm * Scale, AgentID);
 }
 
-float UMocRewardSubsystem::CalculateDeathPenalty(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, AMocCharacter* Agent)
+float UMocRewardSubsystem::CalculateDeathPenalty(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, int32 AgentID)
 {
 	if (!Settings) return 0.0f;
 	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.DeathScale, Settings->DefendReward.DeathScale, Settings->SupportReward.DeathScale);
-	return ApplyAndLogReward(InOutState, ERewardEventType::Death, ActiveStrategy, -Settings->DeathPenaltyReward * Scale, Agent);
+	return ApplyAndLogReward(InOutState, ERewardEventType::Death, ActiveStrategy, -Settings->DeathPenaltyReward * Scale, AgentID);
 }
 
-float UMocRewardSubsystem::CalculateTeamWipePenalty(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, AMocCharacter* Agent)
+float UMocRewardSubsystem::CalculateTeamWipePenalty(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, int32 AgentID)
 {
 	if (!Settings) return 0.0f;
 	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.DeathScale, Settings->DefendReward.DeathScale, Settings->SupportReward.DeathScale);
-	return ApplyAndLogReward(InOutState, ERewardEventType::TeamWipe, ActiveStrategy, -Settings->TeamWipePenalty * Scale, Agent);
+	return ApplyAndLogReward(InOutState, ERewardEventType::TeamWipe, ActiveStrategy, -Settings->TeamWipePenalty * Scale, AgentID);
 }
 
-float UMocRewardSubsystem::CalculateCaptureReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, AMocCharacter* Agent)
+float UMocRewardSubsystem::CalculateCaptureReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, int32 AgentID)
 {
 	if (!Settings) return 0.0f;
 	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.CaptureRewardScale, Settings->DefendReward.CaptureRewardScale, Settings->SupportReward.CaptureRewardScale);
-	return ApplyAndLogReward(InOutState, ERewardEventType::CapturePoint, ActiveStrategy, Settings->CaptureReward * Scale, Agent);
+	return ApplyAndLogReward(InOutState, ERewardEventType::CapturePoint, ActiveStrategy, Settings->CaptureReward * Scale, AgentID);
 }
 
-float UMocRewardSubsystem::CalculateLosePointPenalty(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, AMocCharacter* Agent)
+float UMocRewardSubsystem::CalculateLosePointPenalty(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, int32 AgentID)
 {
 	if (!Settings) return 0.0f;
 	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.LossCaptureRewardScale, Settings->DefendReward.LossCaptureRewardScale, Settings->SupportReward.LossCaptureRewardScale);
-	return ApplyAndLogReward(InOutState, ERewardEventType::LosePoint, ActiveStrategy, Settings->LossCaptureReward * Scale, Agent);
+	return ApplyAndLogReward(InOutState, ERewardEventType::LosePoint, ActiveStrategy, Settings->LossCaptureReward * Scale, AgentID);
 }
 
-void UMocRewardSubsystem::ApplyMatchEndReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, bool bTeamWon, AMocCharacter* Agent)
+float UMocRewardSubsystem::CalculateSurvivalReward(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, float CurrentHP, float MaxHP, int32 AgentID)
 {
-	if (!Settings) return;
-	const float Reward = bTeamWon ? Settings->MatchWinReward : Settings->MatchLossReward;
-	const EStrategyType Strategy = Agent ? Agent->GetCommandedStrategy() : EStrategyType::Assault;
-	ApplyAndLogReward(InOutState, ERewardEventType::TeamVictory, Strategy, Reward, Agent);
+	return 0.0f;
 }
+
+float UMocRewardSubsystem::CalculateDistanceShaping(const URewardSettingsDataAsset* Settings, FRewardState& InOutState, EStrategyType ActiveStrategy, float DistanceToTarget, int32 AgentID)
+{
+	return 0.0f;
+}
+
+
 
 // ==================== Dense Per-Step Reward ====================
 
@@ -115,14 +109,15 @@ float UMocRewardSubsystem::ComputeStepReward(
 
 	// 환경 거점 캐싱 (Subsystem은 캐시를 들고 있지 않으므로 매 스텝 또는 참조를 받아야 함)
 	TArray<ACapturePoint*> EnvCapturePoints;
-	for (TActorIterator<AScholaEnvironment> It(GetWorld()); It; ++It)
+	for (TActorIterator<AMatchManager> It(GetWorld()); It; ++It)
 	{
-		if ((*It)->GetEnvId() == MyEnvID)
+		if ((*It)->GetEnvID() == MyEnvID)
 		{
-			EnvCapturePoints = (*It)->GetAllCapturePoints();
+			EnvCapturePoints = (*It)->GetCapturePoints();
 			break;
 		}
 	}
+
 	float CaptureRadiusSq_Cached = 250000.0f;
 	if (EnvCapturePoints.Num() > 0 && EnvCapturePoints[0])
 	{
@@ -169,7 +164,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 					float PrevDistSq = FVector::DistSquared(Prev.Position, CP->GetActorLocation());
 					float CurrDistSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
 
-					if (CP->GetOwningTeamID() != MyTeamID)
+					if (CP->GetTeamID_Implementation() != MyTeamID)
 					{
 						PrevNearestDistSq = FMath::Min(PrevNearestDistSq, PrevDistSq);
 						CurrNearestDistSq = FMath::Min(CurrNearestDistSq, CurrDistSq);
@@ -192,7 +187,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 					float NearestFriendlyDistSq = FLT_MAX;
 					for (ACapturePoint* CP : EnvCapturePoints)
 					{
-						if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+						if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 						float DSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
 						if (DSq < NearestFriendlyDistSq)
 						{
@@ -252,7 +247,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 
 				for (ACapturePoint* CP : EnvCapturePoints)
 				{
-					if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+					if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 					const float CurrDist = FVector::Dist(Current.Position, CP->GetActorLocation());
 					const float PrevDist = FVector::Dist(Prev.Position, CP->GetActorLocation());
 					CurrNearestFriendlyDist = FMath::Min(CurrNearestFriendlyDist, CurrDist);
@@ -267,7 +262,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 					float ActiveCappingProgress = 0.0f;
 					for (ACapturePoint* NonFriendlyCP : EnvCapturePoints)
 					{
-						if (!NonFriendlyCP || NonFriendlyCP->GetOwningTeamID() == MyTeamID) continue;
+						if (!NonFriendlyCP || NonFriendlyCP->GetTeamID_Implementation() == MyTeamID) continue;
 						const float PrevDist = FVector::Dist(Prev.Position, NonFriendlyCP->GetActorLocation());
 						const float CurrDist = FVector::Dist(Current.Position, NonFriendlyCP->GetActorLocation());
 						PrevNonFriendlyDist = FMath::Min(PrevNonFriendlyDist, PrevDist);
@@ -312,7 +307,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 						{
 							for (ACapturePoint* CP : EnvCapturePoints)
 							{
-								if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+								if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 								if (FVector::Dist(Current.EnemyPositions[i], CP->GetActorLocation()) <= CP->CaptureRadius)
 								{
 									Reward += Settings->DefendReward.ThreatResponseBonus;
@@ -343,7 +338,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 				{
 					const float DurabilityReward = Settings->DefendReward.ZoneDurabilityBonus * DamageTaken;
 					Reward += DurabilityReward;
-					ApplyAndLogReward(InOutState, ERewardEventType::ZoneDurability, Strategy, DurabilityReward, Agent);
+					ApplyAndLogReward(InOutState, ERewardEventType::ZoneDurability, Strategy, DurabilityReward, Agent->AgentID);
 				}
 			}
 
@@ -356,7 +351,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 					{
 						for (ACapturePoint* CP : EnvCapturePoints)
 						{
-							if (!CP || CP->GetOwningTeamID() != MyTeamID) continue;
+							if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
 							if (FVector::Dist(Prev.EnemyPositions[i], CP->GetActorLocation()) <= CP->CaptureRadius * Settings->DefendReward.ZoneGuardRadius)
 							{
 								bEnemyWasNearZone = true;
@@ -368,7 +363,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 				if (bEnemyWasNearZone)
 				{
 					Reward += Settings->DefendReward.ZoneGuardKillBonus;
-					ApplyAndLogReward(InOutState, ERewardEventType::ZoneGuardKill, Strategy, Settings->DefendReward.ZoneGuardKillBonus, Agent);
+					ApplyAndLogReward(InOutState, ERewardEventType::ZoneGuardKill, Strategy, Settings->DefendReward.ZoneGuardKillBonus, Agent->AgentID);
 				}
 			}
 		}
@@ -434,7 +429,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 				float PrevNearestObjDist = FLT_MAX, CurrNearestObjDist = FLT_MAX;
 				for (ACapturePoint* CP : EnvCapturePoints)
 				{
-					if (!CP || CP->GetOwningTeamID() == MyTeamID) continue;
+					if (!CP || CP->GetTeamID_Implementation() == MyTeamID) continue;
 					PrevNearestObjDist = FMath::Min(PrevNearestObjDist, FVector::Dist(Prev.Position, CP->GetActorLocation()));
 					CurrNearestObjDist = FMath::Min(CurrNearestObjDist, FVector::Dist(Current.Position, CP->GetActorLocation()));
 				}
@@ -451,7 +446,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 			if (Agent && Agent->GetLastTickHealAmount() > 0.0f)
 			{
 				Reward += Settings->SupportReward.HealTickReward;
-				ApplyAndLogReward(InOutState, ERewardEventType::HealAlly, Strategy, Settings->SupportReward.HealTickReward, Agent);
+				ApplyAndLogReward(InOutState, ERewardEventType::HealAlly, Strategy, Settings->SupportReward.HealTickReward, Agent->AgentID);
 			}
 
 			if (InOutState.bSparseKillFiredThisStep)
@@ -464,7 +459,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 				if (bAllyInjured)
 				{
 					Reward -= Settings->SupportReward.RoleBreakPenalty;
-					ApplyAndLogReward(InOutState, ERewardEventType::Kill, Strategy, -Settings->SupportReward.RoleBreakPenalty, Agent);
+					ApplyAndLogReward(InOutState, ERewardEventType::Kill, Strategy, -Settings->SupportReward.RoleBreakPenalty, Agent->AgentID);
 				}
 			}
 
@@ -507,7 +502,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 		for (const ACapturePoint* CP : EnvCapturePoints)
 		{
 			if (!CP) continue;
-			const int32 OwnerTeam = CP->GetOwningTeamID();
+			const int32 OwnerTeam = CP->GetTeamID_Implementation();
 			if (OwnerTeam == MyTeamID) FriendlyBases++;
 			else if (OwnerTeam >= 0) EnemyBases++;
 			else NeutralBases++;
@@ -521,7 +516,7 @@ float UMocRewardSubsystem::ComputeStepReward(
 	Reward -= EffectiveTimePenalty;
 
 	// 희소 보상 Drain 및 정규화
-	Reward += DrainSparseReward(InOutState, Settings);
+	Reward += DrainSparseReward(InOutState, Settings, Agent->AgentID);
 	Reward *= Settings->GlobalRewardScale;
 	Reward = FMath::Clamp(Reward, Settings->StepRewardClampMin, Settings->StepRewardClampMax);
 
@@ -531,9 +526,9 @@ float UMocRewardSubsystem::ComputeStepReward(
 	const float CurrentIndividualReward = Reward;
 	if (Settings->TeamRewardMixingRatio > 0.0f && Agent)
 	{
-		if (ATeamManager* TeamMgr = Agent->GetTeamManager())
+		if (AMatchManager* MatchMgr = Agent->GetMatchManager())
 		{
-			const TArray<AMocCharacter*>& Teammates = TeamMgr->GetTeamAgents(MyTeamID);
+			const TArray<AMocCharacter*>& Teammates = MatchMgr->GetTeamAgents(MyTeamID);
 			float TeamRewardSum = 0.0f;
 			int32 TeamCount = 0;
 			for (AMocCharacter* Mate : Teammates)
@@ -554,4 +549,13 @@ float UMocRewardSubsystem::ComputeStepReward(
 	InOutState.LastIndividualStepReward = CurrentIndividualReward;
 
 	return Reward;
+}
+
+float UMocRewardSubsystem::ApplyAndLogReward(FRewardState& InOutAgentState, ERewardEventType EventType, EStrategyType Strategy, float RewardValue, int32 AgentID)
+{
+	float Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	
+
+	return RewardValue;
 }

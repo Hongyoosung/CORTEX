@@ -270,7 +270,7 @@ void APickupBase::OnCollectionSphereBeginOverlap(
 	// EnvID isolation: reject agents from different environments
 	if (AMocCharacter* MocChar = Cast<AMocCharacter>(OtherActor))
 	{
-		if (MocChar->EnvID != EnvID)
+		if (MocChar->GetEnvID_Implementation() != EnvID)
 		{
 			return;
 		}

@@ -16,7 +16,7 @@ class UScholaMocAgent;
 class UScholaTransitionLogger;
 class AMocCharacter;
 class ACapturePoint;
-class ATeamManager;
+class AMatchManager;
 class AScholaEnvironment;
 
 
@@ -134,9 +134,9 @@ protected:
     UPROPERTY()
     AMocCharacter* ControlledCharacter;
 
-    /** TeamManager reference — cached for O(1) ally/enemy list access */
+    /** MatchManager reference — cached for O(1) ally/enemy list access */
     UPROPERTY()
-    ATeamManager* CachedTeamManager;
+    AMatchManager* CachedMatchManager;
 
     /** ScholaEnvironment that owns this trainer's arena — cached for match state queries */
     UPROPERTY()

@@ -1,7 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AI/BT/Tasks/BTTask_AttackAbility.h"
-#include "Combat/Abilities/AttackAbility.h"
+#include "Combat/Components/MocAbilityComponent.h"
+#include "Combat/Abilities/MocAttackAbility.h"
 #include "Characters/MocCharacter.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "AIController.h"
@@ -40,12 +41,13 @@ void UBTTask_AttackAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		return;
 	}
 
-	UAttackAbility* Ability = Character->AttackAbility;
-	if (!Ability)
+	UMocAbilityComponent* AbilityComp = Character->GetAbilityComponent();
+	if (!AbilityComp || !AbilityComp->GetAttackAbility())
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;
 	}
+	UMocAttackAbility* Ability = AbilityComp->GetAttackAbility();
 
 	UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
 	if (!BB)
@@ -62,5 +64,5 @@ void UBTTask_AttackAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		return;
 	}
 
-	Ability->ExecuteAbilityWithTarget(DeltaSeconds, Target);
+	Ability->ExecuteWithTarget(DeltaSeconds, Target);
 }

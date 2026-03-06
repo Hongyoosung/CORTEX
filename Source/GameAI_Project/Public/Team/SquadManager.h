@@ -14,26 +14,68 @@
 
 class UTeamMCTS;
 class AMocCharacter;
-class ATeamManager;
-class AScholaEnvironment;
 class UTeamDataCollector;
 class ACapturePoint;
 
 /**
- * USquadManager - MOC v10.2 Centralized Tactical Planner
+ * Squad-level planning configuration.
+ * Owned and populated by AMatchManager (or AScholaEnvironment).
+ * Passed to USquadManager::Configure() after Initialize() — no back-reference needed.
+ */
+USTRUCT(BlueprintType)
+struct FSquadConfig
+{
+	GENERATED_BODY()
+
+	/** Time budget for MCTS per planning cycle (seconds) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|MCTS")
+	float MCTSTimeBudget = 0.015f;
+
+	/** Planning interval (seconds) between replanning cycles */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|MCTS")
+	float PlanningInterval = 0.5f;
+
+	/** Enable epsilon-greedy data collection instead of MCTS */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Training")
+	bool bDataCollectionMode = false;
+
+	/** Exploration rate for epsilon-greedy (0=exploit, 1=explore) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Training",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ExplorationRate = 0.7f;
+
+	/** Phase 1 RL: fix strategy per episode (sampled at reset) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Training")
+	bool bRLTrainingMode = false;
+
+	/** Draw role-assignment labels above agents */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Debug")
+	bool bShowDebugInfo = false;
+
+	/** Isolated random stream for reproducible planning decisions */
+	FRandomStream RandomStream;
+};
+
+
+/**
+ * USquadManager — MOC v10.3 Centralized Tactical Planner
  *
- * UObject (not Actor): owned and ticked by ATeamManager.
- * Two instances are created programmatically in ATeamManager::BeginPlay()
- * — one per team, no level placement required.
+ * UObject owned by AMatchManager.  Two instances are created
+ * programmatically in AMatchManager::BeginPlay() — one per team.
  *
- * All configuration (PlanningInterval, MCTSTimeBudget, WorldModelPath, etc.)
- * lives on ATeamManager as the single configuration point.
+ * Design (v10.3 — no circular reference):
+ *  - AMatchManager owns USquadManager (parent → child, one-way).
+ *  - Configuration is pushed via Configure(FSquadConfig).
+ *  - Agent lists are passed as parameters at call sites; USquadManager
+ *    never holds a raw pointer back to AMatchManager.
+ *  - ScholaEnvironment is the single orchestrator that propagates config
+ *    from AMatchManager to each USquadManager after BeginPlay.
  *
  * Responsibilities:
- * - Collect global team state from all 5 friendly agents
- * - Run MCTS planning on team-level action space (Tactical Plays)
- * - Distribute role assignments to individual executor agents
- * - Trigger replanning on critical events (Kill/Death, objective capture)
+ *  - Collect FTeamWorldState from caller-supplied agent arrays
+ *  - Run MCTS / epsilon-greedy to select a tactical play
+ *  - Distribute role assignments to individual agents
+ *  - Trigger replanning on critical events
  */
 UCLASS()
 class GAMEAI_PROJECT_API USquadManager : public UObject
@@ -43,56 +85,66 @@ class GAMEAI_PROJECT_API USquadManager : public UObject
 public:
 	USquadManager();
 
-	/** UObject world context — delegates to TeamManager outer */
-	virtual UWorld* GetWorld() const override;
-
 	//========================================
 	// Initialization
 	//========================================
 
 	/**
-	 * Setup with team reference (called by ATeamManager::BeginPlay)
-	 * @param InTeamID       - Team ID (0 = Red, 1 = Blue)
-	 * @param InTeamManager  - Owning TeamManager (config + agent queries)
+	 * Basic setup — assign team ID.
+	 * Must be called before Configure() or TickPlanner().
+	 * @param InTeamID  Team index (0 = Red, 1 = Blue)
 	 */
-	void Initialize(int32 InTeamID, ATeamManager* InTeamManager);
+	void Initialize(int32 InTeamID);
 
 	/**
-	 * Bind capture point events for this environment's capture points.
-	 * Called by ScholaEnvironment after initialization to scope events to owned CPs.
+	 * Push planning configuration from AMatchManager / AScholaEnvironment.
+	 * Safe to call at any time; takes effect on the next planning cycle.
+	 */
+	void Configure(const FSquadConfig& InConfig);
+
+	/**
+	 * Bind capture points scoped to this environment.
+	 * Called by AScholaEnvironment after initialization.
 	 */
 	void BindCapturePoints(const TArray<ACapturePoint*>& CapturePoints);
 
-	/** Set owning ScholaEnvironment so match state is read from it, not AMocGameMode */
-	void SetScholaEnvironment(AScholaEnvironment* InEnvironment);
-
 	//========================================
-	// Planner Tick (called by ATeamManager::Tick)
+	// Planner Tick (called by AMatchManager::Tick)
 	//========================================
 
-	void TickPlanner(float DeltaTime);
+	/**
+	 * Advance the planner timer and trigger replanning when the interval elapses.
+	 * @param DeltaTime    Frame delta (seconds)
+	 * @param TeamAgents   Current live agents for this team (owned by MatchManager)
+	 * @param EnemyAgents  Current live enemy agents (owned by MatchManager)
+	 */
+	void TickPlanner(float DeltaTime,
+	                 const TArray<AMocCharacter*>& TeamAgents,
+	                 const TArray<AMocCharacter*>& EnemyAgents);
 
 	//========================================
 	// Centralized Planning
 	//========================================
 
 	/**
-	 * Main planning entry point — run MCTS and update role assignments.
-	 * Performance: ~15ms (MCTS time budget, configured on TeamManager).
-	 * Triggers: Every PlanningInterval or on critical events.
+	 * Main planning entry point — select tactical play and distribute roles.
+	 * @param TeamAgents   Live agents on this team
+	 * @param EnemyAgents  Live enemy agents
 	 */
-	void PerformTacticalPlanning();
+	void PerformTacticalPlanning(const TArray<AMocCharacter*>& TeamAgents,
+	                             const TArray<AMocCharacter*>& EnemyAgents);
 
-	/** Get current global team state */
-	FTeamWorldState GetGlobalTeamState() const;
+	/** Build and return the current team world state from the supplied agent lists */
+	FTeamWorldState BuildTeamWorldState(const TArray<AMocCharacter*>& TeamAgents,
+	                                    const TArray<AMocCharacter*>& EnemyAgents) const;
 
 	/**
-	 * Get assigned strategy for specific agent
-	 * @param AgentIndex - Agent index in team (0-4)
+	 * Get the assigned strategy for a specific agent slot.
+	 * @param AgentIndex  Slot index in the team (0-4)
 	 */
 	EStrategyType GetAgentStrategy(int32 AgentIndex) const;
 
-	/** Get current active tactical play */
+	/** Current active tactical play */
 	ETacticalPlay GetActiveTacticalPlay() const { return ActiveTacticalPlay; }
 
 	//========================================
@@ -100,21 +152,29 @@ public:
 	//========================================
 
 	/**
-	 * Notify planner of critical event requiring immediate replanning.
-	 * @param EventType       - Type of critical event
-	 * @param InstigatorActor - Actor that triggered event (optional)
+	 * Trigger immediate replanning on a critical game event.
+	 * @param EventType       Category of event
+	 * @param InstigatorActor Actor that triggered the event (may be null)
+	 * @param TeamAgents      Current team agents (for feasibility check)
+	 * @param EnemyAgents     Current enemy agents
 	 */
-	void ReplanMCTSOnCriticalEvent(ECriticalEventType EventType, AActor* InstigatorActor);
+	void ReplanOnCriticalEvent(ECriticalEventType EventType,
+	                           AActor* InstigatorActor,
+	                           const TArray<AMocCharacter*>& TeamAgents,
+	                           const TArray<AMocCharacter*>& EnemyAgents);
 
-	/** Check if replanning is needed based on timer */
+	/** True if a replanning interval has elapsed */
 	bool ShouldReplan() const;
 
 	//========================================
 	// Episode Management
 	//========================================
 
-	/** Reset planner state for new episode */
-	void Reset();
+	/**
+	 * Reset planner state for a new episode.
+	 * @param TeamAgents  Initial agent list for the new episode
+	 */
+	void Reset(const TArray<AMocCharacter*>& TeamAgents);
 
 	//========================================
 	// Debug Accessors
@@ -131,96 +191,84 @@ protected:
 	// Internal Implementation
 	//========================================
 
-	/** Sample a random tactical play and distribute roles (Phase 1 RL training) */
-	void SampleRandomTacticalPlay();
+	/** Sample a round-robin tactical play for Phase 1 RL training */
+	void SampleRandomTacticalPlay(const TArray<AMocCharacter*>& TeamAgents);
 
 	/**
-	 * Returns the subset of all 10 tactical plays that are feasible given the current team state.
-	 * A play is infeasible if it assigns a role whose precondition cannot be met:
-	 *   - Support: requires at least two alive allies
-	 * Defend is always feasible — agents with no friendly base behave like Assault until a base is secured.
-	 * If all plays are filtered out, returns { AllOutRush } as a safe fallback.
-	 * Used by both Phase 1 (random/event sampling) and Phase 3 (MCTS/epsilon-greedy).
+	 * Returns the subset of all tactical plays that are feasible for the current state.
+	 * Falls back to AllOutRush if nothing is feasible.
 	 */
 	TArray<ETacticalPlay> GetFeasiblePlays(const FTeamWorldState& State) const;
 
-	/** Construct FTeamWorldState from live agents via TeamManager */
-	FTeamWorldState CollectTeamState() const;
-
-	/** Convert ETacticalPlay to role distribution (5 × EStrategyType) */
+	/** Convert ETacticalPlay to a 5-element role array */
 	TArray<EStrategyType> DecodeTacticalPlay(ETacticalPlay Play) const;
 
-	/** Broadcast role assignments to agents via SetCommandedStrategy() */
-	void DistributeRoles(const TArray<EStrategyType>& Roles);
+	/** Assign roles to agents via SetCommandedStrategy() */
+	void DistributeRoles(const TArray<EStrategyType>& Roles,
+	                     const TArray<AMocCharacter*>& TeamAgents) const;
 
-	/** Log planning decision for analytics */
+	/** Log the current planning decision */
 	void LogPlanningDecision(ETacticalPlay Play, float Confidence) const;
 
-	/** Draw debug visualization for current tactical play */
-	void DrawDebugVisualization() const;
+	/** Draw 3-D debug labels above agents */
+	void DrawDebugVisualization(const TArray<AMocCharacter*>& TeamAgents) const;
 
 	//========================================
-	// Dependencies
+	// Sub-systems (owned objects)
 	//========================================
 
-	/** Team-level MCTS planner */
 	UPROPERTY()
-	UTeamMCTS* TeamMCTSPlanner;
+	UTeamMCTS* TeamMCTSPlanner = nullptr;
 
-	/** Team world model for MCTS predictions */
 	UPROPERTY()
-	class UTeamWorldModel* TeamWorldModel;
+	class UTeamWorldModel* TeamWorldModel = nullptr;
 
-	/** Training data collector */
 	UPROPERTY()
-	UTeamDataCollector* DataCollector;
-
-	/** Owning TeamManager — source of config and agent queries */
-	UPROPERTY()
-	ATeamManager* TeamManager;
-
-	/** Owning ScholaEnvironment — source of match timer and capture points (replaces AMocGameMode) */
-	UPROPERTY()
-	AScholaEnvironment* OwningEnvironment = nullptr;
+	UTeamDataCollector* DataCollector = nullptr;
 
 	//========================================
 	// Runtime State
 	//========================================
 
 	int32 TeamID = 0;
+
+	/** Configuration pushed from AMatchManager / AScholaEnvironment */
+	FSquadConfig Config;
+
 	TArray<EStrategyType> CurrentRoleAssignments;
-	float TimeSinceLastPlan = 0.0f;
+	float TimeSinceLastPlan       = 0.0f;
 	ETacticalPlay ActiveTacticalPlay = ETacticalPlay::StandardComp;
-	float PlanConfidence = 0.5f;
-	int32 PlanningCycleCount = 0;
-	int32 EventDrivenReplanCount = 0;
+	float PlanConfidence          = 0.5f;
+	int32 PlanningCycleCount      = 0;
+	int32 EventDrivenReplanCount  = 0;
 
 	FTeamWorldState PreviousTeamState;
 	ETacticalPlay PreviousTacticalPlay = ETacticalPlay::StandardComp;
-	bool bHasPreviousState = false;
+	bool bHasPreviousState        = false;
 
 	bool bHealthCriticalTriggered = false;
-	float LastPlanningDurationMs = 0.0f;
-	float ValidationTickCounter = 0.0f;
+	float LastPlanningDurationMs  = 0.0f;
+	float ValidationTickCounter   = 0.0f;
 
-	/** Incremented each episode; drives round-robin strategy rotation for balanced RL training */
+	/** Incremented each episode; drives round-robin strategy rotation */
 	int32 EpisodeCount = 0;
 
-	/** Scoped capture points for this environment (set via BindCapturePoints) */
+	/** Capture points scoped to this environment (set via BindCapturePoints) */
 	TArray<ACapturePoint*> CachedCapturePoints;
 
 private:
-	FCompositeReward CalculateTeamReward(const FTeamWorldState& OldState, const FTeamWorldState& NewState) const;
+	FCompositeReward CalculateTeamReward(const FTeamWorldState& OldState,
+	                                     const FTeamWorldState& NewState) const;
 
-	ETacticalPlay SelectEpsilonGreedyAction(const FTeamWorldState& TeamState, const TArray<ETacticalPlay>& FeasiblePlays) const;
+	ETacticalPlay SelectEpsilonGreedyAction(const FTeamWorldState& TeamState,
+	                                        const TArray<ETacticalPlay>& FeasiblePlays) const;
 
 	//========================================
-	// Critical Event Handlers
+	// Critical Event Handlers (bound to CapturePoint delegates)
 	//========================================
 
 	UFUNCTION()
-	void OnAgentKilledHandler(int32 VictimTeamID, int32 KillerTeamID, AMocCharacter* Victim);
-
-	UFUNCTION()
-	void OnPointCapturedHandler(ECapturePointID PointID, ECapturePointOwnership PreviousOwner, ECapturePointOwnership NewOwner);
+	void OnPointCapturedHandler(ECapturePointID PointID,
+	                            int32 PreviousTeamID,
+	                            int32 NewTeamID);
 };

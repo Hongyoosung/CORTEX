@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AI/BT/Tasks/BTTask_HealAbility.h"
-#include "Combat/Abilities/HealAbility.h"
+#include "Combat/Abilities/MocHealAbility.h"
 #include "Characters/MocCharacter.h"
 #include "AIController.h"
 
@@ -37,12 +37,5 @@ void UBTTask_HealAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* Nod
 		return;
 	}
 
-	UHealAbility* Ability = Character->HealAbility;
-	if (!Ability)
-	{
-		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
-		return;
-	}
 
-	Ability->ExecuteAbility(DeltaSeconds);
 }

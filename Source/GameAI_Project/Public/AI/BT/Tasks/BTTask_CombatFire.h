@@ -7,7 +7,7 @@
 #include "BehaviorTree/BTTaskNode.h"
 #include "BTTask_CombatFire.generated.h"
 
-class UAttackAbility;
+class UMocAttackAbility;
 class AMocCharacter;
 
 /**
@@ -48,7 +48,7 @@ public:
 
 protected:
 	/** Validate combat target and weapon state */
-	bool ValidateCombatConditions(UBehaviorTreeComponent& OwnerComp, AActor*& OutTarget, UAttackAbility*& OutAbility) const;
+	bool ValidateCombatConditions(UBehaviorTreeComponent& OwnerComp, AActor*& OutTarget, UMocAttackAbility*& OutAbility) const;
 
 	/** Check if target is still valid and visible */
 	bool IsTargetValid(AActor* Target, APawn* OwnerPawn) const;
@@ -57,7 +57,7 @@ protected:
 	void AimAtTarget(APawn* OwnerPawn, AActor* Target);
 
 	/** Fire weapon at target */
-	bool FireWeapon(UAttackAbility* Ability, AActor* Target);
+	bool FireWeapon(UMocAttackAbility* Ability, AActor* Target);
 
 public:
 	//--------------------------------------------------------------------------

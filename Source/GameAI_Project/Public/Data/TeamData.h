@@ -16,7 +16,7 @@
  * Usage:
  * 1. Create Data Asset: Right-click → Miscellaneous → Data Asset → TeamData
  * 2. Configure appearance: Set skeletal mesh, animation blueprint, materials, etc.
- * 3. Assign to TeamManager: Set in RedTeamAppearance or BlueTeamAppearance
+ * 3. Assign to MatchManager: Set in RedTeamAppearance or BlueTeamAppearance
  *
  * Example Assets:
  * - DA_RedTeamAppearance: Red team configuration (red materials, aggressive animations)
@@ -34,6 +34,9 @@ public:
 	//========================================
 	// Team Identity
 	//========================================
+	/** Character class to spawn (AMocCharacter) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Agent")
+	TSubclassOf<ACharacter> CharacterClass;
 
 	/** Team display name (e.g., "Red Team", "Blue Team") */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Team Identity")

@@ -93,7 +93,7 @@ The system consists of three layers: centralized planning, decentralized executi
 | `UTeamWorldModel` | `AI/Models/TeamWorldModel` | ONNX model wrapper: batch inference, NNE integration |
 | `FTeamWorldState` | `Team/TeamWorldState` | 60-70 dim global team state, `ToTensor()` method |
 | `AMocCharacter` | `Characters/MocCharacter` | Agent: receives strategy commands, executes via EQS |
-| `ATeamManager` | `Team/TeamManager` | 5v5 spawning, respawn, squad commander integration |
+| `AMatchManager` | `Team/MatchManager` | 5v5 spawning, respawn, squad commander integration |
 | `UMocEQSExecutor` | `AI/EQS/MocEQSExecutor` | 7-dim weight EQS query → best tactical location |
 | `UTeamDataCollector` | `AI/Training/TeamDataCollector` | (State, Action, NextState, Reward) → CSV for training |
 | `MocRewardCalculator` | `RL/Rewards/` | Composite reward: WinProb + HealthDelta + ObjectiveScore |
@@ -114,7 +114,7 @@ The system consists of three layers: centralized planning, decentralized executi
 * `UTeamDataCollector` — training data collection and CSV export
 * `AMocCharacter::SetCommandedStrategy()` — command interface
 * `AMocCharacter::PerformTacticalAction()` — EQS execution with dynamic weights
-* `ATeamManager::GetSquadCommander()` — integration
+* `AMatchManager::GetSquadCommander()` — integration
 * Event system — Kill/Death/Capture events wired to `ASquadManager::ReplanMCTSOnCriticalEvent()`
 
 **⏳ In Progress (Week 4):**

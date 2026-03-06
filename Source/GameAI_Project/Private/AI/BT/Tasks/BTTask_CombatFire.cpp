@@ -6,7 +6,8 @@
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "GameFramework/Character.h"
 #include "Characters/MocCharacter.h"
-#include "Combat/Abilities/AttackAbility.h"
+#include "Combat/Abilities/MocAttackAbility.h"
+#include "Combat/Components/MocAbilityComponent.h"
 #include "Combat/CombatStatsInterface.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -27,7 +28,7 @@ EBTNodeResult::Type UBTTask_CombatFire::ExecuteTask(UBehaviorTreeComponent& Owne
 {
 	// Validate combat conditions
 	AActor* Target = nullptr;
-	UAttackAbility* Ability = nullptr;
+	UMocAttackAbility* Ability = nullptr;
 	if (!ValidateCombatConditions(OwnerComp, Target, Ability))
 	{
 		return EBTNodeResult::Failed;
@@ -63,7 +64,7 @@ void UBTTask_CombatFire::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* Node
 	}
 
 	AActor* Target = nullptr;
-	UAttackAbility* Ability = nullptr;
+	UMocAttackAbility* Ability = nullptr;
 	if (!ValidateCombatConditions(OwnerComp, Target, Ability))
 	{
 		bIsFiring = false;
@@ -83,7 +84,7 @@ void UBTTask_CombatFire::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* Node
 	FireWeapon(Ability, Target);
 }
 
-bool UBTTask_CombatFire::ValidateCombatConditions(UBehaviorTreeComponent& OwnerComp, AActor*& OutTarget, UAttackAbility*& OutAbility) const
+bool UBTTask_CombatFire::ValidateCombatConditions(UBehaviorTreeComponent& OwnerComp, AActor*& OutTarget, UMocAttackAbility*& OutAbility) const
 {
 	// Get AI Controller
 	AAIController* AIController = OwnerComp.GetAIOwner();
@@ -105,7 +106,8 @@ bool UBTTask_CombatFire::ValidateCombatConditions(UBehaviorTreeComponent& OwnerC
 		return false;
 	}
 
-	OutAbility = MocChar->GetAttackAbility();
+	UMocAbilityComponent* AbilityComp = MocChar->GetAbilityComponent();
+	OutAbility = AbilityComp ? AbilityComp->GetAttackAbility() : nullptr;
 	if (!OutAbility)
 	{
 		UE_LOG(LogBehaviorTree, Warning, TEXT("BTTask_CombatFire: AttackAbility not found on %s"), *MocChar->GetName());
@@ -238,7 +240,7 @@ void UBTTask_CombatFire::AimAtTarget(APawn* OwnerPawn, AActor* Target)
 	OwnerPawn->SetActorRotation(NewRotation);
 }
 
-bool UBTTask_CombatFire::FireWeapon(UAttackAbility* Ability, AActor* Target)
+bool UBTTask_CombatFire::FireWeapon(UMocAttackAbility* Ability, AActor* Target)
 {
 	if (!Ability || !Target) return false;
 	return Ability->FireAtTarget(Target, bUsePredictiveAiming);

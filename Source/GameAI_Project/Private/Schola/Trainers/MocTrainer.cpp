@@ -12,7 +12,7 @@
 #include "Types/RewardTypes.h"
 #include "AIController.h"
 #include "Training/StateStructs/TrainerState.h"
-#include "Team/TeamManager.h"
+#include "Team/MatchManager.h"
 #include "Core/MocGameMode.h"
 #include "Actors/CapturePoint.h"
 
@@ -34,7 +34,7 @@ AMocTrainer::AMocTrainer()
     MocAgent = nullptr;
     ControlledCharacter = nullptr;
     TransitionLogger = nullptr;
-    CachedTeamManager = nullptr;
+    CachedMatchManager = nullptr;
 
     // Default strategy
     CachedCommandedStrategy = EStrategyType::Assault;
@@ -72,14 +72,14 @@ void AMocTrainer::InitializeMocTrainer(UScholaMocAgent* InAgent)
         }
     }
 
-    // Cache TeamManager reference (avoids GetAllActorsOfClass in hot paths)
-    CachedTeamManager = ControlledCharacter->GetTeamManager();
-    if (!CachedTeamManager)
+    // Cache MatchManager reference (avoids GetAllActorsOfClass in hot paths)
+    CachedMatchManager = ControlledCharacter->GetMatchManager();
+    if (!CachedMatchManager)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] TeamManager not yet available — GatherStateObservation will fall back to world scan"));
+        UE_LOG(LogTemp, Warning, TEXT("[MocTrainer] MatchManager not yet available — GatherStateObservation will fall back to world scan"));
     }
 
-    // Cache ScholaEnvironment — find the one whose OwnedTeamManager matches ours
+    // Cache ScholaEnvironment — find the one whose OwnedMatchManager matches ours
     {
         TArray<AActor*> EnvActors;
         UGameplayStatics::GetAllActorsOfClass(GetWorld(), AScholaEnvironment::StaticClass(), EnvActors);
@@ -87,7 +87,7 @@ void AMocTrainer::InitializeMocTrainer(UScholaMocAgent* InAgent)
         {
             if (AScholaEnvironment* Env = Cast<AScholaEnvironment>(Actor))
             {
-                if (Env->GetTeamManager() == CachedTeamManager)
+                if (Env->GetMatchManager() == CachedMatchManager)
                 {
                     CachedScholaEnvironment = Env;
                     break;
@@ -404,10 +404,10 @@ FObservation AMocTrainer::GatherStateObservation()
     int32 AllyIndex = 0;
     int32 EnemyIndex = 0;
 
-    // Allies — use TeamManager cached list (O(1) lookup, no world scan)
-    if (CachedTeamManager)
+    // Allies — use MatchManager cached list (O(1) lookup, no world scan)
+    if (CachedMatchManager)
     {
-        TArray<AMocCharacter*> Allies = CachedTeamManager->GetTeamAgents(MyTeamID);
+        TArray<AMocCharacter*> Allies = CachedMatchManager->GetTeamAgents(MyTeamID);
         for (AMocCharacter* Ally : Allies)
         {
             if (!Ally || Ally == ControlledCharacter) continue;
@@ -419,7 +419,7 @@ FObservation AMocTrainer::GatherStateObservation()
         }
 
         // Enemies — direct line-of-sight only (FogOfWarManager deprecated)
-        TArray<AMocCharacter*> Enemies = CachedTeamManager->GetEnemyAgents(MyTeamID);
+        TArray<AMocCharacter*> Enemies = CachedMatchManager->GetEnemyAgents(MyTeamID);
         for (AMocCharacter* Enemy : Enemies)
         {
             if (!Enemy) continue;
@@ -451,7 +451,7 @@ FObservation AMocTrainer::GatherStateObservation()
     }
     else
     {
-        // Fallback: world scan (CachedTeamManager unavailable at initialization)
+        // Fallback: world scan (CachedMatchManager unavailable at initialization)
         TArray<AActor*> AllCharacters;
         UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMocCharacter::StaticClass(), AllCharacters);
 
@@ -507,7 +507,7 @@ FObservation AMocTrainer::GatherStateObservation()
         const int32 Idx = static_cast<int32>(CP->PointID);
         if (Idx < 0 || Idx >= 5) continue;
 
-        const int32 OwnerTeam = CP->GetOwningTeamID();
+        const int32 OwnerTeam = CP->GetTeamID_Implementation();
         if (OwnerTeam == MyTeamID)
         {
             Obs.CapturePointStatuses[Idx] = 1.0f;
@@ -773,13 +773,13 @@ EAgentTrainingStatus AMocTrainer::ComputeStatus()
 
     // Agent death does NOT end the episode.
     // In v10.2 team-based architecture, agents stay dead until their entire team
-    // is eliminated, then the team respawns as a group via TeamManager::ProcessRespawnQueue().
+    // is eliminated, then the team respawns as a group via MatchManager::ProcessRespawnQueue().
     // The episode only ends on match termination (time expired, score limit) or max steps.
     // Returning Completed here would trigger ResetEnvironment() → ResetMatch() → ResetTeams(),
     // which bypasses the group respawn system and causes ghost agents (invisible but active).
     if (!ControlledCharacter->IsAlive_Implementation())
     {
-        // Agent is dead — continue episode, let TeamManager handle group respawn
+        // Agent is dead — continue episode, let MatchManager handle group respawn
         return EAgentTrainingStatus::Running;
     }
 
@@ -830,19 +830,6 @@ void AMocTrainer::GetInfo(TMap<FString, FString>& Info)
         }
     }
 
-    // Reward breakdown
-    if (ControlledCharacter)
-    {
-        FRewardBreakdown Breakdown = ControlledCharacter->ComputeRewardBreakdown(
-            CachedCommandedStrategy,
-            PreviousObservation,
-            CurrentObservation
-        );
-        Info.Add(TEXT("RewardPosition"), FString::Printf(TEXT("%.3f"), Breakdown.PositionComponent));
-        Info.Add(TEXT("RewardHealth"), FString::Printf(TEXT("%.3f"), Breakdown.HealthComponent));
-        Info.Add(TEXT("RewardObjective"), FString::Printf(TEXT("%.3f"), Breakdown.ObjectiveComponent));
-        Info.Add(TEXT("RewardDeath"), FString::Printf(TEXT("%.3f"), Breakdown.DeathPenaltyComponent));
-    }
 }
 
 void AMocTrainer::ResetTrainer()
@@ -1031,18 +1018,5 @@ void AMocTrainer::LogRewardBreakdown() const
 {
     if (!ControlledCharacter) return;
 
-    FRewardBreakdown Breakdown = ControlledCharacter->ComputeRewardBreakdown(
-        CachedCommandedStrategy,
-        PreviousObservation,
-        CurrentObservation
-    );
 
-    UE_LOG(LogTemp, Log, TEXT("[MocTrainer] Reward Breakdown - Strategy: %s"),
-        *UEnum::GetValueAsString(CachedCommandedStrategy));
-    UE_LOG(LogTemp, Log, TEXT("  Position: %.3f, Health: %.3f, Death: %.3f, Time: %.3f"),
-        Breakdown.PositionComponent,
-        Breakdown.HealthComponent,
-        Breakdown.DeathPenaltyComponent,
-        Breakdown.TimePenaltyComponent);
-    UE_LOG(LogTemp, Log, TEXT("  Total: %.3f"), Breakdown.Total);
 }

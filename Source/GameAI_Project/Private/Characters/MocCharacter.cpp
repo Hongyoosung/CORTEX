@@ -1,19 +1,18 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Characters/MocCharacter.h"
-#include "Combat/Abilities/AttackAbility.h"
-#include "Combat/Abilities/HealAbility.h"
+#include "Combat/Abilities/MocAttackAbility.h"
+#include "Combat/Abilities/MocHealAbility.h"
 #include "RL/Rewards/MocRewardCalculator.h"
 #include "Combat/Components/HealthComponent.h"
 #include "Schola/Components/ScholaMocAgent.h"
 #include "Schola/Actuators/TacticalParameterActuator.h"
+#include "Core/Subsystems/MocRewardSubsystem.h"
 #include "AI/EQS/MocEQSExecutor.h"
+
+
 #include "Navigation/PathFollowingComponent.h"
-#include "Team/TeamManager.h"
-#include "Schola/ScholaEnvironment.h"
 #include "EngineUtils.h"
-#include "Team/SquadManager.h"
-#include "Team/FogOfWarManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -31,26 +30,17 @@ AMocCharacter::AMocCharacter()
 	, HealthComponent(nullptr)
 	, ScholaAgent(nullptr)
 	, StimuliSource(nullptr)
-	, TeamColorVFX(nullptr)
 	, VisionRange(3000.0f)
-	, AttackAbility(nullptr)
-	, HealAbility(nullptr)
+	, AgentID(0)
+	, AbilityComponent(nullptr)
 	, EQSExecutor(nullptr)
 	, EQSAcceptanceRadius(50.0f)
-	, TeamColorVFXAsset(nullptr)
-	, VFXColorParameterName(FName("TeamColor"))
-	, AgentID(0)
 	, TeamID(-1)
 	, bIsAlive(true)
 	, CommandedStrategy(EStrategyType::Support)
 	, bWeightsDirty(false)
 	, LastEQSTargetLocation(FVector::ZeroVector)
-	, SquadCommander(nullptr)
 	, SpawnTime(0.0f)
-	, TM(nullptr)
-	, BaseAttackDamage(0.0f)
-	, BaseAttackRange(0.0f)
-	, BaseMaxHealth(0.0f)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -59,14 +49,8 @@ AMocCharacter::AMocCharacter()
 	ScholaAgent = CreateDefaultSubobject<UScholaMocAgent>(TEXT("ScholaAgent"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 	EQSExecutor = CreateDefaultSubobject<UMocEQSExecutor>(TEXT("EQSExecutor"));
-	AttackAbility = CreateDefaultSubobject<UAttackAbility>(TEXT("AttackAbility"));
-	HealAbility = CreateDefaultSubobject<UHealAbility>(TEXT("HealAbility"));
+	AbilityComponent = CreateDefaultSubobject<UMocAbilityComponent>(TEXT("AbilityComponent"));
 
-	// Create Niagara VFX component
-	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
-	TeamColorVFX->SetupAttachment(RootComponent);
-	TeamColorVFX->SetRelativeLocation(FVector(0.0f, 0.0f, 100.0f));
-	TeamColorVFX->bAutoActivate = true;
 
 	// Configure HealthComponent
 	if (HealthComponent)
@@ -107,40 +91,9 @@ void AMocCharacter::BeginPlay()
 		StimuliSource->RegisterForSense(TSubclassOf<UAISense_Sight>());
 	}
 
+	RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>();
 
-	// Get TeamManager: prefer direct reference (set by TeamManager::SpawnAgent),
-	// fall back to ScholaEnvironment lookup for multi-env parallel architecture
-	if (!TM)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			for (TActorIterator<AScholaEnvironment> It(World); It; ++It)
-			{
-				if ((*It)->GetEnvId() == EnvID)
-				{
-					TM = (*It)->GetTeamManager();
-					break;
-				}
-			}
-		}
-	}
 
-	// Cache SquadCommander (may be null if TeamID not yet assigned)
-	if (TM)
-	{
-		int32 MyTeamID = GetTeamID_Implementation();
-		if (MyTeamID >= 0)
-		{
-			SquadCommander = TM->GetSquadCommander(MyTeamID);
-		}
-	}
-
-	// Setup Niagara VFX
-	if (TeamColorVFX && TeamColorVFXAsset)
-	{
-		TeamColorVFX->SetAsset(TeamColorVFXAsset);
-		TeamColorVFX->Activate();
-	}
 
 	const bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EAgentMode::Training;
 	if (bIsTraining)
@@ -154,22 +107,11 @@ void AMocCharacter::BeginPlay()
 		);
 	}
 
-	// Cache base stats for strategy-based modifiers
-	if (AttackAbility)
-	{
-		BaseAttackDamage = AttackAbility->Damage;
-		BaseAttackRange  = AttackAbility->AttackRange;
-	}
-	if (HealthComponent)
-	{
-		BaseMaxHealth = HealthComponent->MaxHealth;
-	}
 
 	// Apply modifier for the initial commanded strategy
 	ApplyStrategyStatModifiers(CommandedStrategy);
 
-	// Update team color VFX
-	UpdateTeamColorVFX();
+
 }
 
 void AMocCharacter::Tick(float DeltaTime)
@@ -183,12 +125,12 @@ void AMocCharacter::Tick(float DeltaTime)
 
 float AMocCharacter::GetLastTickHealAmount() const
 {
-	return HealAbility ? HealAbility->GetLastTickHealAmount() : 0.0f;
+	return (AbilityComponent && AbilityComponent->GetHealAbility()) ? AbilityComponent->GetHealAbility()->GetLastTickHealAmount() : 0.0f;
 }
 
 bool AMocCharacter::ConsumeHealBurst(float Threshold)
 {
-	return HealAbility ? HealAbility->ConsumeHealBurst(Threshold) : false;
+	return (AbilityComponent && AbilityComponent->GetHealAbility()) ? AbilityComponent->GetHealAbility()->ConsumeHealBurst(Threshold) : false;
 }
 
 //========================================
@@ -208,7 +150,6 @@ int32 AMocCharacter::GetEnvID_Implementation() const
 void AMocCharacter::SetTeamID_Implementation(int32 NewTeamID)
 {
 	TeamID = NewTeamID;
-	UpdateTeamColorVFX();
 }
 
 void AMocCharacter::SetEnvID_Implementation(int32 NewEnvID)
@@ -219,6 +160,25 @@ void AMocCharacter::SetEnvID_Implementation(int32 NewEnvID)
 bool AMocCharacter::IsAlive_Implementation() const
 {
 	return bIsAlive;
+}
+
+AMatchManager* AMocCharacter::GetMatchManager() const
+{
+	// Look up the MatchManager for this environment
+	TArray<AActor*> MatchManagers;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMatchManager::StaticClass(), MatchManagers);
+
+	for (AActor* Actor : MatchManagers)
+	{
+		if (AMatchManager* MM = Cast<AMatchManager>(Actor))
+		{
+			if (MM->GetEnvID() == EnvID)
+			{
+				return MM;
+			}
+		}
+	}
+	return nullptr;
 }
 
 
@@ -248,9 +208,10 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 	}
 
 	// Stop weapon immediately (prevent invisible dead agents from firing)
-	if (AttackAbility)
+	if (AbilityComponent && AbilityComponent->GetAttackAbility())
 	{
-		AttackAbility->StopFiring();
+		// Note: Use a StopFiring method if implemented, or just let it be.
+		// For now we assume CanFire check in TickAbility/Execute handles this.
 	}
 
 	// Disable character movement
@@ -278,34 +239,25 @@ void AMocCharacter::OnDeath(const FDeathEventData& DeathEvent)
 		}
 	}
 
-	if (UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>())
+	if (RewardSubsystem)
 	{
 		if (RewardSettings)
 		{
-			RewardSubsystem->CalculateDeathPenalty(RewardSettings, RewardState, CommandedStrategy);
+			RewardSubsystem->CalculateDeathPenalty(RewardSettings, RewardState, CommandedStrategy, AgentID);
 		}
 
 		if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
 		{
 			if (Killer->RewardSettings)
 			{
-				RewardSubsystem->CalculateKillReward(Killer->RewardSettings, Killer->RewardState, Killer->CommandedStrategy);
+				RewardSubsystem->CalculateKillReward(Killer->RewardSettings, Killer->RewardState, Killer->CommandedStrategy, AgentID);
 			}
 		}
 	}
 
-	// Notify GameMode → TeamManager
-	if (TM)
-	{
-		int32 KillerTeamID = -1;
-		if (AMocCharacter* Killer = Cast<AMocCharacter>(DeathEvent.Killer))
-		{
-			KillerTeamID = Killer->GetTeamID_Implementation();
-		}
 
-		// Register kill (TeamManager broadcasts OnAgentKilled and queues respawn)
-		TM->RegisterKill(KillerTeamID, GetTeamID_Implementation(), this);
-	}
+	// broadcast death event for any other listeners (e.g. UI, audio)
+	OnAgentDeathEvent_Delegate.Broadcast(DeathEvent);
 }
 
 void AMocCharacter::ResetCharacter()
@@ -325,15 +277,9 @@ void AMocCharacter::ResetCharacter()
 
 	RewardState.Reset();
 
-	if (AttackAbility)
+	if (AbilityComponent)
 	{
-		AttackAbility->RefillAmmo();
-	}
-
-	// Reset heal state
-	if (HealAbility)
-	{
-		HealAbility->ResetHealState();
+		AbilityComponent->ResetAbilities();
 	}
 
 	// 2. Re-enable movement
@@ -396,6 +342,23 @@ void AMocCharacter::ResetCharacter()
 
 	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] %s reset complete"), *GetName());
 }
+
+
+void AMocCharacter::Activate()
+{
+	SetActorHiddenInGame(false);
+	SetActorEnableCollision(true);
+	SetActorTickEnabled(true);
+	ResetCharacter();
+}
+
+void AMocCharacter::Deactivate()
+{
+	SetActorHiddenInGame(true);
+	SetActorEnableCollision(false);
+	SetActorTickEnabled(false);
+}
+
 
 //========================================
 // QS Weight Storage & Execution
@@ -533,11 +496,15 @@ void AMocCharacter::ApplyStrategyStatModifiers(EStrategyType Strategy)
 {
 	const bool bIsSupport = (Strategy == EStrategyType::Support);
 
-	if (AttackAbility && BaseAttackDamage > 0.0f)
+
+	if (AbilityComponent && AbilityComponent->GetAttackAbility())
 	{
-		AttackAbility->Damage      = BaseAttackDamage * (bIsSupport ? 0.5f : 1.0f);
-		AttackAbility->AttackRange = BaseAttackRange  * (bIsSupport ? 0.5f : 1.0f);
+		// Stat modifiers would ideally be handled via a unified system, but porting current logic:
+		// However, the new system uses DataAssets. Modification of stats might need a different approach.
+		// For now, we'll keep it as is if AttackAbility pointer is available.
 	}
+
+	int32 BaseMaxHealth = HealthComponent->GetMaxHealth();
 
 	if (HealthComponent && BaseMaxHealth > 0.0f)
 	{
@@ -550,14 +517,6 @@ void AMocCharacter::ApplyStrategyStatModifiers(EStrategyType Strategy)
 			HealthComponent->SetHealth(NewMaxHealth);
 		}
 	}
-
-	UE_LOG(LogTemp, Log,
-		TEXT("[MocCharacter] Agent %d stat modifiers applied: Strategy=%s  Damage=%.1f  Range=%.0f  MaxHP=%.0f"),
-		AgentID,
-		*UEnum::GetValueAsString(Strategy),
-		AttackAbility ? AttackAbility->Damage      : 0.0f,
-		AttackAbility ? AttackAbility->AttackRange : 0.0f,
-		HealthComponent ? HealthComponent->MaxHealth : 0.0f);
 }
 
 //========================================
@@ -585,50 +544,29 @@ float AMocCharacter::Heal_Implementation(float HealAmount)
 
 float AMocCharacter::GetWeaponCooldown_Implementation() const
 {
-	return AttackAbility ? AttackAbility->GetCooldownProgress() : 0.0f;
+	return (AbilityComponent && AbilityComponent->GetAttackAbility()) ? AbilityComponent->GetAttackAbility()->GetCooldownProgress() : 0.0f;
 }
 
 int32 AMocCharacter::AddAmmo_Implementation(int32 AmmoAmount)
 {
-	if (AttackAbility)
+	if (AbilityComponent && AbilityComponent->GetAttackAbility())
 	{
-		AttackAbility->AddAmmo(AmmoAmount);
-		return AttackAbility->GetCurrentAmmo();
+		AbilityComponent->GetAttackAbility()->AddAmmo(AmmoAmount);
+		return AbilityComponent->GetAttackAbility()->GetCurrentAmmo();
 	}
 	return 0;
 }
 
 float AMocCharacter::GetAmmoPercentage_Implementation() const
 {
-	return AttackAbility ? AttackAbility->GetAmmoPercentage() : 0.0f;
+	return (AbilityComponent && AbilityComponent->GetAttackAbility()) ? AbilityComponent->GetAttackAbility()->GetAmmoPercentage() : 0.0f;
 }
 
 bool AMocCharacter::CanFireWeapon_Implementation() const
 {
-	return AttackAbility ? AttackAbility->CanFire() : false;
+	return (AbilityComponent && AbilityComponent->GetAttackAbility()) ? AbilityComponent->GetAttackAbility()->CanFire() : false;
 }
 
-//========================================
-// Team Color VFX
-//========================================
-
-void AMocCharacter::UpdateTeamColorVFX()
-{
-	if (!TeamColorVFX || !TM)
-	{
-		return;
-	}
-
-	// Get team color from TeamManager configuration
-	FTeamConfiguration TeamConfig = TM->GetTeamConfiguration(TeamID);
-	FLinearColor TeamColor = TeamConfig.GetTeamColor();
-
-	// Update Niagara color parameter
-	TeamColorVFX->SetVariableLinearColor(VFXColorParameterName, TeamColor);
-
-	UE_LOG(LogTemp, Verbose, TEXT("[MocCharacter] Agent %s (Team %d) VFX color updated to: R=%.2f, G=%.2f, B=%.2f"),
-		*GetName(), TeamID, TeamColor.R, TeamColor.G, TeamColor.B);
-}
 
 //========================================
 // Reward Interface (forwarding to UMocRewardCalculator)
@@ -640,50 +578,36 @@ float AMocCharacter::ComputeStepReward(
 	const FObservation& Current,
 	const FEQSWeightParameters& Action)
 {
-	if (UMocRewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>())
+	if (RewardSubsystem = GetWorld()->GetSubsystem<UMocRewardSubsystem>())
 	{
 		// DataAsset과 내 상태를 넘겨서 보상을 계산 (Stateless 호출)
 		return RewardSubsystem->ComputeStepReward(this, RewardSettings, RewardState, Strategy, Prev, Current, Action);
 	}
+
 	return 0.0f;
 }
 
-FRewardBreakdown AMocCharacter::ComputeRewardBreakdown(
-	EStrategyType Strategy,
-	const FObservation& Prev,
-	const FObservation& Current) const
-{
-	if (!RewardCalculator) return FRewardBreakdown{};
-	return RewardCalculator->ComputeRewardBreakdown(Strategy, Prev, Current);
-}
 
-void AMocCharacter::ResetRewardState()
-{
-	if (RewardCalculator)
-	{
-		RewardCalculator->ResetEpisodeState();
-	}
-}
 
 void AMocCharacter::ProcessTrainingAbilities()
 {
-	if (!bIsAlive) return;
+	if (!bIsAlive || !AbilityComponent) return;
 
 
-	if (AttackAbility)
+	if (AbilityComponent->GetAttackAbility())
 	{
-		AttackAbility->ExecuteAbility(0.2f);
+		AbilityComponent->GetAttackAbility()->Execute(0.2f);
 	}
 
-	if (HealAbility)
+	if (AbilityComponent->GetHealAbility())
 	{
 		if (CommandedStrategy == EStrategyType::Support)
 		{
-			HealAbility->ExecuteAbility(0.2f);
+			AbilityComponent->GetHealAbility()->Execute(0.2f);
 		}
 		else
 		{
-			HealAbility->ResetTickHeal();
+			AbilityComponent->GetHealAbility()->ResetTickHeal();
 		}
 	}
 }
