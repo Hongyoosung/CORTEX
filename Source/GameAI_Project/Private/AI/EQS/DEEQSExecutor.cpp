@@ -63,23 +63,49 @@ TOptional<FVector> UDEEQSExecutor::ExecuteSynchronousQuery(const FDEEQSWeightPar
 {
 	if (!TacticalMovementQuery || !OwnerCharacter)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("DEEQSExecutor: Cannot execute query - missing template or owner"));
+		UE_LOG(LogTemp, Error, TEXT("[DEEQSExecutor] %s: Cannot execute query — Template=%s Owner=%s"),
+			GetOwner() ? *GetOwner()->GetName() : TEXT("?"),
+			TacticalMovementQuery ? *TacticalMovementQuery->GetName() : TEXT("NULL"),
+			OwnerCharacter ? *OwnerCharacter->GetName() : TEXT("NULL"));
 		return {};
 	}
 
 	UEnvQueryManager* EQSManager = UEnvQueryManager::GetCurrent(GetWorld());
 	if (!EQSManager)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("DEEQSExecutor: EQS Manager not available"));
+		UE_LOG(LogTemp, Error, TEXT("[DEEQSExecutor] %s: EQS Manager not available"), *OwnerCharacter->GetName());
 		return {};
 	}
 
 	FEnvQueryRequest QueryRequest(TacticalMovementQuery, OwnerCharacter);
 	ApplyWeightsToRequest(QueryRequest, Weights);
 
+	static int32 QueryCount = 0;
 	double StartTime = FPlatformTime::Seconds();
 	TSharedPtr<FEnvQueryResult> Result = EQSManager->RunInstantQuery(QueryRequest, EEnvQueryRunMode::AllMatching);
 	LastQueryDuration = static_cast<float>((FPlatformTime::Seconds() - StartTime) * 1000.0);
+
+	// Log first 5 queries per executor to confirm EQS is running and returning results
+	QueryCount++;
+	if (QueryCount <= 5)
+	{
+		const bool bSuccess = Result.IsValid() && Result->IsSuccessful();
+		UE_LOG(LogTemp, Warning, TEXT("[DEEQSExecutor] %s Query#%d: Template=%s Items=%d Success=%s Duration=%.2fms Weights=[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]"),
+			*OwnerCharacter->GetName(), QueryCount,
+			*TacticalMovementQuery->GetName(),
+			bSuccess ? Result->Items.Num() : 0,
+			bSuccess ? TEXT("YES") : TEXT("NO"),
+			LastQueryDuration,
+			Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity,
+			Weights.CoverDensity, Weights.EnemyVisibility,
+			Weights.AllyProximity, Weights.CombatRange);
+		if (bSuccess && Result->Items.Num() > 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[DEEQSExecutor] %s Query#%d: BestLocation=%s"),
+				*OwnerCharacter->GetName(), QueryCount,
+				*Result->GetItemAsLocation(0).ToString());
+		}
+	}
 
 	return ExtractBestLocation(Result);
 }

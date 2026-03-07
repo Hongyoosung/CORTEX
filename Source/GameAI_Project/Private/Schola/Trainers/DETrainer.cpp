@@ -730,7 +730,7 @@ void ADETrainer::DrawTrainingDebug(float DeltaTime)
         8,
         StrategyColor,
         false,
-        DrawDuration,
+        0.0f, 
         0,
         3.0f
     );

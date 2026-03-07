@@ -35,28 +35,35 @@ void UEnvQueryContext_DEEnemies::ProvideContext(FEnvQueryInstance& QueryInstance
 	ADECharacter* DEChar = Cast<ADECharacter>(QueryOwner);
 	AAIController* AIC = Cast<AAIController>(QueryOwner);
 
-	if (!DEChar || !AIC)
+	// Owner may be ADECharacter (training) or AAIController (inference/BT)
+	if (!DEChar && !AIC)
 	{
-		// Try to get from controller if not directly possessed
-		if (AIC)
-		{
-			DEChar = Cast<ADECharacter>(AIC->GetPawn());
-		}
-
-		if (!DEChar)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext] Query owner is not a DECharacter or AIController: %s"), *QueryOwner->GetName())
-
-			return;
-		}
+		UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext] Query owner is not a DECharacter or AIController: %s"), *QueryOwner->GetName());
+		return;
 	}
 
+	// Resolve the missing side
+	if (!DEChar && AIC)
+	{
+		DEChar = Cast<ADECharacter>(AIC->GetPawn());
+	}
+	if (!AIC && DEChar)
+	{
+		AIC = Cast<AAIController>(DEChar->GetController());
+	}
+
+	if (!DEChar)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext] DEEnemies: Could not resolve DECharacter from owner %s"), *QueryOwner->GetName());
+		return;
+	}
 
 	// 퍼셉션 컴포넌트 가져오기
-	UAIPerceptionComponent* PerceptionComp = AIC->GetAIPerceptionComponent();
+	UAIPerceptionComponent* PerceptionComp = AIC ? AIC->GetAIPerceptionComponent() : nullptr;
 	if (!PerceptionComp)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext] %s: AIPerceptionComponent is missing on AIController!"), *DEChar->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext] %s: AIPerceptionComponent is missing on AIController (AIC=%s)!"),
+			*DEChar->GetName(), AIC ? *AIC->GetName() : TEXT("NULL"));
 		return;
 	}
 

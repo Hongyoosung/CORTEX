@@ -38,13 +38,14 @@ void ADEMatchManager::BeginPlay()
 	}
 
 	// Initialise runtime state and create one UDESquadManager per configured team.
+	// Use FindOrAdd to avoid overwriting ActiveAgents that SpawnTeams() may have already
+	// populated if ADEScholaEnvironment::BeginPlay() ran before this actor's BeginPlay.
 	for (const FDETeamConfiguration& Config : TeamConfigs)
 	{
 		const int32 ID = Config.TeamID;
 
-		FDETeamState NewState;
-		NewState.TeamID = ID;
-		TeamStates.Add(ID, NewState);
+		FDETeamState& State = TeamStates.FindOrAdd(ID);
+		State.TeamID = ID;
 
 		UDESquadManager* Commander = NewObject<UDESquadManager>(this);
 		Commander->Initialize(ID);
@@ -529,7 +530,7 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 
 	for (ADECharacter* Agent : GetTeamAgents(NewTeam))
 	{
-		if (Agent && Agent->IsAlive())
+		if (Agent && Agent->IsAlive_Implementation())
 			RS->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 	}
 
@@ -537,7 +538,7 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 	{
 		for (ADECharacter* Agent : GetTeamAgents(PreviousTeam))
 		{
-			if (Agent && Agent->IsAlive())
+			if (Agent && Agent->IsAlive_Implementation())
 				RS->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 		}
 	}

@@ -379,14 +379,19 @@ void ADECharacter::PerformTacticalAction()
 	UBlackboardComponent* BB = AICtrl->GetBlackboardComponent();
 	bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EDEAgentMode::Training;
 
-	// DIAGNOSTIC: Log mode detection state so freeze cause is visible in output log
-	UE_LOG(LogTemp, Verbose,
-		TEXT("[DECharacter] %s PerformTacticalAction: bIsTraining=%s (ScholaAgent=%s, Mode=%s) BB=%s"),
-		*GetName(),
-		bIsTraining ? TEXT("true") : TEXT("false"),
-		ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
-		ScholaAgent ? *UEnum::GetValueAsString(ScholaAgent->CurrentMode) : TEXT("N/A"),
-		BB ? TEXT("Valid") : TEXT("NULL"));
+	// DIAGNOSTIC: Log mode detection state — promoted to Warning so it's visible without log filters
+	static int32 PerfTactDiagCount = 0;
+	if (++PerfTactDiagCount <= 5)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DECharacter] %s PerformTacticalAction#%d: bIsTraining=%s (ScholaAgent=%s, Mode=%s) BB=%s → Branch=%s"),
+			*GetName(), PerfTactDiagCount,
+			bIsTraining ? TEXT("true") : TEXT("false"),
+			ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
+			ScholaAgent ? *UEnum::GetValueAsString(ScholaAgent->CurrentMode) : TEXT("N/A"),
+			BB ? TEXT("Valid") : TEXT("NULL"),
+			(BB && !bIsTraining) ? TEXT("INFERENCE (EQS skipped!)") : TEXT("TRAINING (EQS will run)"));
+	}
 
 	if (BB && !bIsTraining)
 	{
@@ -479,28 +484,11 @@ void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 
 void ADECharacter::ApplyStrategyStatModifiers(EDEStrategyType Strategy)
 {
-	const bool bIsSupport = (Strategy == EDEStrategyType::Support);
-
-
 	if (AbilityComponent && AbilityComponent->GetAttackAbility())
 	{
 		// Stat modifiers would ideally be handled via a unified system, but porting current logic:
 		// However, the new system uses DataAssets. Modification of stats might need a different approach.
 		// For now, we'll keep it as is if AttackAbility pointer is available.
-	}
-
-	int32 BaseMaxHealth = DEHealthComponent->GetMaxHealth();
-
-	if (DEHealthComponent && BaseMaxHealth > 0.0f)
-	{
-		const float NewMaxHealth = BaseMaxHealth * (bIsSupport ? 0.7f : 1.0f);
-		DEHealthComponent->MaxHealth = NewMaxHealth;
-
-		// Clamp current HP so agent doesn't exceed the new lower cap
-		if (DEHealthComponent->CurrentHealth > NewMaxHealth)
-		{
-			DEHealthComponent->SetHealth(NewMaxHealth);
-		}
 	}
 }
 

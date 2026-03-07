@@ -109,8 +109,10 @@ public:
      * - Training: Schola Policy connects to Python (RLlib)
      * - Inference: Schola Policy uses local ONNX models
      */
+    // NOTE: Must be set to Training in BP_Agent Blueprint defaults when connecting to Python.
+    // Affects: ProcessTrainingAbilities timer (weapons/heal), PerformTacticalAction branch.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC")
-    EDEAgentMode CurrentMode = EDEAgentMode::Inference;
+    EDEAgentMode CurrentMode = EDEAgentMode::Training;
 
     //========================================
     // Phase 1 Training Configuration
