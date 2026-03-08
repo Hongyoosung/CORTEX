@@ -23,7 +23,7 @@
  * - DA_BlueTeamAppearance: Blue team configuration (blue materials, tactical animations)
  * - DA_EliteAppearance: Special appearance for elite agents
  *
- * MOC v10.2: Team appearance configuration is now data-driven
+ * Team appearance configuration is now data-driven
  */
 UCLASS(BlueprintType)
 class GAMEAI_PROJECT_API UDETeamData : public UPrimaryDataAsset

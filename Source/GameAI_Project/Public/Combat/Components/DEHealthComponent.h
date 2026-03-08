@@ -11,7 +11,6 @@
 class AActor;
 
 
-
 /**
  * Delegates for health events
  */
@@ -54,10 +53,10 @@ public:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	//--------------------------------------------------------------------------
-	// DAMAGE HANDLING
-	//--------------------------------------------------------------------------
 
+	//========================================
+	// DAMAGE HANDLING
+	//========================================
 	/**
 	 * Apply damage to this actor
 	 * @param DamageAmount Raw damage amount
@@ -84,9 +83,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
 	void NotifyKillConfirmed(AActor* Victim, float InTotalDamageDealt);
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// HEALTH MANAGEMENT
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Heal this actor */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
@@ -104,9 +104,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
 	void Kill(AActor* Killer = nullptr);
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// QUERIES
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Get current health */
 	UFUNCTION(BlueprintPure, Category = "Combat|Health")
@@ -136,9 +137,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Health")
 	float GetTimeSinceLastDamage() const;
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// DAMAGE MITIGATION
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Set invulnerability */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
@@ -156,9 +158,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Health")
 	float GetArmor() const { return Armor; }
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// STATS TRACKING
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Get total damage taken this life */
 	UFUNCTION(BlueprintPure, Category = "Combat|Stats")
@@ -179,11 +182,24 @@ public:
 	/** Get map of actors that dealt damage to this component (for assist reward calculation) */
 	const TMap<AActor*, float>& GetDamageContributors() const { return DamageContributors; }
 
-public:
-	//--------------------------------------------------------------------------
-	// CONFIGURATION
-	//--------------------------------------------------------------------------
 
+private:
+	//========================================
+	// INTERNAL LOGIC
+	//========================================
+
+	float	ApplyArmorMitigation(float IncomingDamage);
+
+	void	UpdateHealthRegen(float DeltaTime);
+
+	void	DrawDebugInfo();
+
+
+public:
+
+	//========================================
+	// CONFIGURATION
+	//========================================
 	/** Maximum health */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config", meta = (ClampMin = "1.0", ClampMax = "10000.0"))
 	float MaxHealth = 100.0f;
@@ -224,9 +240,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Debug")
 	bool bEnableDebugDrawing = false;
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// STATE
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Current health */
 	UPROPERTY(BlueprintReadOnly, Category = "Combat|State")
@@ -252,10 +269,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Combat|State")
 	FDEDeathEventData LastDeathEvent;
 
-	//--------------------------------------------------------------------------
-	// STATS
-	//--------------------------------------------------------------------------
 
+	//========================================
+	// STATS
+	//========================================
 	/** Total damage taken this life */
 	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
 	float TotalDamageTaken = 0.0f;
@@ -268,10 +285,27 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
 	int32 KillCount = 0;
 
-	//--------------------------------------------------------------------------
-	// EVENTS
-	//--------------------------------------------------------------------------
 
+
+private:
+	/** Handle death logic */
+	void HandleDeath(AActor* Killer, float FinalDamage);
+
+	/** Time of last damage taken (for regen delay) */
+	float TimeOfLastDamage = 0.0f;
+
+	/** Has died this session? (for one-time death logic) */
+	bool bHasDied = false;
+
+	/** Tracks cumulative damage dealt by each attacker (for assist rewards) */
+	TMap<AActor*, float> DamageContributors;
+
+
+
+public:
+	//========================================
+	// EVENTS
+	//========================================
 	/** Fired when this actor takes damage */
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
 	FOnDamageTaken OnDamageTaken_Delegate;
@@ -291,26 +325,4 @@ public:
 	/** Fired when a kill is confirmed */
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
 	FOnKillConfirmed OnKillConfirmed_Delegate;
-
-private:
-	/** Handle death logic */
-	void HandleDeath(AActor* Killer, float FinalDamage);
-
-	/** Apply armor mitigation to damage */
-	float ApplyArmorMitigation(float IncomingDamage);
-
-	/** Update health regeneration */
-	void UpdateHealthRegen(float DeltaTime);
-
-	/** Draw debug info */
-	void DrawDebugInfo();
-
-	/** Time of last damage taken (for regen delay) */
-	float TimeOfLastDamage = 0.0f;
-
-	/** Has died this session? (for one-time death logic) */
-	bool bHasDied = false;
-
-	/** Tracks cumulative damage dealt by each attacker (for assist rewards) */
-	TMap<AActor*, float> DamageContributors;
 };

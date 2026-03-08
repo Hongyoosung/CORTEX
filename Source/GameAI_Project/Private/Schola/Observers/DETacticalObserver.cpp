@@ -1,8 +1,8 @@
-// DETacticalObserver.cpp - MOC v10.2 Executor Agent Observer Implementation
 
 #include "Schola/Observers/DETacticalObserver.h"
 #include "Schola/Trainers/DETrainer.h"
 #include "Schola/Components/DEScholaAgent.h"
+#include "Schola/DEScholaEnvironment.h"
 #include "Characters/DECharacter.h"
 #include "Team/DEMatchManager.h"
 #include "Actors/DECapturePoint.h"
@@ -60,7 +60,26 @@ void UDETacticalObserver::InitializeObserver()
 	CachedTrainer = GetTypedOuter<ADETrainer>();
 	if (CachedTrainer)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Initialized (Training mode) for trainer: %s"), *CachedTrainer->GetName());
+		// Cache environment origin for position normalization
+		ADECharacter* Char = Cast<ADECharacter>(CachedTrainer->GetPawn());
+		if (Char && Char->GetMatchManager())
+		{
+			TArray<AActor*> EnvActors;
+			UGameplayStatics::GetAllActorsOfClass(CachedTrainer->GetWorld(), ADEScholaEnvironment::StaticClass(), EnvActors);
+			for (AActor* Actor : EnvActors)
+			{
+				if (ADEScholaEnvironment* Env = Cast<ADEScholaEnvironment>(Actor))
+				{
+					if (Env->GetMatchManager() == Char->GetMatchManager())
+					{
+						CachedEnvironmentOrigin = Env->GetActorLocation();
+						break;
+					}
+				}
+			}
+		}
+		UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Initialized (Training mode) for trainer: %s (EnvOrigin: %s)"),
+			*CachedTrainer->GetName(), *CachedEnvironmentOrigin.ToString());
 		return;
 	}
 
@@ -68,7 +87,25 @@ void UDETacticalObserver::InitializeObserver()
 	CachedCharacter = GetTypedOuter<ADECharacter>();
 	if (CachedCharacter)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Initialized (Inference mode) for character: %s"), *CachedCharacter->GetName());
+		// Cache environment origin for position normalization
+		if (CachedCharacter->GetMatchManager())
+		{
+			TArray<AActor*> EnvActors;
+			UGameplayStatics::GetAllActorsOfClass(CachedCharacter->GetWorld(), ADEScholaEnvironment::StaticClass(), EnvActors);
+			for (AActor* Actor : EnvActors)
+			{
+				if (ADEScholaEnvironment* Env = Cast<ADEScholaEnvironment>(Actor))
+				{
+					if (Env->GetMatchManager() == CachedCharacter->GetMatchManager())
+					{
+						CachedEnvironmentOrigin = Env->GetActorLocation();
+						break;
+					}
+				}
+			}
+		}
+		UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Initialized (Inference mode) for character: %s (EnvOrigin: %s)"),
+			*CachedCharacter->GetName(), *CachedEnvironmentOrigin.ToString());
 		return;
 	}
 
@@ -221,6 +258,7 @@ FDEObservation UDETacticalObserver::GatherBaseObservation() const
 
 	// Self state
 	Obs.Position = Character->GetActorLocation();
+	Obs.EnvironmentOrigin = CachedEnvironmentOrigin;
 	Obs.Health = Character->GetHealthPercentage_Implementation();
 	Obs.Velocity = Character->GetVelocity();
 	Obs.WeaponCooldown = Character->GetWeaponCooldown_Implementation();
@@ -228,64 +266,112 @@ FDEObservation UDETacticalObserver::GatherBaseObservation() const
 	Obs.CurrentStrategy = Character->GetCommandedStrategy();
 	Obs.bIsAlive = Character->IsAlive_Implementation();
 
-	TArray<AActor*> AllCharacters;
-	UGameplayStatics::GetAllActorsOfClass(
-		Character->GetWorld(),
-		ADECharacter::StaticClass(),
-		AllCharacters
-	);
+	const int32 MyTeamID = Character->GetTeamID_Implementation();
+	const int32 MyEnvID = Character->GetEnvID_Implementation();
+	const FVector MyLocation = Character->GetActorLocation();
 
 	int32 AllyIndex = 0;
 	int32 EnemyIndex = 0;
-	const int32 MyTeamID = Character->GetTeamID_Implementation();
-	const FVector MyLocation = Character->GetActorLocation();
 
-	for (AActor* Actor : AllCharacters)
+	// Prefer MatchManager cached lists (O(1) lookup, already environment-scoped)
+	ADEMatchManager* MatchMgr = Character->GetMatchManager();
+	if (MatchMgr)
 	{
-		ADECharacter* OtherChar = Cast<ADECharacter>(Actor);
-		if (!OtherChar || OtherChar == Character)
+		// Allies — from MatchManager (already filtered by team and environment)
+		TArray<ADECharacter*> Allies = MatchMgr->GetTeamAgents(MyTeamID);
+		for (ADECharacter* Ally : Allies)
 		{
-			continue;
+			if (!Ally || Ally == Character) continue;
+			if (AllyIndex >= 4) break;
+
+			Obs.AllyPositions[AllyIndex] = Ally->GetActorLocation();
+			Obs.AllyHealths[AllyIndex] = Ally->GetHealthPercentage_Implementation();
+			AllyIndex++;
 		}
 
-		if (OtherChar->GetTeamID_Implementation() == MyTeamID)
+		// Enemies — from MatchManager (already filtered by environment)
+		TArray<ADECharacter*> Enemies = MatchMgr->GetEnemyAgents(MyTeamID);
+		for (ADECharacter* Enemy : Enemies)
 		{
-			// Ally (max 4) — always known, no LoS required
-			if (AllyIndex < 4)
+			if (!Enemy) continue;
+			if (EnemyIndex >= 5) break;
+
+			const float Distance = FVector::Dist(Enemy->GetActorLocation(), MyLocation);
+			bool bVisible = false;
+
+			if (Distance < 8000.0f)
 			{
-				Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
-				Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
-				AllyIndex++;
+				FHitResult HitResult;
+				FCollisionQueryParams QueryParams;
+				QueryParams.AddIgnoredActor(Character);
+
+				bVisible = !Character->GetWorld()->LineTraceSingleByChannel(
+					HitResult,
+					MyLocation + FVector(0, 0, 90),
+					Enemy->GetActorLocation() + FVector(0, 0, 90),
+					ECC_Visibility,
+					QueryParams
+				);
 			}
+
+			Obs.EnemyPositions[EnemyIndex] = bVisible ? Enemy->GetActorLocation() : FVector::ZeroVector;
+			Obs.EnemyVisible[EnemyIndex] = bVisible;
+			EnemyIndex++;
 		}
-		else
+	}
+	else
+	{
+		// Fallback: world scan filtered by EnvID (MatchManager unavailable at init)
+		TArray<AActor*> AllCharacters;
+		UGameplayStatics::GetAllActorsOfClass(
+			Character->GetWorld(),
+			ADECharacter::StaticClass(),
+			AllCharacters
+		);
+
+		for (AActor* Actor : AllCharacters)
 		{
-			// Enemy (max 5) — direct line-of-sight only, no FogOfWar
-			if (EnemyIndex < 5)
+			ADECharacter* OtherChar = Cast<ADECharacter>(Actor);
+			if (!OtherChar || OtherChar == Character) continue;
+
+			// Filter by EnvID — only observe agents in the same environment
+			if (OtherChar->GetEnvID_Implementation() != MyEnvID) continue;
+
+			if (OtherChar->GetTeamID_Implementation() == MyTeamID)
 			{
-				const FVector ToEnemy = OtherChar->GetActorLocation() - MyLocation;
-				const float Distance = ToEnemy.Size();
-				bool bVisible = false;
-
-				if (Distance < 8000.0f)
+				if (AllyIndex < 4)
 				{
-					FHitResult HitResult;
-					FCollisionQueryParams QueryParams;
-					QueryParams.AddIgnoredActor(Character);
-
-					bVisible = !Character->GetWorld()->LineTraceSingleByChannel(
-						HitResult,
-						MyLocation + FVector(0, 0, 90),
-						OtherChar->GetActorLocation() + FVector(0, 0, 90),
-						ECC_Visibility,
-						QueryParams
-					);
+					Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
+					Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
+					AllyIndex++;
 				}
+			}
+			else
+			{
+				if (EnemyIndex < 5)
+				{
+					const float Distance = FVector::Dist(OtherChar->GetActorLocation(), MyLocation);
+					bool bVisible = false;
 
-				// Store actual position only when visible; ToArray zeros non-visible slots
-				Obs.EnemyPositions[EnemyIndex] = bVisible ? OtherChar->GetActorLocation() : FVector::ZeroVector;
-				Obs.EnemyVisible[EnemyIndex] = bVisible;
-				EnemyIndex++;
+					if (Distance < 8000.0f)
+					{
+						FHitResult HitResult;
+						FCollisionQueryParams QueryParams;
+						QueryParams.AddIgnoredActor(Character);
+
+						bVisible = !Character->GetWorld()->LineTraceSingleByChannel(
+							HitResult,
+							MyLocation + FVector(0, 0, 90),
+							OtherChar->GetActorLocation() + FVector(0, 0, 90),
+							ECC_Visibility,
+							QueryParams
+						);
+					}
+
+					Obs.EnemyPositions[EnemyIndex] = bVisible ? OtherChar->GetActorLocation() : FVector::ZeroVector;
+					Obs.EnemyVisible[EnemyIndex] = bVisible;
+					EnemyIndex++;
+				}
 			}
 		}
 	}

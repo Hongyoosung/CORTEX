@@ -30,7 +30,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMatchStateChanged, EDEMatchState,
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnScoreUpdated, int32, TeamID, int32, NewScore, FString, Reason);
 
 /**
- * ADEGameMode - MOC v10.1 Game Mode Orchestrator
+ * ADEGameMode - Game Mode Orchestrator
  *
  * Responsibilities:
  * - Spawn and manage all game entities (DEMatchManager, CapturePoints)

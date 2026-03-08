@@ -72,7 +72,7 @@ struct FDETransition
 };
 
 /**
- * Transition logger for MOC training pipeline.
+ * Transition logger for DE training pipeline.
  *
  * Responsibilities:
  * - Collect (S, O, A, R, S', Done) transitions
@@ -86,7 +86,7 @@ struct FDETransition
  *
  * Target: 100,000 transitions for Phase 1 training
  */
-UCLASS(ClassGroup=(MOC), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(DE), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UDETransitionLogger : public UActorComponent
 {
 	GENERATED_BODY()
@@ -102,7 +102,7 @@ public:
 	/**
 	 * Log single transition
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Logging")
+	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void LogTransition(
 		const FDEObservation& State,
 		EDEStrategyType OptionType,
@@ -117,43 +117,43 @@ public:
 	/**
 	 * Start new episode
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Logging")
+	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void StartEpisode();
 
 	/**
 	 * End current episode and flush buffer
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Logging")
+	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void EndEpisode(bool bTeamWon);
 
 	/**
 	 * Flush transition buffer to disk (CSV)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Logging")
+	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void FlushToDisk();
 
 	/**
 	 * Get transition count
 	 */
-	UFUNCTION(BlueprintPure, Category = "MOC|Logging")
+	UFUNCTION(BlueprintPure, Category = "DE|Logging")
 	int32 GetTransitionCount() const { return TotalTransitions; }
 
 	/**
 	 * Get current episode ID
 	 */
-	UFUNCTION(BlueprintPure, Category = "MOC|Logging")
+	UFUNCTION(BlueprintPure, Category = "DE|Logging")
 	int32 GetEpisodeID() const { return CurrentEpisodeID; }
 
 	/**
 	 * Set output directory for CSV files
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Logging")
+	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void SetOutputDirectory(const FString& Directory) { OutputDirectory = Directory; }
 
 	/**
 	 * Enable/disable logging
 	 */
-	UFUNCTION(BlueprintCallable, Category = "MOC|Logging")
+	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void SetLoggingEnabled(bool bEnabled) { bLoggingEnabled = bEnabled; }
 
 protected:
@@ -163,7 +163,7 @@ protected:
 
 	/** Output directory for CSV files */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Logging")
-	FString OutputDirectory = TEXT("Saved/MOC_Training");
+	FString OutputDirectory = TEXT("Saved/DE_Training");
 
 	/** Current episode ID */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Logging")

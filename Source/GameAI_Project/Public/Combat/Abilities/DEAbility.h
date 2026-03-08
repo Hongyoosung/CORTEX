@@ -34,7 +34,7 @@ protected:
 	TObjectPtr<ADECharacter> OwnerCharacter;
 
 	UPROPERTY(Transient)
-	TObjectPtr<ADEMatchManager> CachedMatchManager;
+	mutable TObjectPtr<ADEMatchManager> CachedMatchManager;
 
 	ADEMatchManager* GetMatchManager() const;
 };

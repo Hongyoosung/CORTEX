@@ -148,30 +148,34 @@ protected:
 	/** Deactivate projectile (for pooling) */
 	void DeactivateProjectile();
 
+
+
 public:
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// COMPONENTS
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Collision sphere */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Components")
-	USphereComponent* CollisionComponent = nullptr;
+	TObjectPtr<USphereComponent> CollisionComponent = nullptr;
 
 	/** Projectile movement */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Components")
-	UProjectileMovementComponent* ProjectileMovement = nullptr;
+	TObjectPtr<UProjectileMovementComponent> ProjectileMovement = nullptr;
 
 	/** Visual mesh (optional) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Components")
-	UStaticMeshComponent* MeshComponent = nullptr;
+	TObjectPtr<UStaticMeshComponent> MeshComponent = nullptr;
 
 	/** Trail VFX (optional) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Components")
-	UParticleSystemComponent* TrailVFX = nullptr;
+	TObjectPtr<UParticleSystemComponent> TrailVFX = nullptr;
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// CONFIGURATION
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Base damage (before falloff) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Config", meta = (ClampMin = "0.0"))
@@ -237,9 +241,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Debug")
 	bool bEnableDebugDrawing = false;
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// VFX/SFX HOOKS (Set in Blueprint)
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Impact particle system */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|VFX")
@@ -249,9 +254,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|VFX")
 	USoundBase* ImpactSound = nullptr;
 
-	//--------------------------------------------------------------------------
+
+	//========================================
 	// STATE
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Environment ID for parallel environment isolation. Set from owner on init. */
 	UPROPERTY(BlueprintReadOnly, Category = "Combat|State")
@@ -281,17 +287,7 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Combat|State")
 	int32 HitCount = 0;
 
-	//--------------------------------------------------------------------------
-	// EVENTS
-	//--------------------------------------------------------------------------
 
-	/** Fired when projectile hits something */
-	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
-	FOnProjectileHit OnProjectileHit_Delegate;
-
-	/** Fired when projectile expires */
-	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
-	FOnProjectileExpired OnProjectileExpired_Delegate;
 
 private:
 	/** Lifetime timer handle */
@@ -302,4 +298,18 @@ private:
 
 	/** Actors already hit (for penetration tracking) */
 	TSet<AActor*> HitActors;
+
+
+
+public:
+	//========================================
+	// EVENTS
+	//========================================
+	/** Fired when projectile hits something */
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
+	FOnProjectileHit		OnProjectileHit_Delegate;
+
+	/** Fired when projectile expires */
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
+	FOnProjectileExpired	OnProjectileExpired_Delegate;
 };

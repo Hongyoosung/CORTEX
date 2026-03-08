@@ -17,7 +17,7 @@ enum class EDETeamOwnership : uint8
 };
 
 /**
- * Agent statistics for MOC Arena
+ * Agent statistics for DE Arena
  */
 USTRUCT(BlueprintType)
 struct FAgentStats

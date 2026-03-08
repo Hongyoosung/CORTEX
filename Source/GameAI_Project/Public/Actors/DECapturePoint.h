@@ -208,8 +208,8 @@ protected:
 	float PreviousProgress = 0.0f;
 
 	UPROPERTY()
-	UMaterialInstanceDynamic* DynamicMaterial;
+	TObjectPtr<UMaterialInstanceDynamic> DynamicMaterial;
 
 	UPROPERTY()
-	ADEMatchManager* OwnerMatchManager = nullptr;
+	TObjectPtr<ADEMatchManager> OwnerMatchManager = nullptr;
 };

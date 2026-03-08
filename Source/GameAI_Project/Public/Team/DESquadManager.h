@@ -59,12 +59,12 @@ struct FDESquadConfig
 
 
 /**
- * UDESquadManager — MOC v10.3 Centralized Tactical Planner
+ * UDESquadManager — Centralized Tactical Planner
  *
  * UObject owned by ADEMatchManager.  Two instances are created
  * programmatically in ADEMatchManager::BeginPlay() — one per team.
  *
- * Design (v10.3 — no circular reference):
+ * Design (— no circular reference):
  *  - ADEMatchManager owns UDESquadManager (parent → child, one-way).
  *  - Configuration is pushed via Configure(FDESquadConfig).
  *  - Agent lists are passed as parameters at call sites; UDESquadManager
@@ -177,15 +177,36 @@ public:
 	 */
 	void Reset(const TArray<ADECharacter*>& TeamAgents);
 
+
 	//========================================
 	// Debug Accessors
 	//========================================
 
-	int32 GetTeamID()                const { return TeamID; }
-	int32 GetPlanningCycleCount()     const { return PlanningCycleCount; }
-	int32 GetEventDrivenReplanCount() const { return EventDrivenReplanCount; }
-	float GetPlanConfidence()         const { return PlanConfidence; }
-	const TArray<EDEStrategyType>& GetCurrentRoleAssignments() const { return CurrentRoleAssignments; }
+	FORCEINLINE int32 GetTeamID()                const	{ return TeamID; }
+	FORCEINLINE int32 GetPlanningCycleCount()     const { return PlanningCycleCount; }
+	FORCEINLINE int32 GetEventDrivenReplanCount() const { return EventDrivenReplanCount; }
+	FORCEINLINE float GetPlanConfidence()         const { return PlanConfidence; }
+	FORCEINLINE const TArray<EDEStrategyType>& GetCurrentRoleAssignments() const { return CurrentRoleAssignments; }
+
+
+
+private:
+	FDECompositeReward CalculateTeamReward(const FDETeamWorldState& OldState,
+		const FDETeamWorldState& NewState) const;
+
+	ETacticalPlay SelectEpsilonGreedyAction(const FDETeamWorldState& TeamState,
+		const TArray<ETacticalPlay>& FeasiblePlays) const;
+
+	//========================================
+	// Critical Event Handlers (bound to DECapturePoint delegates)
+	//========================================
+
+	UFUNCTION()
+	void OnPointCapturedHandler(ECapturePointID PointID,
+		int32 PreviousTeamID,
+		int32 NewTeamID);
+
+
 
 protected:
 	//========================================
@@ -214,6 +235,7 @@ protected:
 	/** Draw 3-D debug labels above agents */
 	void DrawDebugVisualization(const TArray<ADECharacter*>& TeamAgents) const;
 
+
 	//========================================
 	// Sub-systems (owned objects)
 	//========================================
@@ -226,6 +248,7 @@ protected:
 
 	UPROPERTY()
 	UDETeamDataCollector* DataCollector = nullptr;
+
 
 	//========================================
 	// Runtime State
@@ -256,20 +279,4 @@ protected:
 
 	/** Capture points scoped to this environment (set via BindCapturePoints) */
 	TArray<ADECapturePoint*> CachedCapturePoints;
-
-private:
-	FDECompositeReward CalculateTeamReward(const FDETeamWorldState& OldState,
-	                                     const FDETeamWorldState& NewState) const;
-
-	ETacticalPlay SelectEpsilonGreedyAction(const FDETeamWorldState& TeamState,
-	                                        const TArray<ETacticalPlay>& FeasiblePlays) const;
-
-	//========================================
-	// Critical Event Handlers (bound to DECapturePoint delegates)
-	//========================================
-
-	UFUNCTION()
-	void OnPointCapturedHandler(ECapturePointID PointID,
-	                            int32 PreviousTeamID,
-	                            int32 NewTeamID);
 };

@@ -1,6 +1,6 @@
 # Team World Model Training Pipeline
 
-**MOC v10.2 - Pure Team Model Approach**
+**DE v10.2 - Pure Team Model Approach**
 
 This directory contains the training pipeline for the team-level world model neural network.
 

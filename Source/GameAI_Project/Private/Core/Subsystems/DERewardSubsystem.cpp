@@ -310,8 +310,10 @@ float UDERewardSubsystem::ComputeStepReward(
 				if (InOutState.bInFriendlyZone)
 				{
 					Reward += Settings->DefendReward.ZonePresenceBonus;
-					if (PositionChange < Settings->DefendStationaryThreshold) Reward += Settings->DefendReward.PositionReward;
-					if (Current.Health > Settings->DefendHealthThreshold)     Reward += Settings->DefendReward.HealthBonus;
+					// Reward free movement within the zone; remove stationary center bias
+					if (PositionChange >= Settings->ZoneMovementMinThreshold)
+						Reward += Settings->ZoneMovementBonus;
+					if (Current.Health > Settings->DefendHealthThreshold) Reward += Settings->DefendReward.HealthBonus;
 
 					for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
 					{
@@ -508,6 +510,42 @@ float UDERewardSubsystem::ComputeStepReward(
 	{
 		CalculateSurvivalReward(InOutState, Strategy, Current.Health, 1.0f, Agent->AgentID);
 	}
+
+	// Minimum combat range penalty (common to all strategies)
+	// Penalizes agents when a visible enemy is within MinCombatRange to discourage point-blank combat
+	// and reinforce the CombatRange EQS weight as a meaningful positioning signal.
+	if (!bIsRespawnStep && Settings->MinCombatRange > 0.0f && Settings->TooCloseEnemyPenalty > 0.0f)
+	{
+		const float MinRangeSq = FMath::Square(Settings->MinCombatRange);
+		for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
+		{
+			if (i < Current.EnemyVisible.Num() && Current.EnemyVisible[i])
+			{
+				if (FVector::DistSquared(Current.Position, Current.EnemyPositions[i]) < MinRangeSq)
+				{
+					Reward -= Settings->TooCloseEnemyPenalty;
+					break; // one penalty per step regardless of how many close enemies
+				}
+			}
+		}
+	}
+	// Close-range kill tracking — flags whether the agent was too close when a kill fired this step
+	if (!bIsRespawnStep && Settings->CloseRangeKillThreshold > 0.0f)
+	{
+		const float KillRangeSq = FMath::Square(Settings->CloseRangeKillThreshold);
+		for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
+		{
+			if (i < Current.EnemyVisible.Num() && Current.EnemyVisible[i])
+			{
+				if (FVector::DistSquared(Current.Position, Current.EnemyPositions[i]) < KillRangeSq)
+				{
+					InOutState.bWasTooCloseAtKill = true;
+					break;
+				}
+			}
+		}
+	}
+
 	// Zone Control Reward
 	if (MyTeamID >= 0 && EnvCapturePoints.Num() > 0)
 	{
@@ -528,11 +566,17 @@ float UDERewardSubsystem::ComputeStepReward(
 	float EffectiveTimePenalty = (Strategy == EDEStrategyType::Assault) ? Settings->AssaultReward.TimePenalty : Settings->TimePenalty;
 	Reward -= EffectiveTimePenalty;
 
-	Reward += DrainSparseReward(InOutState, Agent->AgentID);
+	float DrainedSparse = DrainSparseReward(InOutState, Agent->AgentID);
+	if (InOutState.bWasTooCloseAtKill && InOutState.bSparseKillFiredThisStep)
+	{
+		DrainedSparse *= Settings->CloseRangeKillPenaltyScale;
+	}
+	Reward += DrainedSparse;
 	Reward *= Settings->GlobalRewardScale;
 	Reward = FMath::Clamp(Reward, Settings->StepRewardClampMin, Settings->StepRewardClampMax);
 
 	InOutState.bSparseKillFiredThisStep = false;
+	InOutState.bWasTooCloseAtKill = false;
 
 	// Team reward mixing
 	const float CurrentIndividualReward = Reward;

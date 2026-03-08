@@ -10,10 +10,9 @@ ADEHealthPack::ADEHealthPack()
 	// Set pickup type
 	PickupType = EPickupType::Health;
 
-	// MOC v10.1 spec: 30 second respawn
 	RespawnTime = 30.0f;
 
-	// MOC v10.1 spec: Visible through walls within 20m (2000cm)
+	// Visible through walls within 20m (2000cm)
 	ThroughWallVisibilityRange = 2000.0f;
 	bVisibleThroughWalls = true;
 

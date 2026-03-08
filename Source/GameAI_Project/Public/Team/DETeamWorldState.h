@@ -7,7 +7,7 @@
 #include "DETeamWorldState.generated.h"
 
 /**
- * FDETeamState - MOC v10.2 Global Squad Status for Centralized Planning
+ * FDETeamState - Global Squad Status for Centralized Planning
  *
  * Represents the complete state of a 5-agent team for use by Squad Commander.
  * Replaces individual FDEObservation (52-dim) with team-wide awareness including:

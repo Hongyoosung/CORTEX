@@ -25,10 +25,9 @@ class GAMEAI_PROJECT_API UDEEpisodeManagerComponent : public UActorComponent
 public:
 	UDEEpisodeManagerComponent();
 
-
-	//--------------------------------------------------------------------------
+	//========================================
 	// EPISODE LIFECYCLE
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/**
 	 * Start a new episode for this environment
@@ -61,6 +60,7 @@ public:
 	 * @return Environment ID
 	 */
 	int32 GetEnvironmentID() const { return EnvironmentID; }
+
 
 
 private:

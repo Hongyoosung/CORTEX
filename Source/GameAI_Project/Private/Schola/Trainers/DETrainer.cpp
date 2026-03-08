@@ -100,18 +100,22 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
         }
     }
 
-    // Cache capture point references (static actors — populated once)
+    // Cache capture point references filtered by EnvID (static actors — populated once)
+    const int32 MyEnvID = ControlledCharacter->GetEnvID_Implementation();
     TArray<AActor*> FoundPoints;
     UGameplayStatics::GetAllActorsOfClass(GetWorld(), ADECapturePoint::StaticClass(), FoundPoints);
-    CachedCapturePoints.Reset(FoundPoints.Num());
+    CachedCapturePoints.Reset();
     for (AActor* Actor : FoundPoints)
     {
         if (ADECapturePoint* CP = Cast<ADECapturePoint>(Actor))
         {
-            CachedCapturePoints.Add(CP);
+            if (CP->GetEnvID_Implementation() == MyEnvID)
+            {
+                CachedCapturePoints.Add(CP);
+            }
         }
     }
-    UE_LOG(LogTemp, Log, TEXT("[DETrainer] Cached %d capture points"), CachedCapturePoints.Num());
+    UE_LOG(LogTemp, Log, TEXT("[DETrainer] Cached %d capture points for EnvID %d"), CachedCapturePoints.Num(), MyEnvID);
 
     // 초기 commanded strategy 캐시
     CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
@@ -392,6 +396,7 @@ FDEObservation ADETrainer::GatherStateObservation()
 
     // Self state
     Obs.Position = ControlledCharacter->GetActorLocation();
+    Obs.EnvironmentOrigin = CachedScholaEnvironment ? CachedScholaEnvironment->GetActorLocation() : FVector::ZeroVector;
     Obs.Health = ControlledCharacter->GetHealthPercentage_Implementation();
     Obs.Velocity = ControlledCharacter->GetVelocity();
     Obs.WeaponCooldown = ControlledCharacter->GetWeaponCooldown_Implementation();
@@ -451,7 +456,8 @@ FDEObservation ADETrainer::GatherStateObservation()
     }
     else
     {
-        // Fallback: world scan (CachedMatchManager unavailable at initialization)
+        // Fallback: world scan filtered by EnvID (CachedMatchManager unavailable at initialization)
+        const int32 MyEnvID = ControlledCharacter->GetEnvID_Implementation();
         TArray<AActor*> AllCharacters;
         UGameplayStatics::GetAllActorsOfClass(GetWorld(), ADECharacter::StaticClass(), AllCharacters);
 
@@ -459,6 +465,9 @@ FDEObservation ADETrainer::GatherStateObservation()
         {
             ADECharacter* OtherChar = Cast<ADECharacter>(Actor);
             if (!OtherChar || OtherChar == ControlledCharacter) continue;
+
+            // Filter by EnvID — only observe agents in the same environment
+            if (OtherChar->GetEnvID_Implementation() != MyEnvID) continue;
 
             if (OtherChar->GetTeamID_Implementation() == MyTeamID)
             {
@@ -572,6 +581,9 @@ void ADETrainer::LogTransition(
 void ADETrainer::DrawTrainingDebug(float DeltaTime)
 {
     if (!ControlledCharacter || !GetWorld()) return;
+
+    // Skip world-space debug visuals while a spectator is viewing via the HUD camera
+    if (ControlledCharacter->bIsBeingObserved) return;
 
     float DrawDuration = DeltaTime * 1.2f;
 

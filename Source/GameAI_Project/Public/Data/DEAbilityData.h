@@ -21,6 +21,10 @@ struct FDEAttackAbilityConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	float Range = 8000.0f;
 
+	/** Minimum engagement range (cm). Agents will not fire at enemies closer than this. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	float MinRange = 400.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	float Damage = 15.0f;
 

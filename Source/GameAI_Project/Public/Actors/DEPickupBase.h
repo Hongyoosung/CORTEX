@@ -133,19 +133,19 @@ public:
 
 	/** Root component */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	USceneComponent* RootComp;
+	TObjectPtr<USceneComponent> RootComp;
 
 	/** Visual mesh */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UStaticMeshComponent* PickupMesh;
+	TObjectPtr<UStaticMeshComponent> PickupMesh;
 
 	/** Collection trigger sphere */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	USphereComponent* CollectionSphere;
+	TObjectPtr<USphereComponent> CollectionSphere;
 
 	/** Visual effect (glow, hologram, etc.) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UNiagaraComponent* VisualEffect;
+	TObjectPtr<UNiagaraComponent> VisualEffect;
 
 	//========================================
 	// Configuration
@@ -183,17 +183,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Pickup|Debug")
 	bool bShowDebugInfo = false;
 
-	//========================================
-	// Events
-	//========================================
-
-	/** Broadcast when pickup is collected */
-	UPROPERTY(BlueprintAssignable, Category = "Pickup|Events")
-	FOnPickupCollected OnPickupCollected;
-
-	/** Broadcast when pickup respawns */
-	UPROPERTY(BlueprintAssignable, Category = "Pickup|Events")
-	FOnPickupRespawned OnPickupRespawned;
+	
 
 protected:
 	//========================================
@@ -212,5 +202,20 @@ protected:
 
 	/** Material instance for visual feedback */
 	UPROPERTY()
-	UMaterialInstanceDynamic* DynamicMaterial;
+	TObjectPtr<UMaterialInstanceDynamic> DynamicMaterial;
+
+
+
+public:
+	//========================================
+	// Events
+	//========================================
+
+	/** Broadcast when pickup is collected */
+	UPROPERTY(BlueprintAssignable, Category = "Pickup|Events")
+	FOnPickupCollected OnPickupCollected;
+
+	/** Broadcast when pickup respawns */
+	UPROPERTY(BlueprintAssignable, Category = "Pickup|Events")
+	FOnPickupRespawned OnPickupRespawned;
 };

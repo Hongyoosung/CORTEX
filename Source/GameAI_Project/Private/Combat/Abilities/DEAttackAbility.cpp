@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/Abilities/DEAttackAbility.h"
+#include "EngineUtils.h"
 #include "Combat/DEProjectileBase.h"
 #include "Characters/DECharacter.h"
 #include "Team/DEMatchManager.h"
@@ -42,6 +43,7 @@ void UDEAttackAbility::Execute(float DeltaTime)
 	const FVector MyLocation = OwnerCharacter->GetActorLocation();
 	const FVector EyeLocation = MyLocation + FVector(0, 0, 90);
 	const float AttackRangeSq = FMath::Square(Config.Range);
+	const float MinRangeSq    = FMath::Square(Config.MinRange);
 
 	struct FEnemyData {
 		ADECharacter* Enemy;
@@ -56,7 +58,7 @@ void UDEAttackAbility::Execute(float DeltaTime)
 		if (!Enemy || !Enemy->IsAlive_Implementation()) continue;
 
 		float DistSq = FVector::DistSquared(Enemy->GetActorLocation(), MyLocation);
-		if (DistSq <= AttackRangeSq)
+		if (DistSq <= AttackRangeSq && DistSq >= MinRangeSq)
 		{
 			NearbyEnemies.Add({ Enemy, DistSq });
 		}
@@ -67,14 +69,28 @@ void UDEAttackAbility::Execute(float DeltaTime)
 		return A.DistSq < B.DistSq;
 	});
 
+	// Collect cross-environment characters once to exclude from LOS checks.
+	// In multi-env training, their capsules block ECC_Visibility traces and prevent firing.
+	const int32 MyEnvID = OwnerCharacter->GetEnvID_Implementation();
+	TArray<AActor*> CrossEnvActors;
+	for (TActorIterator<ADECharacter> It(OwnerCharacter->GetWorld()); It; ++It)
+	{
+		if ((*It)->GetEnvID_Implementation() != MyEnvID)
+		{
+			CrossEnvActors.Add(*It);
+		}
+	}
+
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(OwnerCharacter);
+	QueryParams.AddIgnoredActors(CrossEnvActors);
 
 	for (const FEnemyData& Data : NearbyEnemies)
 	{
 		QueryParams.ClearIgnoredActors();
 		QueryParams.AddIgnoredActor(OwnerCharacter);
 		QueryParams.AddIgnoredActor(Data.Enemy);
+		QueryParams.AddIgnoredActors(CrossEnvActors);
 
 		FHitResult HitResult;
 		const bool bBlocked = OwnerCharacter->GetWorld()->LineTraceSingleByChannel(

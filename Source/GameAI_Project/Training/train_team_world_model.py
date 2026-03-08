@@ -1,6 +1,6 @@
 """
 Team World Model Training Script
-MOC v10.2 - Pure Team Model Approach
+DE v10.2 - Pure Team Model Approach
 
 Trains a neural network to predict:
   Input: FTeamState (60-dim) + ETacticalPlay (10-dim one-hot) = 70-dim

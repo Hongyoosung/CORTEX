@@ -15,7 +15,7 @@ class AAbstractTrainer;
 
 
 /** //============================================================
- * v10.2 Schola actuator - Pure action-to-weight translator.
+ * Schola actuator - Pure action-to-weight translator.
  *
  * Action Space: Box([-1, 1]^6)
  * - [0]: EnemyObjectiveProximity  (-1=avoid, +1=approach)
@@ -49,7 +49,7 @@ public:
 
 
 	//============================================================
-	// v10.2 Commander Integration
+	// Commander Integration
 	//============================================================
 
 	/**
@@ -97,6 +97,7 @@ public:
 	bool bClampOutputs = true;
 
 
+
 protected:
 	/** Cached DE character reference */
 	UPROPERTY()
@@ -113,6 +114,8 @@ protected:
 	/** Action received counter (for debugging) */
 	UPROPERTY(VisibleAnywhere, Category = "Debug")
 	int32 ActionCount = 0;
+
+
 
 private:
 	/**

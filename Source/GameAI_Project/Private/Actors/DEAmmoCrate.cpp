@@ -10,7 +10,6 @@ ADEAmmoCrate::ADEAmmoCrate()
 	// Set pickup type
 	PickupType = EPickupType::Ammo;
 
-	// MOC v10.1 spec: 20 second respawn
 	RespawnTime = 20.0f;
 
 	// Visual feedback (not through walls by default for ammo)

@@ -18,21 +18,24 @@
 
 // Forward declarations
 
+
+class UAIPerceptionStimuliSourceComponent;
+class USpringArmComponent;
+class UCameraComponent;
+class UEnvQuery;
+class UNiagaraComponent;
+class UNiagaraSystem;
+
+class ADECharacter;
 class UDERewardSubsystem;
 class UDEHealthComponent;
 class UDEScholaAgent;
-class UAIPerceptionStimuliSourceComponent;
 class UDEEQSExecutor;
-
-class UEnvQuery;
-class ADEFogOfWarManager;
-class UNiagaraComponent;
-class UNiagaraSystem;
 struct FDEDeathEventData;
 struct FDETeamInfo;
 
 /**
- * ADECharacter - MOC v10.2 Component-Based Agent Character
+ * ADECharacter - Component-Based Agent Character
  *
  * Component Architecture:
  * - UDEHealthComponent: Damage, death, respawn
@@ -67,8 +70,6 @@ struct FDETeamInfo;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAgentDeathEvent, const FDEDeathEventData&, DeathEvent);
-
-class ADECharacter;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAgentDied, ADECharacter*, DeadAgent, ADECharacter*, Killer);
 
 
@@ -113,15 +114,15 @@ public:
 
 	/** Get DEHealthComponent */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UDEHealthComponent* GetHealthComponent() const { return DEHealthComponent; }
+	UDEHealthComponent*		GetHealthComponent()	const { return DEHealthComponent.Get(); }
 
 	/** Get AbilityComponent (manages all agent abilities) */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UDEAbilityComponent* GetAbilityComponent() const { return AbilityComponent; }
+	UDEAbilityComponent*	GetAbilityComponent()	const { return AbilityComponent.Get();	}
 
 	/** Get DEScholaAgent */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UDEScholaAgent* GetScholaAgent() const { return ScholaAgent; }
+	UDEScholaAgent*			GetScholaAgent()		const { return ScholaAgent.Get();		}
 
 
 
@@ -139,6 +140,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
 	void UpdateTacticalWeights(const FDEEQSWeightParameters& NewWeights);
 
+
 	/**
 	 * Execute tactical action based on current EQS weights.
 	 *
@@ -154,28 +156,32 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
 	void PerformTacticalAction();
 
-	/** Get current EQS weights (read by EQS queries, Trainer, BT tasks) */
-	UFUNCTION(BlueprintPure, Category = "Character|EQS")
-	FDEEQSWeightParameters GetEQSWeights() const { return CurrentEQSWeights; }
-
-	/** Returns true if weights were updated since last consume, then clears the flag */
-	bool ConsumeNewWeights() { bool b = bWeightsDirty; bWeightsDirty = false; return b; }
-
-	/** Get the last EQS target location (for debugging) */
-	UFUNCTION(BlueprintPure, Category = "Character|EQS")
-	FVector GetLastEQSTargetLocation() const { return LastEQSTargetLocation; }
-
-	UFUNCTION()
 	void ProcessTrainingAbilities();
 
 
+	/** Get current EQS weights (read by EQS queries, Trainer, BT tasks) */
+	UFUNCTION(BlueprintPure, Category = "Character|EQS")
+	FORCEINLINE FDEEQSWeightParameters	GetEQSWeights() const			
+	{ return CurrentEQSWeights; }
+
+	/** Get the last EQS target location (for debugging) */
+	UFUNCTION(BlueprintPure, Category = "Character|EQS")
+	FORCEINLINE FVector					GetLastEQSTargetLocation() const 
+	{ return LastEQSTargetLocation; }
+
+	/** Returns true if weights were updated since last consume, then clears the flag */
+	FORCEINLINE bool					ConsumeNewWeights()				
+	{ bool b = bWeightsDirty; bWeightsDirty = false; return b; }
+
+	
+
 	//========================================
-	// v10.2 Command Interface
+	// Command Interface
 	//========================================
 
 	/**
 	 * Receive strategy command from Squad Commander
-	 * Replaces individual MCTS decision-making in v10.2 architecture
+	 * Replaces individual MCTS decision-making
 	 *
 	 * @param NewStrategy - Strategy assigned by centralized commander
 	 */
@@ -213,7 +219,6 @@ public:
 	/** Reset character state (called by DEMatchManager on respawn) */
 	UFUNCTION(BlueprintCallable, Category = "Character|Respawn")
 	void ResetCharacter();
-
 	void Activate();
 	void Deactivate();
 
@@ -231,8 +236,6 @@ public:
 	 * has reached or exceeded Threshold. Pass-through to HealAbility.
 	 */
 	bool ConsumeHealBurst(float Threshold);
-
-
 
 
 
@@ -254,7 +257,6 @@ protected:
 
 	
 
-
 public:
 
 	//========================================
@@ -265,21 +267,48 @@ public:
 
 
 	//========================================
+	// Camera (Spectator Mode)
+	//========================================
+
+	/** Spring arm for third-person spectator camera */
+	UPROPERTY(VisibleAnywhere,		BlueprintReadOnly, Category = "Components|Camera")
+	TObjectPtr<USpringArmComponent> CameraSpringArm;
+
+	/** Third-person camera for spectator observation */
+	UPROPERTY(VisibleAnywhere,		BlueprintReadOnly, Category = "Components|Camera")
+	TObjectPtr<UCameraComponent>	AgentCamera;
+
+	/**
+	 * True while a spectator is actively viewing this agent.
+	 * DETrainer skips world-space debug visuals when this is set to avoid redundancy.
+	 */
+	UPROPERTY(BlueprintReadOnly,	Category = "Debug")
+	bool							bIsBeingObserved = false;
+
+
+	//========================================
 	// Components
 	//========================================
 
 	/** Health management */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UDEHealthComponent* DEHealthComponent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
+	TObjectPtr<UDEHealthComponent>					DEHealthComponent = nullptr;
 
 	/** RL training interface */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UDEScholaAgent* ScholaAgent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
+	TObjectPtr<UDEScholaAgent>						ScholaAgent = nullptr;
 
 	/** AI perception registration */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UAIPerceptionStimuliSourceComponent* StimuliSource;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
+	TObjectPtr<UAIPerceptionStimuliSourceComponent> StimuliSource = nullptr;
 
+	/** Unified ability component */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
+	TObjectPtr<UDEAbilityComponent>					AbilityComponent = nullptr;
+
+	/** EQS Executor component - handles query execution with correct parameter names */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
+	TObjectPtr<UDEEQSExecutor>						EQSExecutor = nullptr;
 
 
 	//========================================
@@ -288,32 +317,22 @@ public:
 
 	/** Vision range for fog-of-war updates (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Vision")
-	float VisionRange; // 30 meters
+	float VisionRange = 3000.0f;
 
 	/** Agent Info for team coordination */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
-	int32 AgentID;
+	int32 AgentID = 0;
 
 	FLinearColor TeamColor;
-
 
 
 	//========================================
 	// EQS Configuration
 	//========================================
 
-	/** Unified ability component */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UDEAbilityComponent* AbilityComponent;
-
-	/** EQS Executor component - handles query execution with correct parameter names */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UDEEQSExecutor* EQSExecutor;
-
 	/** EQS result acceptance radius for movement (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
-	float EQSAcceptanceRadius;
-
+	float EQSAcceptanceRadius = 50.0f;
 
 
 	//========================================
@@ -324,19 +343,16 @@ public:
 
 
 
-
-
 protected:
 	TObjectPtr<UDERewardSubsystem> RewardSubsystem;
 	
 	/** Team ID (0 = Red, 1 = Blue) - Assigned by DEMatchManager on spawn, or set directly in editor for test maps */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
-	int32 TeamID;
+	int32 TeamID = -1;
 
 	/** Environment ID for parallel environment isolation. Set by DEMatchManager on spawn. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 EnvID = 0;
-
 
 
 	//========================================
@@ -345,37 +361,36 @@ protected:
 
 	/** Is dead? */
 	UPROPERTY(BlueprintReadOnly, Category = "State")
-	bool bIsAlive;
+	bool bIsAlive = true;
 
-	/** Current strategy assigned by Squad Commander (v10.2) */
+	/** True when Actuator wrote new weights that haven't been consumed yet */
+	bool bWeightsDirty = false;
+
+	/** Time when character was last spawned/reset (for death diagnostics) */
+	float SpawnTime = 0.0f;
+
+	/** Last EQS target location (for debugging) */
+	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
+	FVector LastEQSTargetLocation = FVector::ZeroVector;
+
+	/** Current strategy assigned by Squad Commander */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
-	EDEStrategyType CommandedStrategy;
+	EDEStrategyType CommandedStrategy = EDEStrategyType::Support;
 
 	/** Current EQS weights (set by Actuator, read by EQS/Trainer/BT) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FDEEQSWeightParameters CurrentEQSWeights;
 
-	/** True when Actuator wrote new weights that haven't been consumed yet */
-	bool bWeightsDirty;
-
-	/** Last EQS target location (for debugging) */
-	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
-	FVector LastEQSTargetLocation;
-
-	/** Time when character was last spawned/reset (for death diagnostics) */
-	float SpawnTime;
-
 	FTimerHandle TrainingAbilityTimerHandle;
-
 
 	
 
 public:
 	//============= Event Delegated ===================
 
-	FOnAgentDeathEvent OnAgentDeathEvent_Delegate;
+	FOnAgentDeathEvent	OnAgentDeathEvent_Delegate;
 
 	UPROPERTY(BlueprintAssignable, Category = "Events")
-	FOnAgentDied OnAgentDied_Delegate;
+	FOnAgentDied		OnAgentDied_Delegate;
 
 };

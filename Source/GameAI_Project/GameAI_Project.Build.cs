@@ -27,6 +27,9 @@ public class GameAI_Project : ModuleRules
             "NNERuntimeORT",
             "GameplayTags",
             "Niagara",
+            "UMG",
+            "Slate",
+            "SlateCore",
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]

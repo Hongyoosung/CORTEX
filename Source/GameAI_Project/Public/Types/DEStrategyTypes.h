@@ -6,7 +6,7 @@
 #include "DEStrategyTypes.generated.h"
 
 /**
- * Five tactical strategies for MOC v10.1+
+ * Five tactical strategies for DE
  */
 UENUM(BlueprintType)
 enum class EDEStrategyType : uint8
@@ -17,7 +17,7 @@ enum class EDEStrategyType : uint8
 };
 
 /**
- * MOC v10.2: Tactical Play - Predefined team compositions for action space pruning
+ * Tactical Play - Predefined team compositions for action space pruning
  * Reduces combinatorial explosion (3^5 = 243 combinations → ~10 valid plays)
  */
 UENUM(BlueprintType)

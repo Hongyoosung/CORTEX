@@ -69,7 +69,7 @@ void UDEScholaAgent::ResetAgent()
 
     // Note: Schola's internal state (observation buffers, action history, etc.)
     // is managed by the parent UInferenceComponent and DEScholaEnvironment.
-    // We only need to reset MOC-specific state here.
+    // We only need to reset specific state here.
 
     ADECharacter* OwnerCharacter = Cast<ADECharacter>(GetOwner());
     if (OwnerCharacter)

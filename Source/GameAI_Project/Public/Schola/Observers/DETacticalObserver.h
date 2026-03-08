@@ -13,13 +13,13 @@ class ADETrainer;
 class UDEScholaAgent;
 
 /**
- * MOC v10.2 Tactical Observer (Schola-Integrated)
+ * Tactical Observer (Schola-Integrated)
  *
  * Purpose:
  * Collects observations for executor agent RL policy training in v10.2 architecture.
  * Extends Schola's UBoxObserver for proper integration with Schola training pipeline.
  *
- * v10.2 Architecture Context:
+ * Architecture Context:
  * - Layer 1 (Squad Commander): Uses FDETeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
@@ -48,7 +48,7 @@ class UDEScholaAgent;
  * - Data Source: ADECharacter (via trainer reference)
  * - Output: FBoxPoint with 51 continuous values
  */
-UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "MOC Tactical Observer v10.2"))
+UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "DE Tactical Observer"))
 class GAMEAI_PROJECT_API UDETacticalObserver : public UBoxObserver
 {
 	GENERATED_BODY()
@@ -82,15 +82,16 @@ public:
 	 */
 	virtual void ResetObserver() override;
 
+
 	//========================================
-	// MOC-Specific Interface
+	// Specific Interface
 	//========================================
 
 	/**
 	 * Get the controlled character (via trainer reference)
 	 * @return ADECharacter being trained, or nullptr if not found
 	 */
-	UFUNCTION(BlueprintPure, Category = "MOC|Observer")
+	UFUNCTION(BlueprintPure, Category = "DE|Observer")
 	ADECharacter* GetControlledCharacter() const;
 
 	/**
@@ -98,7 +99,7 @@ public:
 	 * @param Observation - Vector to validate
 	 * @return true if observation is valid
 	 */
-	UFUNCTION(BlueprintPure, Category = "MOC|Observer|Debug")
+	UFUNCTION(BlueprintPure, Category = "DE|Observer|Debug")
 	bool ValidateObservation(const TArray<float>& Observation) const;
 
 #if WITH_EDITOR
@@ -107,6 +108,7 @@ public:
 	 */
 	virtual void SetDebugObservations(TPoint& Temp) override;
 #endif
+
 
 protected:
 	//========================================
@@ -127,17 +129,18 @@ protected:
 	TArray<float> EncodeStrategyOneHot(EDEStrategyType Strategy) const;
 
 
+
 private:
 	//========================================
 	// Configuration
 	//========================================
 
 	/** Enable debug logging (logs every N observations) */
-	UPROPERTY(EditAnywhere, Category = "MOC|Observer|Debug")
+	UPROPERTY(EditAnywhere, Category = "DE|Observer|Debug")
 	bool bEnableDebugLogging = false;
 
 	/** Debug log frequency (log every N calls) */
-	UPROPERTY(EditAnywhere, Category = "MOC|Observer|Debug", meta = (EditCondition = "bEnableDebugLogging"))
+	UPROPERTY(EditAnywhere, Category = "DE|Observer|Debug", meta = (EditCondition = "bEnableDebugLogging"))
 	int32 DebugLogFrequency = 100;
 
 	//========================================
@@ -158,9 +161,12 @@ private:
 	/** Observation call counter (for debug logging) */
 	int32 ObservationCallCount = 0;
 
+	/** Cached environment origin for position normalization (set in InitializeObserver) */
+	FVector CachedEnvironmentOrigin = FVector::ZeroVector;
+
 #if WITH_EDITORONLY_DATA
 	/** Last collected observation (for editor inspection) */
-	UPROPERTY(VisibleInstanceOnly, Category = "MOC|Observer|Debug")
+	UPROPERTY(VisibleInstanceOnly, Category = "DE|Observer|Debug")
 	TArray<float> DebugLastObservation;
 #endif
 };

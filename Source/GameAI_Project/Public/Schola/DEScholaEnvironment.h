@@ -21,7 +21,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnvMatchStateChanged, EDEMatchSta
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEnvScoreUpdated, int32, TeamID, int32, NewScore, FString, Reason);
 
 /**
- * Schola Training Environment (v10.2 Parallel Isolated Architecture)
+ * Schola Training Environment (Parallel Isolated Architecture)
  *
  * Each ADEScholaEnvironment instance owns ALL game logic for one 5v5 arena:
  * - Match state, scoring, win conditions
@@ -79,64 +79,46 @@ public:
 	float GetTimeRemaining() const { return FMath::Max(0.0f, MaxMatchDuration - MatchTimer); }
 
 
-
-
-	//==========================================================================
+	//=========================================
 	// GETTERS
-	//==========================================================================
+	//=========================================
 
 	/** Get the environment ID assigned by Schola */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
-	FORCEINLINE int32 GetEnvId() const { return ScholaEnvID; }
+	FORCEINLINE int32				GetEnvId() const		{ return ScholaEnvID; }
 
 	/** Get owned DEMatchManager */
 	UFUNCTION(BlueprintPure, Category = "Schola")
-	ADEMatchManager* GetMatchManager() const { return OwnedMatchManager; }
+	FORCEINLINE ADEMatchManager*	GetMatchManager() const { return OwnedMatchManager; }
 
-	/** 외부 액터(DEMatchManager, DESpawnArea, Trainer 등)에서 난수 스트림 접근 시 사용 */
+	/** Used when accessing the random number stream from external actors (DEMatchManager, DESpawnArea, Trainer, etc.) */
 	UFUNCTION(BlueprintPure, Category = "Schola|Random")
-	FRandomStream& GetRandomStream() { return EnvRandomStream; }
-
+	FORCEINLINE FRandomStream&		GetRandomStream()		{ return EnvRandomStream; }
 
 
 
 public:
-	//=========================== Delegates ===============================
-	FOnScholaEnvironmentInitialized OnScholaEnvironmentInitialized_Delegate;
-
-	UPROPERTY(BlueprintAssignable, Category = "Schola|Events")
-	FOnEnvMatchStateChanged OnEnvMatchStateChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "Schola|Events")
-	FOnEnvScoreUpdated OnEnvScoreUpdated;
-
-
-public:
-	//==========================================================================
+	//=========================================
 	// COMPONENTS
-	//==========================================================================
+	//=========================================
 
 	/** Episode Manager Component - manages episode lifecycle */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Schola|Components")
 	UDEEpisodeManagerComponent* EpisodeManager;
 
-	
 
-
-	//==========================================================================
+	//=========================================
 	// OWNED ACTORS (editor-assignable per environment)
-	//==========================================================================
+	//=========================================
 
 	/** DEMatchManager for this environment (assign in editor) */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Schola|Owned")
 	ADEMatchManager* OwnedMatchManager = nullptr;
 
 
-
-
-	//==========================================================================
+	//=========================================
 	// MATCH CONFIGURATION
-	//==========================================================================
+	//=========================================
 
 	/** Maximum match duration (seconds) */
 	UPROPERTY(EditAnywhere, Category = "Schola|Match")
@@ -159,9 +141,9 @@ public:
 	bool bAutoStartMatch = true;
 
 
-	//==========================================================================
+	//=========================================
 	// TRAINING CONFIGURATION
-	//==========================================================================
+	//=========================================
 
 	/** Enable RL training mode */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
@@ -189,9 +171,9 @@ public:
 	bool bLogTacticalPlays;
 
 
-	//==========================================================================
+	//=========================================
 	// STATE
-	//==========================================================================
+	//=========================================
 
 	/** All registered Schola agent components */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
@@ -213,10 +195,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	int32 ScholaEnvID;
 
+
+
 protected:
-	//==========================================================================
+	//=========================================
 	// MATCH RUNTIME STATE
-	//==========================================================================
+	//=========================================
 
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|Match|State")
 	EDEMatchState CurrentMatchState = EDEMatchState::WaitingToStart;
@@ -227,7 +211,19 @@ protected:
 	float PassiveIncomeAccumulator = 0.0f;
 	bool bMatchEnded = false;
 
-	/** 각 환경 인스턴스에 종속된 독립적인 난수 스트림 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Random")
 	FRandomStream EnvRandomStream;
+
+
+public:
+	//=========================================
+	// Delegates
+	//=========================================
+	FOnScholaEnvironmentInitialized OnScholaEnvironmentInitialized_Delegate;
+
+	UPROPERTY(BlueprintAssignable, Category = "Schola|Events")
+	FOnEnvMatchStateChanged OnEnvMatchStateChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Schola|Events")
+	FOnEnvScoreUpdated OnEnvScoreUpdated;
 };

@@ -7,12 +7,12 @@
 #include "DEThrottledScholaSubsystem.generated.h"
 
 /**
- * Custom Schola Manager Subsystem with Time-Based Throttling (v10.2)
+ * Custom Schola Manager Subsystem with Time-Based Throttling
  *
  * Replaces UScholaManagerSubsystem to add FPS-independent decision rate limiting.
  * Overrides Tick() to throttle CollectEnvironmentStates() calls to a fixed interval.
  *
- * v10.2 Architecture Integration:
+ * Architecture Integration:
  * - Aligns observation collection (2 Hz) with Squad Commander planning (2 Hz)
  * - Prevents wasted observations between centralized planning cycles
  * - Ensures each state → action → reward transition is meaningful
@@ -47,6 +47,8 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling")
 	bool bEnableTimingDiagnostics = true;
 
+
+
 private:
 	/** Last decision time (FPlatformTime::Seconds()) */
 	double LastDecisionTime = 0.0;
@@ -57,9 +59,10 @@ private:
 	/** First step flag (for auto-reset logic) */
 	bool bFirstStep = true;
 
-	//--------------------------------------------------------------------------
-	// TIMING DIAGNOSTICS (v8.0)
-	//--------------------------------------------------------------------------
+
+	//========================================
+	// TIMING DIAGNOSTICS 
+	//========================================
 
 	/** Total observation collection overhead (ms) */
 	double TotalCollectionOverhead = 0.0;

@@ -331,6 +331,37 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
 	float SupportBaselineReward = 0.01f;
 
+	// ==================== Defend Zone Movement ====================
+
+	/** Minimum movement (cm) per step to qualify for the in-zone movement bonus.
+	 *  Replaces the old stationary bonus so defenders can roam freely inside the zone. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneMovement")
+	float ZoneMovementMinThreshold = 50.0f;
+
+	/** Bonus awarded each step that the defender moves more than ZoneMovementMinThreshold inside a friendly zone. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneMovement")
+	float ZoneMovementBonus = 0.05f;
+
+	// ==================== Minimum Combat Range ====================
+
+	/** Minimum combat range (cm). Penalty fires when a visible enemy is closer than this. Set to 0 to allow melee. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|CombatRange")
+	float MinCombatRange = 0.0f;
+
+	/** Per-step penalty applied when any visible enemy is within MinCombatRange. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|CombatRange")
+	float TooCloseEnemyPenalty = 1.5f;
+
+	/** Distance threshold (cm) below which kill/assist sparse rewards are scaled down.
+	 *  Agents must maintain this range while attacking to receive full kill credit. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|CombatRange")
+	float CloseRangeKillThreshold = 400.0f;
+
+	/** Multiplier applied to sparse kill/assist rewards when the agent was within CloseRangeKillThreshold.
+	 *  0.0 = no reward for close-range kills; 1.0 = no penalty (disabled). */
+	UPROPERTY(EditAnywhere, Category = "Rewards|CombatRange")
+	float CloseRangeKillPenaltyScale = 0.0f;
+
 	// ==================== Zone Control Reward ====================
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")

@@ -395,11 +395,15 @@ void ADEMatchManager::ProcessRespawnQueue(float DeltaTime)
 		}
 
 		// Trigger immediate replanning so newly respawned agents get strategy commands
-		if (UDESquadManager* Commander = GetSquadCommander(TeamID))
+		if (!bRLTrainingMode)
 		{
-			const int32 EnemyTeamID = (TeamID == 0) ? 1 : 0;
-			Commander->PerformTacticalPlanning(GetTeamAgents(TeamID), GetTeamAgents(EnemyTeamID));
+			if (UDESquadManager* Commander = GetSquadCommander(TeamID))
+			{
+				const int32 EnemyTeamID = (TeamID == 0) ? 1 : 0;
+				Commander->PerformTacticalPlanning(GetTeamAgents(TeamID), GetTeamAgents(EnemyTeamID));
+			}
 		}
+		
 	}
 }
 

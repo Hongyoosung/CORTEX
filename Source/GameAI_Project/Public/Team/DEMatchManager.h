@@ -147,6 +147,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager")
 	int32 GetTotalAgentCount() const;
 
+
 	//========================================
 	// Kill / Score
 	//========================================
@@ -154,6 +155,7 @@ public:
 	/** Called by agent death delegate; queues respawn and emits score event */
 	UFUNCTION(BlueprintCallable, Category = "DEMatchManager")
 	void RegisterKill(const FDEDeathEventData& DeathEvent);
+
 
 	//========================================
 	// Score Tracking
@@ -173,6 +175,7 @@ public:
 	/** Reset both team scores to 0 */
 	void ResetScores();
 
+
 	//========================================
 	// DECapturePoint Integration
 	//========================================
@@ -182,6 +185,7 @@ public:
 
 	void ResetCapturePoint();
 
+
 	//========================================
 	// Squad Commander Access
 	//========================================
@@ -189,6 +193,7 @@ public:
 	/** Get the UDESquadManager for the given team */
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager")
 	UDESquadManager* GetSquadCommander(int32 TeamID) const;
+
 
 	//========================================
 	// Environment Context (injected by ADEScholaEnvironment)
@@ -206,6 +211,7 @@ public:
 
 	void ResetEnvironment();
 
+
 	//========================================
 	// Event Callbacks
 	//========================================
@@ -216,6 +222,7 @@ public:
 	UFUNCTION()
 	void OnAgentDied(ADECharacter* DeadAgent, ADECharacter* Killer);
 
+
 	//========================================
 	// Events
 	//========================================
@@ -225,6 +232,8 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "DEMatchManager|Events")
 	FOnTeamScoreChanged OnTeamScoreChanged;
+
+
 
 public:
 	//========================================
@@ -264,6 +273,7 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "DEMatchManager|Debug")
 	bool bShowDebugInfo = false;
+
 
 	//========================================
 	// Squad Commander Configuration
@@ -309,6 +319,7 @@ public:
 	/** Convenience: build an FDESquadConfig snapshot from current properties */
 	FDESquadConfig MakeSquadConfig() const;
 
+
 	//========================================
 	// Owned Objects
 	//========================================
@@ -318,6 +329,8 @@ public:
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "DEMatchManager|Env")
 	TArray<ADECapturePoint*> EnvCapturePoints;
+
+
 
 protected:
 	//========================================
@@ -332,6 +345,7 @@ protected:
 
 	/** Random point within Radius units of BaseLocation (XY plane) */
 	FVector GetRandomSpawnPoint(FVector BaseLocation, float Radius) const;
+
 
 	//========================================
 	// Runtime State

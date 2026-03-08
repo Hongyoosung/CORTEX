@@ -1050,9 +1050,17 @@ def train_with_rllib(args):
             pol_stats = pol_data.get("learner_stats", pol_data) 
             
             if pol_stats:
-                for metric in ("policy_loss", "vf_loss", "entropy", "total_loss", "explained_variance", "entropy_coeff"):
+                metric_map = {
+                    "policy_loss": "policy_loss",
+                    "vf_loss": "vf_loss",
+                    "entropy": "entropy",
+                    "total_loss": "total_loss",
+                    "vf_explained_var": "vf_explain",
+                    "entropy_coeff": "entropy_coeff",
+                }
+                for metric, tag in metric_map.items():
                     if metric in pol_stats and isinstance(pol_stats[metric], (float, int)):
-                        tb_writer.add_scalar(f"train/{metric}_{strat_label}", pol_stats[metric], step)
+                        tb_writer.add_scalar(f"train/{tag}_{strat_label}", pol_stats[metric], step)
 
         tb_writer.flush()
         # --- End TensorBoard logging ---

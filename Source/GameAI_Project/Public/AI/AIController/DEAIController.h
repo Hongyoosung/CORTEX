@@ -22,9 +22,9 @@ class UAISenseConfig_Damage;
 /**
  * DE AI Controller (Perception + Combat BT only)
  *
- * 역할:
- * - Perception 데이터 수집 및 Blackboard 업데이트 (TargetEnemy, HasTarget)
- * - Behavior Tree 실행 (Combat BT only)
+ * Role:
+ * - Collects Perception data and updates the Blackboard (TargetEnemy, HasTarget)
+ * - Executes Behavior Trees (Combat BT only)
  *
  * Movement/EQS weight inference is handled by DEScholaAgent (UInferenceComponent).
  */
@@ -43,13 +43,15 @@ protected:
 
 
 public:
-    // ==================== Perception Callbacks ====================
 
-    /** Perception 업데이트 콜백 */
+    //========================================
+    // Perception Callbacks
+    //========================================
+    /** Callback Perception Update */
     UFUNCTION()
     void OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors);
 
-    /** 타겟 감지 콜백 */
+    /** Callback Target Perception */
     UFUNCTION()
     void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
@@ -57,15 +59,14 @@ public:
 protected:
     //==================== Components ====================
 
-    /** AI 지각 시스템 (시야, 청각, 피격 감지) */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Perception")
-    UAIPerceptionComponent* AIPerception;
+    TObjectPtr<UAIPerceptionComponent> AIPerception;
 
     //==================== Configuration ====================
 
     /** Behavior Tree Asset */
     UPROPERTY(EditDefaultsOnly, Category="AI")
-    UBehaviorTree* BehaviorTreeAsset;
+    TObjectPtr<UBehaviorTree> BehaviorTreeAsset;
 
     /** AI Perception Configs */
     UPROPERTY(EditDefaultsOnly, Category="Perception")

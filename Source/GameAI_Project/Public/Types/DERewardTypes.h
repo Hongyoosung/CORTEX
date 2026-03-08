@@ -1,4 +1,4 @@
-// File: AI/Common/DERewardTypes.h
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -72,6 +72,7 @@ struct FDERewardState
     float LastCaptureLossPenaltyTime;
 
     bool bSparseKillFiredThisStep = false;
+    bool bWasTooCloseAtKill = false;
     bool bInFriendlyZone = false;
     float LastIndividualStepReward = 0.0f;
     int32 IsolatedConsecutiveSteps = 0;
@@ -87,6 +88,7 @@ struct FDERewardState
         InjuredAllyStalenessCounter = 0;
         LastCaptureLossPenaltyTime = 0;
         bSparseKillFiredThisStep = false;
+        bWasTooCloseAtKill = false;
         bInFriendlyZone = false;
         LastIndividualStepReward = 0.0f;
         IsolatedConsecutiveSteps = 0;

@@ -17,23 +17,32 @@ class GAMEAI_PROJECT_API UDERewardSubsystem : public UWorldSubsystem
     GENERATED_BODY()
 
 public:
-    // ==================== Data Asset Registration ====================
+
+    //========================================
+    // Data Asset Registration
+    //========================================
 
     void SetRewardData(UDERewardData* Data) { CachedRewardData = Data; }
     UDERewardData* GetRewardData() const { return CachedRewardData; }
 
-    // ==================== Event-Driven Sparse Rewards ====================
 
-    float CalculateDeathPenalty(FDERewardState& InOutAgentState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateKillReward(FDERewardState& InOutAgentState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateAssistReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DamageDealt, int32 AgentID);
-    float CalculateTeamWipePenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateCaptureReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateLosePointPenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateSurvivalReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float CurrentHP, float MaxHP, int32 AgentID);
-    float CalculateDistanceShaping(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DistanceToTarget, int32 AgentID);
+    //========================================
+    // Event-Driven Sparse Rewards
+    //========================================
 
-    // ==================== Dense Per-Step Reward ====================
+    float CalculateDeathPenalty     (FDERewardState& InOutAgentState, EDEStrategyType ActiveStrategy, int32 AgentID);
+    float CalculateKillReward       (FDERewardState& InOutAgentState, EDEStrategyType ActiveStrategy, int32 AgentID);
+    float CalculateAssistReward     (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DamageDealt, int32 AgentID);
+    float CalculateTeamWipePenalty  (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
+    float CalculateCaptureReward    (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
+    float CalculateLosePointPenalty (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
+    float CalculateSurvivalReward   (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float CurrentHP, float MaxHP, int32 AgentID);
+    float CalculateDistanceShaping  (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DistanceToTarget, int32 AgentID);
+
+
+    //========================================
+    // Dense Per-Step Reward
+    //========================================
 
     float ComputeStepReward(
         ADECharacter* Agent,
@@ -56,6 +65,8 @@ public:
      * @param AllAgents     All spawned agents in this environment
      */
     void ApplyMatchEndReward(int32 WinnerTeamID, const TArray<ADECharacter*>& AllAgents);
+
+
 
 private:
     float ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEStrategyType Strategy, float RewardValue, int32 AgentID);

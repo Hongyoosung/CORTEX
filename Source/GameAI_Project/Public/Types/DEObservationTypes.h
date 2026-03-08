@@ -7,7 +7,7 @@
 #include "DEObservationTypes.generated.h"
 
 /**
- * MOC v10.2: Individual Agent Observation (48-dim base)
+ * Individual Agent Observation (48-dim base)
  *
  * Layout:
  *   Self      (7):  pos/7500(3), health(1), vel/600(3)
@@ -19,7 +19,8 @@
  *
  * Positions are agent-relative (ally/enemy pos minus self pos) so the same
  * tactical geometry always produces the same feature values regardless of
- * map location.  Self position is map-normalized for absolute context.
+ * map location.  Self position is environment-relative and map-normalized,
+ * ensuring consistent features across parallel environments.
  *
  * CurrentStrategy and bIsAlive are kept in the struct for reward computation
  * but are NOT included in ToArray() — strategy is appended as a one-hot by
@@ -37,6 +38,11 @@ struct GAMEAI_PROJECT_API FDEObservation
 	/** Agent world position (used in ToArray + reward computation) */
 	UPROPERTY(BlueprintReadWrite, Category = "Observation|Self")
 	FVector Position = FVector::ZeroVector;
+
+	/** Environment origin — subtracted from Position in ToArray() so that
+	 *  self-position features are environment-relative, not absolute world coords.
+	 *  Must be set by the observation gatherer (DETrainer / DETacticalObserver). */
+	FVector EnvironmentOrigin = FVector::ZeroVector;
 
 	/** Agent health [0.0-1.0] */
 	UPROPERTY(BlueprintReadWrite, Category = "Observation|Self")
@@ -108,10 +114,11 @@ struct GAMEAI_PROJECT_API FDEObservation
 		Result.Reserve(48);
 
 		// Self state (7-dim) — WeaponCooldown excluded (not useful for NN)
-		// Position: map-normalized (150m map = 15000cm half-width = 7500)
-		Result.Add(Position.X / 7500.0f);
-		Result.Add(Position.Y / 7500.0f);
-		Result.Add(Position.Z / 1000.0f);
+		// Position: environment-relative, map-normalized (150m map = 15000cm half-width = 7500)
+		const FVector RelativePos = Position - EnvironmentOrigin;
+		Result.Add(RelativePos.X / 7500.0f);
+		Result.Add(RelativePos.Y / 7500.0f);
+		Result.Add(RelativePos.Z / 1000.0f);
 		Result.Add(Health);
 		// Velocity: normalized by max walk speed (600 cm/s)
 		Result.Add(Velocity.X / 600.0f);

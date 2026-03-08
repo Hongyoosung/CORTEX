@@ -249,7 +249,7 @@ FString UDETransitionLogger::SerializeObservation(const FDEObservation& Obs) con
 
 FString UDETransitionLogger::GetCSVFilePath() const
 {
-	FString FileName = FString::Printf(TEXT("moc_transitions_episode_%d.csv"), CurrentEpisodeID);
+	FString FileName = FString::Printf(TEXT("transitions_episode_%d.csv"), CurrentEpisodeID);
 	FString FullPath = FPaths::ProjectDir() + OutputDirectory + TEXT("/") + FileName;
 	return FPaths::ConvertRelativePathToFull(FullPath);
 }

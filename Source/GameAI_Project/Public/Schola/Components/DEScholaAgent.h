@@ -21,10 +21,10 @@ enum class EDEAgentMode : uint8
 
 
 /**
- * UDEScholaAgent - MOC v10.2 Schola Integration Component
+ * UDEScholaAgent - Schola Integration Component
  *
  * Purpose:
- * Thin integration layer between Schola framework and MOC v10.2 architecture.
+ * Thin integration layer between Schola framework and architecture.
  * Implements proper Segregation of Responsibilities by delegating work to
  * parent class components (Observers, Policy, Brain, Actuators).
  *
@@ -65,8 +65,9 @@ public:
 
     virtual void BeginPlay() override;
 
+
     //========================================
-    // Command Reception (v10.2 Architecture)
+    // Command Reception 
     //========================================
 
     /**
@@ -75,7 +76,7 @@ public:
      *
      * @param NewStrategy - Strategy assigned by centralized MCTS planner
      */
-    UFUNCTION(BlueprintCallable, Category = "MOC|Commands")
+    UFUNCTION(BlueprintCallable, Category = "DE|Commands")
     void UpdateCommandedStrategy(EDEStrategyType NewStrategy);
 
     /**
@@ -86,19 +87,21 @@ public:
      * If bUseTrainingStrategyOverride is enabled, returns TrainingStrategyOverride
      * instead of the commanded strategy from DESquadManager.
      */
-    UFUNCTION(BlueprintPure, Category = "MOC|Commands")
+    UFUNCTION(BlueprintPure, Category = "DE|Commands")
     EDEStrategyType GetCommandedStrategy() const
     {
         return bUseTrainingStrategyOverride ? TrainingStrategyOverride : CommandedStrategy;
     }
+
 
     //========================================
     // Episode Management
     //========================================
 
     /** Reset agent state for new episode */
-    UFUNCTION(BlueprintCallable, Category = "MOC|Episode")
+    UFUNCTION(BlueprintCallable, Category = "DE|Episode")
     void ResetAgent();
+
 
     //========================================
     // Mode Management
@@ -111,8 +114,9 @@ public:
      */
     // NOTE: Must be set to Training in BP_Agent Blueprint defaults when connecting to Python.
     // Affects: ProcessTrainingAbilities timer (weapons/heal), PerformTacticalAction branch.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DE")
     EDEAgentMode CurrentMode = EDEAgentMode::Training;
+
 
     //========================================
     // Phase 1 Training Configuration
@@ -125,7 +129,7 @@ public:
      *
      * IMPORTANT: Disable this in Phase 3 when testing centralized planning!
      */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Phase1Training",
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DE|Phase1Training",
         meta = (DisplayName = "Override Strategy (Phase 1 Training)"))
     bool bUseTrainingStrategyOverride = false;
 
@@ -139,9 +143,11 @@ public:
      * - Day 2: Set to Defend, train defend policy
      * - Day 3: Set to Support, train support policy
      */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MOC|Phase1Training",
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DE|Phase1Training",
         meta = (DisplayName = "Training Strategy", EditCondition = "bUseTrainingStrategyOverride"))
     EDEStrategyType TrainingStrategyOverride = EDEStrategyType::Assault;
+
+
 
 private:
     //========================================

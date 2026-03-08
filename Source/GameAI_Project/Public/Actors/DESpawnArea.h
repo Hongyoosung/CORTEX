@@ -22,6 +22,9 @@ class GAMEAI_PROJECT_API ADESpawnArea : public AActor
 public:
 	ADESpawnArea();
 
+	//========================================
+	// Spawn Point Generation
+	//========================================
 	/** Get a random spawn point within the box volume */
 	UFUNCTION(BlueprintPure, Category = "DESpawnArea")
 	FVector GetRandomSpawnPoint(const FRandomStream& RandomStream) const;
@@ -30,10 +33,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DESpawnArea")
 	FRotator GetSpawnRotation() const;
 
+
 public:
 	/** Box volume defining the spawn region */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UBoxComponent* SpawnVolume;
+	TObjectPtr<UBoxComponent> SpawnVolume;
 
 	/** Team ID (0 = Red, 1 = Blue) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DESpawnArea")

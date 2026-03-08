@@ -255,6 +255,13 @@ bool UDESquadManager::ShouldReplan() const
 void UDESquadManager::PerformTacticalPlanning(const TArray<ADECharacter*>& TeamAgents,
                                             const TArray<ADECharacter*>& EnemyAgents)
 {
+	// Phase 1 RL: strategy is fixed per episode by SampleRandomTacticalPlay at reset.
+	// Mid-episode replanning would overwrite the round-robin assignment.
+	if (Config.bRLTrainingMode)
+	{
+		return;
+	}
+
 	const float StartTime = FPlatformTime::Seconds();
 
 	// 1. Build team state from caller-supplied agent lists

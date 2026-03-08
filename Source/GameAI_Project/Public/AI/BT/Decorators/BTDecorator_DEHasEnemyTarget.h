@@ -42,9 +42,9 @@ protected:
 	virtual FString GetStaticDescription() const override;
 
 public:
-	//--------------------------------------------------------------------------
+	//========================================
 	// CONFIGURATION
-	//--------------------------------------------------------------------------
+	//========================================
 
 	/** Verify target is alive */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation")
@@ -58,10 +58,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Validation", meta = (ClampMin = "0.0"))
 	float MaxRange = 0.0f;
 
-	//--------------------------------------------------------------------------
-	// BLACKBOARD KEYS
-	//--------------------------------------------------------------------------
 
+	//========================================
+	// BLACKBOARD KEYS
+	//========================================
 	/** Blackboard key for target enemy */
 	UPROPERTY(EditAnywhere, Category = "Blackboard")
 	FBlackboardKeySelector TargetEnemyKey;

@@ -60,10 +60,9 @@ protected:
 	bool FireWeapon(UDEAttackAbility* Ability, AActor* Target);
 
 public:
-	//--------------------------------------------------------------------------
+	//========================================
 	// CONFIGURATION
-	//--------------------------------------------------------------------------
-
+	//========================================
 	/** Use predictive aiming to lead moving targets */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	bool bUsePredictiveAiming = true;
@@ -80,14 +79,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
 	float MaxEngagementRange = 0.0f;
 
+	/** Minimum distance to engage target — targets closer than this will not be fired at (0 = no limit) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
+	float MinEngagementRange = 0.0f;
+
 	/** Rotation speed when aiming at target (degrees per second, 0 = instant) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
 	float AimRotationSpeed = 360.0f;
 
-	//--------------------------------------------------------------------------
-	// BLACKBOARD KEYS
-	//--------------------------------------------------------------------------
 
+	//========================================
+	// BLACKBOARD KEYS
+	//========================================
 	/** Blackboard key for target enemy */
 	UPROPERTY(EditAnywhere, Category = "Blackboard")
 	FBlackboardKeySelector TargetEnemyKey;

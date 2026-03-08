@@ -11,6 +11,7 @@
 #include "Combat/DECombatStatsInterface.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "EngineUtils.h"
 
 UBTTask_DECombatFire::UBTTask_DECombatFire()
 {
@@ -168,26 +169,42 @@ bool UBTTask_DECombatFire::IsTargetValid(AActor* Target, APawn* OwnerPawn) const
 		}
 	}
 
-	// Check distance if max range is specified
-	if (MaxEngagementRange > 0.0f)
+	// Check distance range
+	const float Distance = FVector::Dist(OwnerPawn->GetActorLocation(), Target->GetActorLocation());
+	if (MaxEngagementRange > 0.0f && Distance > MaxEngagementRange)
 	{
-		float Distance = FVector::Dist(OwnerPawn->GetActorLocation(), Target->GetActorLocation());
-		if (Distance > MaxEngagementRange)
-		{
-			return false;
-		}
+		return false;
+	}
+	if (MinEngagementRange > 0.0f && Distance < MinEngagementRange)
+	{
+		return false;
 	}
 
 	// Check line of sight if required
 	if (bRequireLineOfSight)
 	{
-		FVector StartLocation = OwnerPawn->GetActorLocation();
-		FVector TargetLocation = Target->GetActorLocation();
+		// Trace from shooter's eye height to target's center mass to avoid false blocks at ground level
+		FVector StartLocation = OwnerPawn->GetPawnViewLocation();
+		FVector TargetLocation = Target->GetActorLocation() + FVector(0.f, 0.f, 50.f);
 
+		// Ignore cross-environment characters so they don't block LOS in multi-env training
 		FHitResult HitResult;
 		FCollisionQueryParams QueryParams;
 		QueryParams.AddIgnoredActor(OwnerPawn);
 		QueryParams.AddIgnoredActor(Target);
+
+		ADECharacter* SelfChar = Cast<ADECharacter>(OwnerPawn);
+		if (SelfChar)
+		{
+			const int32 MyEnvID = SelfChar->GetEnvID_Implementation();
+			for (TActorIterator<ADECharacter> It(OwnerPawn->GetWorld()); It; ++It)
+			{
+				if ((*It)->GetEnvID_Implementation() != MyEnvID)
+				{
+					QueryParams.AddIgnoredActor(*It);
+				}
+			}
+		}
 
 		UWorld* World = OwnerPawn->GetWorld();
 		bool bHit = World->LineTraceSingleByChannel(

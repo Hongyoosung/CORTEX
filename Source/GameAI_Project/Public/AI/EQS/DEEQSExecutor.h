@@ -25,7 +25,7 @@ DECLARE_DELEGATE_OneParam(FOnEQSQueryComplete, TOptional<FVector>);
  * - Guarantees navigable results via NavMesh integration
  * - 48-sample circular generation
  */
-UCLASS(ClassGroup=(MOC), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(DE), meta=(BlueprintSpawnableComponent))
 class GAMEAI_PROJECT_API UDEEQSExecutor : public UActorComponent
 {
 	GENERATED_BODY()

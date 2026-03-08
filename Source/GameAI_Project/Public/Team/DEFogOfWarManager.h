@@ -43,7 +43,7 @@ struct FDEExploredResource
 };
 
 /**
- * ADEFogOfWarManager - MOC v10.1 Fog of War System
+ * ADEFogOfWarManager - Fog of War System
  *
  * Responsibilities:
  * - Dynamic Objects (Enemies): 5-second memory decay after losing sight

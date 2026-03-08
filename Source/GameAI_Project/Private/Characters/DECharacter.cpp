@@ -13,6 +13,8 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
@@ -26,29 +28,31 @@
 
 ADECharacter::ADECharacter()
 	: Super()
-	, DEHealthComponent(nullptr)
-	, ScholaAgent(nullptr)
-	, StimuliSource(nullptr)
-	, VisionRange(3000.0f)
-	, AgentID(0)
-	, AbilityComponent(nullptr)
-	, EQSExecutor(nullptr)
-	, EQSAcceptanceRadius(50.0f)
-	, TeamID(-1)
-	, bIsAlive(true)
-	, CommandedStrategy(EDEStrategyType::Support)
-	, bWeightsDirty(false)
-	, LastEQSTargetLocation(FVector::ZeroVector)
-	, SpawnTime(0.0f)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
 	// Create components
 	DEHealthComponent = CreateDefaultSubobject<UDEHealthComponent>(TEXT("DEHealthComponent"));
-	ScholaAgent = CreateDefaultSubobject<UDEScholaAgent>(TEXT("ScholaAgent"));
-	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
-	EQSExecutor = CreateDefaultSubobject<UDEEQSExecutor>(TEXT("EQSExecutor"));
-	AbilityComponent = CreateDefaultSubobject<UDEAbilityComponent>(TEXT("AbilityComponent"));
+	ScholaAgent =		CreateDefaultSubobject<UDEScholaAgent>(TEXT("ScholaAgent"));
+	StimuliSource =		CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
+	EQSExecutor =		CreateDefaultSubobject<UDEEQSExecutor>(TEXT("EQSExecutor"));
+	AbilityComponent =	CreateDefaultSubobject<UDEAbilityComponent>(TEXT("AbilityComponent"));
+
+	// Create third-person spectator camera (inactive during normal AI operation)
+	CameraSpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraSpringArm"));
+	CameraSpringArm->SetupAttachment(GetCapsuleComponent());
+	CameraSpringArm->TargetArmLength = 350.0f;
+	CameraSpringArm->SetRelativeLocation(FVector(0.0f, 0.0f, 80.0f));
+	CameraSpringArm->SetRelativeRotation(FRotator(-20.0f, 0.0f, 0.0f));
+	CameraSpringArm->bUsePawnControlRotation = false;
+	CameraSpringArm->bInheritYaw = true;
+	CameraSpringArm->bInheritPitch = false;
+	CameraSpringArm->bInheritRoll = false;
+	CameraSpringArm->bDoCollisionTest = true;
+
+	AgentCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("AgentCamera"));
+	AgentCamera->SetupAttachment(CameraSpringArm, USpringArmComponent::SocketName);
+	AgentCamera->bUsePawnControlRotation = false;
 
 
 	// Configure DEHealthComponent
@@ -64,6 +68,10 @@ ADECharacter::ADECharacter()
 	{
 		MovementComp->MaxWalkSpeed = 600.0f; // 6 m/s
 		MovementComp->bOrientRotationToMovement = true;
+
+		// Prevent agents from stacking on each other
+		MovementComp->bUseRVOAvoidance = true;
+		MovementComp->AvoidanceConsiderationRadius = 120.f; // ~2× capsule radius
 	}
 
 	// Let movement component handle rotation, not controller

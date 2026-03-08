@@ -6,7 +6,7 @@
 #include "Stats/Stats.h"
 
 /**
- * Performance Profiling Macros for MOC v6.0
+ * Performance Profiling Macros for 
  *
  * Usage:
  *   1. Declare stats in this file

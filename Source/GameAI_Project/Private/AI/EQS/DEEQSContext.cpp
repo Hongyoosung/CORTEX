@@ -58,45 +58,77 @@ void UEnvQueryContext_DEEnemies::ProvideContext(FEnvQueryInstance& QueryInstance
 		return;
 	}
 
-	// 퍼셉션 컴포넌트 가져오기
-	UAIPerceptionComponent* PerceptionComp = AIC ? AIC->GetAIPerceptionComponent() : nullptr;
-	if (!PerceptionComp)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext] %s: AIPerceptionComponent is missing on AIController (AIC=%s)!"),
-			*DEChar->GetName(), AIC ? *AIC->GetName() : TEXT("NULL"));
-		return;
-	}
-
 	const int32 MyTeamID = DEChar->GetTeamID_Implementation();
 	const int32 MyEnvID = DEChar->GetEnvID_Implementation();
 	TArray<FVector> EnemyPositions;
 
-	// 시각(Sight)으로 인지된 모든 액터 가져오기
-	TArray<AActor*> PerceivedActors;
-	PerceptionComp->GetKnownPerceivedActors(UAISense_Sight::StaticClass(), PerceivedActors);
-
-	for (AActor* Actor : PerceivedActors)
+	UAIPerceptionComponent* PerceptionComp = AIC ? AIC->GetAIPerceptionComponent() : nullptr;
+	if (PerceptionComp)
 	{
-		ADECharacter* PerceivedChar = Cast<ADECharacter>(Actor);
+		// Runtime path: use AIPerceptionComponent (inference / BT)
+		TArray<AActor*> PerceivedActors;
+		PerceptionComp->GetKnownPerceivedActors(UAISense_Sight::StaticClass(), PerceivedActors);
 
-		// 1. 대상이 DECharacter이고, 살아있으며, 적팀이고, 같은 환경(Env)에 있는지 확인
-		if (PerceivedChar &&
-			PerceivedChar->IsAlive_Implementation() &&
-			PerceivedChar->GetTeamID_Implementation() != MyTeamID &&
-			PerceivedChar->GetEnvID_Implementation() == MyEnvID)
+		for (AActor* Actor : PerceivedActors)
 		{
-			// 2. 현재 시야에 실제로 보이는지 확인 (기억 속에만 있는 위치는 제외)
-			FActorPerceptionBlueprintInfo PerceptionInfo;
-			PerceptionComp->GetActorsPerception(Actor, PerceptionInfo);
+			ADECharacter* PerceivedChar = Cast<ADECharacter>(Actor);
 
-			for (const FAIStimulus& Stimulus : PerceptionInfo.LastSensedStimuli)
+			if (PerceivedChar &&
+				PerceivedChar->IsAlive_Implementation() &&
+				PerceivedChar->GetTeamID_Implementation() != MyTeamID &&
+				PerceivedChar->GetEnvID_Implementation() == MyEnvID)
 			{
-				// 시각 정보이며, 성공적으로 인지 중(WasSuccessfullySensed)인 경우에만 추가
-				if (Stimulus.Type == UAISense::GetSenseID<UAISense_Sight>() && Stimulus.WasSuccessfullySensed())
+				FActorPerceptionBlueprintInfo PerceptionInfo;
+				PerceptionComp->GetActorsPerception(Actor, PerceptionInfo);
+
+				for (const FAIStimulus& Stimulus : PerceptionInfo.LastSensedStimuli)
 				{
-					EnemyPositions.Add(PerceivedChar->GetActorLocation());
-					break; // 한 번 확인했으면 다음 액터로 넘어감
+					if (Stimulus.Type == UAISense::GetSenseID<UAISense_Sight>() && Stimulus.WasSuccessfullySensed())
+					{
+						EnemyPositions.Add(PerceivedChar->GetActorLocation());
+						break;
+					}
 				}
+			}
+		}
+	}
+	else
+	{
+		// Training path: AIController is possessed by Trainer — fall back to manual LOS check
+		UWorld* World = DEChar->GetWorld();
+		if (!World) return;
+
+		const FVector MyLocation = DEChar->GetActorLocation();
+		const float VisionRangeSq = FMath::Square(DEChar->VisionRange);
+
+		FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(DEEnemiesLOS), true, DEChar);
+
+		for (TActorIterator<ADECharacter> It(World); It; ++It)
+		{
+			ADECharacter* Candidate = *It;
+
+			if (!Candidate ||
+				Candidate == DEChar ||
+				!Candidate->IsAlive_Implementation() ||
+				Candidate->GetTeamID_Implementation() == MyTeamID ||
+				Candidate->GetEnvID_Implementation() != MyEnvID)
+			{
+				continue;
+			}
+
+			const FVector CandidateLocation = Candidate->GetActorLocation();
+			if (FVector::DistSquared(MyLocation, CandidateLocation) > VisionRangeSq)
+			{
+				continue;
+			}
+
+			FHitResult Hit;
+			const bool bBlocked = World->LineTraceSingleByChannel(
+				Hit, MyLocation, CandidateLocation, ECC_Visibility, TraceParams);
+
+			if (!bBlocked || Hit.GetActor() == Candidate)
+			{
+				EnemyPositions.Add(CandidateLocation);
 			}
 		}
 	}

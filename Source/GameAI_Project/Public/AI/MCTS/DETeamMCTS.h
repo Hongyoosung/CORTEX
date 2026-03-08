@@ -20,7 +20,7 @@ struct FDETeamMCTSConfig
 };
 
 /**
- * UDETeamMCTS - MOC v10.2 Centralized Team-Level MCTS Planner
+ * UDETeamMCTS - Centralized Team-Level MCTS Planner
  *
  * Architecture Change (v10.1 → v10.2):
  * - OLD: 5 agents × MCTS (15ms each) = 75ms total
@@ -156,7 +156,7 @@ private:
 private:
 	/** Team world model for state prediction */
 	UPROPERTY()
-	UDETeamWorldModel* TeamWorldModel;
+	TObjectPtr<UDETeamWorldModel> TeamWorldModel;
 
 	/** MCTS configuration */
 	FDETeamMCTSConfig Config;

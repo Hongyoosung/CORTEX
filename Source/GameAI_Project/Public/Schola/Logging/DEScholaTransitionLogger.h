@@ -8,7 +8,7 @@
 #include "Types/DERewardTypes.h"
 #include "DEScholaTransitionLogger.generated.h"
 
-// World Model 학습을 위한 데이터 튜플
+// Data tuples for learning the world model
 struct FDETransitionTuple {
     TArray<float> StateBefore;      // s_t
     FDETacticalOption ActionTaken;    // a_t (Option)
@@ -21,8 +21,8 @@ struct FDETransitionTuple {
 };
 
 /**
- * 학습 데이터 수집기
- * MCTS가 선택한 행동과 그 결과를 버퍼링하고 JSON/Binary로 저장합니다.
+ * Training data collector
+ * Buffer the actions and results selected by MCTS and save them as JSON/Binary.
  */
 UCLASS()
 class GAMEAI_PROJECT_API UDEScholaTransitionLogger : public UObject
@@ -32,11 +32,11 @@ class GAMEAI_PROJECT_API UDEScholaTransitionLogger : public UObject
 public:
     void Initialize(FString InLogPath);
 
-    // 트랜지션 기록 (한 틱이 끝날 때 호출)
+    // Transition logging (called at the end of a tick)
     void RecordTransition(const TArray<float>& State, const FDETacticalOption& Option, 
                           const FDECompositeReward& Reward, const TArray<float>& NextState, bool bTerminal);
 
-    // 에피소드가 끝나면 디스크에 저장
+    // When an episode ends, it is saved to disk.
     void FlushToDisk();
 
 
@@ -45,6 +45,6 @@ private:
     FString LogDirectory;
     int32 EpisodeCount = 0;
 
-    // JSON 직렬화 헬퍼
+    // JSON serialization helper
     FString SerializeTuple(const FDETransitionTuple& Tuple);
 };

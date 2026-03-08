@@ -18,7 +18,7 @@ namespace UE::NNE
 // FDETeamBatchInput and FDETeamBatchOutput are now in TeamWorldModelTypes.h
 
 /**
- * MOC v10.2: Team World Model
+ * Team World Model
  * Centralized world model for Squad Commander's MCTS planning.
  *
  * Key Differences from v10.1 UDEAgentWorldModel:
