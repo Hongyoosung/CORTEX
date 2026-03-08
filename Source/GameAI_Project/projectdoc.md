@@ -13,7 +13,7 @@ math: true
 
 ---
 
-## 개요
+## 개요 (Overview)
 
 본 프로젝트는 Unreal Engine 5 환경에서 5 vs 5 팀 기반 거점 점령전을 위한 전략적 포지셔닝 최적화를 목표로 합니다.
 
@@ -23,7 +23,7 @@ math: true
 
 ---
 
-## System Architecture Overview
+## 시스템 아키텍처 (System Architecture)
 
 
 {{< img src="/images/project1/archi.png" 
@@ -34,7 +34,7 @@ math: true
 
 ---
 
-## Tech Stack
+## 기술 스택 (Tech Stack)
 
 | Category | Technologies |
 |---|---|
@@ -50,44 +50,7 @@ math: true
 ---
 
 
-
-## 관측 공간 및 전략별 보상 설계
-
-
-### 관측 공간
-
-| 데이터 구분 | 세부 항목 | | 설명 및 처리 방식 | 차원 |
-| --- | --- | --- | --- | --- |
-| **Self** | 위치, 체력, 속도 | 정규화된 맵 위치 및 에이전트의 현재 상태 | 7 |
-| **Allies** | 상대 위치, 체력 | 최대 4명. 거리/시야 정규화 | 16 |
-| **Enemies** | 적군 상대 위치, 시야 플래그 | 시권(Line of Sight) 내 적만 유효 좌표 제공 | | 20
-| **Map** | 5개 거점 소유권 | 아군(+1), 중립(0), 적군(-1) 상태 플래그 | 5 |
-| **Strategy** | 현재 부여된 전술 역할 | 돌격/방어/지원 |  One-hot 인코딩 벡터 | 3 |
-| **합계** | | | | 51 |
-
-
-### 보상 설계
-
-단일 보상 체계에서 발생하는 그래디언트 간섭(Gradient Interference)을 막기 위해, 역할별 독립 네트워크를 구성하고 각 목표에 맞는 조밀한(Dense) 보상과 희소(Sparse) 보상을 설계했습니다.
-
-**돌격 (Assault)**:
-- **목표**: 적 거점 탈취 및 전선 푸시.
-- **보상**: 중립, 적 거점 접근에 대한 스칼라 거리 보상, 비아군 구역 점유 및 캡처 진행률 기반 능동 보상, 점령 후 지속적인 전진을 유도하는 모멘텀 보너스 부여.
-
-
-**방어(Defend)**:
-- **목표**: 아군 거점 유지 및 적의 진입 차단.
-- **보상**: 아군 거점 내 체류 시 기본 보상, 적이 거점을 위협할 때 거점 내부에 위치 시 추가 보상, 거점 내에서 적의 데미지를 흡수할 시 주어지는 내구도 보너스.
-
-**지원(Support)**:
-- **목표**: 아군 생존율 증가 및 후방 유지.
-- **보상**: 체력이 낮은 아군을 추적하고 힐링을 틱 단위로 보상, 아군보다 뒤편에 위치하는 후방 포지셔닝 보너스, 아군이 부상 중인데 적을 처치할 경우 부여하는 역할 이탈 패널티.
-
-
----
-
-
-## 핵심 기능 (Key Features)
+## 주요 기능 (Key Features)
 
 
 ### 1. RL & EQS 통합 로직 (Actuator Transformation)
@@ -104,10 +67,8 @@ RL 정책의 출력 공간은 Box([-1, 1]^6)이며, TacticalParameterActuator를
 | **AllyProximity** | 아군과의 진형 유지 선호도 |
 | **CombatRange** | 최적의 무기 사거리 유지 선호도 |
 
----
 
-
-RL 정책의 출력 -> UE5 액추에이터 변환 로직
+**RL 정책의 출력 -> UE5 액추에이터 변환 로직**
 
 ```C++
 // Schola Actuator가 Python의 Action Tensor를 UE5 EQS 파라미터로 디코딩
@@ -142,11 +103,25 @@ void UTacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 ---
 
 
-#### 2. 전략 조건부 보상 설계 (Strategy-Conditioned Reward Shaping)
+### 2. 관측 공간 및 전략 조건부 보상 설계 (Strategy-Conditioned Reward Shaping)
 
-단일 보상 함수로 세 가지 역할을 동시에 학습시키면 그래디언트 간섭(Gradient Interference)이 발생합니다. 한 역할에 유리한 업데이트가 다른 역할의 정책을 손상시키기 때문입니다. 이를 해결하기 위해, 역할별로 완전히 독립된 정책 네트워크와 전술 목표에 특화된 조밀(Dense) + 희소(Sparse) 보상 함수 조합을 설계했습니다.
+**관측 공간**
+
+| 데이터 구분 | 세부 항목 | | 설명 및 처리 방식 | 차원 |
+| --- | --- | --- | --- | --- |
+| **Self** | 위치, 체력, 속도 | 정규화된 맵 위치 및 에이전트의 현재 상태 | 7 |
+| **Allies** | 상대 위치, 체력 | 최대 4명. 거리/시야 정규화 | 16 |
+| **Enemies** | 적군 상대 위치, 시야 플래그 | 시권(Line of Sight) 내 적만 유효 좌표 제공 | | 20
+| **Map** | 5개 거점 소유권 | 아군(+1), 중립(0), 적군(-1) 상태 플래그 | 5 |
+| **Strategy** | 현재 부여된 전술 역할 | 돌격/방어/지원 |  One-hot 인코딩 벡터 | 3 |
+| **합계** | | | | 51 |
+
+
+<br>
 
 **보상 구조 개요**
+
+단일 보상 함수로 세 가지 역할을 동시에 학습시키면 그래디언트 간섭(Gradient Interference)이 발생합니다. 한 역할에 유리한 업데이트가 다른 역할의 정책을 손상시키기 때문입니다. 이를 해결하기 위해, 역할별로 완전히 독립된 정책 네트워크와 전술 목표에 특화된 조밀(Dense) + 희소(Sparse) 보상 함수 조합을 설계했습니다.
 
 모든 전략에 공통으로 적용되는 베이스라인 보상 위에, 역할별 전술 목표에 맞춘 밀도 보상(Dense)이 매 스텝마다 계산됩니다. 킬/점령 등 이산 이벤트는 희소 보상(Sparse)으로 별도 누적되어 스텝 종료 시 함께 드레인됩니다.
 
@@ -167,9 +142,12 @@ float UDERewardSubsystem::GetStrategyScale(
 
 킬·사망·점령 등 모든 이벤트 보상은 이 스케일을 통해 역할마다 다른 가중치로 적용됩니다. 예를 들어 킬 보상은 돌격에 높고 지원에 낮으며, 사망 패널티는 방어에 더 크게 부과됩니다.
 
+
+
+
 ---
 
-**돌격 (Assault)**
+> **돌격: 거점의 확보**
 
 목표는 적 거점 접근과 점령 완료입니다. 적 거점까지의 거리 감소분에 비례한 접근 보상을 매 스텝 부여하고, 거점 반경 내 진입 시 추가 존재 보너스를 부여합니다. 점령이 완료되면 즉시 `PostCaptureMomentumDuration` 스텝 동안 모멘텀 보너스가 활성화되어, 점령 후 제자리에 머무는 대신 다음 거점으로 계속 전진하도록 유도합니다.
 
@@ -196,7 +174,7 @@ if (PositionChange < Settings->AssaultIdleMovementThreshold && !bInNonFriendlyZo
 
 ---
 
-**방어 (Defend)**
+> **방어: 거점의 유지**
 
 목표는 아군 거점 유지와 거점 내 적 격퇴입니다. 아군 거점 반경 내에 위치할 때 기본 존재 보상이 부여됩니다. 거점 내에서 적에게 데미지를 받으면 추가 내구도 보너스(`ZoneDurabilityBonus`)가 지급되어, 거점에서 물러나지 않고 버티는 행동을 강화합니다. 아군 거점이 없는 상황에서는 중립/적 거점 접근으로 목표가 전환됩니다.
 
@@ -227,7 +205,7 @@ else
 
 ---
 
-**지원 (Support)**
+> **지원: 아군의 유지**
 
 목표는 체력이 낮은 아군을 추적하고 힐링하며 후방을 유지하는 것입니다. 매 스텝 부상 아군 탐색을 수행하되, 잦은 타겟 전환으로 인한 진동 행동을 막기 위해 5스텝 캐시를 적용합니다. 캐시된 아군이 현재 가장 낮은 체력이 아니더라도 5스텝이 지나기 전까지는 교체하지 않습니다. 아군 뒤편에 위치하면 후방 포지셔닝 보너스를 받으며, 아군이 부상 중인 상황에서 직접 킬을 시도하면 역할 이탈 패널티가 부과됩니다.
 
@@ -261,7 +239,7 @@ if (NearestEnemyDist > NearestAllyToEnemyDist)
 
 **독립 정책 네트워크와 전략 균형 리플레이 버퍼**
 
-공유 인코더 + 멀티헤드 구조(v10.2.0)에서는 Support 헤드가 학습 초기에 붕괴하는 그래디언트 간섭 문제가 반복됐습니다. 이를 해결하기 위해 전략별 완전 독립 단일 헤드 정책(v10.2.1)으로 전환했습니다.
+공유 인코더 + 멀티헤드 구조에서는 Support 헤드가 학습 초기에 붕괴하는 그래디언트 간섭 문제가 반복됐습니다. 이를 해결하기 위해 전략별 완전 독립 단일 헤드 정책으로 전환했습니다.
 
 ```python
 # phase1_policy_training_v10_2.py — 전략별 독립 정책 등록
@@ -299,7 +277,6 @@ class StrategyBalancedReplayBuffer:
 ```
 
 관측 공간에 아군의 전략 분포(팀 구성비)도 포함하여, 에이전트가 팀 내 전략 조합을 인식하고 협동 행동을 발견할 수 있도록 유도했습니다.
-
 
 ---
 
@@ -350,7 +327,7 @@ NUM_ITERATIONS        = int(os.environ.get('NUM_ITERATIONS', 100))
 
 ### 4. 듀얼 모드 아키텍처 (Dual-Mode Architecture)
 
-모든 주요 컴포넌트는 단일 UE5 바이너리 내에서 **학습 모드(Training)**와 **추론 모드(Inference)**를 동시에 지원하도록 설계했습니다. 학습이 끝난 ONNX 모델을 별도의 빌드 없이 동일한 UE5 환경에서 즉시 실행하고 검증할 수 있습니다.
+모든 주요 컴포넌트는 단일 UE5 바이너리 내에서 **학습 모드(Training)** 와 **추론 모드(Inference)** 를 동시에 지원하도록 설계했습니다. 학습이 끝난 ONNX 모델을 별도의 빌드 없이 동일한 UE5 환경에서 즉시 실행하고 검증할 수 있습니다.
 
 #### 핵심 설계: `UDEScholaAgent`
 
@@ -405,6 +382,10 @@ void ADECharacter::PerformTacticalAction()
 }
 ```
 
+<br>
+
+**학습 모드, 추론 모드 비교 테이블**
+
 | 구분 | 학습 모드 | 추론 모드 |
 |---|---|---|
 | **정책 소스** | Python RLlib (gRPC) | 로컬 ONNX 모델 (UE5 NNE) |
@@ -412,33 +393,14 @@ void ADECharacter::PerformTacticalAction()
 | **에피소드 관리** | `ADEScholaEnvironment`가 제어 | 불필요 (게임 루프로 동작) |
 | **환경 리셋** | Schola 프로토콜 기반 | 없음 |
 
-#### 학습 환경 격리: `ADEScholaEnvironment`
-
-학습 모드에서는 `ADEScholaEnvironment`가 에이전트 등록 여부를 `bTrainingMode` 플래그로 제어합니다. 추론 모드로 전환하면 Schola Trainer 등록 전체가 스킵되고 Behavior Tree가 직접 루프를 담당합니다.
-
-```cpp
-// DEScholaEnvironment.cpp
-void ADEScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPawns)
-{
-    if (!bTrainingMode)
-    {
-        // 추론 모드: Trainer를 등록하지 않음. BT가 직접 에이전트를 구동함.
-        UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Inference mode — skipping trainer registration"));
-        return;
-    }
-    // 학습 모드: 각 에이전트에 DETrainer를 배정하고 Schola 스텝 루프에 등록
-    ...
-}
-```
+<br>
 
 
 
 ---
 
-## 기술적 난제 및 해결 방안
+## 기술적 난제 및 해결 전략 (Problem Solving)
 
-
----
 
 ### Problem 1: UE5 환경과 Rllib 환경의 통신 표준 프레임워크의 필요성
 
@@ -585,5 +547,56 @@ if (!ControlledCharacter->IsAlive_Implementation())
 모든 에이전트(생존/사망 무관)가 `MaxEpisodeSteps`에서 동시에 에피소드를 종료하게 되었습니다. RLlib는 에피소드 경계가 깔끔하게 정렬된 단일 궤적 배치를 수신하여, 혼합 궤적 없이 안정적인 PPO 업데이트를 수행합니다.
 
 
+## 결과 (Results)
 
+### 학습 곡선 분석 (Training Curve Analysis)
 
+본 프로젝트는 **셀프플레이(Self-Play)** 방식으로 학습을 진행했습니다. 고정된 규칙 기반 AI를 상대하는 것이 아니라, 양 팀이 서로의 전략에 반응하며 함께 진화하는 구조입니다. 이는 기술적으로 훨씬 높은 난이도를 요구하는데, 상대방이 고정된 목표(fixed target)가 아니라 끊임없이 변화하는 이동 목표(moving target)이기 때문입니다.
+
+학습 총 스텝은 **120만 스텝**이며, 약 **80만 스텝** 시점에서 최적 성능에 도달했습니다.
+
+{{< img src="/images/project1/tb_reward.png"
+        alt="Reward"
+        class="max-w-full"
+        caption="Fig 2. 에피소드 평균 보상 (Episode Mean Reward)" >}}
+
+{{< img src="/images/project1/tb_entropy.png"
+        alt="Entropy"
+        class="max-w-full"
+        caption="Fig 3. 정책 엔트로피 (Policy Entropy)" >}}
+
+{{< img src="/images/project1/tb_vf_explained.png"
+        alt="VF Explained Variance"
+        class="max-w-full"
+        caption="Fig 4. 가치 함수 설명 분산 (VF Explained Variance)" >}}
+
+{{< img src="/images/project1/tb_kl.png"
+        alt="KL Divergence"
+        class="max-w-full"
+        caption="Fig 5. KL 발산 (Approx. KL Divergence)" >}}
+
+{{< img src="/images/project1/tb_policy_loss.png"
+        alt="Policy Loss"
+        class="max-w-full"
+        caption="Fig 6. 정책 손실 (Policy Loss)" >}}
+
+<br>
+
+#### 보상 그래프의 해석: 셀프플레이에서 보상이 증가하는 이유
+
+셀프플레이 제로섬 게임에서는 한 팀이 얻으면 다른 팀이 잃으므로, 단순 승패 보상만 사용했다면 평균 보상이 0으로 수렴해야 합니다. 그러나 본 그래프에서는 보상이 전반적으로 **우상향** 추세를 보입니다.
+
+이는 설계된 **밀도 보상(Dense Reward) 구조** 덕분입니다. 단순 승패(희소 보상) 외에도 거점 점령, 아군 거점 방어, 힐링 효율, 전술 역할 준수 등 **에이전트의 전술적 성장을 유도하는 다양한 중간 보상**을 매 스텝마다 부여했습니다. 그 결과 양 팀이 서로를 상쇄하는 구조 속에서도, 두 팀 모두 거점을 더 효율적으로 점령하고 역할에 충실하게 행동하는 방향으로 공진화(co-evolution)하면서 전체 보상의 절대값이 상승하게 됩니다.
+
+<br>
+
+#### 최적 체크포인트 선택: 80만 스텝
+
+80만 스텝 이후 **전략 붕괴(Strategy Collapse)** 현상이 관찰되었습니다. 셀프플레이의 특성상 에이전트들이 수치적으로 가장 유리한 패턴만을 반복하게 되는 과최적화가 발생한 것입니다.
+
+이는 두 지표에서 명확하게 나타납니다.
+
+- **VF Explained Variance 하락:** 80만 스텝 이후 Explained Variance가 감소하기 시작합니다. 이는 가치 함수가 고정된 상대의 패턴에 과적합(overfitting)되면서, 새로운 상황에 대한 가치 판단의 범용성이 낮아졌음을 의미합니다.
+- **Entropy 감소:** 정책의 엔트로피가 지속적으로 낮아지며 행동의 다양성이 줄어들었습니다. 다양한 전술적 대응보다 특정 패턴에 수렴하기 시작한 신호입니다.
+
+따라서 전술적 대응 패턴이 가장 다양하고 범용성이 높았던 **80만 스텝 모델을 최종 모델로 선택**했습니다.
