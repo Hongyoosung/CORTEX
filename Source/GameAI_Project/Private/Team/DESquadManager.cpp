@@ -358,9 +358,9 @@ FDETeamWorldState UDESquadManager::BuildTeamWorldState(
 		if (ADECharacter* A = TeamAgents[i])
 		{
 			State.FriendlyPositions[i] = A->GetActorLocation();
-			State.FriendlyHealths[i]   = A->GetHealthPercentage_Implementation();
-			State.FriendlyCooldowns[i] = A->GetWeaponCooldown_Implementation();
-			State.FriendlyAlive[i]     = A->IsAlive_Implementation();
+			State.FriendlyHealths[i]   = A->GetHealthPercentage();
+			State.FriendlyCooldowns[i] = A->GetWeaponCooldown();
+			State.FriendlyAlive[i]     = A->IsAlive();
 		}
 	}
 
@@ -369,8 +369,8 @@ FDETeamWorldState UDESquadManager::BuildTeamWorldState(
 		if (ADECharacter* A = EnemyAgents[i])
 		{
 			State.EnemyPositions[i]   = A->GetActorLocation();
-			State.EnemyHealths[i]     = A->GetHealthPercentage_Implementation();
-			State.EnemyAlive[i]       = A->IsAlive_Implementation();
+			State.EnemyHealths[i]     = A->GetHealthPercentage();
+			State.EnemyAlive[i]       = A->IsAlive();
 			State.EnemyConfidences[i] = 1.0f;
 		}
 	}
@@ -526,7 +526,7 @@ void UDESquadManager::DistributeRoles(const TArray<EDEStrategyType>& Roles,
 	for (int32 i = 0; i < FMath::Min(Roles.Num(), TeamAgents.Num()); ++i)
 	{
 		ADECharacter* Agent = TeamAgents[i];
-		if (Agent && Agent->IsAlive_Implementation())
+		if (Agent && Agent->IsAlive())
 		{
 			Agent->SetCommandedStrategy(Roles[i]);
 
@@ -557,7 +557,7 @@ void UDESquadManager::DrawDebugVisualization(const TArray<ADECharacter*>& TeamAg
 	for (int32 i = 0; i < FMath::Min(CurrentRoleAssignments.Num(), TeamAgents.Num()); ++i)
 	{
 		ADECharacter* Agent = TeamAgents[i];
-		if (!Agent || !Agent->IsAlive_Implementation()) { continue; }
+		if (!Agent || !Agent->IsAlive()) { continue; }
 
 		FColor RoleColor = FColor::White;
 		switch (CurrentRoleAssignments[i])

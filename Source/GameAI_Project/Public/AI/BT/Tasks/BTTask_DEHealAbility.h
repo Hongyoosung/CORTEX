@@ -6,7 +6,6 @@
 #include "BehaviorTree/BTTaskNode.h"
 #include "BTTask_DEHealAbility.generated.h"
 
-class UDEHealAbility;
 class ADECharacter;
 
 /**

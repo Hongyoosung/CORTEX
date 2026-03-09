@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "GameplayEffect.h"
 #include "DEAbilityData.generated.h"
 
 class ADEProjectileBase;
@@ -54,6 +55,18 @@ struct FDEAttackAbilityConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	FName MuzzleSocketName = TEXT("MuzzleFlash");
+
+	/** Rotation speed when aiming at target (degrees/sec, 0 = instant) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
+	float AimRotationSpeed = 360.0f;
+
+	/** Require line-of-sight check before firing */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	bool bRequireLineOfSight = true;
+
+	/** GE Blueprint to apply damage to the target. Must use SetByCaller with tag Data.Damage. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	TSubclassOf<UGameplayEffect> DamageEffectClass;
 };
 
 /**
@@ -75,6 +88,10 @@ struct FDEHealAbilityConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	TObjectPtr<UNiagaraSystem> HealBeamSystem;
+
+	/** GE Blueprint to apply healing. Must use SetByCaller with tag Data.Healing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	TSubclassOf<UGameplayEffect> HealEffectClass;
 };
 
 /**

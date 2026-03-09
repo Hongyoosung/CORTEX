@@ -1,13 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AI/BT/Tasks/BTTask_DEHealAbility.h"
-#include "Combat/Abilities/DEHealAbility.h"
 #include "Characters/DECharacter.h"
+#include "GAS/DEGameplayTags.h"
+#include "AbilitySystemComponent.h"
 #include "AIController.h"
 
 UBTTask_DEHealAbility::UBTTask_DEHealAbility()
 {
-	NodeName = TEXT("Heal Ability");
+	NodeName = TEXT("Heal Ability (GAS)");
 	bNotifyTick = true;
 }
 
@@ -31,11 +32,21 @@ void UBTTask_DEHealAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	}
 
 	ADECharacter* Character = Cast<ADECharacter>(AICtrl->GetPawn());
-	if (!Character || !Character->IsAlive_Implementation())
+	if (!Character || !Character->IsAlive())
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;
 	}
 
+	UAbilitySystemComponent* ASC = Character->GetAbilitySystemComponent();
+	if (!ASC)
+	{
+		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+		return;
+	}
 
+	// Activate heal ability via GAS tag
+	FGameplayTagContainer HealTag;
+	HealTag.AddTag(DEGameplayTags::Ability_Heal);
+	ASC->TryActivateAbilitiesByTag(HealTag);
 }

@@ -1,73 +1,51 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Actors/DEAmmoCrate.h"
-#include "Combat/DECombatStatsInterface.h"
+#include "Characters/DECharacter.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
 
 ADEAmmoCrate::ADEAmmoCrate()
 {
-	// Set pickup type
 	PickupType = EPickupType::Ammo;
-
 	RespawnTime = 20.0f;
-
-	// Visual feedback (not through walls by default for ammo)
 	bVisibleThroughWalls = false;
 
-	// Visual customization
 	if (PickupMesh)
 	{
-		// Set orange custom depth stencil for ammo pickups
 		PickupMesh->SetCustomDepthStencilValue(251);
 	}
 }
 
 void ADEAmmoCrate::ApplyPickupEffect_Implementation(AActor* Collector)
 {
-	if (!Collector)
-	{
-		return;
-	}
+	if (!Collector) return;
 
-	if (Collector->Implements<UDECombatStatsInterface>())
+	if (ADECharacter* Character = Cast<ADECharacter>(Collector))
 	{
-		float ActualAdded = IDECombatStatsInterface::Execute_AddAmmo(Collector, AmmoAmount);
-
-		if (ActualAdded > 0.0f)
+		int32 ActualAdded = Character->AddAmmo(AmmoAmount);
+		if (ActualAdded > 0)
 		{
-			UE_LOG(LogTemp, Log, TEXT("DEAmmoCrate: Added %s via Interface for %.1f Ammo"),
-				*Collector->GetName(), ActualAdded);
+			UE_LOG(LogTemp, Log, TEXT("DEAmmoCrate: Added ammo for %s"), *Collector->GetName());
 		}
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("DEAmmoCrate: Collector %s does not implement CombatStatsInterface"), *Collector->GetName());
-	}
 
-	// Play collection sound
 	if (bPlayCollectionSound && CollectionSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, CollectionSound, GetActorLocation(), 1.0f, 1.0f );
+		UGameplayStatics::PlaySoundAtLocation(this, CollectionSound, GetActorLocation(), 1.0f, 1.0f);
 	}
 
-
-	// Call parent implementation
 	Super::ApplyPickupEffect_Implementation(Collector);
 }
 
 bool ADEAmmoCrate::CanCollect_Implementation(AActor* Collector) const
 {
-	if (!Collector) { return false; }
+	if (!Collector) return false;
 
-	if (Collector->Implements<UDECombatStatsInterface>())
+	if (const ADECharacter* Character = Cast<ADECharacter>(Collector))
 	{
-		float CurrentAmmo = IDECombatStatsInterface::Execute_GetAmmoPercentage(Collector);
-
-		return CurrentAmmo < MaxAmmoPercentForCollection;
+		return Character->GetAmmoPercentage() < MaxAmmoPercentForCollection;
 	}
 
-
-	// If no weapon component, don't allow collection
 	return false;
 }

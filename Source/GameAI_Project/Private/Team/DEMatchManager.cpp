@@ -4,7 +4,8 @@
 #include "Team/DESquadManager.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
 #include "Characters/DECharacter.h"
-#include "Combat/Components/DEHealthComponent.h"
+#include "AbilitySystemComponent.h"
+#include "GAS/DEGameplayTags.h"
 #include "Schola/Components/DEScholaAgent.h"
 #include "Actors/DESpawnArea.h"
 #include "Actors/DECapturePoint.h"
@@ -376,19 +377,23 @@ void ADEMatchManager::ProcessRespawnQueue(float DeltaTime)
 			const FVector SpawnLoc = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
 			Agent->SetActorLocation(SpawnLoc);
 
-			if (RespawnInvincibilityDuration > 0.0f && Agent->GetHealthComponent())
+			if (RespawnInvincibilityDuration > 0.0f)
 			{
-				Agent->GetHealthComponent()->SetInvulnerable(true);
-				FTimerHandle InvincibilityTimer;
-				GetWorldTimerManager().SetTimer(InvincibilityTimer,
-					[Agent]()
+				if (UAbilitySystemComponent* ASC = Agent->GetAbilitySystemComponent())
+				{
+					ASC->AddLooseGameplayTag(DEGameplayTags::State_Invulnerable);
+
+					// Capture a weak ref so the timer is safe if the agent is destroyed
+					TWeakObjectPtr<UAbilitySystemComponent> WeakASC(ASC);
+					FTimerHandle TimerHandle;
+					GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateLambda([WeakASC]()
 					{
-						if (IsValid(Agent) && Agent->GetHealthComponent())
+						if (UAbilitySystemComponent* StillValid = WeakASC.Get())
 						{
-							Agent->GetHealthComponent()->SetInvulnerable(false);
+							StillValid->RemoveLooseGameplayTag(DEGameplayTags::State_Invulnerable);
 						}
-					},
-					RespawnInvincibilityDuration, false);
+					}), RespawnInvincibilityDuration, /*bLoop=*/false);
+				}
 			}
 
 			OnAgentSpawned.Broadcast(TeamID, Agent);
@@ -534,7 +539,7 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 
 	for (ADECharacter* Agent : GetTeamAgents(NewTeam))
 	{
-		if (Agent && Agent->IsAlive_Implementation())
+		if (Agent && Agent->IsAlive())
 			RS->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 	}
 
@@ -542,7 +547,7 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 	{
 		for (ADECharacter* Agent : GetTeamAgents(PreviousTeam))
 		{
-			if (Agent && Agent->IsAlive_Implementation())
+			if (Agent && Agent->IsAlive())
 				RS->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 		}
 	}
@@ -560,13 +565,13 @@ void ADEMatchManager::OnAgentDied(ADECharacter* DeadAgent, ADECharacter* Killer)
 		RS->CalculateKillReward(Killer->RewardState, Killer->GetCommandedStrategy(), Killer->AgentID);
 
 	// Assist rewards for non-killer contributors
-	if (DeadAgent && DeadAgent->GetHealthComponent())
+	if (DeadAgent)
 	{
-		for (const auto& Pair : DeadAgent->GetHealthComponent()->GetDamageContributors())
+		for (const auto& Pair : DeadAgent->GetDamageContributors())
 		{
 			ADECharacter* Contributor = Cast<ADECharacter>(Pair.Key);
 			if (!Contributor || Contributor == Killer) continue;
-			if (!Contributor->IsAlive_Implementation()) continue;
+			if (!Contributor->IsAlive()) continue;
 			RS->CalculateAssistReward(Contributor->RewardState, Contributor->GetCommandedStrategy(), Pair.Value, Contributor->AgentID);
 		}
 	}

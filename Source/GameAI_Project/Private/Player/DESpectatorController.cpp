@@ -119,7 +119,7 @@ void ADESpectatorController::CollectAgents()
 	{
 		for (ADECharacter* Char : TActorRange<ADECharacter>(World))
 		{
-			if (IsValid(Char) && Char->IsAlive_Implementation())
+			if (IsValid(Char) && Char->IsAlive())
 			{
 				AllAgents.Add(Char);
 			}
@@ -141,7 +141,7 @@ void ADESpectatorController::SwitchToNextStrategyAgent()
 
 		for (ADECharacter* Agent : AllAgents)
 		{
-			if (IsValid(Agent) && Agent->IsAlive_Implementation() && Agent->GetCommandedStrategy() == TargetStrategy)
+			if (IsValid(Agent) && Agent->IsAlive() && Agent->GetCommandedStrategy() == TargetStrategy)
 			{
 				Found = Agent;
 				break;
@@ -170,7 +170,7 @@ void ADESpectatorController::CycleToNextAgent()
 	{
 		CurrentAgentIndex = (CurrentAgentIndex + 1) % AllAgents.Num();
 	}
-	while (!AllAgents[CurrentAgentIndex]->IsAlive_Implementation() && CurrentAgentIndex != StartIndex);
+	while (!AllAgents[CurrentAgentIndex]->IsAlive() && CurrentAgentIndex != StartIndex);
 
 	SwitchToAgent(AllAgents[CurrentAgentIndex]);
 }

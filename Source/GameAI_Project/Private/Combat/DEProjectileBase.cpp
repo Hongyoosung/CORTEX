@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/DEProjectileBase.h"
-#include "Combat/Components/DEHealthComponent.h"
 #include "Characters/DECharacter.h"
+#include "GAS/DEAttributeSet.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Particles/ParticleSystemComponent.h"
@@ -229,8 +229,9 @@ void ADEProjectileBase::OnProjectileHit(UPrimitiveComponent* HitComponent, AActo
 	}
 
 
-	UDEHealthComponent* TargetHealth = OtherActor->FindComponentByClass<UDEHealthComponent>();
-	if (TargetHealth)
+	// Check if the hit actor is a damageable character
+	ADECharacter* TargetChar = Cast<ADECharacter>(OtherActor);
+	if (TargetChar)
 	{
 		if (!ValidateHit(OtherActor))
 		{
@@ -241,7 +242,7 @@ void ADEProjectileBase::OnProjectileHit(UPrimitiveComponent* HitComponent, AActo
 
 	SpawnImpactEffects(Hit.ImpactPoint, Hit.ImpactNormal);
 
-	if (TargetHealth)
+	if (TargetChar)
 	{
 
 		if (HitActors.Contains(OtherActor))
@@ -260,7 +261,7 @@ void ADEProjectileBase::OnProjectileHit(UPrimitiveComponent* HitComponent, AActo
 
 		if (bPenetrateActors && (MaxPenetrations == 0 || HitCount < MaxPenetrations))
 		{
-			UE_LOG(LogTemp, Log, TEXT("🏹 Projectile penetrated %s"), *OtherActor->GetName());
+			UE_LOG(LogTemp, Log, TEXT("Projectile penetrated %s"), *OtherActor->GetName());
 			return;
 		}
 	}
@@ -357,40 +358,21 @@ void ADEProjectileBase::ApplyDamageToActor(AActor* HitActor, const FVector& HitL
 	// Calculate final damage
 	float FinalDamage = CalculateDamageWithFalloff(DistanceTraveled);
 
-	
-
-	// Find DEHealthComponent on hit actor
-	UDEHealthComponent* TargetHealth = HitActor->FindComponentByClass<UDEHealthComponent>();
-	if (TargetHealth)
+	// Apply damage via GAS on the target character
+	ADECharacter* TargetChar = Cast<ADECharacter>(HitActor);
+	if (TargetChar)
 	{
-		// Apply damage via DEHealthComponent
-		
-		float ActualDamage = TargetHealth->TakeDamage(FinalDamage, InstigatorActor, OwnerActor, HitLocation, HitNormal);
-		
-		// Notify our owner's DEHealthComponent that we dealt damage
-		if (OwnerActor)
-		{
-			UDEHealthComponent* OwnerHealth = OwnerActor->FindComponentByClass<UDEHealthComponent>();
-			if (OwnerHealth)
-			{
-				OwnerHealth->NotifyDamageDealt(HitActor, ActualDamage);
-			}
-			else
-			{
-				UE_LOG(LogTemp, Warning, TEXT("⚠️ Owner %s has no DEHealthComponent to notify damage dealt"), *OwnerActor->GetName());
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("⚠️ Projectile has no OwnerActor to notify damage dealt"));
-		}
+		float ActualDamage = TargetChar->ApplyDamageToSelf(FinalDamage, InstigatorActor, OwnerActor, HitLocation, HitNormal);
 
-		/*UE_LOG(LogTemp, Log, TEXT("💥 Projectile hit %s → Damage: %.1f (Distance: %.0fcm)"),
-			*HitActor->GetName(), ActualDamage, DistanceTraveled);*/
+		// Notify owner that we dealt damage (for stats/rewards)
+		if (ADECharacter* OwnerChar = Cast<ADECharacter>(OwnerActor))
+		{
+			OwnerChar->NotifyDamageDealt(HitActor, ActualDamage);
+		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ Projectile hit %s (no DEHealthComponent)"), *HitActor->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("Projectile hit %s (not a DECharacter)"), *HitActor->GetName());
 	}
 }
 

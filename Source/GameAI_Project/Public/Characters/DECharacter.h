@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "AbilitySystemInterface.h"
+#include "GameplayEffect.h"
 #include "Team/DETeamInterface.h"
 #include "Types/DEStrategyTypes.h"
 #include "Types/DEGameStateTypes.h"
@@ -11,13 +13,15 @@
 #include "Types/DEObservationTypes.h"
 #include "Types/DERewardTypes.h"
 #include "Types/DEEventTypes.h"
-#include "Combat/Components/DEAbilityComponent.h"
-#include "Combat/DECombatStatsInterface.h"
 #include "Team/DEMatchManager.h"
 #include "DECharacter.generated.h"
 
 // Forward declarations
-
+class UAbilitySystemComponent;
+class UDEAttributeSet;
+class UDEGA_Attack;
+class UDEGA_Heal;
+class UDEAbilityData;
 
 class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
@@ -28,18 +32,19 @@ class UNiagaraSystem;
 
 class ADECharacter;
 class UDERewardSubsystem;
-class UDEHealthComponent;
 class UDEScholaAgent;
 class UDEEQSExecutor;
 struct FDEDeathEventData;
 struct FDETeamInfo;
 
 /**
- * ADECharacter - Component-Based Agent Character
+ * ADECharacter - GAS-Integrated Agent Character
  *
  * Component Architecture:
- * - UDEHealthComponent: Damage, death, respawn
- * - UAttackAbility: Firing, ammo, cooldown, target scanning
+ * - UAbilitySystemComponent: GAS ability management, effects, tags
+ * - UDEAttributeSet: Health, MaxHealth, Armor (replaces DEHealthComponent)
+ * - UDEGA_Attack: GAS-based attack ability (replaces DEAttackAbility)
+ * - UDEGA_Heal: GAS-based heal ability (replaces DEHealAbility)
  * - UDEScholaAgent: RL training interface
  * - UAIPerceptionStimuliSourceComponent: AI visibility
  *
@@ -48,8 +53,8 @@ struct FDETeamInfo;
  * - Assigned by DEMatchManager on spawn
  *
  * Death/Respawn Flow:
- * 1. DEHealthComponent broadcasts OnDeath
- * 2. DECharacter::OnDeath() called
+ * 1. AttributeSet Health reaches 0 → State.Dead tag applied
+ * 2. ADECharacter::OnHealthChanged() detects death
  * 3. Disable movement, physics ragdoll
  * 4. Notify GameMode → DEMatchManager
  * 5. DEMatchManager queues respawn (5 seconds)
@@ -57,15 +62,8 @@ struct FDETeamInfo;
  * 7. Re-enable movement, restart AI
  *
  * AI Integration:
- * - Auto-possesses AIController on spawn
- * - Runs Behavior Tree
- * - BT tasks access components for combat/movement
- * - Schola agent collects observations from components
- *
- * Usage:
- * 1. Set AIControllerClass and BehaviorTree in Blueprint
- * 2. DEMatchManager spawns and assigns TeamID
- * 3. AI takes over automatically
+ * - Abilities activated via TryActivateAbilityByTag (no input binding)
+ * - BT tasks call TryActivateAbilityByTag(Ability.Attack) etc.
  */
 
 
@@ -74,7 +72,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAgentDied, ADECharacter*, DeadAg
 
 
 UCLASS()
-class GAMEAI_PROJECT_API ADECharacter : public ACharacter, public IDETeamInterface, public IDECombatStatsInterface
+class GAMEAI_PROJECT_API ADECharacter : public ACharacter, public IAbilitySystemInterface, public IDETeamInterface
 {
 	GENERATED_BODY()
 
@@ -83,114 +81,119 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+	virtual void PossessedBy(AController* NewController) override;
 
 
 	//========================================
-	// ID Interfaces Implementions
+	// IAbilitySystemInterface
 	//========================================
-	virtual int32 	GetTeamID_Implementation() const override;
-	virtual int32 	GetEnvID_Implementation() const override;
-	virtual void 	SetTeamID_Implementation(int32 NewTeamID) override;
-	virtual void 	SetEnvID_Implementation(int32 NewEnvID) override;
+	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 
 	//========================================
-	// Combat Interfaces Implementions
+	// ID Interfaces Implementations
 	//========================================
-	virtual float	GetHealthPercentage_Implementation() const override;
-	virtual float	Heal_Implementation(float HealAmount) override;
-	virtual bool	IsAlive_Implementation() const override;
-	virtual float	GetWeaponCooldown_Implementation() const override;
-	virtual bool	CanFireWeapon_Implementation() const override;
-	virtual int32	AddAmmo_Implementation(int32 AmmoAmount) override;
-	virtual float	GetAmmoPercentage_Implementation() const override;
-	
-	
+	virtual int32	GetTeamID_Implementation() const override;
+	virtual int32	GetEnvID_Implementation() const override;
+	virtual void	SetTeamID_Implementation(int32 NewTeamID) override;
+	virtual void	SetEnvID_Implementation(int32 NewEnvID) override;
 
 
 	//========================================
-	// Component Access
+	// GAS Health Queries (replace IDECombatStatsInterface)
 	//========================================
 
-	/** Get DEHealthComponent */
-	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UDEHealthComponent*		GetHealthComponent()	const { return DEHealthComponent.Get(); }
+	/** Get current health percentage (0.0 - 1.0) */
+	UFUNCTION(BlueprintPure, Category = "Character|Health")
+	float GetHealthPercentage() const;
 
-	/** Get AbilityComponent (manages all agent abilities) */
-	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UDEAbilityComponent*	GetAbilityComponent()	const { return AbilityComponent.Get();	}
+	/** Is the character alive? */
+	UFUNCTION(BlueprintPure, Category = "Character|Health")
+	bool IsAlive() const { return bIsAlive; }
+
+
+	/** Heal the character via GAS effect */
+	UFUNCTION(BlueprintCallable, Category = "Character|Health")
+	float HealCharacter(float HealAmount);
+
+	/** Apply damage via GAS meta-attribute */
+	UFUNCTION(BlueprintCallable, Category = "Character|Health")
+	float ApplyDamageToSelf(float DamageAmount, AActor* DamageInstigator, AActor* DamageCauser,
+		const FVector& HitLocation = FVector::ZeroVector, const FVector& HitNormal = FVector::ZeroVector);
+
+	/** Get current health */
+	UFUNCTION(BlueprintPure, Category = "Character|Health")
+	float GetCurrentHealth() const;
+
+	/** Get max health */
+	UFUNCTION(BlueprintPure, Category = "Character|Health")
+	float GetMaxHealth() const;
+
+	/** Weapon cooldown progress (0=just fired, 1=ready) */
+	UFUNCTION(BlueprintPure, Category = "Character|Combat")
+	float GetWeaponCooldown() const;
+
+	/** Can fire weapon? */
+	UFUNCTION(BlueprintPure, Category = "Character|Combat")
+	bool CanFireWeapon() const;
+
+	/** Add ammo */
+	UFUNCTION(BlueprintCallable, Category = "Character|Combat")
+	int32 AddAmmo(int32 AmmoAmount);
+
+	/** Get ammo percentage (0.0-1.0) */
+	UFUNCTION(BlueprintPure, Category = "Character|Combat")
+	float GetAmmoPercentage() const;
+
+
+	//========================================
+	// GAS Ability Access
+	//========================================
+
+	/** Get the GAS Attack ability instance */
+	UFUNCTION(BlueprintPure, Category = "Character|Abilities")
+	UDEGA_Attack* GetAttackAbility() const { return AttackAbility; }
+
+	/** Get the GAS Heal ability instance */
+	UFUNCTION(BlueprintPure, Category = "Character|Abilities")
+	UDEGA_Heal* GetHealAbility() const { return HealAbility; }
 
 	/** Get DEScholaAgent */
 	UFUNCTION(BlueprintPure, Category = "Character|Components")
-	UDEScholaAgent*			GetScholaAgent()		const { return ScholaAgent.Get();		}
-
+	UDEScholaAgent* GetScholaAgent() const { return ScholaAgent.Get(); }
 
 
 	//========================================
-	// Tatical Action Interface (EQS weight management and execution)
+	// Tactical Action Interface (EQS weight management and execution)
 	//========================================
 
-	/**
-	 * Update EQS weights from Actuator.
-	 * Stores weights on Character (single source of truth).
-	 * Does NOT trigger execution - call PerformTacticalAction() separately.
-	 *
-	 * @param NewWeights - 7-dim EQS weights from RL policy or ONNX inference
-	 */
 	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
 	void UpdateTacticalWeights(const FDEEQSWeightParameters& NewWeights);
 
-
-	/**
-	 * Execute tactical action based on current EQS weights.
-	 *
-	 * Training Mode (AIController without Blackboard):
-	 *   Runs EQS query SYNCHRONOUSLY using RunInstantQuery(),
-	 *   then commands AIController->MoveToLocation() to navigate to best position.
-	 *   Movement respects MaxWalkSpeed (600 cm/s) and physics.
-	 *   Agent walks to target using pathfinding (NOT teleportation).
-	 *
-	 * Runtime Mode (AIController with Blackboard/BT):
-	 *   Syncs weights to Blackboard. Behavior Tree handles EQS asynchronously.
-	 */
 	UFUNCTION(BlueprintCallable, Category = "Character|EQS")
 	void PerformTacticalAction();
 
 	void ProcessTrainingAbilities();
 
-
-	/** Get current EQS weights (read by EQS queries, Trainer, BT tasks) */
 	UFUNCTION(BlueprintPure, Category = "Character|EQS")
-	FORCEINLINE FDEEQSWeightParameters	GetEQSWeights() const			
+	FORCEINLINE FDEEQSWeightParameters	GetEQSWeights() const
 	{ return CurrentEQSWeights; }
 
-	/** Get the last EQS target location (for debugging) */
 	UFUNCTION(BlueprintPure, Category = "Character|EQS")
-	FORCEINLINE FVector					GetLastEQSTargetLocation() const 
+	FORCEINLINE FVector					GetLastEQSTargetLocation() const
 	{ return LastEQSTargetLocation; }
 
-	/** Returns true if weights were updated since last consume, then clears the flag */
-	FORCEINLINE bool					ConsumeNewWeights()				
+	FORCEINLINE bool					ConsumeNewWeights()
 	{ bool b = bWeightsDirty; bWeightsDirty = false; return b; }
 
-	
 
 	//========================================
 	// Command Interface
 	//========================================
 
-	/**
-	 * Receive strategy command from Squad Commander
-	 * Replaces individual MCTS decision-making
-	 *
-	 * @param NewStrategy - Strategy assigned by centralized commander
-	 */
 	UFUNCTION(BlueprintCallable, Category = "Character|Commands")
 	void SetCommandedStrategy(EDEStrategyType NewStrategy);
 
-	/**
-	 * Get current commanded strategy (for Blackboard update)
-	 */
 	UFUNCTION(BlueprintPure, Category = "Character|Commands")
 	EDEStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
 
@@ -199,15 +202,10 @@ public:
 	// Reward Interface (forwarding to RewardCalculator)
 	//========================================
 
-	/**
-	 * Compute a single-step reward for the state transition (Prev → Current).
-	 * Delegates to UDERewardCalculator — DETrainer calls this, never the calculator directly.
-	 */
 	float ComputeStepReward(EDEStrategyType Strategy,
 		const FDEObservation& Prev,
 		const FDEObservation& Current,
 		const FDEEQSWeightParameters& Action);
-
 
 
 	//========================================
@@ -216,27 +214,29 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Match")
 	ADEMatchManager* GetMatchManager() const;
 
-	/** Reset character state (called by DEMatchManager on respawn) */
 	UFUNCTION(BlueprintCallable, Category = "Character|Respawn")
 	void ResetCharacter();
 	void Activate();
 	void Deactivate();
 
 
-
 	//========================================
 	// Heal Interface (for DERewardCalculator)
 	//========================================
 
-	/** HP healed on an ally during the most recent heal tick (pass-through to HealAbility) */
 	float GetLastTickHealAmount() const;
-
-	/**
-	 * Returns true and resets the accumulator if cumulative heal on the current target
-	 * has reached or exceeded Threshold. Pass-through to HealAbility.
-	 */
 	bool ConsumeHealBurst(float Threshold);
 
+
+	//========================================
+	// Damage Event System (replaces DEHealthComponent delegates)
+	//========================================
+
+	/** Notify that this character dealt damage to another actor (for stats/rewards) */
+	void NotifyDamageDealt(AActor* Victim, float DamageAmount);
+
+	/** Notify that this character confirmed a kill */
+	void NotifyKillConfirmed(AActor* Victim, float TotalDamageDealt);
 
 
 protected:
@@ -244,18 +244,15 @@ protected:
 	// Event Handlers
 	//========================================
 
-	/** Handle death event from DEHealthComponent */
-	UFUNCTION()
-	void OnDeath(const FDEDeathEventData& DeathEvent);
+	/** Called when Health attribute changes — handles death detection */
+	void OnHealthChanged(const struct FOnAttributeChangeData& Data);
 
+	/** Handle death */
+	void HandleDeath(AActor* Killer, float FinalDamage);
 
-	//========================================
-	// Strategy-specific
-	//========================================
-	/** Apply strategy-specific stat multipliers (Support: -50% damage/range, -30% max HP) */
+	/** Apply strategy-specific stat multipliers */
 	void ApplyStrategyStatModifiers(EDEStrategyType Strategy);
 
-	
 
 public:
 
@@ -270,56 +267,60 @@ public:
 	// Camera (Spectator Mode)
 	//========================================
 
-	/** Spring arm for third-person spectator camera */
-	UPROPERTY(VisibleAnywhere,		BlueprintReadOnly, Category = "Components|Camera")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Camera")
 	TObjectPtr<USpringArmComponent> CameraSpringArm;
 
-	/** Third-person camera for spectator observation */
-	UPROPERTY(VisibleAnywhere,		BlueprintReadOnly, Category = "Components|Camera")
-	TObjectPtr<UCameraComponent>	AgentCamera;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Camera")
+	TObjectPtr<UCameraComponent> AgentCamera;
 
-	/**
-	 * True while a spectator is actively viewing this agent.
-	 * DETrainer skips world-space debug visuals when this is set to avoid redundancy.
-	 */
-	UPROPERTY(BlueprintReadOnly,	Category = "Debug")
-	bool							bIsBeingObserved = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Debug")
+	bool bIsBeingObserved = false;
 
 
 	//========================================
-	// Components
+	// GAS Components
 	//========================================
 
-	/** Health management */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
-	TObjectPtr<UDEHealthComponent>					DEHealthComponent = nullptr;
+	/** Ability System Component — manages abilities, effects, tags */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|GAS")
+	TObjectPtr<UAbilitySystemComponent> AbilitySystemComponent;
 
-	/** RL training interface */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
-	TObjectPtr<UDEScholaAgent>						ScholaAgent = nullptr;
+	/** Attribute Set — Health, MaxHealth, Armor, meta-attributes */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|GAS")
+	TObjectPtr<UDEAttributeSet> AttributeSet;
 
-	/** AI perception registration */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
+
+	//========================================
+	// Other Components
+	//========================================
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UDEScholaAgent> ScholaAgent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UAIPerceptionStimuliSourceComponent> StimuliSource = nullptr;
 
-	/** Unified ability component */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
-	TObjectPtr<UDEAbilityComponent>					AbilityComponent = nullptr;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UDEEQSExecutor> EQSExecutor = nullptr;
 
-	/** EQS Executor component - handles query execution with correct parameter names */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly,	Category = "Components")
-	TObjectPtr<UDEEQSExecutor>						EQSExecutor = nullptr;
+
+	//========================================
+	// Ability Configuration
+	//========================================
+
+	/** Data asset containing attack/heal configs (assigned in Blueprint) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Abilities|Config")
+	TObjectPtr<UDEAbilityData> AbilityData;
+
 
 
 	//========================================
 	// Configuration
 	//========================================
 
-	/** Vision range for fog-of-war updates (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Vision")
 	float VisionRange = 3000.0f;
 
-	/** Agent Info for team coordination */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 AgentID = 0;
 
@@ -330,7 +331,6 @@ public:
 	// EQS Configuration
 	//========================================
 
-	/** EQS result acceptance radius for movement (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|EQS")
 	float EQSAcceptanceRadius = 50.0f;
 
@@ -342,15 +342,29 @@ public:
 	TArray<ADECapturePoint*> AssignedCapturePoints;
 
 
+	//========================================
+	// Damage Stats (replaces DEHealthComponent stats)
+	//========================================
+
+	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
+	float TotalDamageTaken = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
+	float TotalDamageDealt = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
+	int32 KillCount = 0;
+
+	/** Tracks cumulative damage dealt by each attacker (for assist rewards) */
+	const TMap<AActor*, float>& GetDamageContributors() const { return DamageContributors; }
+
 
 protected:
 	TObjectPtr<UDERewardSubsystem> RewardSubsystem;
-	
-	/** Team ID (0 = Red, 1 = Blue) - Assigned by DEMatchManager on spawn, or set directly in editor for test maps */
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 TeamID = -1;
 
-	/** Environment ID for parallel environment isolation. Set by DEMatchManager on spawn. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
 	int32 EnvID = 0;
 
@@ -359,38 +373,70 @@ protected:
 	// Runtime State
 	//========================================
 
-	/** Is dead? */
 	UPROPERTY(BlueprintReadOnly, Category = "State")
 	bool bIsAlive = true;
 
-	/** True when Actuator wrote new weights that haven't been consumed yet */
 	bool bWeightsDirty = false;
-
-	/** Time when character was last spawned/reset (for death diagnostics) */
 	float SpawnTime = 0.0f;
 
-	/** Last EQS target location (for debugging) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FVector LastEQSTargetLocation = FVector::ZeroVector;
 
-	/** Current strategy assigned by Squad Commander */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
 	EDEStrategyType CommandedStrategy = EDEStrategyType::Support;
 
-	/** Current EQS weights (set by Actuator, read by EQS/Trainer/BT) */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FDEEQSWeightParameters CurrentEQSWeights;
 
 	FTimerHandle TrainingAbilityTimerHandle;
 
-	
+
+private:
+	/** GAS ability instances (created in BeginPlay from AbilityData) */
+	UPROPERTY(Transient)
+	TObjectPtr<UDEGA_Attack> AttackAbility;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UDEGA_Heal> HealAbility;
+
+	/** Last actor to deal damage (for death attribution) */
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> LastDamageInstigator;
+	float LastDamageAmount = 0.0f;
+
+	/** Damage contributors for assist tracking */
+	TMap<AActor*, float> DamageContributors;
+
+	/** Has died flag (prevents double-death) */
+	bool bHasDied = false;
+
+	/** Initialize GAS abilities from AbilityData */
+	void InitializeGASAbilities();
+
 
 public:
-	//============= Event Delegated ===================
+	//============= Event Delegates ===================
 
 	FOnAgentDeathEvent	OnAgentDeathEvent_Delegate;
 
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnAgentDied		OnAgentDied_Delegate;
 
+	// Compatibility delegates (for systems that subscribed to DEHealthComponent events)
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamageTakenDel, const FDEDamageEventData&, DamageEvent, float, CurrentHealth);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamageDealtDel, AActor*, Victim, float, DamageAmount);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnKillConfirmedDel, AActor*, Victim, float, DamageDealt);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChangedDel, float, CurrentHealth, float, MaxHealth);
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
+	FOnDamageTakenDel OnDamageTaken_Delegate;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
+	FOnDamageDealtDel OnDamageDealt_Delegate;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
+	FOnKillConfirmedDel OnKillConfirmed_Delegate;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
+	FOnHealthChangedDel OnHealthChanged_Delegate;
 };

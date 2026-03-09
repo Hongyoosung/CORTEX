@@ -164,7 +164,7 @@ struct GAMEAI_PROJECT_API FDECompositeReward
 struct FDERewardBreakdown
 {
     float StrategyReward       = 0.0f;
-    float DEHealthComponent      = 0.0f;
+    float HealthComponent         = 0.0f;
     float PositionComponent    = 0.0f;
     float ObjectiveComponent   = 0.0f;
     float DeathPenaltyComponent = 0.0f;

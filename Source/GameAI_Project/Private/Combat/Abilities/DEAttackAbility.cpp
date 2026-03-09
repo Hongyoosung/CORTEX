@@ -55,7 +55,7 @@ void UDEAttackAbility::Execute(float DeltaTime)
 
 	for (ADECharacter* Enemy : Enemies)
 	{
-		if (!Enemy || !Enemy->IsAlive_Implementation()) continue;
+		if (!Enemy || !Enemy->IsAlive()) continue;
 
 		float DistSq = FVector::DistSquared(Enemy->GetActorLocation(), MyLocation);
 		if (DistSq <= AttackRangeSq && DistSq >= MinRangeSq)
@@ -117,7 +117,7 @@ void UDEAttackAbility::ExecuteWithTarget(float DeltaTime, AActor* Target)
 
 bool UDEAttackAbility::CanFire() const
 {
-	if (!OwnerCharacter || !OwnerCharacter->IsAlive_Implementation()) return false;
+	if (!OwnerCharacter || !OwnerCharacter->IsAlive()) return false;
 	if (bIsReloading) return false;
 	if (Config.bUseAmmo && CurrentAmmo <= 0) return false;
 

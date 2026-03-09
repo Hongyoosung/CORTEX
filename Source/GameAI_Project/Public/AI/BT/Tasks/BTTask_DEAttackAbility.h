@@ -6,16 +6,14 @@
 #include "BehaviorTree/BTTaskNode.h"
 #include "BTTask_DEAttackAbility.generated.h"
 
-class UDEAttackAbility;
 class ADECharacter;
 
 /**
- * BTTask_DEAttackAbility - BT Task that delegates combat to UAttackAbility.
- * Replaces BTTask_DECombatFire in inference mode.
+ * BTTask_DEAttackAbility - Executes DEGA_Attack via GAS.
  *
- * ExecuteTask → InProgress
- * TickTask    → reads BB keys → calls AttackAbility->ExecuteAbilityWithTarget()
- * Fails if target invalid / weapon can't fire / character dead
+ * Each tick: aims at the blackboard target via DEGA_Attack::AimAtTarget(),
+ * validates the target via DEGA_Attack::IsTargetValid(), then activates the
+ * attack ability through TryActivateAbilitiesByTag(Ability.Attack).
  *
  * Blackboard Requirements:
  * - "TargetEnemy" (Object) - Enemy actor to fire at
@@ -34,11 +32,16 @@ public:
 	virtual void TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 
 public:
-	/** Blackboard key for target enemy */
+	/** Keep firing each tick while target is valid (full-auto). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	bool bContinuousFire = true;
+
 	UPROPERTY(EditAnywhere, Category = "Blackboard")
 	FBlackboardKeySelector TargetEnemyKey;
 
-	/** Blackboard key for target validity flag */
 	UPROPERTY(EditAnywhere, Category = "Blackboard")
 	FBlackboardKeySelector HasTargetKey;
+
+protected:
+	bool bIsFiring = false;
 };
