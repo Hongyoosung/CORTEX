@@ -1,0 +1,83 @@
+RL Training Diagnostic Thresholds for Your Setup                                                                      
+  Your Setup Math                                                                                                                                                                                                   
+  ┌────────────────────┬────────────────────────────────┐                                                            
+  │     Parameter      │             Value              │   
+  ├────────────────────┼────────────────────────────────┤
+  │ Episode length     │ 500 steps                      │
+  ├────────────────────┼────────────────────────────────┤
+  │ Real-time speed    │ 3 steps/sec → ~2.8 min/episode │
+  ├────────────────────┼────────────────────────────────┤
+  │ Agents per match   │ 5 (multi-agent)                │
+  ├────────────────────┼────────────────────────────────┤
+  │ Agent-steps/match  │ 5 × 500 = 2,500                │
+  ├────────────────────┼────────────────────────────────┤
+  │ TRAIN_BATCH_SIZE   │ 12,000 → ~5 matches/iteration  │
+  ├────────────────────┼────────────────────────────────┤
+  │ Time per iteration │ ~14 minutes                    │
+  └────────────────────┴────────────────────────────────┘
+
+  ---
+  Diagnostic Signal Thresholds
+
+  Phase 1: ~50k agent-steps (~4 iterations)
+
+  ┌───────────────────────┬───────────────────┬────────────────────────────┐
+  │        Metric         │      Healthy      │       Retune Needed        │
+  ├───────────────────────┼───────────────────┼────────────────────────────┤
+  │ vf_explained_variance │ > 0 (positive)    │ < 0 (critic is random)     │
+  ├───────────────────────┼───────────────────┼────────────────────────────┤
+  │ entropy               │ > 3.5 (6-dim)     │ < 2.0 (premature collapse) │
+  ├───────────────────────┼───────────────────┼────────────────────────────┤
+  │ approx_kl             │ < 0.015           │ > 0.03 consistently        │
+  ├───────────────────────┼───────────────────┼────────────────────────────┤
+  │ policy_loss           │ Decreasing/stable │ Monotonically increasing   │
+  └───────────────────────┴───────────────────┴────────────────────────────┘
+
+  Phase 2: ~150k–200k agent-steps (~12–17 iterations)
+
+  ┌────────────────────────────────┬────────────────────┬──────────────────────────────┐
+  │             Metric             │      Healthy       │        Retune Needed         │
+  ├────────────────────────────────┼────────────────────┼──────────────────────────────┤
+  │ vf_explained_variance          │ > 0.3              │ < 0.1 (critic not learning)  │
+  ├────────────────────────────────┼────────────────────┼──────────────────────────────┤
+  │ mean_reward                    │ Positive trend     │ Flat or oscillating          │
+  ├────────────────────────────────┼────────────────────┼──────────────────────────────┤
+  │ Per-strategy reward divergence │ Visible separation │ All 3 strategies same reward │
+  ├────────────────────────────────┼────────────────────┼──────────────────────────────┤
+  │ entropy                        │ Gradual decay      │ Sudden cliff drop            │
+  └────────────────────────────────┴────────────────────┴──────────────────────────────┘
+
+  Phase 3: ~500k agent-steps (~42 iterations) — "go/no-go"
+
+  ┌───────────────────────┬───────────────────┬───────────────┐
+  │        Metric         │      Target       │     Fail      │
+  ├───────────────────────┼───────────────────┼───────────────┤
+  │ Win rate vs baseline  │ > 40%             │ < 25%         │
+  ├───────────────────────┼───────────────────┼───────────────┤
+  │ vf_explained_variance │ > 0.5             │ < 0.3         │
+  ├───────────────────────┼───────────────────┼───────────────┤
+  │ Strategy reward gap   │ Assault ≠ Support │ All identical │
+  └───────────────────────┴───────────────────┴───────────────┘
+
+  ---
+  Common Failure Signatures
+
+  1. Entropy cliff (drops to minimum in < 100k steps)
+  Cause:  entropy_coeff too low OR clip_param too tight
+  Fix:    Your ENTROPY_COEFF=0.003 is conservative — try 0.005–0.01 early
+          CLIP_PARAM=0.1 is already tight, keep it
+
+  2. vf_explained_variance stays negative past 50k steps
+  Cause:  VF_LOSS_COEFF too low OR reward scale too high/inconsistent
+  Fix:    Your VF_LOSS_COEFF=1.5 is good. Check reward normalization —
+          look at MocRewardCalculator.cpp for scale outliers
+
+  3. KL > kl_target (0.01) every iteration
+  Cause:  LR too high for current reward scale
+  Fix:    Your LEARNING_RATE=8e-5 — try 5e-5 or lower
+          Or reduce NUM_SGD_ITER from 4 to 2
+
+  4. Support policy collapses to 0 reward (your previous v10.2.0 issue)
+  With independent policies (v10.2.1), check per-policy entropy separately:
+    strategy_support_reward_mean stays near 0 past 100k steps
+  → Increase HealTickReward or AllyProximityBonus in FSupportRewardSettings

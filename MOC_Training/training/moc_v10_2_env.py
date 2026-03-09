@@ -1,0 +1,905 @@
+"""
+MOC v10.2 Synchronous Multi-Agent Environment
+
+- 3 strategies (Assault, Defend, Support)
+- 48-dim base observation + 3-dim team composition + 3-dim strategy one-hot = 54-dim total
+- Action space: Box([-1, 1]^6) for EQS weights
+- Commanders assign strategies; executors output EQS weights
+
+Architecture:
+    - Synchronous: step() blocks until UE5 responds
+    - Multi-Agent: Multiple agents per environment
+    - Command-Driven: Strategies come from Squad Commander (in UE5)
+"""
+
+from gymnasium import spaces
+import numpy as np
+import time
+from typing import Dict, Tuple, Optional
+from collections import deque
+
+try:
+    from ray.rllib.env.multi_agent_env import MultiAgentEnv
+    RLLIB_AVAILABLE = True
+except ImportError:
+    RLLIB_AVAILABLE = False
+    class MultiAgentEnv:
+        pass
+
+try:
+    from schola.core.env import ScholaEnv, AutoResetType
+    from schola.core.unreal_connections.editor_connection import UnrealEditorConnection
+    SCHOLA_AVAILABLE = True
+except ImportError:
+    SCHOLA_AVAILABLE = False
+    print("Warning: schola not installed. Run: pip install schola")
+
+
+class MOCv10_2Config:
+    """Configuration for MOC v10.2 environment."""
+    # Observation layout (48 base + 3 team composition + 3 strategy one-hot = 54 total):
+    #   Self      (7):  pos/7500(3), health(1), vel/600(3)
+    #   Allies   (16):  4 × [rel_pos/8000(3), health(1)]
+    #   Enemies  (20):  5 × [rel_pos/8000_if_visible(3), visible(1)]
+    #   Map       (5):  capture_point_status×5
+    #   Composition(3): [num_assault/5, num_defend/5, num_support/5]
+    #   Strategy  (3):  one-hot [Assault, Defend, Support]
+    OBSERVATION_BASE_SIZE = 48
+    NUM_STRATEGIES = 3  # Assault, Defend, Support
+    OBSERVATION_SIZE = 54  # 48 base + 3 composition + 3 strategy one-hot
+    NUM_EQS_WEIGHTS = 6  # EQS weight outputs
+
+
+if SCHOLA_AVAILABLE:
+
+    class MOCv10_2MultiAgentEnv(MultiAgentEnv):
+        """
+        MOC v10.2 Synchronous Multi-Agent Environment.
+
+        Design:
+            - Receives commanded strategy from UE5 Squad Commander
+            - Agents output 6-dim EQS weights in range [-1, 1]
+            - Synchronous: step() blocks until UE5 responds
+            - Clean episode boundaries with terminal state detection
+        """
+
+        def __init__(self, **kwargs):
+            super().__init__()
+
+            host = kwargs.get("host", "localhost")
+            port = self._resolve_port(kwargs)
+            self.num_envs = kwargs.get("num_envs", 4)
+            self._agent_strategies = {}  # flat_id → strategy_idx (0=Assault, 1=Defend, 2=Support)
+            self._episode_count = 0      # incremented each episode; drives round-robin rotation
+
+            # Force uniform strategy distribution: override UE5 SquadCommander assignments
+            # so each strategy head sees equal training data.
+            self._force_uniform_strategy = kwargs.get("force_uniform_strategy", True)
+
+            print(f"[MOC v10.2] Connecting to {host}:{port}...")
+            print(f"[MOC v10.2] Multi-environment: {self.num_envs} parallel UE5 envs")
+            print(f"[MOC v10.2] Architecture: Command-Driven Executor (3 strategies)")
+            print(f"[MOC v10.2] Obs Space: {MOCv10_2Config.OBSERVATION_SIZE}-dim (48 base + 3 composition + 3 strategy one-hot)")
+            print(f"[MOC v10.2] Action Space: Box([-1, 1]^{MOCv10_2Config.NUM_EQS_WEIGHTS}) EQS weights")
+
+            # Connect to UE5
+            try:
+                connection = UnrealEditorConnection(url=host, port=port)
+                self.schola_env = ScholaEnv(
+                    unreal_connection=connection,
+                    verbosity=1,
+                    auto_reset_type=AutoResetType.SAME_STEP
+                )
+                print(f"[MOC v10.2] ✅ Connected!")
+
+                # Auto-discover actual number of environments from UE5
+                actual_num_envs = len(self.schola_env.ids)
+                if actual_num_envs != self.num_envs:
+                    print(f"[MOC v10.2] 🔄 Auto-adjusting: Expected {self.num_envs} environments, discovered {actual_num_envs} from UE5")
+                    self.num_envs = actual_num_envs
+
+                total_agents = sum(len(a) for a in self.schola_env.ids)
+                print(f"[MOC v10.2] ✅ Verified {self.num_envs} environments with {total_agents} total agents")
+
+            except Exception as e:
+                print(f"[ERROR] Connection failed: {e}")
+                raise
+
+            # Agent mapping (flat agent IDs for RLlib)
+            self.agent_map = {}  # flat_id -> (env_idx, schola_agent_idx)
+            self.reverse_map = {}  # (env_idx, schola_agent_idx) -> flat_id
+            self._agent_ids = set()
+
+            if hasattr(self.schola_env, 'ids'):
+                self._update_agent_map()
+
+            # Observation/Action Spaces
+            # v10.2: 54-dim input (48 local + 3 composition + 3 strategy one-hot)
+            self._obs_space = spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(MOCv10_2Config.OBSERVATION_SIZE,),
+                dtype=np.float32
+            )
+            # v10.2: 7-dim output (EQS weights in [-1, 1])
+            self._action_space = spaces.Box(
+                low=-1.0, high=1.0,
+                shape=(MOCv10_2Config.NUM_EQS_WEIGHTS,),
+                dtype=np.float32
+            )
+
+            # Per-env strategy tracker: each env cycles independently through A/D/S.
+            # Offset by env_idx so envs are staggered and all three strategies are
+            # active simultaneously across parallel envs.
+            self._env_strategy = {i: i % 3 for i in range(self.num_envs)}
+
+            # Episode Tracking
+            self._first_reset_done = False
+            self._training_start_time = None
+            self._env_episode_steps = {i: 0 for i in range(self.num_envs)}
+            self._env_episode_start_time = {i: None for i in range(self.num_envs)}
+            self._env_episodes_completed = {i: 0 for i in range(self.num_envs)}
+            self._env_done_flags = {i: False for i in range(self.num_envs)}
+            self._agent_episode_rewards = {}  # Cumulative rewards per agent per episode
+            self._prev_cumulative_rewards = {}  # Per-agent lifetime reward baseline for delta computation
+            self._reward_debug_count = 0
+
+            # Episode timeout (backup mechanism - will sync from UE5)
+            self._max_episode_steps = 100  # Shorter episodes improve credit assignment; 100 = ~50s at 2Hz
+            self._max_episode_steps_synced = False
+            self._force_timeout_enabled = True
+
+            # Performance metrics
+            self.step_durations = deque(maxlen=100)
+            self.poll_durations = deque(maxlen=100)
+
+            # Freeze diagnostic: track inter-step gaps
+            self._last_step_return_time = None  # When step() last returned to RLlib
+            self._last_step_call_time = None    # When step() was last called
+            self._step_call_count = 0
+
+            print(f"[MOC v10.2] Initialization complete!")
+
+        def _resolve_port(self, kwargs):
+            """Resolve port for multi-worker RLlib setup."""
+            base_port = kwargs.get("base_port")
+            if base_port is not None:
+                try:
+                    from ray.rllib.evaluation.rollout_worker import get_global_worker
+                    worker = get_global_worker()
+                    worker_index = worker.worker_index if worker else 0
+                    return base_port + max(0, worker_index - 1)
+                except:
+                    return base_port
+            return kwargs.get("port", 50051)
+
+        def _update_agent_map(self):
+            """Build flat agent ID mapping for RLlib."""
+            self.agent_map.clear()
+            self.reverse_map.clear()
+            self._agent_ids.clear()
+
+            if hasattr(self.schola_env, 'ids'):
+                for physical_env_idx, agent_list in enumerate(self.schola_env.ids):
+                    for schola_agent_idx in agent_list:
+                        flat_id = f"agent_{physical_env_idx}_{schola_agent_idx}"
+                        self.agent_map[flat_id] = (physical_env_idx, schola_agent_idx)
+                        self.reverse_map[(physical_env_idx, schola_agent_idx)] = flat_id
+                        self._agent_ids.add(flat_id)
+
+            print(f"[MOC v10.2] Agent map: {len(self._agent_ids)} agents")
+
+        def _get_agents_for_env(self, physical_env_idx):
+            """Get all agent IDs belonging to a physical Schola environment."""
+            return [aid for aid in self._agent_ids if aid.startswith(f"agent_{physical_env_idx}_")]
+
+        def _assign_uniform_strategies(self):
+            """Assign strategies in round-robin across all agents for uniform distribution.
+
+            Called at every episode boundary. Rotates assignments each episode so every
+            agent cycles through all 3 strategies. Over N envs × 3 episodes, every strategy
+            receives exactly equal training exposure (5N agent-episodes each).
+
+            Pattern for 5 agents: episode 0 → [A,D,S,A,D], episode 1 → [D,S,A,D,S], episode 2 → [S,A,D,S,A]
+            """
+            self._episode_count += 1
+            agents_sorted = sorted(self._agent_ids)
+            for i, flat_id in enumerate(agents_sorted):
+                self._agent_strategies[flat_id] = (i + self._episode_count) % 3
+
+        def _get_agent_strategy(self, flat_id, ue5_strategy_idx):
+            """Get strategy for an agent, applying uniform override if enabled."""
+            if self._force_uniform_strategy:
+                # Use pre-assigned uniform strategy (set in reset / episode boundary)
+                return self._agent_strategies.get(flat_id, ue5_strategy_idx)
+            return ue5_strategy_idx
+
+        def _sync_max_episode_steps_from_ue5(self, info_dict):
+            """
+            Sync max_episode_steps from UE5 trainer info.
+
+            UE5 MocTrainer includes 'MaxSteps' in GetInfo().
+            This ensures Python uses the same timeout as UE5.
+            """
+            # Debug: Show first agent's info to verify data flow
+            if info_dict:
+                first_agent = next(iter(info_dict.keys()))
+                first_info = info_dict[first_agent]
+                print(f"[DEBUG] First agent info keys: {list(first_info.keys()) if isinstance(first_info, dict) else 'not a dict'}")
+
+            for flat_id, info in info_dict.items():
+                if isinstance(info, dict) and 'MaxSteps' in info:
+                    try:
+                        ue5_max_steps = int(info['MaxSteps'])
+                        if ue5_max_steps > 0:
+                            self._max_episode_steps = ue5_max_steps
+                            self._max_episode_steps_synced = True
+                            print(f"[MOC v10.2] ✅ Synced max_episode_steps from UE5: {self._max_episode_steps}")
+                            return
+                    except (ValueError, TypeError) as e:
+                        print(f"[DEBUG] Error parsing MaxSteps: {e}")
+
+            # If not synced, use default and warn
+            if not self._max_episode_steps_synced:
+                print(f"[MOC v10.2] ⚠️ Could not sync max_episode_steps from UE5, using default: {self._max_episode_steps}")
+                print(f"[DEBUG] Checked {len(info_dict)} agents, none had 'MaxSteps' in info")
+                self._max_episode_steps_synced = True
+
+        def _get_all_action_keys(self):
+            """Extract action keys from Schola action definitions."""
+            all_keys = {}
+            action_defns = getattr(self.schola_env, 'action_defns', {})
+
+            for flat_id in self._agent_ids:
+                env_idx, agent_idx = self.agent_map[flat_id]
+                agent_defn = action_defns.get(env_idx, {}).get(agent_idx, None)
+
+                if agent_defn is None:
+                    continue
+
+                keys_list = []
+                if hasattr(agent_defn, 'spaces'):
+                    keys_list = list(agent_defn.spaces.keys())
+                elif isinstance(agent_defn, dict):
+                    keys_list = list(agent_defn.keys())
+
+                if keys_list:
+                    all_keys[(env_idx, agent_idx)] = keys_list
+
+            return all_keys
+
+        def _extract_agent_observation(self, flat_id, obs_nested, info_nested):
+            """Extract and build observation + info for a single agent from nested Schola data.
+
+            Shared by _process_obs, _parse_step_result, and _parse_step_result_full.
+
+            Returns:
+                (obs_52dim, info_dict, strategy_idx)
+            """
+            env_idx, agent_idx = self.agent_map[flat_id]
+
+            # Extract raw observation
+            agent_obs_data = obs_nested.get(env_idx, {}).get(agent_idx, None)
+            if agent_obs_data is not None:
+                if isinstance(agent_obs_data, dict):
+                    obs_val = list(agent_obs_data.values())[0]
+                else:
+                    obs_val = agent_obs_data
+                full_obs = np.array(obs_val, dtype=np.float32).flatten()
+            else:
+                full_obs = np.zeros(54, dtype=np.float32)
+
+            # Split into base obs (48) + composition (3) + strategy one-hot (3)
+            # Layout from C++: [base(48) | composition(3) | strategy(3)] = 54
+            if len(full_obs) >= 54:
+                base_obs = full_obs[:51]  # 48 base + 3 composition = 51
+                strategy_onehot = full_obs[51:54]
+                ue5_strategy_idx = int(np.argmax(strategy_onehot))
+            elif len(full_obs) >= 51:
+                base_obs = full_obs[:51]
+                ue5_strategy_idx = 0
+            else:
+                base_obs = full_obs[:51] if len(full_obs) >= 51 else np.pad(full_obs, (0, 51 - len(full_obs)))
+                ue5_strategy_idx = 0
+
+            # Apply uniform strategy override if enabled
+            if self._force_uniform_strategy:
+                strategy_idx = self._agent_strategies.get(flat_id, ue5_strategy_idx)
+            else:
+                strategy_idx = ue5_strategy_idx
+            self._agent_strategies[flat_id] = strategy_idx
+
+            obs = self._build_observation(base_obs, strategy_idx)
+
+            # Info
+            ue5_info = info_nested.get(env_idx, {}).get(agent_idx, {})
+            if isinstance(ue5_info, dict):
+                info = {"env_id": env_idx, **ue5_info}
+            else:
+                info = {"env_id": env_idx}
+
+            return obs, info, strategy_idx
+
+        def _build_observation(self, base_obs, strategy_idx=0):
+            """Build 54-dim observation: 51 base (48 + 3 composition) + 3 strategy one-hot.
+
+            Args:
+                base_obs: 51-dim observation vector (48 base features + 3 team composition)
+                strategy_idx: Strategy index (0=Assault, 1=Defend, 2=Support)
+
+            Returns:
+                54-dim observation array
+            """
+            TARGET_BASE_SIZE = 51  # 48 base + 3 team composition
+
+            # Pad/truncate to 51 dimensions
+            if len(base_obs) < TARGET_BASE_SIZE:
+                base_obs = np.pad(base_obs[:TARGET_BASE_SIZE], (0, TARGET_BASE_SIZE - len(base_obs)), mode='constant')
+            else:
+                base_obs = base_obs[:TARGET_BASE_SIZE]
+
+            # Strategy one-hot (3-dim for v10.2)
+            strategy_onehot = np.zeros(3, dtype=np.float32)
+            strategy_idx = min(int(strategy_idx), 2)  # Range check: [0,2]
+            strategy_onehot[strategy_idx] = 1.0
+
+            # Track strategy distribution
+            if not hasattr(self, '_strategy_count'):
+                self._strategy_count = [0, 0, 0]
+            self._strategy_count[strategy_idx] += 1
+
+            # Log every 10000 observations
+            if sum(self._strategy_count) % 10000 == 0:
+                total = sum(self._strategy_count)
+                pct = [f"{100*c//total:>3}%" for c in self._strategy_count]
+                names = ["Assault", "Defend", "Support"]
+                dist_str = " | ".join([f"{n}={p}" for n, p in zip(names, pct)])
+                print(f"[STRATEGY DIST] {dist_str}")
+
+            # Final result: 51(Base+Composition) + 3(Strategy) = 54 floats
+            return np.concatenate([base_obs, strategy_onehot]).astype(np.float32)
+
+        @property
+        def observation_space(self):
+            return self._obs_space
+
+        @property
+        def action_space(self):
+            return self._action_space
+
+        # ============================================================================
+        # CORE INTERFACE: reset() and step()
+        # ============================================================================
+
+        def reset(self, *, seed=None, options=None):
+            """Reset environment."""
+            reset_start = time.time()
+            print(f"[RESET CALLED] time={time.strftime('%H:%M:%S')} first_done={self._first_reset_done}")
+
+            is_first = not self._first_reset_done
+
+            if is_first:
+                print("=" * 80)
+                print(f"RESET: First reset (v10.2 SYNCHRONOUS mode)")
+
+                # Initialize training timer
+                if self._training_start_time is None:
+                    self._training_start_time = time.time()
+
+                current_time = time.time()
+                for env_idx in range(self.num_envs):
+                    self._env_episode_steps[env_idx] = 0
+                    self._env_episode_start_time[env_idx] = current_time
+                    self._env_done_flags[env_idx] = False
+
+                # Initialize reward tracking for all agents
+                for flat_id in self._agent_ids:
+                    self._agent_episode_rewards[flat_id] = 0.0
+
+                # Hard reset (blocking call)
+                rawobs = self.schola_env.hard_reset()
+                self._first_reset_done = True
+
+                self._update_agent_map()
+
+                # Assign uniform strategies if enabled
+                if self._force_uniform_strategy:
+                    self._assign_uniform_strategies()
+                    print(f"[MOC v10.2] Uniform strategy assignment: {dict(sorted(self._agent_strategies.items()))}")
+
+                # Re-initialize reward tracking after agent map is built
+                for flat_id in self._agent_ids:
+                    self._agent_episode_rewards[flat_id] = 0.0
+
+                result = self._process_obs(rawobs)
+
+                print(f"RESET: Complete (Duration={time.time()-reset_start:.2f}s, Agents={len(result[0])})")
+                print("=" * 80)
+                return result
+
+            else:
+                # Subsequent resets: UE5 auto-resets are detected via __all__=True in step()
+                print(f"RESET: Soft reset (auto-reset detected)")
+
+                # Rotate strategies for the new episode
+                if self._force_uniform_strategy:
+                    self._assign_uniform_strategies()
+                    print(f"[MOC v10.2] Episode {self._episode_count} strategy rotation: {dict(sorted(self._agent_strategies.items()))}")
+
+                # Send dummy actions to trigger UE5 response
+                allactionkeys = self._get_all_action_keys()
+                dummy_actions = {}
+                for flat_id in self._agent_ids:
+                    env_idx, agent_idx = self.agent_map[flat_id]
+                    if env_idx not in dummy_actions:
+                        dummy_actions[env_idx] = {}
+                    agent_keys = allactionkeys.get((env_idx, agent_idx), [])
+                    if agent_keys:
+                        # v10.2: 6-dim EQS weights in [-1, 1]
+                        dummy_action = np.zeros(6, dtype=np.float32)
+                        dummy_actions[env_idx][agent_idx] = {key: dummy_action for key in agent_keys}
+
+                # Blocking send + poll
+                self.schola_env.send_actions(dummy_actions)
+                step_result = self.schola_env.poll()
+
+                obs_dict, info_dict = self._parse_step_result(step_result)
+
+                print(f"RESET: Complete (Duration={time.time()-reset_start:.2f}s)")
+                return obs_dict, info_dict
+
+        def step(self, actiondict):
+            """
+            Execute one environment step.
+
+            Args:
+                actiondict: {agent_id: eqs_weights (6-dim array in [-1, 1])}
+
+            Returns:
+                obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
+            """
+            step_start = time.time()
+            self._step_call_count += 1
+
+            # Freeze diagnostic: detect large gaps between step() calls
+            # (indicates RLlib hung during training/processing)
+            if self._last_step_return_time is not None:
+                gap = step_start - self._last_step_return_time
+                if gap > 5.0:
+                    print(f"[FREEZE DIAG] ⚠️ RLlib took {gap:.1f}s between step() calls "
+                          f"(step #{self._step_call_count}, env_steps={self._env_episode_steps})")
+                elif gap > 30.0:
+                    print(f"[FREEZE DIAG] 🚨 RLlib took {gap:.1f}s — likely training hang!")
+
+            try:
+                # 1. Format actions for Schola
+                allactionkeys = self._get_all_action_keys()
+                formattedactions = {}
+
+                for flatid, action in actiondict.items():
+                    if flatid not in self.agent_map:
+                        continue
+                    envidx, agentidx = self.agent_map[flatid]
+                    if envidx not in formattedactions:
+                        formattedactions[envidx] = {}
+
+                    # v10.2: Expect 6-dim EQS weights in [-1, 1]
+                    if isinstance(action, np.ndarray) and action.shape[0] == 6:
+                        actionarray = np.clip(action, -1.0, 1.0).astype(np.float32)
+                    else:
+                        actionarray = np.zeros(6, dtype=np.float32)
+
+                    agentkeys = allactionkeys.get((envidx, agentidx), [])
+                    if agentkeys:
+                        formattedactions[envidx][agentidx] = {key: actionarray for key in agentkeys}
+
+                # 2. Send actions (non-blocking - just stores in schola_env.next_action)
+                num_formatted = sum(len(agents) for agents in formattedactions.values())
+
+                self.schola_env.send_actions(formattedactions)
+
+                # 3. Poll for observations (BLOCKING - waits for UE5 response)
+                poll_start = time.time()
+                env_steps_summary = {i: self._env_episode_steps.get(i, 0) for i in range(self.num_envs)}
+                if not hasattr(self, '_total_step_count'):
+                    self._total_step_count = 0
+                self._total_step_count += 1
+                # Log every step for the first few, after episode boundaries, and periodically
+                steps_since_reset = self._env_episode_steps.get(0, 0)
+                if self._total_step_count <= 5 or self._total_step_count % 500 == 0 or steps_since_reset <= 2:
+                    print(f"[STEP {self._total_step_count}] Calling poll() with {num_formatted} agent actions, env_steps={env_steps_summary}")
+
+                step_result = self.schola_env.poll()
+                poll_duration = time.time() - poll_start
+                self.poll_durations.append(poll_duration)
+
+                if poll_duration > 1.0:
+                    print(f"[STEP] WARNING: poll() took {poll_duration:.1f}s")
+
+                # 4. Parse step result
+                obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict = self._parse_step_result_full(step_result)
+
+                # 4.1 Sync max_episode_steps from UE5 on first step
+                if not self._max_episode_steps_synced:
+                    self._sync_max_episode_steps_from_ue5(info_dict)
+
+                # 5. Update episode tracking
+                # v10.2: Individual agent termination is suppressed in _parse_step_result_full().
+                # Only the force timeout below ends episodes (all agents simultaneously).
+                for env_idx in range(self.num_envs):
+                    env_agents = self._get_agents_for_env(env_idx)
+                    if not env_agents:
+                        continue
+
+                    # Clear done flag from previous episode (new episode starting)
+                    if self._env_done_flags.get(env_idx, False):
+                        self._env_done_flags[env_idx] = False
+
+                    # Increment steps
+                    self._env_episode_steps[env_idx] += 1
+
+                    # Accumulate rewards
+                    for aid in env_agents:
+                        if aid in reward_dict:
+                            self._agent_episode_rewards[aid] = self._agent_episode_rewards.get(aid, 0.0) + reward_dict[aid]
+
+                    # UE5 match-end: authoritative episode boundary from SquadCommander/ScholaEnvironment
+                    ue5_match_ended = any(
+                        info_dict.get(aid, {}).get('MatchEnded', 'false') == 'true'
+                        for aid in env_agents
+                    )
+                    # Force timeout: fallback episode boundary when UE5 doesn't signal match end
+                    timeout_hit = self._force_timeout_enabled and self._env_episode_steps[env_idx] >= self._max_episode_steps
+
+                    if ue5_match_ended or timeout_hit:
+                        reason = "UE5 match ended" if ue5_match_ended else f"timeout ({self._max_episode_steps} steps)"
+                        print(f"[STEP] Episode end: Env {env_idx} — {reason}")
+                        for aid in env_agents:
+                            if ue5_match_ended:
+                                terminated_dict[aid] = True
+                            else:
+                                truncated_dict[aid] = True
+                        self._log_episode_completion(env_idx, env_agents, terminated_dict, truncated_dict)
+                        self._env_done_flags[env_idx] = True
+                        self._env_episodes_completed[env_idx] += 1
+                        self._env_episode_steps[env_idx] = 0
+                        self._env_episode_start_time[env_idx] = time.time()
+                        for aid in env_agents:
+                            self._agent_episode_rewards[aid] = 0.0
+
+                        # Rotate strategy for next episode and patch the SAME_STEP obs now.
+                        # This must happen here (not in reset()) because AutoResetType.SAME_STEP
+                        # returns the new episode's first obs inside this same step() call.
+                        if self._force_uniform_strategy:
+                            # 해당 환경의 에피소드 카운트 사용
+                            ep_count = self._env_episodes_completed[env_idx]
+                            
+                            strategy_names = {0: "Assault", 1: "Defend", 2: "Support"}
+                            print(f"[STRATEGY] Env {env_idx} ep {ep_count} Strategy Rotated for 5 Agents")
+                            
+                            for aid in env_agents:
+                                # aid 형태 (예: 'agent_0_2')에서 환경 인덱스와 에이전트 인덱스 추출
+                                _, agent_idx = self.agent_map[aid] 
+                                
+                                # 표와 정확히 일치하는 할당 공식: (Agent Index + Episode Count) % 3
+                                new_strat = (agent_idx + ep_count) % 3
+                                
+                                self._agent_strategies[aid] = new_strat
+                                
+                                if aid in obs_dict:
+                                    obs_dict[aid][51:54] = 0.0
+                                    obs_dict[aid][51 + new_strat] = 1.0
+
+                # Set __all__ after processing all environments
+                all_envs_done = all(self._env_done_flags.get(i, False) for i in range(self.num_envs))
+                if all_envs_done:
+                    terminated_dict['__all__'] = True
+                    truncated_dict['__all__'] = True
+
+                # 6. Periodic logging
+                should_log = any(
+                    self._env_episode_steps[i] % 100 == 0 and self._env_episode_steps[i] > 0
+                    for i in range(self.num_envs)
+                )
+                if should_log:
+                    self._log_progress()
+
+                # 7. Record step duration
+                step_duration = time.time() - step_start
+                self.step_durations.append(step_duration)
+
+                # Freeze diagnostic: detect NaN in rewards/observations before returning to RLlib
+                for aid, rew in reward_dict.items():
+                    if aid != '__all__' and (np.isnan(rew) or np.isinf(rew)):
+                        print(f"[FREEZE DIAG] 🚨 NaN/Inf REWARD for {aid}: {rew} at step #{self._step_call_count}")
+                for aid, obs in obs_dict.items():
+                    if isinstance(obs, np.ndarray) and (np.any(np.isnan(obs)) or np.any(np.isinf(obs))):
+                        nan_idx = np.where(np.isnan(obs) | np.isinf(obs))[0]
+                        print(f"[FREEZE DIAG] 🚨 NaN/Inf OBS for {aid}: indices={nan_idx} at step #{self._step_call_count}")
+
+                self._last_step_return_time = time.time()
+                return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
+
+            except Exception as e:
+                print(f"[STEP ERROR] {e}")
+                import traceback
+                traceback.print_exc()
+                # Return terminal state
+                return self._create_terminal_fallback()
+
+        # ============================================================================
+        # HELPER METHODS
+        # ============================================================================
+
+        def _parse_step_result(self, step_result):
+            """Parse step result into observations and info (for reset).
+
+            IMPORTANT: Also syncs _prev_cumulative_rewards so the soft-reset dummy step
+            does not produce a phantom delta at the first step of the next episode.
+            Assault agents end episodes near enemy objectives; after UE5 resets them to
+            spawn, the dummy step computes a reward (Δ_reset) that advances
+            CumulativeLifetimeReward in C++. Without syncing here, _prev_cumulative_rewards
+            stays at the end-of-episode value, so episode N+1 step 1 sees
+            info_step_reward = Δ_reset + real_step_reward instead of just real_step_reward.
+            For Assault agents Δ_reset is large and negative, zeroing out their episode reward.
+            """
+            if len(step_result) == 5:
+                obs_nested, _, _, _, info_nested = step_result
+            elif len(step_result) == 4:
+                obs_nested, _, _, info_nested = step_result
+            else:
+                obs_nested = step_result[0] if step_result else {}
+                info_nested = {}
+
+            obs_dict = {}
+            info_dict = {}
+            for flat_id in self._agent_ids:
+                obs_dict[flat_id], info_dict[flat_id], _ = self._extract_agent_observation(
+                    flat_id, obs_nested, info_nested
+                )
+
+            # Sync _prev_cumulative_rewards to consume the soft-reset step's reward
+            # so it doesn't bleed into episode N+1 step 1 as a phantom delta.
+            for flat_id in self._agent_ids:
+                info = info_dict.get(flat_id, {})
+                if 'CumulativeLifetimeReward' in info:
+                    try:
+                        self._prev_cumulative_rewards[flat_id] = float(info['CumulativeLifetimeReward'])
+                    except (ValueError, TypeError):
+                        pass
+
+            return obs_dict, info_dict
+
+        def _parse_step_result_full(self, step_result):
+            """Parse full step result into obs, rewards, terminated, truncated, info."""
+            if len(step_result) == 5:
+                obs_nested, rew_nested, term_nested, trunc_nested, info_nested = step_result
+            elif len(step_result) == 4:
+                obs_nested, rew_nested, term_nested, info_nested = step_result
+                trunc_nested = term_nested
+            else:
+                # Fallback
+                return self._create_zero_step_result()
+
+            obs_dict = {}
+            reward_dict = {}
+            terminated_dict = {}
+            truncated_dict = {}
+            info_dict = {}
+
+            for flat_id in self._agent_ids:
+                env_idx, agent_idx = self.agent_map[flat_id]
+
+                # Observation + Info (shared helper)
+                obs_dict[flat_id], info_dict[flat_id], _ = self._extract_agent_observation(
+                    flat_id, obs_nested, info_nested
+                )
+
+                # Reward (from UE5)
+                raw_reward = rew_nested.get(env_idx, {}).get(agent_idx, 0.0)
+                reward_dict[flat_id] = float(raw_reward)
+
+                # Termination
+                is_term = term_nested.get(env_idx, {}).get(agent_idx, False)
+                is_trunc = trunc_nested.get(env_idx, {}).get(agent_idx, False) if isinstance(trunc_nested, dict) else False
+                terminated_dict[flat_id] = is_term
+                truncated_dict[flat_id] = is_trunc
+
+            # v10.2 FIX: Suppress individual agent termination signals from UE5.
+            # With AutoResetType.SAME_STEP, individual agent deaths trigger auto-reset
+            # within the same step, creating new sub-episodes that mix trajectories.
+            # RLlib's postprocessing then receives batches with multiple eps_id values,
+            # causing "Batches must only contain steps from a single trajectory" error.
+            # Solution: Only Python's force timeout OR UE5 match-end ends episodes,
+            # ensuring all agents terminate simultaneously with clean boundaries.
+            ue5_match_ended = any(
+                info_dict.get(fid, {}).get('MatchEnded', 'false') == 'true'
+                for fid in info_dict if fid != '__all__'
+            )
+            for flat_id in list(terminated_dict.keys()):
+                if flat_id != '__all__':
+                    terminated_dict[flat_id] = False
+                    truncated_dict[flat_id] = False
+            terminated_dict['__all__'] = ue5_match_ended
+            truncated_dict['__all__'] = False
+
+            # v10.2 REWARD FIX: Use CumulativeLifetimeReward from info as primary reward source.
+            # Schola calls ComputeReward() multiple times per step; only the last call's
+            # return value is sent to Python. With idempotent ComputeReward(), all calls
+            # now return the same cached value. But as a safety net, we also extract
+            # rewards from the info channel using a monotonic cumulative counter.
+            #
+            # SAME_STEP note: With AutoResetType.SAME_STEP, an agent death+respawn within
+            # one Python step causes CumulativeLifetimeReward to increment TWICE (death step
+            # + respawn step 0). The delta therefore captures both rewards. Schola only
+            # sends the final ComputeReward() return (the respawn step). Using the delta
+            # is intentional: it correctly accounts for the death penalty that Schola drops.
+
+            info_reward_used = False
+            for flat_id in list(reward_dict.keys()):
+                info = info_dict.get(flat_id, {})
+                if 'CumulativeLifetimeReward' in info:
+                    try:
+                        curr_cumulative = float(info['CumulativeLifetimeReward'])
+                        prev_cumulative = self._prev_cumulative_rewards.get(flat_id, None)
+
+                        if prev_cumulative is None:
+                            # First step ever for this agent — delta is undefined, use Schola reward.
+                            self._prev_cumulative_rewards[flat_id] = curr_cumulative
+                            continue
+
+                        info_step_reward = curr_cumulative - prev_cumulative
+
+                        # Note: CumulativeLifetimeReward CAN decrease (negative step rewards
+                        # such as time/death penalties are valid). No drop detection needed —
+                        # the delta is always the correct signed step reward.
+                        self._prev_cumulative_rewards[flat_id] = curr_cumulative
+
+                        schola_reward = reward_dict[flat_id]
+                        # Prefer info-channel delta when non-trivial.
+                        # This captures rewards that Schola may have dropped (e.g., intermediate
+                        # ComputeReward() calls discarded by the gRPC layer).
+                        if abs(info_step_reward) > 1e-4:
+                            reward_dict[flat_id] = info_step_reward
+                            if not info_reward_used:
+                                info_reward_used = True
+                        # else: info delta ≈ 0 → keep Schola reward (handles first step of
+                        # a new in-episode respawn before C++ computes the new step reward)
+                    except (ValueError, TypeError):
+                        pass  # Keep Schola reward
+
+            # Debug logging (first few steps)
+            self._reward_debug_count += 1
+            if self._reward_debug_count <= 3:
+                sample_id = next(iter(reward_dict.keys()))
+                sample_info = info_dict.get(sample_id, {})
+                print(f"[REWARD DEBUG] Step {self._reward_debug_count}:")
+                print(f"  Schola raw: {rew_nested.get(0, {})}")
+                print(f"  reward_dict[{sample_id}] = {reward_dict[sample_id]:.6f}")
+                print(f"  Info CumulativeLifetimeReward: {sample_info.get('CumulativeLifetimeReward', 'N/A')}")
+                print(f"  Info LastStepReward: {sample_info.get('LastStepReward', 'N/A')}")
+                print(f"  Info EpisodeReward: {sample_info.get('EpisodeReward', 'N/A')}")
+            if info_reward_used and self._reward_debug_count == 1:
+                print(f"[REWARD] Using info-channel rewards (CumulativeLifetimeReward delta) instead of Schola rewards")
+
+            return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
+
+        def _process_obs(self, raw_data):
+            """Process observation from reset."""
+            obs_nested = raw_data
+            info_nested = {}
+
+            if isinstance(raw_data, tuple):
+                if len(raw_data) >= 5:
+                    obs_nested, _, _, _, info_nested = raw_data
+                elif len(raw_data) >= 4:
+                    obs_nested, _, _, info_nested = raw_data
+                else:
+                    obs_nested = raw_data[0]
+
+            obs_dict = {}
+            info_dict = {}
+            for flat_id in self._agent_ids:
+                obs_dict[flat_id], info_dict[flat_id], _ = self._extract_agent_observation(
+                    flat_id, obs_nested, info_nested
+                )
+            return obs_dict, info_dict
+
+        def _log_episode_completion(self, env_idx, env_agents, terminated_dict, truncated_dict):
+            """Log episode completion with detailed stats."""
+            episode_duration = time.time() - self._env_episode_start_time.get(env_idx, time.time())
+            env_total_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
+
+            was_truncated = any(truncated_dict.get(aid, False) for aid in env_agents)
+            end_type = "TRUNCATED (timeout)" if was_truncated else "TERMINATED (team annihilation)"
+
+            print("=" * 80)
+            print(f"🏁 [ENV {env_idx} EPISODE COMPLETE] Episode {self._env_episodes_completed[env_idx]} - {end_type}")
+            print(f"  Duration: {episode_duration:.1f}s, Steps: {self._env_episode_steps[env_idx]}")
+            print(f"  Total Reward: {env_total_reward:.2f}")
+            print(f"  Agent Rewards:")
+            for aid in sorted(env_agents):
+                agent_reward = self._agent_episode_rewards.get(aid, 0.0)
+                print(f"    {aid}: {agent_reward:.2f}")
+            print("=" * 80)
+
+        def _log_progress(self):
+            """Log periodic progress for all environments."""
+            first_milestone_env = next(
+                i for i in range(self.num_envs)
+                if self._env_episode_steps[i] % 100 == 0 and self._env_episode_steps[i] > 0
+            )
+
+            print("=" * 80)
+            print(f"[PROGRESS] Step Milestone={self._env_episode_steps[first_milestone_env]}")
+
+            training_elapsed = time.time() - self._training_start_time
+            for env_idx in range(self.num_envs):
+                episode_time = time.time() - self._env_episode_start_time[env_idx] if self._env_episode_start_time[env_idx] else 0
+
+                env_agents = self._get_agents_for_env(env_idx)
+                env_reward = sum(self._agent_episode_rewards.get(aid, 0.0) for aid in env_agents)
+
+                sample_agents = sorted(env_agents)
+                sample_rewards_str = ", ".join([f"{aid}={self._agent_episode_rewards.get(aid, 0.0):.1f}" for aid in sample_agents])
+
+                status = "⚡" if episode_time < 60 else "🔥"
+                done_flag = "✅ DONE" if self._env_done_flags.get(env_idx, False) else "▶️ ACTIVE"
+                print(f"  {status} Env {env_idx}: {done_flag}, Episode {self._env_episodes_completed[env_idx]}, "
+                      f"Steps={self._env_episode_steps[env_idx]}, EpisodeTime={episode_time:.1f}s, "
+                      f"CurrentReward={env_reward:.2f} (samples: {sample_rewards_str})")
+
+            # Performance metrics
+            avg_poll = np.mean(self.poll_durations) if self.poll_durations else 0
+            avg_step = np.mean(self.step_durations) if self.step_durations else 0
+            print(f"  📊 Total Training Elapsed: {training_elapsed:.1f}s")
+            print(f"  ⏱️ Avg step={avg_step*1000:.1f}ms, poll={avg_poll*1000:.1f}ms")
+            print("=" * 80)
+
+        def _create_zero_step_result(self):
+            """Create zero-filled step result for fallback."""
+            obs_dict = {}
+            for flat_id in self._agent_ids:
+                strategy_idx = self._agent_strategies.get(flat_id, 0)
+                obs_dict[flat_id] = self._build_observation(np.zeros(51, dtype=np.float32), strategy_idx)
+
+            reward_dict = {flat_id: 0.0 for flat_id in self._agent_ids}
+            terminated_dict = {flat_id: False for flat_id in self._agent_ids}
+            terminated_dict['__all__'] = False
+            truncated_dict = {flat_id: False for flat_id in self._agent_ids}
+            truncated_dict['__all__'] = False
+            info_dict = {flat_id: {} for flat_id in self._agent_ids}
+
+            return obs_dict, reward_dict, terminated_dict, truncated_dict, info_dict
+
+        def _create_terminal_fallback(self):
+            """Create terminal fallback for error handling."""
+            fallback_obs = {}
+            for flat_id in self._agent_ids:
+                strategy_idx = self._agent_strategies.get(flat_id, 0)
+                fallback_obs[flat_id] = self._build_observation(np.zeros(51, dtype=np.float32), strategy_idx)
+
+            terminated_fallback = {flat_id: True for flat_id in self._agent_ids}
+            terminated_fallback['__all__'] = True
+            truncated_fallback = {flat_id: False for flat_id in self._agent_ids}
+            truncated_fallback['__all__'] = False
+            return (
+                fallback_obs,
+                {flat_id: 0.0 for flat_id in self._agent_ids},
+                terminated_fallback,
+                truncated_fallback,
+                {flat_id: {} for flat_id in self._agent_ids}
+            )
+
+        # ============================================================================
+        # CLEANUP
+        # ============================================================================
+
+        def render(self):
+            return None
+
+        def close(self):
+            """Clean shutdown."""
+            print("[MOC v10.2] Closing environment...")
+            if hasattr(self.schola_env, 'close'):
+                self.schola_env.close()
+            print("[MOC v10.2] Closed")

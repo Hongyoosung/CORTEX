@@ -2,10 +2,10 @@
 # Reduces build time and image size
 
 # Training results and checkpoints (large, frequently changing)
-CORTEX_Training/training_results/
-CORTEX_Training/models/
-CORTEX_Training/__pycache__/
-CORTEX_Training/*.pyc
+MOC_Training/training_results/
+MOC_Training/models/
+MOC_Training/__pycache__/
+MOC_Training/*.pyc
 
 # UE5 build artifacts (huge, not needed in container)
 Binaries/
@@ -34,7 +34,7 @@ $RECYCLE.BIN/
 
 # Documentation (not needed in runtime image)
 *.md
-!CORTEX_Training/README.md
+!MOC_Training/README.md
 
 # Plugins (except Schola)
 Plugins/*
@@ -47,5 +47,5 @@ Content/
 Source/
 
 # Keep only what's needed:
-# - CORTEX_Training/ (Python scripts)
+# - MOC_Training/ (Python scripts)
 # - Plugins/Schola-1.3.0/Resources/python (Schola package)

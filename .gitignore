@@ -152,3 +152,7 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+
+
+# Assets
+Content/ModularSciFi/

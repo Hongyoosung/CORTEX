@@ -25,7 +25,11 @@ public class GameAI_Project : ModuleRules
             "Schola",
             "NNE",
             "NNERuntimeORT",
-            "GameplayTags"
+            "GameplayTags",
+            "Niagara",
+            "UMG",
+            "Slate",
+            "SlateCore",
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]
