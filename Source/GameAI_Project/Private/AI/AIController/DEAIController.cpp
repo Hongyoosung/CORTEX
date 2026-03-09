@@ -109,10 +109,12 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     {
         BB->SetValueAsObject(TEXT("TargetEnemy"), BestEnemy);
         BB->SetValueAsBool(TEXT("HasTarget"), true);
+        SetFocus(BestEnemy);
     }
     else
     {
         BB->SetValueAsBool(TEXT("HasTarget"), false);
+        ClearFocus(EAIFocusPriority::Gameplay);
     }
 }
 

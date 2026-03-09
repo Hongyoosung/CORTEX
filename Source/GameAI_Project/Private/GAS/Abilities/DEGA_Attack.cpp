@@ -13,6 +13,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
+#include "AIController.h"
 
 UDEGA_Attack::UDEGA_Attack()
 {
@@ -61,6 +62,14 @@ void UDEGA_Attack::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
 	if (Target)
 	{
+		// Set AI focus so ControlRotation tracks the target (drives Aim Offset in AnimBP)
+		if (APawn* OwnerPawn = Cast<APawn>(GetAvatarActorFromActorInfo()))
+		{
+			if (AAIController* AICtrl = Cast<AAIController>(OwnerPawn->GetController()))
+			{
+				AICtrl->SetFocus(Target);
+			}
+		}
 		FireAtTarget(Target, ActorInfo);
 	}
 
@@ -84,31 +93,6 @@ bool UDEGA_Attack::CanFire() const
 	return true;
 }
 
-void UDEGA_Attack::AimAtTarget(AActor* Target)
-{
-	APawn* OwnerPawn = Cast<APawn>(GetAvatarActorFromActorInfo());
-	if (!OwnerPawn || !Target) return;
-
-	FVector Direction = Target->GetActorLocation() - OwnerPawn->GetActorLocation();
-	Direction.Z = 0.0f;
-	Direction.Normalize();
-
-	FRotator TargetRot = Direction.Rotation();
-	FRotator CurrentRot = OwnerPawn->GetActorRotation();
-
-	FRotator NewRot;
-	if (Config.AimRotationSpeed > 0.0f)
-	{
-		float DeltaTime = OwnerPawn->GetWorld()->GetDeltaSeconds();
-		NewRot = FMath::RInterpConstantTo(CurrentRot, TargetRot, DeltaTime, Config.AimRotationSpeed);
-	}
-	else
-	{
-		NewRot = TargetRot;
-	}
-
-	OwnerPawn->SetActorRotation(NewRot);
-}
 
 bool UDEGA_Attack::IsTargetValid(AActor* Target) const
 {
@@ -371,12 +355,16 @@ void UDEGA_Attack::ResetState()
 
 void UDEGA_Attack::StartReload()
 {
-	bIsReloading = true;
-	if (const AActor* AvatarActor = GetAvatarActorFromActorInfo())
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	if (!AvatarActor)
 	{
-		const_cast<AActor*>(AvatarActor)->GetWorldTimerManager().SetTimer(
-			ReloadTimerHandle, this, &UDEGA_Attack::CompleteReload, Config.ReloadTime, false);
+		// Can't start timer without a valid actor; skip reload to avoid permanently blocking fire.
+		return;
 	}
+
+	bIsReloading = true;
+	const_cast<AActor*>(AvatarActor)->GetWorldTimerManager().SetTimer(
+		ReloadTimerHandle, this, &UDEGA_Attack::CompleteReload, Config.ReloadTime, false);
 }
 
 void UDEGA_Attack::CompleteReload()

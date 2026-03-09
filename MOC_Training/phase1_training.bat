@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-SET "NUM_SCHOLA_ENVS=4"
+SET "NUM_SCHOLA_ENVS=1"
 SET "NUM_WORKERS=0"
 SET "NUM_ITERATIONS=150"
 SET "DETACH=false"

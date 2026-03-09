@@ -56,9 +56,6 @@ public:
 
 	// --- Combat Interface (used by BT tasks) ---
 
-	/** Aim the pawn toward Target using configured AimRotationSpeed. */
-	void AimAtTarget(AActor* Target);
-
 	/** Return true if Target is alive, within range, and (if configured) visible. */
 	bool IsTargetValid(AActor* Target) const;
 

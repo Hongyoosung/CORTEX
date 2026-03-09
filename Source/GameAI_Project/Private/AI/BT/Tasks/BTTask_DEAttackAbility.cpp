@@ -41,8 +41,6 @@ EBTNodeResult::Type UBTTask_DEAttackAbility::ExecuteTask(UBehaviorTreeComponent&
 	AActor* Target = Cast<AActor>(BB->GetValueAsObject(TargetEnemyKey.SelectedKeyName));
 	if (!Target || !Ability->IsTargetValid(Target)) return EBTNodeResult::Failed;
 
-	Ability->AimAtTarget(Target);
-
 	FGameplayTagContainer AttackTag;
 	AttackTag.AddTag(DEGameplayTags::Ability_Attack);
 	const bool bActivated = Character->GetAbilitySystemComponent()->TryActivateAbilitiesByTag(AttackTag);
@@ -89,8 +87,6 @@ void UBTTask_DEAttackAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8*
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;
 	}
-
-	Ability->AimAtTarget(Target);
 
 	if (Ability->CanFire())
 	{

@@ -22,10 +22,12 @@
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "AIController.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "BrainComponent.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Misc/Optional.h"
+#include "Components/WidgetComponent.h"
 
 
 ADECharacter::ADECharacter()
@@ -41,6 +43,14 @@ ADECharacter::ADECharacter()
 	ScholaAgent =	CreateDefaultSubobject<UDEScholaAgent>(TEXT("ScholaAgent"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 	EQSExecutor =	CreateDefaultSubobject<UDEEQSExecutor>(TEXT("EQSExecutor"));
+
+	// Overhead strategy + health widget (screen space)
+	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadWidget"));
+	OverheadWidgetComponent->SetupAttachment(GetCapsuleComponent());
+	OverheadWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 120.0f));
+	OverheadWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	OverheadWidgetComponent->SetDrawSize(FVector2D(200.0f, 60.0f));
+	OverheadWidgetComponent->SetPivot(FVector2D(0.5f, 1.0f));
 
 	// Create third-person spectator camera
 	CameraSpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraSpringArm"));
@@ -62,7 +72,10 @@ ADECharacter::ADECharacter()
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
 		MovementComp->MaxWalkSpeed = 600.0f;
+		// Keep body facing the movement direction so directional (strafe) blend spaces work.
+		// Upper-body aiming toward the focus target is handled via AimYaw/AimPitch → Aim Offset in AnimBP.
 		MovementComp->bOrientRotationToMovement = true;
+		MovementComp->bUseControllerDesiredRotation = false;
 		MovementComp->bUseRVOAvoidance = true;
 		MovementComp->AvoidanceConsiderationRadius = 120.f;
 	}
@@ -130,6 +143,7 @@ void ADECharacter::PossessedBy(AController* NewController)
 void ADECharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
 }
 
 

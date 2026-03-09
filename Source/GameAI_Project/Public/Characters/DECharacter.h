@@ -29,6 +29,7 @@ class UCameraComponent;
 class UEnvQuery;
 class UNiagaraComponent;
 class UNiagaraSystem;
+class UWidgetComponent;
 
 class ADECharacter;
 class UDERewardSubsystem;
@@ -261,6 +262,14 @@ public:
 	//========================================
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Rewards")
 	FDERewardState RewardState;
+
+
+	//========================================
+	// Overhead HUD Widget
+	//========================================
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|UI")
+	TObjectPtr<UWidgetComponent> OverheadWidgetComponent;
 
 
 	//========================================
