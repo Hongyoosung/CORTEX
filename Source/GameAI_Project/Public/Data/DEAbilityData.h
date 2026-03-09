@@ -7,6 +7,8 @@
 #include "GameplayEffect.h"
 #include "DEAbilityData.generated.h"
 
+class UDEGA_Attack;
+class UDEGA_Heal;
 class ADEProjectileBase;
 class UNiagaraSystem;
 class UAnimMontage;
@@ -18,6 +20,14 @@ USTRUCT(BlueprintType)
 struct FDEAttackAbilityConfig
 {
 	GENERATED_BODY()
+
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Ability")
+	TSubclassOf<UDEGA_Attack> AbilityClass;
+
+	/** GE Blueprint to apply damage to the target. Must use SetByCaller with tag Data.Damage. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	float Range = 8000.0f;
@@ -64,9 +74,7 @@ struct FDEAttackAbilityConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	bool bRequireLineOfSight = true;
 
-	/** GE Blueprint to apply damage to the target. Must use SetByCaller with tag Data.Damage. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
-	TSubclassOf<UGameplayEffect> DamageEffectClass;
+	
 };
 
 /**
@@ -76,6 +84,13 @@ USTRUCT(BlueprintType)
 struct FDEHealAbilityConfig
 {
 	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Ability")
+	TSubclassOf<UDEGA_Heal> AbilityClass;
+
+	/** GE Blueprint to apply healing. Must use SetByCaller with tag Data.Healing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	TSubclassOf<UGameplayEffect> HealEffectClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	float Range = 800.0f;
@@ -89,9 +104,6 @@ struct FDEHealAbilityConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	TObjectPtr<UNiagaraSystem> HealBeamSystem;
 
-	/** GE Blueprint to apply healing. Must use SetByCaller with tag Data.Healing. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
-	TSubclassOf<UGameplayEffect> HealEffectClass;
 };
 
 /**

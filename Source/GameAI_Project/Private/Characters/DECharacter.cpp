@@ -75,6 +75,13 @@ void ADECharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Ensure GAS actor info is set before any ability grants.
+	// PossessedBy may not fire before BeginPlay when spawned during another actor's BeginPlay.
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	}
+
 	// Subscribe to Health attribute changes for death detection
 	if (AbilitySystemComponent && AttributeSet)
 	{
@@ -144,22 +151,46 @@ void ADECharacter::InitializeGASAbilities()
 {
 	if (!AbilitySystemComponent || !AbilityData) return;
 
-	// Grant Attack ability
+	// 1. Grant Attack ability
+	// Pass the class to GiveAbility — GAS creates and owns the instance internally.
+	// Retrieve the GAS-managed instance afterward so SetConfig targets the real object.
+	if (AbilityData->AttackConfig.AbilityClass)
 	{
-		AttackAbility = NewObject<UDEGA_Attack>(this);
-		AttackAbility->SetConfig(AbilityData->AttackConfig);
+		FGameplayAbilitySpec AttackSpec(AbilityData->AttackConfig.AbilityClass, 1, INDEX_NONE, this);
+		FGameplayAbilitySpecHandle AttackHandle = AbilitySystemComponent->GiveAbility(AttackSpec);
 
-		FGameplayAbilitySpec AttackSpec(AttackAbility, 1, INDEX_NONE, this);
-		AbilitySystemComponent->GiveAbility(AttackSpec);
+		if (FGameplayAbilitySpec* GrantedSpec = AbilitySystemComponent->FindAbilitySpecFromHandle(AttackHandle))
+		{
+			AttackAbility = Cast<UDEGA_Attack>(GrantedSpec->GetPrimaryInstance());
+			if (AttackAbility)
+			{
+				AttackAbility->SetConfig(AbilityData->AttackConfig);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[%s] AttackAbilityClass is not assigned to DA_AbilityConfig!"), *GetName());
 	}
 
-	// Grant Heal ability
+	// 2. Grant Heal ability
+	if (AbilityData->HealConfig.AbilityClass)
 	{
-		HealAbility = NewObject<UDEGA_Heal>(this);
-		HealAbility->SetConfig(AbilityData->HealConfig);
+		FGameplayAbilitySpec HealSpec(AbilityData->HealConfig.AbilityClass, 1, INDEX_NONE, this);
+		FGameplayAbilitySpecHandle HealHandle = AbilitySystemComponent->GiveAbility(HealSpec);
 
-		FGameplayAbilitySpec HealSpec(HealAbility, 1, INDEX_NONE, this);
-		AbilitySystemComponent->GiveAbility(HealSpec);
+		if (FGameplayAbilitySpec* GrantedSpec = AbilitySystemComponent->FindAbilitySpecFromHandle(HealHandle))
+		{
+			HealAbility = Cast<UDEGA_Heal>(GrantedSpec->GetPrimaryInstance());
+			if (HealAbility)
+			{
+				HealAbility->SetConfig(AbilityData->HealConfig);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[%s] HealAbilityClass is not assigned to DA_AbilityConfig!"), *GetName());
 	}
 }
 
@@ -273,6 +304,17 @@ float ADECharacter::ApplyDamageToSelf(float DamageAmount, AActor* DamageInstigat
 
 	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
 	Context.AddInstigator(DamageInstigator, DamageCauser);
+
+	FHitResult HitResult;
+	HitResult.bBlockingHit = true;          
+	HitResult.Location = HitLocation;       
+	HitResult.ImpactPoint = HitLocation;    
+	HitResult.Normal = HitNormal;          
+	HitResult.ImpactNormal = HitNormal;
+	HitResult.HitObjectHandle = FActorInstanceHandle(this); 
+
+	Context.AddHitResult(HitResult);
+
 	FGameplayEffectSpecHandle SpecHandle = AbilitySystemComponent->MakeOutgoingSpec(DamageEffectClass, 1.0f, Context);
 	if (SpecHandle.IsValid())
 	{
