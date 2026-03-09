@@ -1,0 +1,86 @@
+; ============================================================================
+; UE5 Engine Configuration for Headless Training
+;
+; This configuration optimizes UE5 for headless training mode:
+; - Disables rendering/graphics features
+; - Reduces physics quality for faster simulation
+; - Enables server-side optimizations
+; - Configures training-specific settings
+;
+; Usage:
+;   Copy this file to Config/DefaultEngine.ini when running training
+; ============================================================================
+
+[/Script/Engine.Engine]
+; Disable rendering features
+bUseFixedFrameRate=True
+FixedFrameRate=60.000000
+bSmoothFrameRate=False
+
+[/Script/Engine.RendererSettings]
+; Null RHI (no GPU rendering)
+r.DefaultFeature.AutoExposure=False
+r.DefaultFeature.MotionBlur=False
+r.DefaultFeature.Bloom=False
+r.DefaultFeature.AmbientOcclusion=False
+r.DefaultFeature.AmbientOcclusionStaticFraction=False
+r.Shadow.MaxResolution=512
+r.Shadow.MinResolution=32
+
+[/Script/Engine.GameEngine]
+; Server optimizations
+bUseVSync=False
+MaxChannelSize=32768
+
+[/Script/EngineSettings.GameMapsSettings]
+; Default training map
+GameDefaultMap=/Game/Maps/MOC_Arena.MOC_Arena
+ServerDefaultMap=/Game/Maps/MOC_Arena.MOC_Arena
+GlobalDefaultGameMode=/Script/GameAI_Project.MocGameMode
+
+[/Script/Engine.PhysicsSettings]
+; Reduce physics quality for faster simulation
+DefaultGravityZ=-980.000000
+TickPhysicsAsync=True
+bEnableAsyncScene=True
+PhysicErrorCorrection=(PingExtrapolation=0.1,ErrorPerLinearDifference=1.0,ErrorPerAngularDifference=1.0,MaxRestoredStateError=1.0,PositionLerp=0.0,AngleLerp=0.4,LinearVelocityCoefficient=100.0,AngularVelocityCoefficient=10.0,ErrorAccumulationSeconds=0.5,ErrorAccumulationDistanceSq=15.0,ErrorAccumulationSimilarity=100.0)
+MaxPhysicsDeltaTime=0.033333
+bSubstepping=False
+
+[/Script/Engine.NetworkSettings]
+; Network settings for local training
+n.VerifyPeer=False
+p.EnableMultiplayerWorldOriginRebasing=False
+
+[Core.Log]
+; Enable detailed logging for training
+LogAI=Verbose
+LogMoc=Verbose
+LogSchola=Log
+LogTemp=Log
+
+[Core.System]
+; Performance settings
+Paths=../../../Engine/Content
+Paths=%GAMEDIR%Content
+Paths=../../../Engine/Plugins/Schola/Content
+
+[ConsoleVariables]
+; Console variables for headless mode
+t.MaxFPS=60
+r.SetRes=1280x720w
+sg.ViewDistanceQuality=0
+sg.ShadowQuality=0
+sg.TextureQuality=0
+sg.EffectsQuality=0
+sg.PostProcessQuality=0
+r.VSync=0
+r.ScreenPercentage=50
+
+; Disable expensive features
+fx.Niagara.AllowRuntimeScalability=0
+r.Streaming.PoolSize=400
+r.Streaming.MaxTempMemoryAllowed=100
+
+; Training-specific
+ai.debug.nav.EditorTimeSlice=0.1

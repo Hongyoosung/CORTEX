@@ -47,6 +47,8 @@ void UAbstractGymConnector::ResetCompletedEnvironments()
 	this->SubmitPostResetState(this->TrainingState);
 	UE_LOG(LogSchola, Verbose, TEXT("Reset %d Environments"), Count);
 
+	UE_LOG(LogSchola, Warning, TEXT("ResetCompletedEnvironments: Reset $d Environments"));
+
 	//We set the environment back to running once we've sent out the state etc. etc.
 	for (AAbstractScholaEnvironment* Environment : this->Environments)
 	{
