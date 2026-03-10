@@ -347,7 +347,7 @@ public:
 	//========================================
 	// CapturePoints
 	//========================================
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "AI|Environment")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Transient, Category = "AI|Environment")
 	TArray<ADECapturePoint*> AssignedCapturePoints;
 
 
@@ -387,12 +387,18 @@ protected:
 
 	bool bWeightsDirty = false;
 	float SpawnTime = 0.0f;
+	int32 TacticalActionCallCount = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FVector LastEQSTargetLocation = FVector::ZeroVector;
 
+	/** Initial strategy applied at BeginPlay. Set per-agent in the Details panel. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Strategy",
+		meta = (DisplayName = "Default Strategy"))
+	EDEStrategyType DefaultStrategy = EDEStrategyType::Assault;
+
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
-	EDEStrategyType CommandedStrategy = EDEStrategyType::Support;
+	EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
 
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FDEEQSWeightParameters CurrentEQSWeights;

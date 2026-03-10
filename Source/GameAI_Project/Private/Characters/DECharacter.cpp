@@ -126,6 +126,9 @@ void ADECharacter::BeginPlay()
 		);
 	}
 
+	// Apply the per-agent default strategy configured in the Details panel.
+	// SetCommandedStrategy also syncs the ScholaAgent component.
+	SetCommandedStrategy(DefaultStrategy);
 	ApplyStrategyStatModifiers(CommandedStrategy);
 }
 
@@ -602,12 +605,12 @@ void ADECharacter::PerformTacticalAction()
 	UBlackboardComponent* BB = AICtrl->GetBlackboardComponent();
 	bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EDEAgentMode::Training;
 
-	static int32 PerfTactDiagCount = 0;
-	if (++PerfTactDiagCount <= 5)
+	TacticalActionCallCount++;
+	if (TacticalActionCallCount <= 10 || TacticalActionCallCount % 60 == 0)
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DECharacter] %s PerformTacticalAction#%d: bIsTraining=%s BB=%s → Branch=%s"),
-			*GetName(), PerfTactDiagCount,
+			*GetName(), TacticalActionCallCount,
 			bIsTraining ? TEXT("true") : TEXT("false"),
 			BB ? TEXT("Valid") : TEXT("NULL"),
 			(BB && !bIsTraining) ? TEXT("INFERENCE") : TEXT("TRAINING"));

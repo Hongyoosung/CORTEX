@@ -1,0 +1,143 @@
+# DE v10.2 — AWS Training Dockerfile
+#
+# Differences from local Dockerfile:
+#   - Non-root user (de) for security
+#   - ENV DISPLAY=:0 for UE5 headless / virtual framebuffer compatibility
+#   - NVIDIA CUDA base for GPU inference on g4dn head node
+#   - s3fs + awscli pre-installed for checkpoint syncing
+#
+# Build & push:
+#   docker build -f aws/Dockerfile.aws -t de:v10-2-latest .
+#   docker tag de:v10-2-latest \
+#       <account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest
+#   aws ecr get-login-password | docker login --username AWS --password-stdin \
+#       <account>.dkr.ecr.us-east-1.amazonaws.com
+#   docker push <account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu20.04
+
+###############################################################################
+# System dependencies
+###############################################################################
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build tools
+    build-essential \
+    git \
+    curl \
+    wget \
+    # Process utilities
+    procps \
+    htop \
+    # X11 / virtual display (required by some UE5 plugins that probe $DISPLAY)
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    xvfb \
+    # FUSE / S3 mount
+    s3fs \
+    fuse \
+    # AWS CLI
+    awscli \
+    # Python
+    python3.10 \
+    python3.10-dev \
+    python3.10-distutils \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.10 the default python
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 && \
+    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
+###############################################################################
+# Non-root user for security
+###############################################################################
+ARG UID=1001
+ARG GID=1001
+
+RUN groupadd -g ${GID} de && \
+    useradd -u ${UID} -g de -m -s /bin/bash de && \
+    # Allow de user to mount FUSE filesystems (needed for s3fs)
+    usermod -aG fuse de
+
+###############################################################################
+# Python packages (installed as root for system-wide availability)
+###############################################################################
+WORKDIR /app
+
+COPY DE_Training/requirements.txt ./requirements.txt
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    # wandb for experiment tracking
+    pip install --no-cache-dir wandb && \
+    # PyTorch with CUDA 12.1
+    pip install --no-cache-dir \
+        torch>=2.0.0 \
+        --extra-index-url https://download.pytorch.org/whl/cu121
+
+# Schola UE5 gRPC bridge
+COPY Plugins/Schola-1.3.0/Resources/python /tmp/schola
+RUN pip install --no-cache-dir /tmp/schola[rllib] && \
+    rm -rf /tmp/schola
+
+###############################################################################
+# Copy application code
+###############################################################################
+COPY DE_Training/ .
+
+# Transfer ownership to non-root user
+RUN chown -R de:de /app
+
+###############################################################################
+# Environment variables
+###############################################################################
+
+# Virtual display — required by UE5 plugins that probe $DISPLAY at import time
+ENV DISPLAY=:0
+
+# Ray / RLlib
+ENV RAY_DISABLE_MEMORY_MONITOR=1
+ENV RAY_memory_usage_threshold=0.95
+ENV OMP_NUM_THREADS=1
+
+# Training defaults (overridable via docker run -e or cluster.yaml env_vars)
+ENV NUM_WORKERS=4
+ENV NUM_ITERATIONS=500
+ENV HOST=host.docker.internal
+ENV PORT=50051
+
+# W&B — set WANDB_API_KEY at runtime; do NOT bake credentials into the image
+ENV WANDB_PROJECT=de-v10-2
+
+###############################################################################
+# S3 mount helper script
+###############################################################################
+COPY --chown=de:de aws/scripts/mount_s3.sh /usr/local/bin/mount_s3.sh
+RUN chmod +x /usr/local/bin/mount_s3.sh
+
+###############################################################################
+# Ports
+###############################################################################
+EXPOSE 6006   # TensorBoard
+EXPOSE 8265   # Ray dashboard
+EXPOSE 50051 50052 50053 50054  # Schola gRPC
+
+###############################################################################
+# Health check
+###############################################################################
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import ray; import torch; import schola; print('ok')" || exit 1
+
+###############################################################################
+# Switch to non-root user
+###############################################################################
+USER de
+
+###############################################################################
+# Entrypoint
+###############################################################################
+CMD ["python", "train_rllib.py"]

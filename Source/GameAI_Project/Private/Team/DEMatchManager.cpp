@@ -55,6 +55,15 @@ void ADEMatchManager::BeginPlay()
 		// Configuration is pushed later by ADEScholaEnvironment via MakeSquadConfig().
 		SquadCommanders.Add(ID, Commander);
 	}
+
+	// In standalone/inference mode there is no ADEScholaEnvironment to call
+	// CapturePointInitialize(), so we do it here ourselves.
+	if (bStandaloneMode)
+	{
+		CapturePointInitialize();
+		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Standalone mode — capture points auto-initialized (%d points)"),
+			EnvCapturePoints.Num());
+	}
 }
 
 void ADEMatchManager::Tick(float DeltaTime)

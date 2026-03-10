@@ -296,6 +296,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Squad")
 	FString TeamWorldModelPath;
 
+	/**
+	 * Standalone / Inference mode — no ADEScholaEnvironment in the level.
+	 * When true, BeginPlay() calls CapturePointInitialize() automatically
+	 * so capture points are bound without Schola setup.
+	 * Assign EnvCapturePoints manually in the editor.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Standalone")
+	bool bStandaloneMode = false;
+
 	/** Use epsilon-greedy instead of MCTS (faster data collection) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Squad")
 	bool bDataCollectionMode = false;

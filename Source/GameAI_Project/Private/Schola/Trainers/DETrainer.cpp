@@ -234,33 +234,33 @@ void ADETrainer::Tick(float DeltaTime)
         // Log at regular intervals to diagnose freeze
         if (TicksWithoutNewWeights % FreezeWatchdogInterval == 0)
         {
-            const float FrozenSeconds = TicksWithoutNewWeights * 0.0167f;
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] FREEZE WATCHDOG: %s — %d ticks (%.1fs) without new weights | Alive=%s | Steps=%d | bHasNewReward=%s"),
-                *ControlledCharacter->GetName(),
-                TicksWithoutNewWeights,
-                FrozenSeconds,
-                ControlledCharacter->IsAlive() ? TEXT("true") : TEXT("false"),
-                CurrentEpisodeSteps,
-                bHasNewReward ? TEXT("true") : TEXT("false"));
+            //const float FrozenSeconds = TicksWithoutNewWeights * 0.0167f;
+            //UE_LOG(LogTemp, Warning,
+            //    TEXT("[DETrainer] FREEZE WATCHDOG: %s — %d ticks (%.1fs) without new weights | Alive=%s | Steps=%d | bHasNewReward=%s"),
+            //    *ControlledCharacter->GetName(),
+            //    TicksWithoutNewWeights,
+            //    FrozenSeconds,
+            //    ControlledCharacter->IsAlive() ? TEXT("true") : TEXT("false"),
+            //    CurrentEpisodeSteps,
+            //    bHasNewReward ? TEXT("true") : TEXT("false"));
 
-            // Diagnose why weights are not arriving
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] FREEZE DIAG: %s — Controller=%s | Pawn=%s | DEAgent=%s | Health=%.1f%%"),
-                *ControlledCharacter->GetName(),
-                ControlledCharacter->GetController() ? *ControlledCharacter->GetController()->GetName() : TEXT("NULL"),
-                GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
-                DEAgent ? *DEAgent->GetName() : TEXT("NULL"),
-                ControlledCharacter->GetHealthPercentage() * 100.0f);
+            //// Diagnose why weights are not arriving
+            //UE_LOG(LogTemp, Warning,
+            //    TEXT("[DETrainer] FREEZE DIAG: %s — Controller=%s | Pawn=%s | DEAgent=%s | Health=%.1f%%"),
+            //    *ControlledCharacter->GetName(),
+            //    ControlledCharacter->GetController() ? *ControlledCharacter->GetController()->GetName() : TEXT("NULL"),
+            //    GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
+            //    DEAgent ? *DEAgent->GetName() : TEXT("NULL"),
+            //    ControlledCharacter->GetHealthPercentage() * 100.0f);
 
-            // Check if this trainer is actually possessing the character
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] FREEZE DIAG: %s — Trainer(%s) Pawn==%s? %s | ControlledChar==%s"),
-                *ControlledCharacter->GetName(),
-                *GetName(),
-                GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
-                (GetPawn() == ControlledCharacter) ? TEXT("YES") : TEXT("NO - MISMATCH!"),
-                *ControlledCharacter->GetName());
+            //// Check if this trainer is actually possessing the character
+            //UE_LOG(LogTemp, Warning,
+            //    TEXT("[DETrainer] FREEZE DIAG: %s — Trainer(%s) Pawn==%s? %s | ControlledChar==%s"),
+            //    *ControlledCharacter->GetName(),
+            //    *GetName(),
+            //    GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
+            //    (GetPawn() == ControlledCharacter) ? TEXT("YES") : TEXT("NO - MISMATCH!"),
+            //    *ControlledCharacter->GetName());
         }
     }
 
