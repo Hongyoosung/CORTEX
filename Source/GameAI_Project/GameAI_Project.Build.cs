@@ -30,6 +30,9 @@ public class GameAI_Project : ModuleRules
             "UMG",
             "Slate",
             "SlateCore",
+            "GameplayAbilities",
+            "GameplayTags",
+            "GameplayTasks"
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]

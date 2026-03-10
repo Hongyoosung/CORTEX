@@ -259,12 +259,12 @@ FDEObservation UDETacticalObserver::GatherBaseObservation() const
 	// Self state
 	Obs.Position = Character->GetActorLocation();
 	Obs.EnvironmentOrigin = CachedEnvironmentOrigin;
-	Obs.Health = Character->GetHealthPercentage_Implementation();
+	Obs.Health = Character->GetHealthPercentage();
 	Obs.Velocity = Character->GetVelocity();
-	Obs.WeaponCooldown = Character->GetWeaponCooldown_Implementation();
+	Obs.WeaponCooldown = Character->GetWeaponCooldown();
 	// CurrentStrategy and bIsAlive stored for reward logic, not included in ToArray
 	Obs.CurrentStrategy = Character->GetCommandedStrategy();
-	Obs.bIsAlive = Character->IsAlive_Implementation();
+	Obs.bIsAlive = Character->IsAlive();
 
 	const int32 MyTeamID = Character->GetTeamID_Implementation();
 	const int32 MyEnvID = Character->GetEnvID_Implementation();
@@ -285,7 +285,7 @@ FDEObservation UDETacticalObserver::GatherBaseObservation() const
 			if (AllyIndex >= 4) break;
 
 			Obs.AllyPositions[AllyIndex] = Ally->GetActorLocation();
-			Obs.AllyHealths[AllyIndex] = Ally->GetHealthPercentage_Implementation();
+			Obs.AllyHealths[AllyIndex] = Ally->GetHealthPercentage();
 			AllyIndex++;
 		}
 
@@ -342,7 +342,7 @@ FDEObservation UDETacticalObserver::GatherBaseObservation() const
 				if (AllyIndex < 4)
 				{
 					Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
-					Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
+					Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage();
 					AllyIndex++;
 				}
 			}

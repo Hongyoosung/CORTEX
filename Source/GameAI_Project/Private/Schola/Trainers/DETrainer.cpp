@@ -158,7 +158,7 @@ void ADETrainer::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    if (!ControlledCharacter || !ControlledCharacter->IsAlive_Implementation())
+    if (!ControlledCharacter || !ControlledCharacter->IsAlive())
     {
         // Dead agents MUST still drain any queued action so Schola's multi-agent
         // step barrier can advance. Schola waits for all agents to acknowledge their
@@ -234,33 +234,33 @@ void ADETrainer::Tick(float DeltaTime)
         // Log at regular intervals to diagnose freeze
         if (TicksWithoutNewWeights % FreezeWatchdogInterval == 0)
         {
-            const float FrozenSeconds = TicksWithoutNewWeights * 0.0167f;
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] FREEZE WATCHDOG: %s — %d ticks (%.1fs) without new weights | Alive=%s | Steps=%d | bHasNewReward=%s"),
-                *ControlledCharacter->GetName(),
-                TicksWithoutNewWeights,
-                FrozenSeconds,
-                ControlledCharacter->IsAlive_Implementation() ? TEXT("true") : TEXT("false"),
-                CurrentEpisodeSteps,
-                bHasNewReward ? TEXT("true") : TEXT("false"));
+            //const float FrozenSeconds = TicksWithoutNewWeights * 0.0167f;
+            //UE_LOG(LogTemp, Warning,
+            //    TEXT("[DETrainer] FREEZE WATCHDOG: %s — %d ticks (%.1fs) without new weights | Alive=%s | Steps=%d | bHasNewReward=%s"),
+            //    *ControlledCharacter->GetName(),
+            //    TicksWithoutNewWeights,
+            //    FrozenSeconds,
+            //    ControlledCharacter->IsAlive() ? TEXT("true") : TEXT("false"),
+            //    CurrentEpisodeSteps,
+            //    bHasNewReward ? TEXT("true") : TEXT("false"));
 
-            // Diagnose why weights are not arriving
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] FREEZE DIAG: %s — Controller=%s | Pawn=%s | DEAgent=%s | Health=%.1f%%"),
-                *ControlledCharacter->GetName(),
-                ControlledCharacter->GetController() ? *ControlledCharacter->GetController()->GetName() : TEXT("NULL"),
-                GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
-                DEAgent ? *DEAgent->GetName() : TEXT("NULL"),
-                ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f);
+            //// Diagnose why weights are not arriving
+            //UE_LOG(LogTemp, Warning,
+            //    TEXT("[DETrainer] FREEZE DIAG: %s — Controller=%s | Pawn=%s | DEAgent=%s | Health=%.1f%%"),
+            //    *ControlledCharacter->GetName(),
+            //    ControlledCharacter->GetController() ? *ControlledCharacter->GetController()->GetName() : TEXT("NULL"),
+            //    GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
+            //    DEAgent ? *DEAgent->GetName() : TEXT("NULL"),
+            //    ControlledCharacter->GetHealthPercentage() * 100.0f);
 
-            // Check if this trainer is actually possessing the character
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] FREEZE DIAG: %s — Trainer(%s) Pawn==%s? %s | ControlledChar==%s"),
-                *ControlledCharacter->GetName(),
-                *GetName(),
-                GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
-                (GetPawn() == ControlledCharacter) ? TEXT("YES") : TEXT("NO - MISMATCH!"),
-                *ControlledCharacter->GetName());
+            //// Check if this trainer is actually possessing the character
+            //UE_LOG(LogTemp, Warning,
+            //    TEXT("[DETrainer] FREEZE DIAG: %s — Trainer(%s) Pawn==%s? %s | ControlledChar==%s"),
+            //    *ControlledCharacter->GetName(),
+            //    *GetName(),
+            //    GetPawn() ? *GetPawn()->GetName() : TEXT("NULL"),
+            //    (GetPawn() == ControlledCharacter) ? TEXT("YES") : TEXT("NO - MISMATCH!"),
+            //    *ControlledCharacter->GetName());
         }
     }
 
@@ -332,7 +332,7 @@ float ADETrainer::ComputeReward()
         CumulativeLifetimeReward += CachedStepReward;
 
         // Log transition — skip dead-agent drain steps (observations are meaningless)
-        if (bLogTransitions && TransitionLogger && ControlledCharacter->IsAlive_Implementation())
+        if (bLogTransitions && TransitionLogger && ControlledCharacter->IsAlive())
         {
             LogTransition(
                 PreviousObservation,
@@ -397,11 +397,11 @@ FDEObservation ADETrainer::GatherStateObservation()
     // Self state
     Obs.Position = ControlledCharacter->GetActorLocation();
     Obs.EnvironmentOrigin = CachedScholaEnvironment ? CachedScholaEnvironment->GetActorLocation() : FVector::ZeroVector;
-    Obs.Health = ControlledCharacter->GetHealthPercentage_Implementation();
+    Obs.Health = ControlledCharacter->GetHealthPercentage();
     Obs.Velocity = ControlledCharacter->GetVelocity();
-    Obs.WeaponCooldown = ControlledCharacter->GetWeaponCooldown_Implementation();
+    Obs.WeaponCooldown = ControlledCharacter->GetWeaponCooldown();
     Obs.CurrentStrategy = ControlledCharacter->GetCommandedStrategy();
-    Obs.bIsAlive = ControlledCharacter->IsAlive_Implementation();
+    Obs.bIsAlive = ControlledCharacter->IsAlive();
 
     const int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
     const FVector MyLocation = ControlledCharacter->GetActorLocation();
@@ -419,7 +419,7 @@ FDEObservation ADETrainer::GatherStateObservation()
             if (AllyIndex >= 4) break;
 
             Obs.AllyPositions[AllyIndex] = Ally->GetActorLocation();
-            Obs.AllyHealths[AllyIndex] = Ally->GetHealthPercentage_Implementation();
+            Obs.AllyHealths[AllyIndex] = Ally->GetHealthPercentage();
             AllyIndex++;
         }
 
@@ -474,7 +474,7 @@ FDEObservation ADETrainer::GatherStateObservation()
                 if (AllyIndex < 4)
                 {
                     Obs.AllyPositions[AllyIndex] = OtherChar->GetActorLocation();
-                    Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage_Implementation();
+                    Obs.AllyHealths[AllyIndex] = OtherChar->GetHealthPercentage();
                     AllyIndex++;
                 }
             }
@@ -787,7 +787,7 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
     // In v10.2 team-based architecture, agents stay dead until their entire team
     // is eliminated, then the team respawns as a group via DEMatchManager::ProcessRespawnQueue().
     // The episode only ends on match termination (time expired, score limit) or max steps.
-    if (!ControlledCharacter->IsAlive_Implementation())
+    if (!ControlledCharacter->IsAlive())
     {
         // Agent is dead — continue episode, let DEMatchManager handle group respawn
         return EAgentTrainingStatus::Running;
@@ -841,8 +841,8 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
     {
         Info.Add(TEXT("Strategy"), UEnum::GetValueAsString(CachedCommandedStrategy));
         Info.Add(TEXT("Health"), FString::Printf(TEXT("%.1f%%"),
-            ControlledCharacter->GetHealthPercentage_Implementation() * 100.0f));
-        Info.Add(TEXT("IsAlive"), ControlledCharacter->IsAlive_Implementation() ? TEXT("true") : TEXT("false"));
+            ControlledCharacter->GetHealthPercentage() * 100.0f));
+        Info.Add(TEXT("IsAlive"), ControlledCharacter->IsAlive() ? TEXT("true") : TEXT("false"));
 
         FVector EQSTarget = ControlledCharacter->GetLastEQSTargetLocation();
         if (!EQSTarget.IsZero())

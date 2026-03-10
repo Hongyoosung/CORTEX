@@ -1,0 +1,7 @@
+Tag,DevComment
+State.Dead,Character is dead - blocks ability activation
+State.Debuff,Character has a debuff applied
+Ability.Attack,Identity tag for attack ability
+Ability.Heal,Identity tag for heal ability
+Cooldown.Attack,Cooldown tag for attack ability
+Cooldown.Heal,Cooldown tag for heal ability

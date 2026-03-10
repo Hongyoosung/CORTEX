@@ -23,7 +23,7 @@ void UDEHealAbility::Execute(float DeltaTime)
 		CachedMatchManager = GetMatchManager();
 	}
 
-	if (!OwnerCharacter || !OwnerCharacter->IsAlive_Implementation() || !CachedMatchManager)
+	if (!OwnerCharacter || !OwnerCharacter->IsAlive() || !CachedMatchManager)
 	{
 		UpdateHealBeam(nullptr);
 		return;
@@ -33,7 +33,7 @@ void UDEHealAbility::Execute(float DeltaTime)
 	if (Target)
 	{
 		float HealAmount = Config.Rate * DeltaTime;
-		float ActualHeal = Target->Heal_Implementation(HealAmount);
+		float ActualHeal = Target->HealCharacter(HealAmount);
 		
 		LastTickHealAmount = ActualHeal;
 		CumulativeHealAmount += ActualHeal;
@@ -50,10 +50,10 @@ void UDEHealAbility::Execute(float DeltaTime)
 void UDEHealAbility::ExecuteWithTarget(float DeltaTime, AActor* Target)
 {
 	ADECharacter* DETarget = Cast<ADECharacter>(Target);
-	if (DETarget && DETarget->IsAlive_Implementation())
+	if (DETarget && DETarget->IsAlive())
 	{
 		float HealAmount = Config.Rate * DeltaTime;
-		float ActualHeal = DETarget->Heal_Implementation(HealAmount);
+		float ActualHeal = DETarget->HealCharacter(HealAmount);
 		
 		LastTickHealAmount = ActualHeal;
 		CumulativeHealAmount += ActualHeal;
@@ -91,10 +91,10 @@ ADECharacter* UDEHealAbility::FindNearestInjuredAlly() const
 
 	for (ADECharacter* Ally : Allies)
 	{
-		if (!Ally || Ally == OwnerCharacter || !Ally->IsAlive_Implementation()) continue;
+		if (!Ally || Ally == OwnerCharacter || !Ally->IsAlive()) continue;
 
 		// Only heal if injured
-		if (Ally->GetHealthPercentage_Implementation() >= 1.0f) continue;
+		if (Ally->GetHealthPercentage() >= 1.0f) continue;
 
 		float DistSq = FVector::DistSquared(Ally->GetActorLocation(), MyLoc);
 		if (DistSq < MinDistSq)

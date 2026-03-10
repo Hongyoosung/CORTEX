@@ -74,7 +74,7 @@ void UEnvQueryContext_DEEnemies::ProvideContext(FEnvQueryInstance& QueryInstance
 			ADECharacter* PerceivedChar = Cast<ADECharacter>(Actor);
 
 			if (PerceivedChar &&
-				PerceivedChar->IsAlive_Implementation() &&
+				PerceivedChar->IsAlive() &&
 				PerceivedChar->GetTeamID_Implementation() != MyTeamID &&
 				PerceivedChar->GetEnvID_Implementation() == MyEnvID)
 			{
@@ -109,7 +109,7 @@ void UEnvQueryContext_DEEnemies::ProvideContext(FEnvQueryInstance& QueryInstance
 
 			if (!Candidate ||
 				Candidate == DEChar ||
-				!Candidate->IsAlive_Implementation() ||
+				!Candidate->IsAlive() ||
 				Candidate->GetTeamID_Implementation() == MyTeamID ||
 				Candidate->GetEnvID_Implementation() != MyEnvID)
 			{
@@ -167,7 +167,7 @@ void UEnvQueryContext_DEAllies::ProvideContext(FEnvQueryInstance& QueryInstance,
 
 		// 본인이 아니며, 살아있고, 같은 팀이며, 같은 환경인 경우 수집
 		if (Ally && Ally != DEChar &&
-			Ally->IsAlive_Implementation() &&
+			Ally->IsAlive() &&
 			Ally->GetTeamID_Implementation() == MyTeamID &&
 			Ally->GetEnvID_Implementation() == MyEnvID)
 		{

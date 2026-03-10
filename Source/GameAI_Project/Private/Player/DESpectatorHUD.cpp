@@ -3,9 +3,7 @@
 #include "Player/DESpectatorHUD.h"
 #include "Player/DESpectatorController.h"
 #include "Characters/DECharacter.h"
-#include "Combat/Components/DEHealthComponent.h"
-#include "Combat/Components/DEAbilityComponent.h"
-#include "Combat/Abilities/DEAttackAbility.h"
+#include "GAS/Abilities/DEGA_Attack.h"
 #include "Types/DEStrategyTypes.h"
 #include "Engine/Canvas.h"
 #include "Engine/Font.h"
@@ -26,24 +24,15 @@ void ADESpectatorHUD::DrawHUD()
 	const EDEStrategyType Strategy = Agent->GetCommandedStrategy();
 	const FDEEQSWeightParameters Weights = Agent->GetEQSWeights();
 
-	float HealthPct   = 0.0f;
+	float HealthPct   = Agent->GetHealthPercentage();
 	int32 CurrentAmmo = 0;
 	int32 MaxAmmo     = 0;
 
-	if (UDEHealthComponent* HC = Agent->GetHealthComponent())
+	if (UDEGA_Attack* Attack = Agent->GetAttackAbility())
 	{
-		HealthPct = HC->GetHealthPercentage();
-	}
-
-	if (UDEAbilityComponent* AC = Agent->GetAbilityComponent())
-	{
-		if (UDEAttackAbility* Attack = AC->GetAttackAbility())
-		{
-			CurrentAmmo = Attack->GetCurrentAmmo();
-			// Reconstruct max ammo from percentage (avoid dependency on AbilityData directly)
-			const float AmmoPct = Attack->GetAmmoPercentage();
-			MaxAmmo = (AmmoPct > 0.0f) ? FMath::RoundToInt(static_cast<float>(CurrentAmmo) / AmmoPct) : 0;
-		}
+		CurrentAmmo = Attack->GetCurrentAmmo();
+		const float AmmoPct = Attack->GetAmmoPercentage();
+		MaxAmmo = (AmmoPct > 0.0f) ? FMath::RoundToInt(static_cast<float>(CurrentAmmo) / AmmoPct) : 0;
 	}
 
 	// ---- Strategy label (top-left, large) ----
@@ -54,15 +43,15 @@ void ADESpectatorHUD::DrawHUD()
 	{
 	case EDEStrategyType::Assault:
 		StrategyName  = TEXT("ASSAULT");
-		StrategyColor = FLinearColor(1.0f, 0.15f, 0.05f, 1.0f); // Red
+		StrategyColor = FLinearColor(1.0f, 0.15f, 0.05f, 1.0f);
 		break;
 	case EDEStrategyType::Defend:
 		StrategyName  = TEXT("DEFEND");
-		StrategyColor = FLinearColor(0.1f, 0.4f, 1.0f, 1.0f);   // Blue
+		StrategyColor = FLinearColor(0.1f, 0.4f, 1.0f, 1.0f);
 		break;
 	case EDEStrategyType::Support:
 		StrategyName  = TEXT("SUPPORT");
-		StrategyColor = FLinearColor(0.45f, 1.0f, 0.45f, 1.0f); // Light Green
+		StrategyColor = FLinearColor(0.45f, 1.0f, 0.45f, 1.0f);
 		break;
 	default:
 		StrategyName  = TEXT("UNKNOWN");
@@ -97,7 +86,6 @@ void ADESpectatorHUD::DrawStrategyLabel(const FString& StrategyName, const FLine
 	TextItem.OutlineColor = FLinearColor::Black;
 	Canvas->DrawItem(TextItem);
 
-	// Measure text height to position bars below
 	float TextW = 0.0f, TextH = 0.0f;
 	GetTextSize(StrategyName, TextW, TextH, GEngine->GetLargeFont(), FontScale);
 	OutBottomY = MarginY + TextH + 8.0f;
@@ -114,11 +102,9 @@ void ADESpectatorHUD::DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 M
 	const float BarHeight = 18.0f;
 	const float RowSpacing = 28.0f;
 
-	// Health
 	const FString HealthLabel = FString::Printf(TEXT("HP  %d%%"), FMath::RoundToInt(HealthPct * 100.0f));
 	DrawBar(HealthLabel, HealthPct, FLinearColor(0.05f, 0.85f, 0.1f, 0.9f), MarginX, TopY, BarWidth, BarHeight);
 
-	// Ammo
 	const float AmmoPct = (MaxAmmo > 0) ? FMath::Clamp(static_cast<float>(CurrentAmmo) / static_cast<float>(MaxAmmo), 0.0f, 1.0f) : 0.0f;
 	const FString AmmoLabel = FString::Printf(TEXT("AMM %d / %d"), CurrentAmmo, MaxAmmo);
 	DrawBar(AmmoLabel, AmmoPct, FLinearColor(0.9f, 0.75f, 0.1f, 0.9f), MarginX, TopY + RowSpacing, BarWidth, BarHeight);
@@ -126,12 +112,10 @@ void ADESpectatorHUD::DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 M
 
 void ADESpectatorHUD::DrawBar(const FString& Label, float Fraction, const FLinearColor& BarColor, float X, float Y, float Width, float Height)
 {
-	// Background
 	FCanvasTileItem BgTile(FVector2D(X, Y), FVector2D(Width, Height), FLinearColor(0.0f, 0.0f, 0.0f, 0.55f));
 	BgTile.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(BgTile);
 
-	// Fill
 	const float FillW = FMath::Clamp(Fraction, 0.0f, 1.0f) * Width;
 	if (FillW > 0.0f)
 	{
@@ -140,7 +124,6 @@ void ADESpectatorHUD::DrawBar(const FString& Label, float Fraction, const FLinea
 		Canvas->DrawItem(FillTile);
 	}
 
-	// Label
 	FCanvasTextItem TextItem(
 		FVector2D(X + 4.0f, Y + 1.0f),
 		FText::FromString(Label),
@@ -163,14 +146,12 @@ void ADESpectatorHUD::DrawEQSWeights(const FDEEQSWeightParameters& Weights)
 	const float MarginY   = 24.0f;
 	const float RowHeight = 20.0f;
 
-	// Six weight rows, listed from bottom
 	const int32 NumRows = 6;
 	const float StartY = Canvas->SizeY - MarginY - NumRows * RowHeight - 20.0f;
 
-	// Header
 	FCanvasTextItem Header(
 		FVector2D(MarginX, StartY),
-		FText::FromString(TEXT("── EQS Weights ──")),
+		FText::FromString(TEXT("-- EQS Weights --")),
 		GEngine->GetSmallFont(),
 		FLinearColor(0.7f, 0.7f, 0.7f, 1.0f)
 	);
@@ -187,7 +168,6 @@ void ADESpectatorHUD::DrawEQSWeights(const FDEEQSWeightParameters& Weights)
 
 void ADESpectatorHUD::DrawWeightRow(const FString& Label, float Value, float X, float Y)
 {
-	// Colour-code: positive → green tint, negative → red tint, near-zero → grey
 	FLinearColor TextColor;
 	if (Value > 0.05f)       TextColor = FLinearColor(0.3f, 1.0f, 0.3f, 1.0f);
 	else if (Value < -0.05f) TextColor = FLinearColor(1.0f, 0.35f, 0.35f, 1.0f);

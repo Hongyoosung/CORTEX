@@ -53,22 +53,54 @@ void ADEAIController::BeginPlay()
 
 void ADEAIController::OnPossess(APawn* InPawn)
 {
-    UE_LOG(LogTemp, Log, TEXT("[DEAIC] OnPossess BEGIN — Pawn: %s"), InPawn ? *InPawn->GetName() : TEXT("NULL"));
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC] ===== OnPossess BEGIN ====="));
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   Controller : %s"), *GetName());
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   Pawn       : %s"), InPawn ? *InPawn->GetName() : TEXT("NULL"));
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT Asset   : %s"), BehaviorTreeAsset ? *BehaviorTreeAsset->GetName() : TEXT("NULL — assign in BP_AIC!"));
 
     Super::OnPossess(InPawn);
 
-    UE_LOG(LogTemp, Log, TEXT("[DEAIC] OnPossess AFTER Super — BehaviorTreeAsset: %s"),
-        BehaviorTreeAsset ? *BehaviorTreeAsset->GetName() : TEXT("NULL (not assigned!)"));
+    // --- Blackboard component check ---
+    UBlackboardComponent* BB = GetBlackboardComponent();
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BB (after Super::OnPossess): %s"), BB ? *BB->GetName() : TEXT("NULL"));
 
-    if (BehaviorTreeAsset)
+    // --- BehaviorTreeComponent check ---
+    UBrainComponent* Brain = GetBrainComponent();
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BrainComponent: %s  (class: %s)"),
+        Brain ? *Brain->GetName() : TEXT("NULL"),
+        Brain ? *Brain->GetClass()->GetName() : TEXT("N/A"));
+
+    if (!BehaviorTreeAsset)
     {
-        bool bSuccess = RunBehaviorTree(BehaviorTreeAsset);
-        UE_LOG(LogTemp, Log, TEXT("[DEAIC] RunBehaviorTree result: %s"), bSuccess ? TEXT("SUCCESS") : TEXT("FAILED"));
+        UE_LOG(LogTemp, Error, TEXT("[DEAIC] ✗ BehaviorTreeAsset is NULL — BT will NOT run! Assign BT_DEAgent in BP_AIC defaults."));
+        return;
+    }
+
+    // --- BB asset match check ---
+    if (BehaviorTreeAsset->BlackboardAsset)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT expects BB: %s"), *BehaviorTreeAsset->BlackboardAsset->GetName());
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("[DEAIC] BehaviorTreeAsset is NULL — assign it in BP_DEAIC!"));
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT has no BlackboardAsset set — BB keys will be missing!"));
     }
+
+    bool bSuccess = RunBehaviorTree(BehaviorTreeAsset);
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   RunBehaviorTree: %s"), bSuccess ? TEXT("✓ SUCCESS") : TEXT("✗ FAILED"));
+
+    if (bSuccess)
+    {
+        // Verify BT is actually active after start
+        UBrainComponent* BrainAfter = GetBrainComponent();
+        bool bBTRunning = BrainAfter && BrainAfter->IsRunning();
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT running after start: %s"), bBTRunning ? TEXT("✓ YES") : TEXT("✗ NO — check BB asset mismatch"));
+
+        UBlackboardComponent* BBAfter = GetBlackboardComponent();
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BB valid after start  : %s"), BBAfter ? TEXT("✓ YES") : TEXT("✗ NO"));
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC] ===== OnPossess END ====="));
 }
 
 void ADEAIController::OnUnPossess()
@@ -87,6 +119,11 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     );
 
     UBlackboardComponent* BB = GetBlackboardComponent();
+    if (!BB)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC] OnPerceptionUpdated — BB is NULL (BT not running?), skipping."));
+        return;
+    }
 
     // Filter by EnvID and TeamID for parallel environment isolation
     ADECharacter* Self = Cast<ADECharacter>(GetPawn());
@@ -109,10 +146,12 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     {
         BB->SetValueAsObject(TEXT("TargetEnemy"), BestEnemy);
         BB->SetValueAsBool(TEXT("HasTarget"), true);
+        SetFocus(BestEnemy);
     }
     else
     {
         BB->SetValueAsBool(TEXT("HasTarget"), false);
+        ClearFocus(EAIFocusPriority::Gameplay);
     }
 }
 

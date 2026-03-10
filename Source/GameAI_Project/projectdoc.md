@@ -509,7 +509,7 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
 
     // 에이전트 사망은 에피소드 종료가 아님.
     // DEMatchManager가 팀 단위로 리스폰을 처리할 때까지 Running 유지.
-    if (!ControlledCharacter->IsAlive_Implementation())
+    if (!ControlledCharacter->IsAlive())
         return EAgentTrainingStatus::Running;
 
     // 매치 종료(시간 초과, 점수 도달)도 종료 조건
@@ -528,7 +528,7 @@ Schola의 멀티에이전트 스텝 배리어는 **모든** 에이전트가 액�
 
 ```cpp
 // DETrainer.cpp — Tick() 사망 에이전트 처리
-if (!ControlledCharacter->IsAlive_Implementation())
+if (!ControlledCharacter->IsAlive())
 {
     // 사망 중에도 Schola의 액션을 소비하여 스텝 배리어를 해제
     if (ControlledCharacter->ConsumeNewWeights())

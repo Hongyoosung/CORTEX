@@ -1,15 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Characters/DECharacter.h"
-#include "Combat/Abilities/DEAttackAbility.h"
-#include "Combat/Abilities/DEHealAbility.h"
-#include "Combat/Components/DEHealthComponent.h"
+#include "GAS/DEAttributeSet.h"
+#include "GAS/DEGameplayTags.h"
+#include "GAS/Abilities/DEGA_Attack.h"
+#include "GAS/Abilities/DEGA_Heal.h"
 #include "Schola/Components/DEScholaAgent.h"
 #include "Schola/Actuators/DETacticalParameterActuator.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
 #include "AI/EQS/DEEQSExecutor.h"
+#include "Data/DEAbilityData.h"
 
-
+#include "AbilitySystemComponent.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -20,10 +22,12 @@
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "AIController.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "BrainComponent.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Misc/Optional.h"
+#include "Components/WidgetComponent.h"
 
 
 ADECharacter::ADECharacter()
@@ -31,14 +35,24 @@ ADECharacter::ADECharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Create components
-	DEHealthComponent = CreateDefaultSubobject<UDEHealthComponent>(TEXT("DEHealthComponent"));
-	ScholaAgent =		CreateDefaultSubobject<UDEScholaAgent>(TEXT("ScholaAgent"));
-	StimuliSource =		CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
-	EQSExecutor =		CreateDefaultSubobject<UDEEQSExecutor>(TEXT("EQSExecutor"));
-	AbilityComponent =	CreateDefaultSubobject<UDEAbilityComponent>(TEXT("AbilityComponent"));
+	// Create GAS components
+	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
+	AttributeSet = CreateDefaultSubobject<UDEAttributeSet>(TEXT("AttributeSet"));
 
-	// Create third-person spectator camera (inactive during normal AI operation)
+	// Create other components
+	ScholaAgent =	CreateDefaultSubobject<UDEScholaAgent>(TEXT("ScholaAgent"));
+	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
+	EQSExecutor =	CreateDefaultSubobject<UDEEQSExecutor>(TEXT("EQSExecutor"));
+
+	// Overhead strategy + health widget (screen space)
+	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadWidget"));
+	OverheadWidgetComponent->SetupAttachment(GetCapsuleComponent());
+	OverheadWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 120.0f));
+	OverheadWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	OverheadWidgetComponent->SetDrawSize(FVector2D(200.0f, 60.0f));
+	OverheadWidgetComponent->SetPivot(FVector2D(0.5f, 1.0f));
+
+	// Create third-person spectator camera
 	CameraSpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraSpringArm"));
 	CameraSpringArm->SetupAttachment(GetCapsuleComponent());
 	CameraSpringArm->TargetArmLength = 350.0f;
@@ -54,30 +68,19 @@ ADECharacter::ADECharacter()
 	AgentCamera->SetupAttachment(CameraSpringArm, USpringArmComponent::SocketName);
 	AgentCamera->bUsePawnControlRotation = false;
 
-
-	// Configure DEHealthComponent
-	if (DEHealthComponent)
-	{
-		DEHealthComponent->MaxHealth = 100.0f;
-		DEHealthComponent->StartingHealth = 100.0f;
-		DEHealthComponent->bEnableHealthRegen = false;
-	}
-
-	// Configure movement (Section 0.3 - Movement Speed)
+	// Configure movement
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
-		MovementComp->MaxWalkSpeed = 600.0f; // 6 m/s
+		MovementComp->MaxWalkSpeed = 600.0f;
+		// Keep body facing the movement direction so directional (strafe) blend spaces work.
+		// Upper-body aiming toward the focus target is handled via AimYaw/AimPitch → Aim Offset in AnimBP.
 		MovementComp->bOrientRotationToMovement = true;
-
-		// Prevent agents from stacking on each other
+		MovementComp->bUseControllerDesiredRotation = false;
 		MovementComp->bUseRVOAvoidance = true;
-		MovementComp->AvoidanceConsiderationRadius = 120.f; // ~2× capsule radius
+		MovementComp->AvoidanceConsiderationRadius = 120.f;
 	}
 
-	// Let movement component handle rotation, not controller
 	bUseControllerRotationYaw = false;
-
-	// Auto-possession by AI
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 }
 
@@ -85,10 +88,18 @@ void ADECharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Subscribe to death event
-	if (DEHealthComponent)
+	// Ensure GAS actor info is set before any ability grants.
+	// PossessedBy may not fire before BeginPlay when spawned during another actor's BeginPlay.
+	if (AbilitySystemComponent)
 	{
-		DEHealthComponent->OnDeath_Delegate.AddDynamic(this, &ADECharacter::OnDeath);
+		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	}
+
+	// Subscribe to Health attribute changes for death detection
+	if (AbilitySystemComponent && AttributeSet)
+	{
+		AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UDEAttributeSet::GetHealthAttribute()).AddUObject(this, &ADECharacter::OnHealthChanged);
 	}
 
 	// Register perception stimuli
@@ -100,7 +111,8 @@ void ADECharacter::BeginPlay()
 
 	RewardSubsystem = GetWorld()->GetSubsystem<UDERewardSubsystem>();
 
-
+	// Initialize GAS abilities from data asset
+	InitializeGASAbilities();
 
 	const bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EDEAgentMode::Training;
 	if (bIsTraining)
@@ -109,22 +121,96 @@ void ADECharacter::BeginPlay()
 			TrainingAbilityTimerHandle,
 			this,
 			&ADECharacter::ProcessTrainingAbilities,
-			0.2f, // 1초에 5번만 실행 (매 프레임 실행 대비 압도적인 성능 향상)
+			0.2f,
 			true
 		);
 	}
 
-
-	// Apply modifier for the initial commanded strategy
+	// Apply the per-agent default strategy configured in the Details panel.
+	// SetCommandedStrategy also syncs the ScholaAgent component.
+	SetCommandedStrategy(DefaultStrategy);
 	ApplyStrategyStatModifiers(CommandedStrategy);
+}
 
+void ADECharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
 
+	// GAS requires ASC to be initialized after possession
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	}
 }
 
 void ADECharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
 }
+
+
+//========================================
+// IAbilitySystemInterface
+//========================================
+
+UAbilitySystemComponent* ADECharacter::GetAbilitySystemComponent() const
+{
+	return AbilitySystemComponent;
+}
+
+
+//========================================
+// GAS Ability Initialization
+//========================================
+
+void ADECharacter::InitializeGASAbilities()
+{
+	if (!AbilitySystemComponent || !AbilityData) return;
+
+	// 1. Grant Attack ability
+	// Pass the class to GiveAbility — GAS creates and owns the instance internally.
+	// Retrieve the GAS-managed instance afterward so SetConfig targets the real object.
+	if (AbilityData->AttackConfig.AbilityClass)
+	{
+		FGameplayAbilitySpec AttackSpec(AbilityData->AttackConfig.AbilityClass, 1, INDEX_NONE, this);
+		FGameplayAbilitySpecHandle AttackHandle = AbilitySystemComponent->GiveAbility(AttackSpec);
+
+		if (FGameplayAbilitySpec* GrantedSpec = AbilitySystemComponent->FindAbilitySpecFromHandle(AttackHandle))
+		{
+			AttackAbility = Cast<UDEGA_Attack>(GrantedSpec->GetPrimaryInstance());
+			if (AttackAbility)
+			{
+				AttackAbility->SetConfig(AbilityData->AttackConfig);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[%s] AttackAbilityClass is not assigned to DA_AbilityConfig!"), *GetName());
+	}
+
+	// 2. Grant Heal ability
+	if (AbilityData->HealConfig.AbilityClass)
+	{
+		FGameplayAbilitySpec HealSpec(AbilityData->HealConfig.AbilityClass, 1, INDEX_NONE, this);
+		FGameplayAbilitySpecHandle HealHandle = AbilitySystemComponent->GiveAbility(HealSpec);
+
+		if (FGameplayAbilitySpec* GrantedSpec = AbilitySystemComponent->FindAbilitySpecFromHandle(HealHandle))
+		{
+			HealAbility = Cast<UDEGA_Heal>(GrantedSpec->GetPrimaryInstance());
+			if (HealAbility)
+			{
+				HealAbility->SetConfig(AbilityData->HealConfig);
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[%s] HealAbilityClass is not assigned to DA_AbilityConfig!"), *GetName());
+	}
+}
+
 
 //========================================
 // Heal Interface pass-throughs (DERewardCalculator calls these)
@@ -132,46 +218,255 @@ void ADECharacter::Tick(float DeltaTime)
 
 float ADECharacter::GetLastTickHealAmount() const
 {
-	return (AbilityComponent && AbilityComponent->GetHealAbility()) ? AbilityComponent->GetHealAbility()->GetLastTickHealAmount() : 0.0f;
+	return HealAbility ? HealAbility->GetLastTickHealAmount() : 0.0f;
 }
 
 bool ADECharacter::ConsumeHealBurst(float Threshold)
 {
-	return (AbilityComponent && AbilityComponent->GetHealAbility()) ? AbilityComponent->GetHealAbility()->ConsumeHealBurst(Threshold) : false;
+	return HealAbility ? HealAbility->ConsumeHealBurst(Threshold) : false;
 }
+
 
 //========================================
 // Team Identification
 //========================================
 
-int32 ADECharacter::GetTeamID_Implementation() const
+int32 ADECharacter::GetTeamID_Implementation() const { return TeamID; }
+int32 ADECharacter::GetEnvID_Implementation() const { return EnvID; }
+void ADECharacter::SetTeamID_Implementation(int32 NewTeamID) { TeamID = NewTeamID; }
+void ADECharacter::SetEnvID_Implementation(int32 NewEnvID) { EnvID = NewEnvID; }
+
+
+//========================================
+// GAS Health Queries
+//========================================
+
+float ADECharacter::GetHealthPercentage() const
 {
-	return TeamID;
+	if (AttributeSet && AttributeSet->GetMaxHealth() > 0.0f)
+	{
+		return AttributeSet->GetHealth() / AttributeSet->GetMaxHealth();
+	}
+	return 1.0f;
 }
 
-int32 ADECharacter::GetEnvID_Implementation() const
+float ADECharacter::GetCurrentHealth() const
 {
-	return EnvID;
+	return AttributeSet ? AttributeSet->GetHealth() : 0.0f;
 }
 
-void ADECharacter::SetTeamID_Implementation(int32 NewTeamID)
+float ADECharacter::GetMaxHealth() const
 {
-	TeamID = NewTeamID;
+	return AttributeSet ? AttributeSet->GetMaxHealth() : 100.0f;
 }
 
-void ADECharacter::SetEnvID_Implementation(int32 NewEnvID)
+float ADECharacter::HealCharacter(float HealAmount)
 {
-	EnvID = NewEnvID;
+	if (!AbilitySystemComponent || !AttributeSet || HealAmount <= 0.0f) return 0.0f;
+
+	TSubclassOf<UGameplayEffect> HealEffectClass = AbilityData ? AbilityData->HealConfig.HealEffectClass : nullptr;
+	if (!HealEffectClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DECharacter: HealEffectClass not set on %s — assign it in DA_AbilityConfig HealConfig."), *GetName());
+		return 0.0f;
+	}
+
+	float OldHealth = AttributeSet->GetHealth();
+
+	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
+	FGameplayEffectSpecHandle SpecHandle = AbilitySystemComponent->MakeOutgoingSpec(HealEffectClass, 1.0f, Context);
+	if (SpecHandle.IsValid())
+	{
+		SpecHandle.Data->SetSetByCallerMagnitude(DEGameplayTags::Data_Healing, HealAmount);
+		AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data);
+	}
+
+	return AttributeSet->GetHealth() - OldHealth;
 }
 
-bool ADECharacter::IsAlive_Implementation() const
+float ADECharacter::ApplyDamageToSelf(float DamageAmount, AActor* DamageInstigator, AActor* DamageCauser,
+	const FVector& HitLocation, const FVector& HitNormal)
 {
-	return bIsAlive;
+	if (!AbilitySystemComponent || !AttributeSet || DamageAmount <= 0.0f) return 0.0f;
+	if (!bIsAlive) return 0.0f;
+
+	float OldHealth = AttributeSet->GetHealth();
+
+	// Track damage instigator for death attribution
+	LastDamageInstigator = DamageInstigator;
+	LastDamageAmount = DamageAmount;
+
+	// Track damage contributors for assist rewards
+	if (DamageInstigator)
+	{
+		float& ContributorDamage = DamageContributors.FindOrAdd(DamageInstigator);
+		ContributorDamage += DamageAmount;
+	}
+
+	// Get DamageEffectClass from the instigator's AbilityData (the shooter owns the attack config)
+	TSubclassOf<UGameplayEffect> DamageEffectClass = nullptr;
+	if (const ADECharacter* InstigatorChar = Cast<ADECharacter>(DamageInstigator))
+	{
+		if (InstigatorChar->AbilityData)
+		{
+			DamageEffectClass = InstigatorChar->AbilityData->AttackConfig.DamageEffectClass;
+		}
+	}
+	if (!DamageEffectClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DECharacter: DamageEffectClass not set — assign it in DA_AbilityConfig AttackConfig on %s."),
+			DamageInstigator ? *DamageInstigator->GetName() : TEXT("Unknown"));
+		return 0.0f;
+	}
+
+	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
+	Context.AddInstigator(DamageInstigator, DamageCauser);
+
+	FHitResult HitResult;
+	HitResult.bBlockingHit = true;          
+	HitResult.Location = HitLocation;       
+	HitResult.ImpactPoint = HitLocation;    
+	HitResult.Normal = HitNormal;          
+	HitResult.ImpactNormal = HitNormal;
+	HitResult.HitObjectHandle = FActorInstanceHandle(this); 
+
+	Context.AddHitResult(HitResult);
+
+	FGameplayEffectSpecHandle SpecHandle = AbilitySystemComponent->MakeOutgoingSpec(DamageEffectClass, 1.0f, Context);
+	if (SpecHandle.IsValid())
+	{
+		SpecHandle.Data->SetSetByCallerMagnitude(DEGameplayTags::Data_Damage, DamageAmount);
+		AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data);
+	}
+
+	float ActualDamage = OldHealth - AttributeSet->GetHealth();
+
+	// Accumulate stats
+	TotalDamageTaken += ActualDamage;
+
+	// Broadcast damage event
+	FDEDamageEventData DamageEvent(DamageInstigator, DamageCauser, ActualDamage, HitLocation, HitNormal);
+	OnDamageTaken_Delegate.Broadcast(DamageEvent, AttributeSet->GetHealth());
+	OnHealthChanged_Delegate.Broadcast(AttributeSet->GetHealth(), AttributeSet->GetMaxHealth());
+
+	return ActualDamage;
+}
+
+float ADECharacter::GetWeaponCooldown() const
+{
+	return AttackAbility ? AttackAbility->GetCooldownProgress() : 0.0f;
+}
+
+bool ADECharacter::CanFireWeapon() const
+{
+	return AttackAbility ? AttackAbility->CanFire() : false;
+}
+
+int32 ADECharacter::AddAmmo(int32 AmmoAmount)
+{
+	if (AttackAbility)
+	{
+		AttackAbility->AddAmmo(AmmoAmount);
+		return AttackAbility->GetCurrentAmmo();
+	}
+	return 0;
+}
+
+float ADECharacter::GetAmmoPercentage() const
+{
+	return AttackAbility ? AttackAbility->GetAmmoPercentage() : 0.0f;
+}
+
+
+//========================================
+// Damage Event System
+//========================================
+
+void ADECharacter::NotifyDamageDealt(AActor* Victim, float DamageAmount)
+{
+	TotalDamageDealt += DamageAmount;
+	OnDamageDealt_Delegate.Broadcast(Victim, DamageAmount);
+}
+
+void ADECharacter::NotifyKillConfirmed(AActor* Victim, float TotalDamageDealtToVictim)
+{
+	KillCount++;
+	OnKillConfirmed_Delegate.Broadcast(Victim, TotalDamageDealtToVictim);
+}
+
+
+//========================================
+// Health Change & Death
+//========================================
+
+void ADECharacter::OnHealthChanged(const FOnAttributeChangeData& Data)
+{
+	if (Data.NewValue <= 0.0f && bIsAlive && !bHasDied)
+	{
+		HandleDeath(LastDamageInstigator.Get(), LastDamageAmount);
+	}
+
+	OnHealthChanged_Delegate.Broadcast(Data.NewValue,
+		AttributeSet ? AttributeSet->GetMaxHealth() : 100.0f);
+}
+
+void ADECharacter::HandleDeath(AActor* Killer, float FinalDamage)
+{
+	bIsAlive = false;
+	bHasDied = true;
+
+	float TimeSinceSpawn = GetWorld() ? (GetWorld()->GetTimeSeconds() - SpawnTime) : -1.0f;
+	UE_LOG(LogTemp, Error, TEXT("[DECharacter DEATH] %s died %.2fs after spawn - Health=%.1f%%, Killer=%s, Location=%s"),
+		*GetName(), TimeSinceSpawn,
+		GetHealthPercentage() * 100.0f,
+		Killer ? *Killer->GetName() : TEXT("None"),
+		*GetActorLocation().ToString());
+
+	if (TimeSinceSpawn < 1.0f)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[DECharacter DEATH] PREMATURE DEATH - Agent died less than 1s after spawn!"));
+	}
+
+	// Notify killer's stats
+	if (ADECharacter* KillerChar = Cast<ADECharacter>(Killer))
+	{
+		KillerChar->NotifyKillConfirmed(this, DamageContributors.Contains(Killer) ? DamageContributors[Killer] : 0.0f);
+	}
+
+	// Disable movement
+	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
+	{
+		MovementComp->DisableMovement();
+		MovementComp->StopMovementImmediately();
+	}
+
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	GetMesh()->SetSimulatePhysics(true);
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+	// Stop AI
+	if (AAIController* AI = Cast<AAIController>(GetController()))
+	{
+		if (UBrainComponent* Brain = AI->BrainComponent)
+		{
+			Brain->StopLogic(TEXT("Death"));
+		}
+	}
+
+	// Broadcast death events
+	FDEDeathEventData DeathEvent(this, Killer, FinalDamage,
+		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+
+	OnAgentDied_Delegate.Broadcast(this, Cast<ADECharacter>(Killer));
+	OnAgentDeathEvent_Delegate.Broadcast(DeathEvent);
 }
 
 ADEMatchManager* ADECharacter::GetMatchManager() const
 {
-	// Look up the DEMatchManager for this environment
 	TArray<AActor*> MatchManagers;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ADEMatchManager::StaticClass(), MatchManagers);
 
@@ -189,153 +484,80 @@ ADEMatchManager* ADECharacter::GetMatchManager() const
 }
 
 
-
 //========================================
 // Death & Respawn
 //========================================
-
-void ADECharacter::OnDeath(const FDEDeathEventData& DeathEvent)
-{
-	bIsAlive = false;
-
-	// v10.2 FIX: Enhanced death logging to diagnose immediate death after spawn
-	float TimeSinceSpawn = GetWorld() ? (GetWorld()->GetTimeSeconds() - SpawnTime) : -1.0f;
-	float CurrentHealth = DEHealthComponent ? DEHealthComponent->GetHealthPercentage() : 0.0f;
-
-	UE_LOG(LogTemp, Error, TEXT("[DECharacter DEATH] %s died %.2fs after spawn - Health=%.1f%%, Killer=%s, Location=%s"),
-		*GetName(),
-		TimeSinceSpawn,
-		CurrentHealth * 100.0f,
-		DeathEvent.Killer ? *DeathEvent.Killer->GetName() : TEXT("None"),
-		*GetActorLocation().ToString());
-
-	if (TimeSinceSpawn < 1.0f)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[DECharacter DEATH] PREMATURE DEATH - Agent died less than 1s after spawn! Possible initialization bug."));
-	}
-
-	// Stop weapon immediately (prevent invisible dead agents from firing)
-	if (AbilityComponent && AbilityComponent->GetAttackAbility())
-	{
-		// Note: Use a StopFiring method if implemented, or just let it be.
-		// For now we assume CanFire check in TickAbility/Execute handles this.
-	}
-
-	// Disable character movement
-	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
-	{
-		MovementComp->DisableMovement();
-		MovementComp->StopMovementImmediately();
-	}
-
-	// Disable collision
-	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
-	{
-		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	}
-
-	GetMesh()->SetSimulatePhysics(true);
-	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	
-	// Stop AI
-	if (AAIController* AI = Cast<AAIController>(GetController()))
-	{
-		if (UBrainComponent* Brain = AI->BrainComponent)
-		{
-			Brain->StopLogic(TEXT("Death"));
-		}
-	}
-
-	OnAgentDied_Delegate.Broadcast(this, Cast<ADECharacter>(DeathEvent.Killer));
-
-
-	// broadcast death event for any other listeners (e.g. UI, audio)
-	OnAgentDeathEvent_Delegate.Broadcast(DeathEvent);
-}
 
 void ADECharacter::ResetCharacter()
 {
 	UE_LOG(LogTemp, Log, TEXT("[DECharacter] %s resetting for new episode"), *GetName());
 
-	// 0. Undo deactivation from QueueRespawn() — ensure actor is fully visible and ticking
 	SetActorHiddenInGame(false);
 	SetActorEnableCollision(true);
 	SetActorTickEnabled(true);
 
-	// 1. Reset health, combat, and reward components
-	if (DEHealthComponent)
+	// Reset health via GAS
+	if (AttributeSet && AbilitySystemComponent)
 	{
-		DEHealthComponent->ResetHealth();
+		AttributeSet->SetHealth(AttributeSet->GetMaxHealth());
+
+		// Remove State.Dead tag
+		FGameplayTagContainer DeadTag;
+		DeadTag.AddTag(DEGameplayTags::State_Dead);
+		AbilitySystemComponent->RemoveLooseGameplayTags(DeadTag);
 	}
 
 	RewardState.Reset();
 
-	if (AbilityComponent)
-	{
-		AbilityComponent->ResetAbilities();
-	}
+	// Reset abilities
+	if (AttackAbility) AttackAbility->ResetState();
+	if (HealAbility) HealAbility->ResetHealState();
 
-	// 2. Re-enable movement
+	// Reset damage stats
+	TotalDamageTaken = 0.0f;
+	TotalDamageDealt = 0.0f;
+	KillCount = 0;
+	DamageContributors.Empty();
+	LastDamageInstigator = nullptr;
+	bHasDied = false;
+
+	// Re-enable movement
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
 		MovementComp->SetMovementMode(MOVE_Walking);
 	}
 
-	// 3. Re-enable collision
 	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
 	{
 		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	}
 
-	// 4. Disable ragdoll physics
 	if (USkeletalMeshComponent* InMesh = GetMesh())
 	{
 		InMesh->SetSimulatePhysics(false);
 		InMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-
-		// Re-attach mesh to capsule
 		InMesh->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
-
-		// Reset mesh transform
 		InMesh->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
 		InMesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
 	}
 
-	// 5. Clear dead flag BEFORE any AI/Schola callbacks
-	// v10.2 FIX: Must be set before ResetAgent() and RunBehaviorTree()
-	// so that ComputeStatus() sees an alive character if evaluated during reset chain
 	bIsAlive = true;
-
-	// v10.2 FIX: Track spawn time for death diagnostics
 	SpawnTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 
-	// v10.2 DEBUG: Log character state after reset
-	float CurrentHealth = DEHealthComponent ? DEHealthComponent->GetHealthPercentage() : 0.0f;
+	float CurrentHealth = GetHealthPercentage();
 	UE_LOG(LogTemp, Log, TEXT("[DECharacter] %s reset complete - bIsAlive=%d, Health=%.1f%%, Location=%s"),
 		*GetName(), bIsAlive, CurrentHealth * 100.0f, *GetActorLocation().ToString());
 
-	// 7. Delegate to RL component
 	if (ScholaAgent)
 	{
 		ScholaAgent->ResetAgent();
 	}
 
-	// 8. DO NOT clear EQS weights or bWeightsDirty.
-	//    The RL actuator may have sent weights while the agent was dead.
-	//    Those weights are RL-generated (not hardcoded), so they don't corrupt training.
-	//    Leaving bWeightsDirty as-is lets the agent move immediately after respawn
-	//    using the last RL output, instead of freezing until the next RL step (~0.5s).
-	//    The RL policy will send updated weights within one decision interval.
-	//
-	//    Previously we zeroed weights + cleared bWeightsDirty here, which caused
-	//    post-respawn freeze: agents waited for RL but timing issues could cause
-	//    permanent stalls in the Schola action pipeline.
 	UE_LOG(LogTemp, Log, TEXT("[DECharacter] %s post-reset EQS state: bWeightsDirty=%d"),
 		*GetName(), bWeightsDirty);
 
 	UE_LOG(LogTemp, Verbose, TEXT("[DECharacter] %s reset complete"), *GetName());
 }
-
 
 void ADECharacter::Activate()
 {
@@ -354,7 +576,7 @@ void ADECharacter::Deactivate()
 
 
 //========================================
-// QS Weight Storage & Execution
+// EQS Weight Storage & Execution
 //========================================
 
 void ADECharacter::UpdateTacticalWeights(const FDEEQSWeightParameters& NewWeights)
@@ -365,11 +587,7 @@ void ADECharacter::UpdateTacticalWeights(const FDEEQSWeightParameters& NewWeight
 
 void ADECharacter::PerformTacticalAction()
 {
-	// Dead agents must not act (Schola may still send actions while agent awaits group respawn)
-	if (!bIsAlive)
-	{
-		return;
-	}
+	if (!bIsAlive) return;
 
 	if (!EQSExecutor)
 	{
@@ -387,30 +605,19 @@ void ADECharacter::PerformTacticalAction()
 	UBlackboardComponent* BB = AICtrl->GetBlackboardComponent();
 	bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EDEAgentMode::Training;
 
-	// DIAGNOSTIC: Log mode detection state — promoted to Warning so it's visible without log filters
-	static int32 PerfTactDiagCount = 0;
-	if (++PerfTactDiagCount <= 5)
+	TacticalActionCallCount++;
+	if (TacticalActionCallCount <= 10 || TacticalActionCallCount % 60 == 0)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[DECharacter] %s PerformTacticalAction#%d: bIsTraining=%s (ScholaAgent=%s, Mode=%s) BB=%s → Branch=%s"),
-			*GetName(), PerfTactDiagCount,
+			TEXT("[DECharacter] %s PerformTacticalAction#%d: bIsTraining=%s BB=%s → Branch=%s"),
+			*GetName(), TacticalActionCallCount,
 			bIsTraining ? TEXT("true") : TEXT("false"),
-			ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
-			ScholaAgent ? *UEnum::GetValueAsString(ScholaAgent->CurrentMode) : TEXT("N/A"),
 			BB ? TEXT("Valid") : TEXT("NULL"),
-			(BB && !bIsTraining) ? TEXT("INFERENCE (EQS skipped!)") : TEXT("TRAINING (EQS will run)"));
+			(BB && !bIsTraining) ? TEXT("INFERENCE") : TEXT("TRAINING"));
 	}
 
 	if (BB && !bIsTraining)
 	{
-		// DIAGNOSTIC: This branch skips MoveTo — if hit during training, agent will freeze
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DECharacter] %s: Entering INFERENCE branch during PerformTacticalAction — no MoveTo issued! ScholaAgent=%s, Mode=%s"),
-			*GetName(),
-			ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
-			ScholaAgent ? *UEnum::GetValueAsString(ScholaAgent->CurrentMode) : TEXT("N/A"));
-
-		// Inference mode: sync weights to Blackboard, let BT handle EQS
 		BB->SetValueAsFloat(TEXT("Weight_EnemyObj"), CurrentEQSWeights.EnemyObjectiveProximity);
 		BB->SetValueAsFloat(TEXT("Weight_AllyObj"), CurrentEQSWeights.AllyObjectiveProximity);
 		BB->SetValueAsFloat(TEXT("Weight_Cover"), CurrentEQSWeights.CoverDensity);
@@ -420,10 +627,6 @@ void ADECharacter::PerformTacticalAction()
 		return;
 	}
 
-	// Training mode: run synchronous EQS via executor, then navigate
-	// Clear stale pathfinding state from death/respawn cycle.
-	// OnDeath calls StopMovementImmediately + Brain->StopLogic, which can leave the
-	// PathFollowingComponent in a state that silently rejects new MoveTo requests.
 	AICtrl->StopMovement();
 
 	TOptional<FVector> Result = EQSExecutor->ExecuteSynchronousQuery(CurrentEQSWeights);
@@ -431,7 +634,6 @@ void ADECharacter::PerformTacticalAction()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[DECharacter] %s: EQS query returned no result - using fallback movement"), *GetName());
 
-		// Fallback: move to a random nearby point to unstick the agent
 		const FVector CurrentLocation = GetActorLocation();
 		const float FallbackRadius = 300.0f;
 		const float RandomAngle = FMath::FRandRange(0.0f, 2.0f * PI);
@@ -458,6 +660,7 @@ void ADECharacter::PerformTacticalAction()
 	AICtrl->MoveTo(MoveReq);
 }
 
+
 //========================================
 // v10.2 Command Interface
 //========================================
@@ -468,13 +671,11 @@ void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 	{
 		CommandedStrategy = NewStrategy;
 
-		// 1. Update Schola Agent (for RL observation)
 		if (ScholaAgent)
 		{
 			ScholaAgent->UpdateCommandedStrategy(NewStrategy);
 		}
 
-		// 2. Update Blackboard for Behavior Tree (for BT tasks)
 		if (AAIController* AICtrl = Cast<AAIController>(GetController()))
 		{
 			if (UBlackboardComponent* BB = AICtrl->GetBlackboardComponent())
@@ -492,65 +693,12 @@ void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 
 void ADECharacter::ApplyStrategyStatModifiers(EDEStrategyType Strategy)
 {
-	if (AbilityComponent && AbilityComponent->GetAttackAbility())
-	{
-		// Stat modifiers would ideally be handled via a unified system, but porting current logic:
-		// However, the new system uses DataAssets. Modification of stats might need a different approach.
-		// For now, we'll keep it as is if AttackAbility pointer is available.
-	}
-}
-
-//========================================
-// Combat Stats Interface
-//========================================
-
-float ADECharacter::GetHealthPercentage_Implementation() const
-{
-	if (DEHealthComponent)
-	{
-		return DEHealthComponent->GetHealthPercentage();
-	}
-	return 1.0f;
-}
-
-float ADECharacter::Heal_Implementation(float HealAmount)
-{
-	if (DEHealthComponent)
-	{
-		return DEHealthComponent->Heal(HealAmount);
-	}
-
-	return 0.0f;
-}
-
-float ADECharacter::GetWeaponCooldown_Implementation() const
-{
-	return (AbilityComponent && AbilityComponent->GetAttackAbility()) ? AbilityComponent->GetAttackAbility()->GetCooldownProgress() : 0.0f;
-}
-
-int32 ADECharacter::AddAmmo_Implementation(int32 AmmoAmount)
-{
-	if (AbilityComponent && AbilityComponent->GetAttackAbility())
-	{
-		AbilityComponent->GetAttackAbility()->AddAmmo(AmmoAmount);
-		return AbilityComponent->GetAttackAbility()->GetCurrentAmmo();
-	}
-	return 0;
-}
-
-float ADECharacter::GetAmmoPercentage_Implementation() const
-{
-	return (AbilityComponent && AbilityComponent->GetAttackAbility()) ? AbilityComponent->GetAttackAbility()->GetAmmoPercentage() : 0.0f;
-}
-
-bool ADECharacter::CanFireWeapon_Implementation() const
-{
-	return (AbilityComponent && AbilityComponent->GetAttackAbility()) ? AbilityComponent->GetAttackAbility()->CanFire() : false;
+	// Strategy-specific stat modifiers can be applied via GAS GameplayEffects in the future
 }
 
 
 //========================================
-// Reward Interface (forwarding to UDERewardCalculator)
+// Reward Interface
 //========================================
 
 float ADECharacter::ComputeStepReward(
@@ -568,26 +716,24 @@ float ADECharacter::ComputeStepReward(
 }
 
 
-
 void ADECharacter::ProcessTrainingAbilities()
 {
-	if (!bIsAlive || !AbilityComponent) return;
+	if (!bIsAlive || !AbilitySystemComponent) return;
 
+	// Activate attack ability via GAS tag
+	FGameplayTagContainer AttackTag;
+	AttackTag.AddTag(DEGameplayTags::Ability_Attack);
+	AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
 
-	if (AbilityComponent->GetAttackAbility())
+	// Activate heal ability only for Support strategy
+	if (CommandedStrategy == EDEStrategyType::Support)
 	{
-		AbilityComponent->GetAttackAbility()->Execute(0.2f);
+		FGameplayTagContainer HealTag;
+		HealTag.AddTag(DEGameplayTags::Ability_Heal);
+		AbilitySystemComponent->TryActivateAbilitiesByTag(HealTag);
 	}
-
-	if (AbilityComponent->GetHealAbility())
+	else if (HealAbility)
 	{
-		if (CommandedStrategy == EDEStrategyType::Support)
-		{
-			AbilityComponent->GetHealAbility()->Execute(0.2f);
-		}
-		else
-		{
-			AbilityComponent->GetHealAbility()->ResetTickHeal();
-		}
+		HealAbility->ResetTickHeal();
 	}
 }
