@@ -563,6 +563,9 @@ float UDERewardSubsystem::ComputeStepReward(
 		Reward += Settings->ZoneControlRewardPerBase * ZoneControlScale * NetControl;
 	}
 
+	// Cooperative base occupation shaping (Phase 5)
+	Reward += ComputeBaseCooperationReward(Agent, InOutState);
+
 	float EffectiveTimePenalty = (Strategy == EDEStrategyType::Assault) ? Settings->AssaultReward.TimePenalty : Settings->TimePenalty;
 	Reward -= EffectiveTimePenalty;
 
@@ -606,6 +609,79 @@ float UDERewardSubsystem::ComputeStepReward(
 
 	return Reward;
 }
+
+float UDERewardSubsystem::ComputeBaseCooperationReward(ADECharacter* Agent, FDERewardState& InOutState)
+{
+	if (!CachedRewardData || !Agent) return 0.0f;
+
+	ADEMatchManager* MatchMgr = Agent->GetMatchManager();
+	if (!MatchMgr) return 0.0f;
+
+	const TArray<ADECapturePoint*>& CPs = MatchMgr->GetCapturePoints();
+	if (CPs.Num() == 0) return 0.0f;
+
+	const int32 MyTeamID = Agent->GetTeamID_Implementation();
+	const FVector MyPos  = Agent->GetActorLocation();
+	const float Radius   = CachedRewardData->BaseOccupationRadius;
+	const float RadiusSq = Radius * Radius;
+
+	TArray<ADECharacter*> Teammates = MatchMgr->GetTeamAgents(MyTeamID);
+
+	float Reward = 0.0f;
+
+	// ---- Per-base pass ----
+	for (int32 i = 0; i < CPs.Num(); ++i)
+	{
+		ADECapturePoint* CP = CPs[i];
+		if (!CP) continue;
+
+		const FVector CPPos   = CP->GetActorLocation();
+		const int32   Owner   = CP->GetTeamID_Implementation();
+		const float   DistSq  = FVector::DistSquared(MyPos, CPPos);
+		const bool    bNearMe = (DistSq <= RadiusSq);
+
+		// Count allies near this base (excluding self)
+		int32 AlliesNear = 0;
+		for (ADECharacter* Mate : Teammates)
+		{
+			if (!Mate || Mate == Agent || !Mate->IsAlive()) continue;
+			if (FVector::DistSquared(Mate->GetActorLocation(), CPPos) <= RadiusSq)
+			{
+				++AlliesNear;
+			}
+		}
+
+		if (bNearMe)
+		{
+			// Solo occupation of an uncontrolled base
+			if (Owner != MyTeamID && AlliesNear == 0)
+			{
+				Reward += CachedRewardData->BaseOccupationReward;
+			}
+			// Co-occupation penalty (2+ allies on same base)
+			if (AlliesNear >= 1)
+			{
+				Reward -= CachedRewardData->CoOccupationPenalty;
+			}
+
+			// Assigned-base reach reward (once per episode)
+			if (!InOutState.bHasReachedAssignedBase && Agent->AssignedBaseIndex == i)
+			{
+				InOutState.bHasReachedAssignedBase = true;
+				Reward += CachedRewardData->AssignedBaseReachReward;
+			}
+		}
+
+		// Undefended friendly base penalty (shared, no ally nearby)
+		if (Owner == MyTeamID && AlliesNear == 0 && !bNearMe)
+		{
+			Reward -= CachedRewardData->UndefendedBasePenalty;
+		}
+	}
+
+	return Reward;
+}
+
 
 float UDERewardSubsystem::ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEStrategyType Strategy, float RewardValue, int32 AgentID)
 {

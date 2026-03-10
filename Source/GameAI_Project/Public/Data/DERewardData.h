@@ -393,4 +393,31 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
 	FDESupportRewardSettings SupportReward;
+
+	// ==================== Cooperative Base Occupation (Phase 5) ====================
+
+	/** Per-step bonus when this agent is the ONLY ally within BaseOccupationRadius
+	 *  of an uncontrolled (neutral or enemy) capture point. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float BaseOccupationReward = 2.0f;
+
+	/** Per-step penalty when 2+ allies stack on the same base. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float CoOccupationPenalty = 0.5f;
+
+	/** Sparse reward for the agent that flipped a base's ownership. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float BaseCaptureCreditReward = 5.0f;
+
+	/** Per-step shared penalty for each friendly base with no ally guarding it. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float UndefendedBasePenalty = 1.0f;
+
+	/** Sparse reward (once per episode) for first reaching the assigned base. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float AssignedBaseReachReward = 1.0f;
+
+	/** Radius (cm) used to determine proximity for base cooperation rewards. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float BaseOccupationRadius = 2000.0f;
 };

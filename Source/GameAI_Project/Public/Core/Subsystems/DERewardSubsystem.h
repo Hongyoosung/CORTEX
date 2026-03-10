@@ -52,6 +52,17 @@ public:
         const FDEObservation& Current,
         const FDEEQSWeightParameters& Action);
 
+    /**
+     * Compute cooperative base occupation shaping reward.
+     * Adds spread incentive and penalises stacking / undefended bases.
+     * Must be called inside ComputeStepReward() before clamping.
+     *
+     * @param Agent       The agent being evaluated
+     * @param InOutState  Agent reward state (HasReachedAssignedBase flag stored here)
+     * @return            Shaped reward value (not yet scaled by GlobalRewardScale)
+     */
+    float ComputeBaseCooperationReward(ADECharacter* Agent, FDERewardState& InOutState);
+
     float GetStrategyScale(EDEStrategyType Strategy, float AssaultScale, float DefendScale, float SupportScale) const;
     float DrainSparseReward(FDERewardState& InOutState, int32 AgentID);
 

@@ -116,10 +116,16 @@ protected:
 	//========================================
 
 	/**
-	 * Gather 48-dim base observation from character
+	 * Gather 48-dim base observation from character (v1, kept for reward subsystem)
 	 * @return FDEObservation with normalized values
 	 */
 	FDEObservation GatherBaseObservation() const;
+
+	/**
+	 * Gather entity-centric V2 observation (167-dim padded flat).
+	 * Populates ally, enemy, and base tokens from MatchManager.
+	 */
+	FDEObservationV2 GatherObservationV2() const;
 
 	/**
 	 * Convert commanded strategy to one-hot encoding

@@ -194,6 +194,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager")
 	UDESquadManager* GetSquadCommander(int32 TeamID) const;
 
+	/**
+	 * Assign a capture-point base index to each agent on a team.
+	 * Uses a greedy, role-aware algorithm that guarantees uniqueness
+	 * (no two Defend agents share the same base).
+	 * Writes AssignedBaseIndex to the agent and to its Blackboard key.
+	 * Call after a tactical play change or a base-flip event.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DEMatchManager|Squad")
+	void AssignBasesToAgents(int32 TeamID);
+
 
 	//========================================
 	// Environment Context (injected by ADEScholaEnvironment)

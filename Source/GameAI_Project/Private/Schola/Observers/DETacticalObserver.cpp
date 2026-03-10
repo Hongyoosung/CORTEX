@@ -13,34 +13,16 @@
 
 UDETacticalObserver::UDETacticalObserver()
 {
-	// Build observation space (54 continuous features: 48 base + 3 team composition + 3 strategy one-hot)
+	// Build observation space (V2 entity-centric: 167-dim padded flat)
+	// Layout: Self(7) + Allies(8×5=40) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) = 167
 	TArray<FBoxSpaceDimension> Dimensions;
-	Dimensions.Reserve(54);
+	Dimensions.Reserve(DE_OBS_V2_DIM);
 
-	// 48 base features: normalized to [-1, 1] or [0, 1]
-	for (int32 i = 0; i < 48; ++i)
+	for (int32 i = 0; i < DE_OBS_V2_DIM; ++i)
 	{
 		FBoxSpaceDimension Dim;
-		Dim.Low = -1.0f;
-		Dim.High = 1.0f;
-		Dimensions.Add(Dim);
-	}
-
-	// 3 team composition features: [0, 1] (num_assault/5, num_defend/5, num_support/5)
-	for (int32 i = 0; i < 3; ++i)
-	{
-		FBoxSpaceDimension Dim;
-		Dim.Low = 0.0f;
-		Dim.High = 1.0f;
-		Dimensions.Add(Dim);
-	}
-
-	// 3 strategy one-hot features: [0, 1] (mutually exclusive)
-	for (int32 i = 0; i < 3; ++i)
-	{
-		FBoxSpaceDimension Dim;
-		Dim.Low = 0.0f;
-		Dim.High = 1.0f;
+		Dim.Low  = -1.0f;
+		Dim.High =  1.0f;
 		Dimensions.Add(Dim);
 	}
 
@@ -127,7 +109,6 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 {
 	ObservationCallCount++;
 
-	// === DIAGNOSTIC: Log first few observations to confirm pipeline is flowing ===
 	if (ObservationCallCount <= 5)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[DETacticalObserver] CollectObservations() call #%d | Trainer=%s | Character=%s"),
@@ -136,10 +117,9 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			GetControlledCharacter() ? *GetControlledCharacter()->GetName() : TEXT("NULL"));
 	}
 
-	// Initialize output with correct size (54-dim: 48 base + 3 team composition + 3 strategy one-hot)
-	OutObservations.Values.SetNum(54);
+	// Initialize output (V2: 167-dim padded flat)
+	OutObservations.Values.SetNum(DE_OBS_V2_DIM);
 
-	// Safety check: Verify trainer and character are valid
 	ADECharacter* Character = GetControlledCharacter();
 	if (!Character || !Character->IsValidLowLevel())
 	{
@@ -147,76 +127,30 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[DETacticalObserver] Character invalid at observation #%d - returning zeros"), ObservationCallCount);
 		}
-
-		for (int32 i = 0; i < 54; ++i)
-		{
-			OutObservations.Values[i] = 0.0f;
-		}
+		FMemory::Memzero(OutObservations.Values.GetData(), DE_OBS_V2_DIM * sizeof(float));
 		return;
 	}
 
-	// 1. Gather 48-dim base observation
-	FDEObservation BaseObs = GatherBaseObservation();
-	TArray<float> BaseFeatures = BaseObs.ToArray();
+	// Gather V2 entity-centric observation and serialise as padded flat array
+	FDEObservationV2 ObsV2 = GatherObservationV2();
+	TArray<float> FlatObs = ObsV2.ToFlatArray();
 
-	if (BaseFeatures.Num() != 48)
+	if (FlatObs.Num() != DE_OBS_V2_DIM)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[DETacticalObserver] Base observation size mismatch! Expected 48, got %d"), BaseFeatures.Num());
-		for (int32 i = 0; i < 54; ++i)
-		{
-			OutObservations.Values[i] = 0.0f;
-		}
+		UE_LOG(LogTemp, Error, TEXT("[DETacticalObserver] V2 observation size mismatch! Expected %d, got %d"),
+			DE_OBS_V2_DIM, FlatObs.Num());
+		FMemory::Memzero(OutObservations.Values.GetData(), DE_OBS_V2_DIM * sizeof(float));
 		return;
 	}
 
-	// Copy base features (48-dim)
-	for (int32 i = 0; i < 48; ++i)
-	{
-		OutObservations.Values[i] = BaseFeatures[i];
-	}
+	OutObservations.Values = MoveTemp(FlatObs);
 
-	// 2. Append team strategy composition (3-dim at indices 48-50)
-	//    [num_assault/5, num_defend/5, num_support/5]
-	{
-		float CompositionCounts[3] = {0.0f, 0.0f, 0.0f}; // Assault, Defend, Support
-		ADEMatchManager* MatchMgr = Character->GetMatchManager();
-		if (MatchMgr)
-		{
-			TArray<ADECharacter*> Teammates = MatchMgr->GetTeamAgents(Character->GetTeamID_Implementation());
-			for (ADECharacter* Mate : Teammates)
-			{
-				if (!Mate) continue;
-				switch (Mate->GetCommandedStrategy())
-				{
-				case EDEStrategyType::Assault: CompositionCounts[0] += 1.0f; break;
-				case EDEStrategyType::Defend:  CompositionCounts[1] += 1.0f; break;
-				case EDEStrategyType::Support: CompositionCounts[2] += 1.0f; break;
-				default: break;
-				}
-			}
-		}
-		OutObservations.Values[48] = CompositionCounts[0] / 5.0f;
-		OutObservations.Values[49] = CompositionCounts[1] / 5.0f;
-		OutObservations.Values[50] = CompositionCounts[2] / 5.0f;
-	}
-
-	// 3. Append commanded strategy as one-hot (3-dim at indices 51-53)
-	EDEStrategyType CommandedStrategy = Character->GetCommandedStrategy();
-	TArray<float> StrategyOneHot = EncodeStrategyOneHot(CommandedStrategy);
-
-	for (int32 i = 0; i < 3; ++i)
-	{
-		OutObservations.Values[51 + i] = StrategyOneHot[i];
-	}
-
-	// Validate final observation
 	if (bEnableDebugLogging && ObservationCallCount % DebugLogFrequency == 0)
 	{
 		if (ValidateObservation(OutObservations.Values))
 		{
-			UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Observation #%d collected successfully (Strategy: %s)"),
-				ObservationCallCount,
-				*UEnum::GetValueAsString(CommandedStrategy));
+			UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] V2 Observation #%d OK (allies=%d enemies=%d bases=%d)"),
+				ObservationCallCount, ObsV2.AllyTokens.Num(), ObsV2.EnemyTokens.Num(), ObsV2.BaseTokens.Num());
 		}
 		else
 		{
@@ -425,6 +359,119 @@ FDEObservation UDETacticalObserver::GatherBaseObservation() const
 	return Obs;
 }
 
+FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
+{
+	FDEObservationV2 Obs;
+
+	ADECharacter* Character = GetControlledCharacter();
+	if (!Character) return Obs;
+
+	const FVector MyPos = Character->GetActorLocation();
+	const FVector RelSelfPos = MyPos - CachedEnvironmentOrigin;
+	const FVector Vel = Character->GetVelocity();
+
+	// ---- Self token (7-dim) ----
+	Obs.SelfToken.Features = {
+		static_cast<float>(RelSelfPos.X / 7500.0),
+		static_cast<float>(RelSelfPos.Y / 7500.0),
+		static_cast<float>(RelSelfPos.Z / 1000.0),
+		Character->GetHealthPercentage(), 
+		static_cast<float>(Vel.X / 600.0),
+		static_cast<float>(Vel.Y / 600.0),
+		static_cast<float>(Vel.Z / 600.0)
+	};
+
+	const int32 MyTeamID = Character->GetTeamID_Implementation();
+
+	ADEMatchManager* MatchMgr = Character->GetMatchManager();
+	if (MatchMgr)
+	{
+		// ---- Ally tokens (5-dim each): [rel_pos/8000(3), health, alive] ----
+		TArray<ADECharacter*> Allies = MatchMgr->GetTeamAgents(MyTeamID);
+		for (ADECharacter* Ally : Allies)
+		{
+			if (!Ally || Ally == Character) continue;
+			if (Obs.AllyTokens.Num() >= DE_MAX_ALLIES) break;
+
+			const FVector RelPos = (Ally->GetActorLocation() - MyPos) / 8000.0f;
+			FDEEntityToken Tok;
+			Tok.Features = {
+				static_cast<float>(RelPos.X),
+				static_cast<float>(RelPos.Y),
+				static_cast<float>(RelPos.Z),
+				Ally->GetHealthPercentage(),
+				Ally->IsAlive() ? 1.0f : 0.0f
+			};
+			Obs.AllyTokens.Add(MoveTemp(Tok));
+		}
+
+		// ---- Enemy tokens (5-dim each): [rel_pos/8000(3), visible, confidence=1] ----
+		TArray<ADECharacter*> Enemies = MatchMgr->GetEnemyAgents(MyTeamID);
+		for (ADECharacter* Enemy : Enemies)
+		{
+			if (!Enemy) continue;
+			if (Obs.EnemyTokens.Num() >= DE_MAX_ENEMIES) break;
+
+			const float Dist = FVector::Dist(Enemy->GetActorLocation(), MyPos);
+			bool bVisible = false;
+			if (Dist < 8000.0f)
+			{
+				FHitResult Hit;
+				FCollisionQueryParams QP;
+				QP.AddIgnoredActor(Character);
+				bVisible = !Character->GetWorld()->LineTraceSingleByChannel(
+					Hit,
+					MyPos + FVector(0, 0, 90),
+					Enemy->GetActorLocation() + FVector(0, 0, 90),
+					ECC_Visibility, QP);
+			}
+
+			const FVector RelPos = bVisible ? (Enemy->GetActorLocation() - MyPos) / 8000.0f : FVector::ZeroVector;
+			FDEEntityToken Tok;
+			Tok.Features = {
+				static_cast<float>(RelPos.X),
+				static_cast<float>(RelPos.Y),
+				static_cast<float>(RelPos.Z),
+				bVisible ? 1.0f : 0.0f,
+				bVisible ? 1.0f : 0.0f
+			};
+			Obs.EnemyTokens.Add(MoveTemp(Tok));
+		}
+
+		// ---- Base tokens (7-dim each) ----
+		// [rel_pos/15000(3), ownership, capture_progress, is_assigned_target, strategic_value]
+		const TArray<ADECapturePoint*>& CPs = MatchMgr->GetCapturePoints();
+		for (int32 i = 0; i < CPs.Num() && Obs.BaseTokens.Num() < DE_MAX_BASES; ++i)
+		{
+			ADECapturePoint* CP = CPs[i];
+			if (!CP) continue;
+
+			const FVector RelPos = (CP->GetActorLocation() - MyPos) / 15000.0f;
+			const int32 OwnerTeam = CP->GetTeamID_Implementation();
+			float Ownership = 0.0f;
+			if (OwnerTeam == MyTeamID) Ownership = 1.0f;
+			else if (OwnerTeam >= 0)   Ownership = -1.0f;
+
+			const float IsAssigned = (Character->AssignedBaseIndex == i) ? 1.0f : 0.0f;
+
+			FDEEntityToken Tok;
+			Tok.Features = {
+				static_cast<float>(RelPos.X),
+				static_cast<float>(RelPos.Y),
+				static_cast<float>(RelPos.Z),
+				Ownership,
+				0.0f,
+				IsAssigned,
+				0.5f
+			};
+			Obs.BaseTokens.Add(MoveTemp(Tok));
+		}
+	}
+
+	return Obs;
+}
+
+
 TArray<float> UDETacticalObserver::EncodeStrategyOneHot(EDEStrategyType Strategy) const
 {
 	TArray<float> OneHot = {0.0f, 0.0f, 0.0f};
@@ -452,9 +499,10 @@ TArray<float> UDETacticalObserver::EncodeStrategyOneHot(EDEStrategyType Strategy
 
 bool UDETacticalObserver::ValidateObservation(const TArray<float>& Observation) const
 {
-	if (Observation.Num() != 54)
+	if (Observation.Num() != DE_OBS_V2_DIM)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[DETacticalObserver] Invalid observation size: %d (expected 54)"), Observation.Num());
+		UE_LOG(LogTemp, Error, TEXT("[DETacticalObserver] Invalid observation size: %d (expected %d)"),
+			Observation.Num(), DE_OBS_V2_DIM);
 		return false;
 	}
 

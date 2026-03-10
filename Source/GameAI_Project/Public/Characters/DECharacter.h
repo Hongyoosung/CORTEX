@@ -350,6 +350,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Transient, Category = "AI|Environment")
 	TArray<ADECapturePoint*> AssignedCapturePoints;
 
+	/**
+	 * Index into ADEMatchManager::GetCapturePoints() for the base assigned
+	 * by the Squad Commander. Written by AssignBasesToAgents() and mirrored
+	 * in the Blackboard key "AssignedBaseIndex".
+	 * -1 = no assignment.
+	 */
+	UPROPERTY(BlueprintReadOnly, Transient, Category = "AI|Squad")
+	int32 AssignedBaseIndex = -1;
+
 
 	//========================================
 	// Damage Stats (replaces DEHealthComponent stats)

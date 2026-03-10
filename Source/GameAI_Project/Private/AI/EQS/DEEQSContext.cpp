@@ -4,6 +4,7 @@
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"
 #include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "Perception/AIPerceptionComponent.h"
@@ -11,6 +12,7 @@
 
 #include "Characters/DECharacter.h"
 #include "Actors/DECapturePoint.h"
+#include "Team/DEMatchManager.h"
 
 void UEnvQueryContext_DEQuerier::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
@@ -258,6 +260,41 @@ void UEnvQueryContext_DEAllyObjective::ProvideContext(FEnvQueryInstance& QueryIn
 			UEnvQueryItemType_Point::SetContextHelper(ContextData, CP->GetActorLocation());
 			return;
 		}
+	}
+}
+
+
+void UEnvQueryContext_DEAssignedBase::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
+{
+	ADECharacter* DEChar = Cast<ADECharacter>(QueryInstance.Owner.Get());
+	if (!DEChar)
+	{
+		AAIController* AIC = Cast<AAIController>(QueryInstance.Owner.Get());
+		if (AIC) DEChar = Cast<ADECharacter>(AIC->GetPawn());
+	}
+
+	if (!DEChar) return;
+
+	// Read AssignedBaseIndex from Blackboard
+	int32 AssignedIndex = DEChar->AssignedBaseIndex;
+
+	AAIController* AIC = Cast<AAIController>(DEChar->GetController());
+	if (AIC)
+	{
+		if (UBlackboardComponent* BB = AIC->GetBlackboardComponent())
+		{
+			AssignedIndex = BB->GetValueAsInt(TEXT("AssignedBaseIndex"));
+		}
+	}
+
+	// Look up the capture point position from MatchManager
+	ADEMatchManager* MatchMgr = DEChar->GetMatchManager();
+	if (!MatchMgr) return;
+
+	const TArray<ADECapturePoint*>& CPs = MatchMgr->GetCapturePoints();
+	if (CPs.IsValidIndex(AssignedIndex) && CPs[AssignedIndex])
+	{
+		UEnvQueryItemType_Point::SetContextHelper(ContextData, CPs[AssignedIndex]->GetActorLocation());
 	}
 }
 

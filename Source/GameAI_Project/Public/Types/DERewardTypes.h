@@ -77,6 +77,9 @@ struct FDERewardState
     float LastIndividualStepReward = 0.0f;
     int32 IsolatedConsecutiveSteps = 0;
 
+    /** Set to true the first time the agent reaches its AssignedBase (prevents repeat reward). */
+    bool bHasReachedAssignedBase = false;
+
     void Reset()
     {
         CumulativeReward = 0.0f;
@@ -92,6 +95,7 @@ struct FDERewardState
         bInFriendlyZone = false;
         LastIndividualStepReward = 0.0f;
         IsolatedConsecutiveSteps = 0;
+        bHasReachedAssignedBase = false;
     }
 };
 
