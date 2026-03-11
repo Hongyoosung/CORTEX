@@ -78,16 +78,16 @@ else
 fi
 
 # Check documentation
-if [ -f "DOCKER_QUICK_START_v10_2.md" ]; then
-    check_pass "DOCKER_QUICK_START_v10_2.md"
+if [ -f "DOCKER_QUICK_START_.md" ]; then
+    check_pass "DOCKER_QUICK_START_.md"
 else
-    check_warn "DOCKER_QUICK_START_v10_2.md (missing)"
+    check_warn "DOCKER_QUICK_START_.md (missing)"
 fi
 
-if [ -f "training/README_v10_2.md" ]; then
-    check_pass "training/README_v10_2.md"
+if [ -f "training/README_.md" ]; then
+    check_pass "training/README_.md"
 else
-    check_warn "training/README_v10_2.md (missing)"
+    check_warn "training/README_.md (missing)"
 fi
 
 echo ""
@@ -129,10 +129,10 @@ else
 fi
 
 # Check output directories (will be created if missing)
-if [ -d "training_results_v10_2" ]; then
-    check_pass "training_results_v10_2 directory exists"
+if [ -d "training_results_" ]; then
+    check_pass "training_results_ directory exists"
 else
-    check_warn "training_results_v10_2 directory missing (will be auto-created)"
+    check_warn "training_results_ directory missing (will be auto-created)"
 fi
 
 if [ -d "models" ]; then

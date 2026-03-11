@@ -9,9 +9,9 @@ services:
     build:
       context: ..
       dockerfile: DE_Training/Dockerfile
-    container_name: DE_training_v10_2
+    container_name: DE_training_
     volumes:
-      - ./training_results_v10_2:/app/training_results_v10_2
+      - ./training_results_:/app/training_results_
       - ./models:/app/models
     environment:
       # Passed through from the host shell (or training.bat).
@@ -42,7 +42,7 @@ services:
     build:
       context: ..
       dockerfile: DE_Training/Dockerfile
-    container_name: DE_training_v10_2_example
+    container_name: DE_training__example
     command: python training/policy_training.py --mode example
     profiles:
       - v10.2-demo
@@ -58,12 +58,12 @@ services:
     build:
       context: ..
       dockerfile: DE_Training/Dockerfile
-    container_name: DE_tensorboard_v10_2
+    container_name: DE_tensorboard_
     volumes:
-      - ./training_results_v10_2:/app/training_results_v10_2
+      - ./training_results_:/app/training_results_
     ports:
       - "6006:6006"
-    command: tensorboard --logdir=/app/training_results_v10_2 --host=0.0.0.0
+    command: tensorboard --logdir=/app/training_results_ --host=0.0.0.0
     profiles:
       - v10.2
       - monitor

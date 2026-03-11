@@ -60,23 +60,23 @@ echo ----------------------------------------
 echo  Available training runs:
 echo ----------------------------------------
 
-REM List run directories under training_results_v10_2\
-set "RESULTS_DIR=%~dp0training_results_v10_2"
+REM List run directories under training_results_\
+set "RESULTS_DIR=%~dp0training_results_"
 if not exist "%RESULTS_DIR%" (
-    echo No training runs found. training_results_v10_2\ does not exist.
+    echo No training runs found. training_results_\ does not exist.
     echo Falling back to new training.
     goto :start_training
 )
 
 set "RUN_COUNT=0"
-for /d %%D in ("%RESULTS_DIR%\v10_2_*") do (
+for /d %%D in ("%RESULTS_DIR%\_*") do (
     set /a "RUN_COUNT+=1"
     set "RUN_!RUN_COUNT!=%%~nD"
     echo    !RUN_COUNT!^) %%~nD
 )
 
 if "%RUN_COUNT%"=="0" (
-    echo No training runs found in training_results_v10_2\.
+    echo No training runs found in training_results_\.
     echo Falling back to new training.
     goto :start_training
 )
@@ -148,8 +148,8 @@ if "%SELECTED_CKP%"=="" (
     goto :start_training
 )
 
-REM Build the container-side path (volume is mounted at /app/training_results_v10_2)
-set "RESUME_CHECKPOINT=/app/training_results_v10_2/%SELECTED_RUN%/%SELECTED_CKP%"
+REM Build the container-side path (volume is mounted at /app/training_results_)
+set "RESUME_CHECKPOINT=/app/training_results_/%SELECTED_RUN%/%SELECTED_CKP%"
 echo.
 echo Resuming from: %RESUME_CHECKPOINT%
 goto :start_training

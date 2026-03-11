@@ -319,7 +319,7 @@ def run_tune(
     wandb_project:    str   = "de-v10-2",
     wandb_api_key:    str   = "",
     num_workers:      int   = 4,
-    local_dir:        str   = "./training_results_v10_2",
+    local_dir:        str   = "./training_results_",
     restore:          Optional[str] = None,
 ) -> tune.ExperimentAnalysis:
     """Single-call entry point used by launch_training.py."""
@@ -366,7 +366,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb-project",    default="de-v10-2")
     parser.add_argument("--wandb-api-key",    default=os.environ.get("WANDB_API_KEY", ""))
     parser.add_argument("--num-workers",      type=int, default=4)
-    parser.add_argument("--local-dir",        default="./training_results_v10_2")
+    parser.add_argument("--local-dir",        default="./training_results_")
     parser.add_argument("--restore",          default=None)
     args = parser.parse_args()
 
