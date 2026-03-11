@@ -2,15 +2,16 @@
 Entity-Centric Policy for DE v10.2+ (entity-centric refactor).
 
 Architecture:
-    Self encoder  : Linear(7, 64)
-    Ally encoder  : Linear(5, 64) + MultiheadAttention(64, heads=4)
-    Enemy encoder : Linear(5, 64) + MultiheadAttention(64, heads=4)
-    Base encoder  : Linear(7, 64) + MultiheadAttention(64, heads=4)
-    Policy head   : Linear(64*4, 256) → ReLU → Linear(256, 128) → ReLU → Linear(128, 7) → Tanh
-    Value head    : Linear(64*4, 256) → ReLU → Linear(256, 1)
+    Self encoder     : Linear(7, 64)
+    Ally encoder     : Linear(5, 64) + MultiheadAttention(64, heads=4)
+    Enemy encoder    : Linear(5, 64) + MultiheadAttention(64, heads=4)
+    Base encoder     : Linear(7, 64) + MultiheadAttention(64, heads=4)
+    Strategy encoder : Embedding(3, 64)  — indexes [167:170] argmax
+    Policy head      : Linear(64*5, 256) → ReLU → Linear(256, 128) → ReLU → Linear(128, 7) → Tanh
+    Value head       : Linear(64*5, 256) → ReLU → Linear(256, 1)
     Learnable log_std: (7,)
 
-Input: 167-dim flat array (from C++ FDEObservationV2::ToFlatArray)
+Input: 170-dim flat array (from C++ FDEObservationV2::ToFlatArray)
 Layout:
     [  0:  7]  Self token (7)
     [  7: 47]  Ally tokens  8×5  (40)
@@ -19,6 +20,7 @@ Layout:
     [143:151]  Ally mask    8    (0=present, 1=padding)
     [151:159]  Enemy mask   8
     [159:167]  Base mask    8
+    [167:170]  Strategy one-hot  [assault, defend, support]  (3)
 
 Output: 7-dim EQS weights in [-1, 1]
     [0] EnemyObjectiveProximity
@@ -27,9 +29,9 @@ Output: 7-dim EQS weights in [-1, 1]
     [3] EnemyVisibility
     [4] AllyProximity
     [5] CombatRange
-    [6] AssignedBaseProximity  ← NEW
+    [6] AssignedBaseProximity
 
-ONNX export: fixed-shape (B, 167) → (B, 7) for UE5 NNE compatibility.
+ONNX export: fixed-shape (B, 170) → (B, 7) for UE5 NNE compatibility.
 """
 
 import os
@@ -42,24 +44,26 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 # ── Observation layout constants (must match DEObservationTypes.h) ──────────
-OBS_DIM         = 167
-SELF_DIM        = 7
-ALLY_DIM        = 5
-ENEMY_DIM       = 5
-BASE_DIM        = 7
-MAX_ALLIES      = 8
-MAX_ENEMIES     = 8
-MAX_BASES       = 8
-EQS_DIM         = 7
-HIDDEN          = 64
+OBS_DIM          = 170
+SELF_DIM         = 7
+ALLY_DIM         = 5
+ENEMY_DIM        = 5
+BASE_DIM         = 7
+STRATEGY_DIM     = 3
+MAX_ALLIES       = 8
+MAX_ENEMIES      = 8
+MAX_BASES        = 8
+EQS_DIM          = 7
+HIDDEN           = 64
 
-SELF_START      = 0
-ALLY_START      = 7           # 7  + 8*5 = 47
-ENEMY_START     = 47          # 47 + 8*5 = 87
-BASE_START      = 87          # 87 + 8*7 = 143
-ALLY_MASK_START = 143
-ENEMY_MASK_START= 151
-BASE_MASK_START = 159
+SELF_START       = 0
+ALLY_START       = 7           # 7  + 8*5 = 47
+ENEMY_START      = 47          # 47 + 8*5 = 87
+BASE_START       = 87          # 87 + 8*7 = 143
+ALLY_MASK_START  = 143
+ENEMY_MASK_START = 151
+BASE_MASK_START  = 159
+STRATEGY_START   = 167         # 159 + 8  = 167; [167:170] strategy one-hot
 
 EQS_LABELS = [
     "EnemyObjectiveProximity",
@@ -76,10 +80,10 @@ EQS_LABELS = [
 
 @dataclass
 class Transition:
-    state:      np.ndarray   # (167,) padded flat observation
+    state:      np.ndarray   # (170,) padded flat observation
     action:     np.ndarray   # (7,)  EQS weights in [-1, 1]
     reward:     float
-    next_state: np.ndarray   # (167,)
+    next_state: np.ndarray   # (170,)
     done:       bool
     log_prob:   float = 0.0
 
@@ -90,9 +94,9 @@ class EntityCentricPolicy(nn.Module):
     """
     Permutation-invariant policy using per-entity-type attention encoders.
 
-    Takes a flat 167-dim observation, unpacks entity sets, attends over each
-    set independently, concatenates with the self encoding, and passes through
-    a shared policy/value head.
+    Takes a flat 170-dim observation, unpacks entity sets, attends over each
+    set independently, concatenates with the self encoding and strategy embedding,
+    and passes through a shared policy/value head.
     """
 
     LOG_STD_MIN = -2.5   # σ_min ≈ 0.08
@@ -103,17 +107,20 @@ class EntityCentricPolicy(nn.Module):
         self.hidden = hidden
 
         # Per-entity-type linear encoders
-        self.self_enc  = nn.Linear(SELF_DIM,  hidden)
-        self.ally_enc  = nn.Linear(ALLY_DIM,  hidden)
-        self.enemy_enc = nn.Linear(ENEMY_DIM, hidden)
-        self.base_enc  = nn.Linear(BASE_DIM,  hidden)
+        self.self_enc     = nn.Linear(SELF_DIM,  hidden)
+        self.ally_enc     = nn.Linear(ALLY_DIM,  hidden)
+        self.enemy_enc    = nn.Linear(ENEMY_DIM, hidden)
+        self.base_enc     = nn.Linear(BASE_DIM,  hidden)
+
+        # Strategy encoder: embeds the 3-way one-hot → hidden (via argmax index)
+        self.strategy_enc = nn.Embedding(STRATEGY_DIM, hidden)
 
         # Per-entity-type cross-attention (self token queries each entity set)
         self.ally_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
         self.enemy_attn = nn.MultiheadAttention(hidden, heads, batch_first=True)
         self.base_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
 
-        combined_dim = hidden * 4  # self + ally_ctx + enemy_ctx + base_ctx
+        combined_dim = hidden * 5  # self + ally_ctx + enemy_ctx + base_ctx + strategy
 
         # Action head: combined → 7-dim EQS weights in [-1, 1]
         self.action_head = nn.Sequential(
@@ -140,18 +147,19 @@ class EntityCentricPolicy(nn.Module):
         self,
         flat: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
-               torch.Tensor, torch.Tensor, torch.Tensor]:
+               torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Unpack (B, 167) flat observation into entity tensors and bool masks.
+        Unpack (B, 170) flat observation into entity tensors, bool masks, and strategy index.
 
         Returns:
-            self_obs   : (B, 7)
-            allies     : (B, 8, 5)
-            enemies    : (B, 8, 5)
-            bases      : (B, 8, 7)
-            ally_mask  : (B, 8) bool — True means padding (ignore in attention)
-            enemy_mask : (B, 8) bool
-            base_mask  : (B, 8) bool
+            self_obs      : (B, 7)
+            allies        : (B, 8, 5)
+            enemies       : (B, 8, 5)
+            bases         : (B, 8, 7)
+            ally_mask     : (B, 8) bool — True means padding (ignore in attention)
+            enemy_mask    : (B, 8) bool
+            base_mask     : (B, 8) bool
+            strategy_idx  : (B,)  long — argmax of the 3-dim one-hot at [167:170]
         """
         B = flat.shape[0]
         self_obs = flat[:, SELF_START:ALLY_START]                               # (B, 7)
@@ -163,7 +171,7 @@ class EntityCentricPolicy(nn.Module):
         # Use > 0.5 threshold (not .bool()) so 0.0 stays False and 1.0 stays True.
         ally_mask  = flat[:, ALLY_MASK_START:ENEMY_MASK_START] > 0.5   # (B, 8)
         enemy_mask = flat[:, ENEMY_MASK_START:BASE_MASK_START] > 0.5   # (B, 8)
-        base_mask  = flat[:, BASE_MASK_START:] > 0.5                   # (B, 8)
+        base_mask  = flat[:, BASE_MASK_START:STRATEGY_START] > 0.5     # (B, 8)
 
         # Safety: if every slot in a mask is True (all padding), unmask slot 0
         # so MultiheadAttention never receives an all-True mask (which produces NaN).
@@ -175,7 +183,11 @@ class EntityCentricPolicy(nn.Module):
         enemy_mask = _safe_mask(enemy_mask)
         base_mask  = _safe_mask(base_mask)
 
-        return self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask
+        # Strategy one-hot → index (0=Assault, 1=Defend, 2=Support)
+        strategy_onehot = flat[:, STRATEGY_START:STRATEGY_START + STRATEGY_DIM]  # (B, 3)
+        strategy_idx    = strategy_onehot.argmax(dim=1)                           # (B,)
+
+        return self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask, strategy_idx
 
     def _encode(
         self,
@@ -184,16 +196,16 @@ class EntityCentricPolicy(nn.Module):
         """
         Encode flat obs into combined feature vector.
 
-        Returns: (B, hidden*4)
+        Returns: (B, hidden*5)
         """
-        self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask = self._unpack(flat)
+        self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask, strategy_idx = self._unpack(flat)
 
-        s = self.self_enc(self_obs)      # (B, hidden)
-        q = s.unsqueeze(1)               # (B, 1, hidden) — query for attention
+        s = self.self_enc(self_obs)               # (B, hidden)
+        q = s.unsqueeze(1)                        # (B, 1, hidden) — query for attention
 
-        a_enc = self.ally_enc(allies)    # (B, 8, hidden)
-        e_enc = self.enemy_enc(enemies)  # (B, 8, hidden)
-        b_enc = self.base_enc(bases)     # (B, 8, hidden)
+        a_enc = self.ally_enc(allies)             # (B, 8, hidden)
+        e_enc = self.enemy_enc(enemies)           # (B, 8, hidden)
+        b_enc = self.base_enc(bases)              # (B, 8, hidden)
 
         # key_padding_mask: True = ignore (padding slot)
         a_ctx, _ = self.ally_attn(q, a_enc, a_enc,
@@ -203,17 +215,20 @@ class EntityCentricPolicy(nn.Module):
         b_ctx, _ = self.base_attn(q, b_enc, b_enc,
                                   key_padding_mask=base_mask)    # (B, 1, hidden)
 
+        strat = self.strategy_enc(strategy_idx)   # (B, hidden)
+
         return torch.cat([s,
                           a_ctx.squeeze(1),
                           e_ctx.squeeze(1),
-                          b_ctx.squeeze(1)], dim=-1)             # (B, hidden*4)
+                          b_ctx.squeeze(1),
+                          strat], dim=-1)                        # (B, hidden*5)
 
     # ── Public interface ─────────────────────────────────────────────────────
 
     def forward(self, flat_obs: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            flat_obs: (B, 167) padded flat observation
+            flat_obs: (B, 170) padded flat observation
 
         Returns:
             eqs_weights: (B, 7) in range [-1, 1]
@@ -256,7 +271,7 @@ class EntityCentricPolicy(nn.Module):
 
     def export_onnx(self, filepath: str, batch_size: int = 1):
         """
-        Export to ONNX for UE5 NNE inference (fixed shape: B×167 → B×7).
+        Export to ONNX for UE5 NNE inference (fixed shape: B×170 → B×7).
 
         Args:
             filepath   : Output .onnx path
@@ -276,7 +291,7 @@ class EntityCentricPolicy(nn.Module):
             },
             opset_version=14,
         )
-        print(f"[ONNX] Exported → {filepath}  (input: B×{OBS_DIM}, output: B×{EQS_DIM})")
+        print(f"[ONNX] Exported → {filepath}  (input: B×{OBS_DIM}, output: B×{EQS_DIM})")  # B×170 → B×7
 
 
 # ── Replay buffer ─────────────────────────────────────────────────────────────
@@ -398,7 +413,7 @@ class PPOTrainer:
 
 def collate_fn(obs_list: List[np.ndarray]) -> torch.Tensor:
     """
-    Stack a list of 167-dim flat observations into a (B, 167) tensor.
+    Stack a list of 170-dim flat observations into a (B, 170) tensor.
     All observations are already fixed-shape (padded by C++), so this is
     a straightforward stack. The function exists as a named hook so callers
     can replace it if the serialization changes.

@@ -4,7 +4,7 @@ DE Entity-Centric Environment Wrapper.
 Wraps Schola/UE5 connection for the entity-centric refactor (v10.2+).
 
 Key differences from the old v10.2 wrapper:
-  - Observation: 167-dim flat (from C++ FDEObservationV2::ToFlatArray)
+  - Observation: 170-dim flat (from C++ FDEObservationV2::ToFlatArray)
   - Action:       7-dim EQS weights in [-1, 1]  (7th = AssignedBaseProximity)
   - No strategy routing: single EntityCentricPolicy handles all agents
   - No uniform strategy assignment: strategies come from UE5 Squad Commander
@@ -40,7 +40,7 @@ except ImportError:
 
 
 # ── Layout constants (must match DEObservationTypes.h) ───────────────────────
-OBS_DIM    = 167
+OBS_DIM    = 170
 ACTION_DIM = 7
 
 
@@ -116,6 +116,23 @@ if SCHOLA_AVAILABLE:
             self._agent_ep_rewards:   Dict[str, float] = {}
             self._prev_cumulative:    Dict[str, float] = {}
             self._reward_debug_count  = 0
+
+            # Per-strategy reward tracking
+            # Keys: 0=Assault, 1=Defend, 2=Support  (StrategyType from UE5 info)
+            STRATEGY_NAMES = {0: "assault", 1: "defend", 2: "support"}
+            self._strategy_names = STRATEGY_NAMES
+            self._agent_strategy: Dict[str, int] = {}          # latest strategy per agent
+            self._strategy_ep_rewards: Dict[int, list] = {k: [] for k in STRATEGY_NAMES}
+            self._step_rewards_by_strategy: Dict[int, list] = {k: [] for k in STRATEGY_NAMES}
+
+            # Per reward-component tracking (UE5 may send these in info)
+            REWARD_COMPONENTS = [
+                "BaseOccupationReward", "CoOccupationPenalty",
+                "BaseCaptureCreditReward", "UndefendedBasePenalty",
+                "AssignedBaseReachReward",
+            ]
+            self._reward_components = REWARD_COMPONENTS
+            self._component_ep_sums: Dict[str, list] = {c: [] for c in REWARD_COMPONENTS}
 
             self._max_episode_steps        = 100
             self._max_episode_steps_synced = False
@@ -373,6 +390,12 @@ if SCHOLA_AVAILABLE:
                         print(f"[NaN GUARD] obs for {aid}: bad indices={bad}")
                         obs_d[aid] = np.nan_to_num(o)
 
+                # Inject custom_metrics so RLlib aggregates them in env_runners
+                cm = self._pop_custom_metrics()
+                if cm:
+                    for fid in self._agent_ids:
+                        info_d.setdefault(fid, {})["custom_metrics"] = cm
+
                 self.step_durations.append(time.time() - step_start)
                 self._last_step_return_time = time.time()
                 return obs_d, rew_d, term_d, trunc_d, info_d
@@ -470,6 +493,32 @@ if SCHOLA_AVAILABLE:
                 except (ValueError, TypeError):
                     pass
 
+            # Per-strategy reward accumulation
+            for fid in list(rew_d.keys()):
+                if fid == '__all__':
+                    continue
+                info = info_d.get(fid, {})
+                # Update agent strategy from UE5 info (StrategyType: 0=Assault,1=Defend,2=Support)
+                raw_strat = info.get('StrategyType')
+                if raw_strat is not None:
+                    try:
+                        strat = int(raw_strat)
+                        self._agent_strategy[fid] = strat
+                    except (ValueError, TypeError):
+                        pass
+                strat = self._agent_strategy.get(fid)
+                if strat is not None and strat in self._step_rewards_by_strategy:
+                    self._step_rewards_by_strategy[strat].append(rew_d[fid])
+
+                # Per reward-component accumulation from UE5 info
+                for comp in self._reward_components:
+                    raw_val = info.get(comp)
+                    if raw_val is not None:
+                        try:
+                            self._component_ep_sums[comp].append(float(raw_val))
+                        except (ValueError, TypeError):
+                            pass
+
             # Debug first 3 steps
             self._reward_debug_count += 1
             if self._reward_debug_count <= 3:
@@ -483,6 +532,29 @@ if SCHOLA_AVAILABLE:
                 print("[REWARD] Using CumulativeLifetimeReward delta channel")
 
             return obs_d, rew_d, term_d, trunc_d, info_d
+
+        # ── Custom metrics ────────────────────────────────────────────────────
+
+        def _pop_custom_metrics(self) -> dict:
+            """
+            Drain accumulated per-strategy and per-component reward buffers
+            and return a flat dict suitable for RLlib custom_metrics.
+            Buffers are cleared after each call.
+            """
+            metrics = {}
+            for strat_id, name in self._strategy_names.items():
+                buf = self._step_rewards_by_strategy[strat_id]
+                if buf:
+                    metrics[f"reward_strategy_{name}_mean"] = float(np.mean(buf))
+                    metrics[f"reward_strategy_{name}_sum"]  = float(np.sum(buf))
+                    metrics[f"reward_strategy_{name}_count"]= float(len(buf))
+                    self._step_rewards_by_strategy[strat_id] = []
+            for comp in self._reward_components:
+                buf = self._component_ep_sums[comp]
+                if buf:
+                    metrics[f"reward_component_{comp}_mean"] = float(np.mean(buf))
+                    self._component_ep_sums[comp] = []
+            return metrics
 
         # ── Episode management helpers ────────────────────────────────────────
 

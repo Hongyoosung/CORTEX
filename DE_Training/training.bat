@@ -8,7 +8,7 @@ SET "DETACH=false"
 SET "NO_BUILD=true"
 SET "RESUME_CHECKPOINT="
 SET "UE5_EXE=C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.exe"
-SET "UPROJECT=C:\Users\Foryoucom\Documents\GitHub\DE\GameAI_Project.uproject"
+SET "UPROJECT=C:\Users\PC\Documents\GitHub\CORTEX\GameAI_Project.uproject"
 SET "SCHOLA_BASE_PORT=50051"
 SET "LAUNCH_UE5=true"
 
@@ -69,7 +69,7 @@ if not exist "%RESULTS_DIR%" (
 )
 
 set "RUN_COUNT=0"
-for /d %%D in ("%RESULTS_DIR%\_*") do (
+for /d %%D in ("%RESULTS_DIR%\*") do (
     set /a "RUN_COUNT+=1"
     set "RUN_!RUN_COUNT!=%%~nD"
     echo    !RUN_COUNT!^) %%~nD

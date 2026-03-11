@@ -134,7 +134,7 @@ if RLLIB_AVAILABLE:
 
         @override(TorchModelV2)
         def forward(self, input_dict, state, seq_lens):
-            obs = input_dict["obs"].float()            # (B, 167)
+            obs = input_dict["obs"].float()            # (B, 170)
             self._last_features = obs
             means = self.policy(obs)                   # (B, 7)
             log_stds = torch.clamp(
@@ -303,14 +303,52 @@ def train_with_rllib(args):
         cumul_episodes += eps
         cumul_steps    += steps
 
-        tb.add_scalar("reward/mean",    reward, cumul_steps)
-        tb.add_scalar("reward/ep_len",  ep_len, cumul_steps)
+        tb.add_scalar("reward/mean",   reward, cumul_steps)
+        tb.add_scalar("reward/ep_len", ep_len, cumul_steps)
 
-        learner = result.get("info", {}).get("learner", {}).get("entity_centric_policy", {})
-        stats   = learner.get("learner_stats", learner)
-        for m in ("policy_loss", "vf_loss", "entropy", "total_loss"):
-            if m in stats and isinstance(stats[m], (int, float)):
-                tb.add_scalar(f"train/{m}", stats[m], cumul_steps)
+        # Per-strategy reward custom_metrics (populated by env_wrapper)
+        custom = env_r.get("custom_metrics", {})
+        for strat in ("assault", "defend", "support"):
+            key_mean = f"reward_strategy_{strat}_mean"
+            key_sum  = f"reward_strategy_{strat}_sum"
+            if key_mean in custom:
+                tb.add_scalar(f"reward/strategy_{strat}_mean", custom[key_mean], cumul_steps)
+            if key_sum in custom:
+                tb.add_scalar(f"reward/strategy_{strat}_sum",  custom[key_sum],  cumul_steps)
+
+        # Per reward-component custom_metrics
+        REWARD_COMPONENTS = [
+            "BaseOccupationReward", "CoOccupationPenalty",
+            "BaseCaptureCreditReward", "UndefendedBasePenalty",
+            "AssignedBaseReachReward",
+        ]
+        for comp in REWARD_COMPONENTS:
+            ckey = f"reward_component_{comp}_mean"
+            if ckey in custom:
+                tb.add_scalar(f"reward/component_{comp}", custom[ckey], cumul_steps)
+
+        # Learner / training metrics — try both old and new RLlib result layouts
+        policy_stats = result.get("info", {}).get("learner", {}).get("entity_centric_policy", {})
+        stats = policy_stats.get("learner_stats", policy_stats)
+
+        TRAIN_METRICS = {
+            # tag: candidate keys (first match wins)
+            "losses/policy_loss":  ["policy_loss",  "mean_policy_loss"],
+            "losses/vf_loss":      ["vf_loss",      "mean_vf_loss"],
+            "losses/total_loss":   ["total_loss",   "mean_total_loss"],
+            "kl/value":            ["kl",           "mean_kl_loss", "kl_loss"],
+            "kl/coeff":            ["cur_kl_coeff"],
+            "entropy/value":       ["entropy",      "mean_entropy"],
+            "lr/value":            ["cur_lr"],
+            "vf/explained_var":    ["vf_explained_var"],
+        }
+        for tag, candidates in TRAIN_METRICS.items():
+            for k in candidates:
+                v = stats.get(k)
+                if v is not None and isinstance(v, (int, float)) and not np.isnan(float(v)):
+                    tb.add_scalar(tag, float(v), cumul_steps)
+                    break
+
         tb.flush()
 
         print(f"{i+1:>3}/{args.iterations:<3}  {reward:>10.2f}  "
@@ -421,11 +459,11 @@ def run_validation() -> bool:
         out_pad = policy(obs_all_pad)
     check("forward works with all-padding ally mask", out_pad.shape == (B, EQS_DIM))
 
-    # -- Test 6: obs dimension = 167 --
-    print("[Test 6] OBS_DIM == 167")
-    check("OBS_DIM == 167", OBS_DIM == 167, f"got {OBS_DIM}")
-    expected = 7 + 8 * 5 + 8 * 5 + 8 * 7 + 8 + 8 + 8
-    check("Layout arithmetic == 167", expected == 167, f"got {expected}")
+    # -- Test 6: obs dimension = 170 --
+    print("[Test 6] OBS_DIM == 170")
+    check("OBS_DIM == 170", OBS_DIM == 170, f"got {OBS_DIM}")
+    expected = 7 + 8 * 5 + 8 * 5 + 8 * 7 + 8 + 8 + 8 + 3
+    check("Layout arithmetic == 170", expected == 170, f"got {expected}")
 
     # -- Test 7: ONNX export + reload --
     print("[Test 7] ONNX export and ORT reload")
@@ -478,7 +516,7 @@ def run_validation() -> bool:
     print("[Test 10] collate_fn")
     obs_list = [np.random.randn(OBS_DIM).astype(np.float32) for _ in range(4)]
     batch    = collate_fn(obs_list)
-    check("collate_fn shape (4, 167)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
+    check("collate_fn shape (4, 170)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
 
     print("\n" + "=" * 70)
     print(f"Results: {passed} passed, {failed} failed / {passed+failed} total")

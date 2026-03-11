@@ -19,12 +19,16 @@ static constexpr int32 DE_ALLY_DIM    = 5;
 static constexpr int32 DE_ENEMY_DIM   = 5;
 static constexpr int32 DE_BASE_DIM    = 7;
 
-// Total padded flat size: 7 + 8*5 + 8*5 + 8*7 + 8+8+8 = 167
+// Strategy one-hot dim: Assault=0, Defend=1, Support=2
+static constexpr int32 DE_STRATEGY_DIM = 3;
+
+// Total padded flat size: 7 + 8*5 + 8*5 + 8*7 + 8+8+8 + 3 = 170
 static constexpr int32 DE_OBS_V2_DIM  = DE_SELF_DIM
                                        + DE_MAX_ALLIES  * DE_ALLY_DIM
                                        + DE_MAX_ENEMIES * DE_ENEMY_DIM
                                        + DE_MAX_BASES   * DE_BASE_DIM
-                                       + DE_MAX_ALLIES + DE_MAX_ENEMIES + DE_MAX_BASES;
+                                       + DE_MAX_ALLIES + DE_MAX_ENEMIES + DE_MAX_BASES
+                                       + DE_STRATEGY_DIM;
 
 /**
  * Lightweight per-step agent state snapshot used exclusively by the reward subsystem.
@@ -97,13 +101,14 @@ struct GAMEAI_PROJECT_API FDEEntityToken
  * Entity-Centric Observation V2.
  *
  * Variable-length sets of typed entity tokens. Serialised to a fixed-size
- * padded flat array (167-dim) for NNE / ONNX compatibility.
+ * padded flat array (170-dim) for NNE / ONNX compatibility.
  *
- * Self (7):  [pos_x/7500, pos_y/7500, pos_z/1000, health, vel_x/600, vel_y/600, vel_z/600]
- * Ally (5):  [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, alive]
- * Enemy (5): [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, visible, confidence]
- * Base (7):  [rel_pos_x/15000, rel_pos_y/15000, rel_pos_z/1000, ownership,
- *             capture_progress, is_assigned_target, strategic_value]
+ * Self (7):      [pos_x/7500, pos_y/7500, pos_z/1000, health, vel_x/600, vel_y/600, vel_z/600]
+ * Ally (5):      [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, alive]
+ * Enemy (5):     [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, visible, confidence]
+ * Base (7):      [rel_pos_x/15000, rel_pos_y/15000, rel_pos_z/1000, ownership,
+ *                 capture_progress, is_assigned_target, strategic_value]
+ * Strategy (3):  one-hot [assault, defend, support]
  */
 USTRUCT(BlueprintType)
 struct GAMEAI_PROJECT_API FDEObservationV2
@@ -126,17 +131,22 @@ struct GAMEAI_PROJECT_API FDEObservationV2
 	UPROPERTY(BlueprintReadWrite, Category = "ObservationV2|Bases")
 	TArray<FDEEntityToken> BaseTokens;
 
+	/** Strategy commanded by the Squad Commander (Assault/Defend/Support) */
+	UPROPERTY(BlueprintReadWrite, Category = "ObservationV2|Strategy")
+	EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
+
 	/**
-	 * Serialise to padded flat array (167-dim) for NNE/ONNX inference.
+	 * Serialise to padded flat array (170-dim) for NNE/ONNX inference.
 	 *
-	 * Layout (total = 167):
-	 *  [0..6]   Self (7)
-	 *  [7..46]  Allies  padded to 8 × 5  (40)
-	 *  [47..86] Enemies padded to 8 × 5  (40)
-	 *  [87..142] Bases  padded to 8 × 7  (56)
+	 * Layout (total = 170):
+	 *  [0..6]     Self (7)
+	 *  [7..46]    Allies  padded to 8 × 5  (40)
+	 *  [47..86]   Enemies padded to 8 × 5  (40)
+	 *  [87..142]  Bases   padded to 8 × 7  (56)
 	 *  [143..150] Ally mask  (8) — 0=present, 1=padding
 	 *  [151..158] Enemy mask (8)
 	 *  [159..166] Base mask  (8)
+	 *  [167..169] Strategy one-hot [assault, defend, support] (3)
 	 */
 	TArray<float> ToFlatArray() const
 	{
@@ -205,6 +215,11 @@ struct GAMEAI_PROJECT_API FDEObservationV2
 		Out.Append(AllyMask);
 		Out.Append(EnemyMask);
 		Out.Append(BaseMask);
+
+		// Strategy one-hot (3): [assault, defend, support]
+		Out.Add(CommandedStrategy == EDEStrategyType::Assault ? 1.0f : 0.0f);
+		Out.Add(CommandedStrategy == EDEStrategyType::Defend  ? 1.0f : 0.0f);
+		Out.Add(CommandedStrategy == EDEStrategyType::Support ? 1.0f : 0.0f);
 
 		ensure(Out.Num() == DE_OBS_V2_DIM);
 		return Out;

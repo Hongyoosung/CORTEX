@@ -23,8 +23,8 @@ class UDEScholaAgent;
  * - Layer 1 (Squad Commander): Uses FDETeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
- * Observation Space (167-dim, entity-centric V2):
- *   Self (7) + Allies 8×5 (40) + Enemies 8×5 (40) + Bases 8×7 (56) + Masks 8+8+8 (24) = 167
+ * Observation Space (170-dim, entity-centric V2):
+ *   Self (7) + Allies 8×5 (40) + Enemies 8×5 (40) + Bases 8×7 (56) + Masks 8+8+8 (24) + Strategy (3) = 170
  *   Serialised as a fixed-size padded flat array via FDEObservationV2::ToFlatArray().
  *
  * Usage:
@@ -36,7 +36,7 @@ class UDEScholaAgent;
  * Integration:
  * - Owner: ADETrainer (Schola trainer)
  * - Data Source: ADECharacter (via trainer reference)
- * - Output: FBoxPoint with 167 continuous values
+ * - Output: FBoxPoint with 170 continuous values
  */
 UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "DE Tactical Observer"))
 class GAMEAI_PROJECT_API UDETacticalObserver : public UBoxObserver
@@ -52,13 +52,13 @@ public:
 
 	/**
 	 * Define observation space bounds
-	 * @return FBoxSpace with 167 dimensions, normalized ranges
+	 * @return FBoxSpace with 170 dimensions, normalized ranges
 	 */
 	virtual FBoxSpace GetObservationSpace() const override;
 
 	/**
 	 * Collect current observation from character
-	 * @param OutObservations - FBoxPoint to fill with 167-dim observation vector
+	 * @param OutObservations - FBoxPoint to fill with 170-dim observation vector
 	 */
 	virtual void CollectObservations(FBoxPoint& OutObservations) override;
 
@@ -106,7 +106,7 @@ protected:
 	//========================================
 
 	/**
-	 * Gather entity-centric V2 observation (167-dim padded flat).
+	 * Gather entity-centric V2 observation (170-dim padded flat).
 	 * Populates ally, enemy, and base tokens from MatchManager.
 	 */
 	FDEObservationV2 GatherObservationV2() const;

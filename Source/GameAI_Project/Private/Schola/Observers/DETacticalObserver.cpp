@@ -13,8 +13,8 @@
 
 UDETacticalObserver::UDETacticalObserver()
 {
-	// Build observation space (V2 entity-centric: 167-dim padded flat)
-	// Layout: Self(7) + Allies(8×5=40) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) = 167
+	// Build observation space (V2 entity-centric: 170-dim padded flat)
+	// Layout: Self(7) + Allies(8×5=40) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) + Strategy(3) = 170
 	TArray<FBoxSpaceDimension> Dimensions;
 	Dimensions.Reserve(DE_OBS_V2_DIM);
 
@@ -117,7 +117,7 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			GetControlledCharacter() ? *GetControlledCharacter()->GetName() : TEXT("NULL"));
 	}
 
-	// Initialize output (V2: 167-dim padded flat)
+	// Initialize output (V2: 170-dim padded flat)
 	OutObservations.Values.SetNum(DE_OBS_V2_DIM);
 
 	ADECharacter* Character = GetControlledCharacter();
@@ -204,6 +204,9 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 	};
 
 	const int32 MyTeamID = Character->GetTeamID_Implementation();
+
+	// Strategy one-hot (populated before MatchMgr block so it's always set)
+	Obs.CommandedStrategy = Character->GetCommandedStrategy();
 
 	ADEMatchManager* MatchMgr = Character->GetMatchManager();
 	if (MatchMgr)
