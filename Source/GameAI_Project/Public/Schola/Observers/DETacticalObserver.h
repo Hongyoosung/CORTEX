@@ -23,19 +23,9 @@ class UDEScholaAgent;
  * - Layer 1 (Squad Commander): Uses FDETeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
- * Observation Space (51-dim):
- * - Base State (48-dim): Agent's local observation (FDEObservation)
- *   • Self  (7): Position/7500(3), Health(1), Velocity/600(3)
- *   • Allies(16): 4 agents × [RelPos/8000(3), Health(1)]  — always known
- *   • Enemies(20): 5 agents × [RelPos/8000_if_visible(3), Visible(1)]  — LoS only
- *   • Map   (5): PointStatus×5 (+1=friendly / 0=neutral / -1=enemy)
- *   Ally/enemy positions are agent-relative (offset from self) so the same
- *   tactical geometry produces identical features anywhere on the map.
- *
- * - Commanded Strategy (3-dim): One-hot encoding of EDEStrategyType
- *   • [1,0,0] = Assault
- *   • [0,1,0] = Defend
- *   • [0,0,1] = Support
+ * Observation Space (167-dim, entity-centric V2):
+ *   Self (7) + Allies 8×5 (40) + Enemies 8×5 (40) + Bases 8×7 (56) + Masks 8+8+8 (24) = 167
+ *   Serialised as a fixed-size padded flat array via FDEObservationV2::ToFlatArray().
  *
  * Usage:
  * 1. Add to ADETrainer.Observers array (Blueprint or C++)
@@ -46,7 +36,7 @@ class UDEScholaAgent;
  * Integration:
  * - Owner: ADETrainer (Schola trainer)
  * - Data Source: ADECharacter (via trainer reference)
- * - Output: FBoxPoint with 51 continuous values
+ * - Output: FBoxPoint with 167 continuous values
  */
 UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "DE Tactical Observer"))
 class GAMEAI_PROJECT_API UDETacticalObserver : public UBoxObserver
@@ -62,13 +52,13 @@ public:
 
 	/**
 	 * Define observation space bounds
-	 * @return FBoxSpace with 51 dimensions, normalized ranges
+	 * @return FBoxSpace with 167 dimensions, normalized ranges
 	 */
 	virtual FBoxSpace GetObservationSpace() const override;
 
 	/**
 	 * Collect current observation from character
-	 * @param OutObservations - FBoxPoint to fill with 51-dim observation vector
+	 * @param OutObservations - FBoxPoint to fill with 167-dim observation vector
 	 */
 	virtual void CollectObservations(FBoxPoint& OutObservations) override;
 
@@ -114,12 +104,6 @@ protected:
 	//========================================
 	// Helper Functions
 	//========================================
-
-	/**
-	 * Gather 48-dim base observation from character (v1, kept for reward subsystem)
-	 * @return FDEObservation with normalized values
-	 */
-	FDEObservation GatherBaseObservation() const;
 
 	/**
 	 * Gather entity-centric V2 observation (167-dim padded flat).

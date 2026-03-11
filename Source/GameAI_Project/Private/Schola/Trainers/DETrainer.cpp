@@ -76,7 +76,7 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
     CachedMatchManager = ControlledCharacter->GetMatchManager();
     if (!CachedMatchManager)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DETrainer] DEMatchManager not yet available — GatherStateObservation will fall back to world scan"));
+        UE_LOG(LogTemp, Warning, TEXT("[DETrainer] DEMatchManager not yet available — GatherStateSnapshot will fall back to world scan"));
     }
 
     // Cache DEScholaEnvironment — find the one whose OwnedMatchManager matches ours
@@ -133,8 +133,8 @@ void ADETrainer::BeginPlay()
     // Executor는 commanded strategy를 수행하는 데만 집중
 
     // Initialize observation state
-    PreviousObservation = FDEObservation();
-    CurrentObservation = GatherStateObservation();
+    PreviousObservation = FDEAgentSnapshot();
+    CurrentObservation = GatherStateSnapshot();
 
     // === DIAGNOSTIC: Log full pipeline state at startup ===
     UE_LOG(LogTemp, Warning, TEXT("========== [DETrainer] BeginPlay DIAGNOSTIC =========="));
@@ -275,26 +275,9 @@ void ADETrainer::Tick(float DeltaTime)
 
 TArray<float> ADETrainer::GetObservation()
 {
-    // NOTE: This method is NOT called by Schola (Schola uses DETacticalObserver::CollectObservations).
-    // It exists as a legacy/utility interface. Tactical execution happens in Tick().
-
-    // Gather current state
-    CurrentObservation = GatherStateObservation();
-
-    // Observation 유효성 검사
-    if (!ValidateObservation(CurrentObservation))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DETrainer] Observation validation failed, returning zeroed observation"));
-        return TArray<float>();
-    }
-
-    TArray<float> Observation = CurrentObservation.ToArray();
-
-    // NOTE: This returns FDEObservation::ToArray() = 48-dim base only.
-    // Schola uses DETacticalObserver which outputs 54-dim (48 base + 3 composition + 3 strategy one-hot).
-    // This path is unused by Schola but kept for legacy/debug use.
-
-    return Observation;
+    // NOTE: Not called by Schola — DETacticalObserver::CollectObservations() handles observations.
+    // Kept as a no-op stub to satisfy any external references.
+    return TArray<float>();
 }
 
 float ADETrainer::ComputeReward()
@@ -316,8 +299,8 @@ float ADETrainer::ComputeReward()
 
     if (bHasNewReward)
     {
-        // Gather LATEST observation (state after action effects have propagated)
-        CurrentObservation = GatherStateObservation();
+        // Gather LATEST snapshot (state after action effects have propagated)
+        CurrentObservation = GatherStateSnapshot();
 
         // Compute reward from state transition (PreviousObs → CurrentObs)
         CachedStepReward = ComputeCommandedStrategyReward(
@@ -382,25 +365,21 @@ void ADETrainer::ResetEpisode()
     }
 
     // 상태 초기화
-    PreviousObservation = FDEObservation();
-    CurrentObservation = GatherStateObservation();
+    PreviousObservation = FDEAgentSnapshot();
+    CurrentObservation = GatherStateSnapshot();
 }
 
 // ==================== Helper Functions ====================
 
-FDEObservation ADETrainer::GatherStateObservation()
+FDEAgentSnapshot ADETrainer::GatherStateSnapshot()
 {
-    FDEObservation Obs;
+    FDEAgentSnapshot Obs;
 
     if (!ControlledCharacter) return Obs;
 
     // Self state
     Obs.Position = ControlledCharacter->GetActorLocation();
-    Obs.EnvironmentOrigin = CachedScholaEnvironment ? CachedScholaEnvironment->GetActorLocation() : FVector::ZeroVector;
     Obs.Health = ControlledCharacter->GetHealthPercentage();
-    Obs.Velocity = ControlledCharacter->GetVelocity();
-    Obs.WeaponCooldown = ControlledCharacter->GetWeaponCooldown();
-    Obs.CurrentStrategy = ControlledCharacter->GetCommandedStrategy();
     Obs.bIsAlive = ControlledCharacter->IsAlive();
 
     const int32 MyTeamID = ControlledCharacter->GetTeamID_Implementation();
@@ -533,8 +512,8 @@ FDEObservation ADETrainer::GatherStateObservation()
 
 float ADETrainer::ComputeCommandedStrategyReward(
     EDEStrategyType CommandedStrategy,
-    const FDEObservation& Prev,
-    const FDEObservation& Current,
+    const FDEAgentSnapshot& Prev,
+    const FDEAgentSnapshot& Current,
     const FDEEQSWeightParameters& Action
 )
 {
@@ -545,19 +524,20 @@ float ADETrainer::ComputeCommandedStrategyReward(
 }
 
 void ADETrainer::LogTransition(
-    const FDEObservation& InState,
+    const FDEAgentSnapshot& InState,
     EDEStrategyType CommandedStrategy,
     const FDEEQSWeightParameters& Action,
     float Reward,
-    const FDEObservation& NextState,
+    const FDEAgentSnapshot& NextState,
     bool bDone
 )
 {
     if (!TransitionLogger) return;
 
-    // Convert to UDEScholaTransitionLogger format
-    TArray<float> StateBefore = InState.ToArray();
-    TArray<float> StateAfter = NextState.ToArray();
+    // Transition logger uses TArray<float> state arrays — not used for NN input,
+    // just for offline data collection. Pass empty arrays as placeholder.
+    TArray<float> StateBefore;
+    TArray<float> StateAfter;
 
     // Create FDETacticalOption from commanded strategy
     // v10.2: Individual agents don't choose options, they execute commanded strategies
@@ -570,7 +550,7 @@ void ADETrainer::LogTransition(
     // v10.2: For simplicity, put the entire reward in ObjectiveScore
     FDECompositeReward CompositeReward;
     CompositeReward.WinProb = 0.0f;
-    CompositeReward.HealthDelta = (NextState.Health - InState.Health);
+    CompositeReward.HealthDelta = NextState.Health - InState.Health;
     CompositeReward.ObjectiveScore = Reward;
 
 
@@ -677,43 +657,23 @@ void ADETrainer::DrawTrainingDebug(float DeltaTime)
     // === Allies (Green) ===
     for (int32 i = 0; i < CurrentObservation.AllyPositions.Num(); ++i)
     {
-        if (!CurrentObservation.AllyPositions[i].IsZero())
+        const FVector& AllyPos = CurrentObservation.AllyPositions[i];
+        if (!AllyPos.IsZero())
         {
-            DrawDebugSphere(
-                GetWorld(),
-                CurrentObservation.AllyPositions[i],
-                50.0f,
-                12,
-                FColor::Green,
-                false,
-                DrawDuration
-            );
+            DrawDebugSphere(GetWorld(), AllyPos, 50.0f, 12, FColor::Green, false, DrawDuration);
         }
     }
 
     // === Enemies (Red - visible only) ===
     for (int32 i = 0; i < CurrentObservation.EnemyPositions.Num(); ++i)
     {
-        if (CurrentObservation.EnemyVisible[i] && !CurrentObservation.EnemyPositions[i].IsZero())
+        if (i < CurrentObservation.EnemyVisible.Num() && CurrentObservation.EnemyVisible[i]
+            && !CurrentObservation.EnemyPositions[i].IsZero())
         {
-            DrawDebugSphere(
-                GetWorld(),
-                CurrentObservation.EnemyPositions[i],
-                50.0f,
-                12,
-                FColor::Red,
-                false,
-                DrawDuration
-            );
-
-            DrawDebugLine(
-                GetWorld(),
-                CharLocation + FVector(0, 0, 90),
-                CurrentObservation.EnemyPositions[i] + FVector(0, 0, 90),
-                FColor::Red,
-                false,
-                DrawDuration
-            );
+            const FVector& EnemyPos = CurrentObservation.EnemyPositions[i];
+            DrawDebugSphere(GetWorld(), EnemyPos, 50.0f, 12, FColor::Red, false, DrawDuration);
+            DrawDebugLine(GetWorld(), CharLocation + FVector(0, 0, 90), EnemyPos + FVector(0, 0, 90),
+                FColor::Red, false, DrawDuration);
         }
     }
 
@@ -921,11 +881,11 @@ void ADETrainer::ResetTrainer()
     }
 
     // Reset observations
-    PreviousObservation = FDEObservation();
+    PreviousObservation = FDEAgentSnapshot();
 
     if (ControlledCharacter && IsValid(ControlledCharacter))
     {
-        CurrentObservation = GatherStateObservation();
+        CurrentObservation = GatherStateSnapshot();
         CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
 
         UE_LOG(LogTemp, Log, TEXT("[DETrainer] v10.2 Trainer reset for episode %d - Agent: %s, Strategy: %s"),
@@ -935,7 +895,7 @@ void ADETrainer::ResetTrainer()
     }
     else
     {
-        CurrentObservation = FDEObservation();
+        CurrentObservation = FDEAgentSnapshot();
         UE_LOG(LogTemp, Error, TEXT("[DETrainer] v10.2 Trainer reset for episode %d - NO VALID CHARACTER!"), TotalEpisodes + 1);
     }
 
@@ -984,39 +944,6 @@ bool ADETrainer::ValidateEQSWeights(const FDEEQSWeightParameters& Weights) const
     return bValid;
 }
 
-bool ADETrainer::ValidateObservation(const FDEObservation& Obs) const
-{
-    // Observation의 주요 필드가 유효한지 확인
-    if (FMath::IsNaN(Obs.Health) || Obs.Health < 0.0f || Obs.Health > 1.0f)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DETrainer] Invalid health value: %f"), Obs.Health);
-        return false;
-    }
-
-    if (!Obs.Position.ContainsNaN() == false || !Obs.Position.IsNormalized())
-    {
-        // Position can be any valid vector
-        if (Obs.Position.ContainsNaN())
-        {
-            UE_LOG(LogTemp, Error, TEXT("[DETrainer] Position contains NaN"));
-            return false;
-        }
-    }
-
-    if (Obs.AllyPositions.Num() != 4 || Obs.AllyHealths.Num() != 4)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DETrainer] Ally data array size mismatch"));
-        return false;
-    }
-
-    if (Obs.EnemyPositions.Num() != 5 || Obs.EnemyVisible.Num() != 5)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DETrainer] Enemy data array size mismatch"));
-        return false;
-    }
-
-    return true;
-}
 
 void ADETrainer::UpdateTrainingStatistics()
 {

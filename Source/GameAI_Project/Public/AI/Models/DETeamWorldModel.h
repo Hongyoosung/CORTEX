@@ -22,7 +22,7 @@ namespace UE::NNE
  * Centralized world model for Squad Commander's MCTS planning.
  *
  * Key Differences from v10.1 UDEAgentWorldModel:
- * - Input: FDETeamState (60-dim) instead of individual FDEObservation (52-dim)
+ * - Input: FDETeamState (60-dim) instead of individual per-agent flat obs (v1)
  * - Action Space: ETacticalPlay (~10 plays) instead of EDEStrategyType (3 strategies)
  * - Optimization Target: Team win rate instead of individual survival
  * - Usage: Single MCTS by ASquadManager instead of 5 parallel MCTS

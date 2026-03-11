@@ -1,11 +1,11 @@
 
 services:
   # =============================================================================
-  # v10.2 TRAINING SERVICES (Commander-Executor Architecture)
+  # TRAINING SERVICES (Commander-Executor Architecture)
   # =============================================================================
 
-  # v10.2 Phase 1: Policy Training (Command-Driven Executors)
-  training-v10.2:
+  # Phase 1: Policy Training (Command-Driven Executors)
+  training:
     build:
       context: ..
       dockerfile: DE_Training/Dockerfile
@@ -34,18 +34,7 @@ services:
       --host host.docker.internal
       --port 50051"
     profiles:
-      - v10.2
-      - v10.2-policy
-
-  # v10.2 Example Mode (Architecture Demo)
-  training-v10.2-example:
-    build:
-      context: ..
-      dockerfile: DE_Training/Dockerfile
-    container_name: DE_training__example
-    command: python training/policy_training.py --mode example
-    profiles:
-      - v10.2-demo
+      - policy
 
 
 
@@ -53,7 +42,7 @@ services:
   # MONITORING SERVICES
   # =============================================================================
 
-  # TensorBoard for v10.2 training
+  # TensorBoard for training
   tensorboard-v10.2:
     build:
       context: ..
@@ -65,23 +54,8 @@ services:
       - "6006:6006"
     command: tensorboard --logdir=/app/training_results_ --host=0.0.0.0
     profiles:
-      - v10.2
       - monitor
 
-  # TensorBoard for legacy training
-  tensorboard:
-    build:
-      context: ..
-      dockerfile: DE_Training/Dockerfile
-    container_name: DE_tensorboard
-    volumes:
-      - ./training_results:/app/training_results
-    ports:
-      - "6007:6006"  # Use different port to avoid conflict with v10.2
-    command: tensorboard --logdir=/app/training_results --host=0.0.0.0
-    profiles:
-      - legacy
-      - monitor
 
   # =============================================================================
   # DIAGNOSTIC SERVICES

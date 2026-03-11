@@ -30,7 +30,7 @@ public:
      * * @param State: The current observed game state (Observation)
      * @return The probability of winning or the value score [0.0, 1.0]
      */
-    float EvaluateState(const FDEObservation& State);
+    float EvaluateState(const TArray<float>& StateFlatArray);
 
 private:
 

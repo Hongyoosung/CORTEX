@@ -13,7 +13,7 @@ class FDETeamTreeNode;
  * Represents a team state in the centralized MCTS tree.
  *
  * Key Differences from FTreeNode (v10.1):
- * - State: FDEObservation (56-dim agent) → FDETeamState (60-dim global)
+ * - State: Per-agent flat obs (v1) → FDETeamState (60-dim global)
  * - Action: FDETacticalOption (target position) → ETacticalPlay (team composition)
  * - Scope: Individual agent planning → Squad-level tactical decisions
  *

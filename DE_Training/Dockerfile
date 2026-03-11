@@ -1,4 +1,4 @@
-# DE v10.2 Training Environment (Linux)
+# DE Training Environment (Linux)
 # Solves Windows + Ray/RLlib compatibility issues by running in Linux container
 # UE5 runs on Windows host, Python training runs in Docker container
 #
@@ -6,7 +6,7 @@
 #   - UE5 (Windows host) :50051 ←→ gRPC ←→ Docker (Linux) Python/RLlib
 #   - Ray uses 'fork' multiprocessing (Linux-only, more efficient than Windows 'spawn')
 #   - Eliminates object store corruption and worker deadlock issues
-#   - Supports v10.2 Commander-Executor architecture with multi-head policy training
+#   - Supports Commander-Executor architecture with multi-head policy training
 
 FROM python:3.10-slim
 

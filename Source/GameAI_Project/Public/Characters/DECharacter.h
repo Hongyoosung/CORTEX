@@ -204,8 +204,8 @@ public:
 	//========================================
 
 	float ComputeStepReward(EDEStrategyType Strategy,
-		const FDEObservation& Prev,
-		const FDEObservation& Current,
+		const FDEAgentSnapshot& Prev,
+		const FDEAgentSnapshot& Current,
 		const FDEEQSWeightParameters& Action);
 
 

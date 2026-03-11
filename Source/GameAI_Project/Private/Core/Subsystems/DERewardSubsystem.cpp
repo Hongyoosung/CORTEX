@@ -107,8 +107,8 @@ float UDERewardSubsystem::ComputeStepReward(
 	ADECharacter* Agent,
 	FDERewardState& InOutState,
 	EDEStrategyType Strategy,
-	const FDEObservation& Prev,
-	const FDEObservation& Current,
+	const FDEAgentSnapshot& Prev,
+	const FDEAgentSnapshot& Current,
 	const FDEEQSWeightParameters& Action)
 {
 	if (!Agent || !CachedRewardData) return 0.0f;

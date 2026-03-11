@@ -27,7 +27,7 @@ struct FDETeamMCTSConfig
  * - NEW: 1 centralized MCTS (15ms) = 5× reduction
  *
  * Key Differences from UModelBasedMCTS:
- * - State Space: FDEObservation (56-dim) → FDETeamState (60-dim)
+ * - State Space: Per-agent flat obs (v1) → FDETeamState (60-dim)
  * - Action Space: FDETacticalOption (3 per agent) → ETacticalPlay (10 total)
  * - Scope: Individual survival → Team win rate + coordination
  * - World Model: UDEAgentWorldModel → UDETeamWorldModel (pure neural network)

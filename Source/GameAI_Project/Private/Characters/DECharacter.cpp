@@ -703,8 +703,8 @@ void ADECharacter::ApplyStrategyStatModifiers(EDEStrategyType Strategy)
 
 float ADECharacter::ComputeStepReward(
 	EDEStrategyType Strategy,
-	const FDEObservation& Prev,
-	const FDEObservation& Current,
+	const FDEAgentSnapshot& Prev,
+	const FDEAgentSnapshot& Current,
 	const FDEEQSWeightParameters& Action)
 {
 	if (RewardSubsystem = GetWorld()->GetSubsystem<UDERewardSubsystem>())

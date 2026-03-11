@@ -28,8 +28,8 @@ class ADEScholaEnvironment;
  * - Action collection and application in the form of EQS weights
  * - Team-level reward calculation based on assigned strategy from Squad Commander
  *
- * Action Space: Box(6) - Continuous EQS weights [-1, 1]
- * Observation Space: Box(52) - Agent State only (Strategy is commanded externally)
+ * Action Space: Box(7) - Continuous EQS weights [-1, 1]
+ * Observation Space: Box(167) - Entity-centric V2 (handled by DETacticalObserver)
  */
 UCLASS(Blueprintable)
 class GAMEAI_PROJECT_API ADETrainer : public AAbstractTrainer
@@ -65,10 +65,7 @@ public:
     // Schola RL Interface
     //=========================================
 
-    /**
-     * Returns current observation (sent to Python)
-     * @return 52-dim vector: Agent state
-     */
+    /** Legacy utility — not called by Schola (DETacticalObserver handles observations) */
     TArray<float> GetObservation();
 
     /** Checks if the current episode should terminate */
@@ -97,8 +94,6 @@ public:
     /** Validates if the EQS weights are within valid ranges */
     bool ValidateEQSWeights(const FDEEQSWeightParameters& Weights) const;
 
-    /** Validates integrity of the gathered observation */
-    bool ValidateObservation(const FDEObservation& Obs) const;
 
 
 
@@ -107,21 +102,21 @@ protected:
     // Internal Helper Functions (Private/Protected Logic)
     //=========================================
 
-    /** Collects 52-dim state observation from the environment */
-    FDEObservation GatherStateObservation();
+    /** Collects per-step agent state snapshot for reward computation */
+    FDEAgentSnapshot GatherStateSnapshot();
 
     /** Computes team-aligned reward based on commanded strategy quality */
     float ComputeCommandedStrategyReward(EDEStrategyType CommandedStrategy,
-        const FDEObservation& Prev,
-        const FDEObservation& Current,
+        const FDEAgentSnapshot& Prev,
+        const FDEAgentSnapshot& Current,
         const FDEEQSWeightParameters& Action);
 
     /** Logs transitions for World Model offline training */
-    void LogTransition(const FDEObservation& InState,
+    void LogTransition(const FDEAgentSnapshot& InState,
         EDEStrategyType CommandedStrategy,
         const FDEEQSWeightParameters& Action,
         float Reward,
-        const FDEObservation& NextState,
+        const FDEAgentSnapshot& NextState,
         bool bDone);
 
     /** Updates internal training metrics and averages */
@@ -186,9 +181,9 @@ protected:
     // Internal State - RL Data & Observations
     ///=========================================
 
-    /** Observations for reward calculation */
-    FDEObservation PreviousObservation;
-    FDEObservation CurrentObservation;
+    /** Snapshots for reward calculation (previous and current step) */
+    FDEAgentSnapshot PreviousObservation;
+    FDEAgentSnapshot CurrentObservation;
 
     /** Most recent action applied */
     FDEEQSWeightParameters LastAction;

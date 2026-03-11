@@ -30,19 +30,17 @@ bool UDEValueNetwork::InitNetwork(const FString& ModelPath)
     return true;
 }
 
-float UDEValueNetwork::EvaluateState(const FDEObservation& State)
+float UDEValueNetwork::EvaluateState(const TArray<float>& StateFlatArray)
 {
 
     const int32 FeatureCount = DEModelConfig::INPUT_FEATURES;
 
-    TArray<float> InputFeatures = State.ToArray();
-
-    if (InputFeatures.Num() != FeatureCount)
+    if (StateFlatArray.Num() != FeatureCount)
     {
-        UE_LOG(LogTemp, Warning, TEXT("ValueNetwork: Input feature mismatch. Expected %d, got %d"), FeatureCount, InputFeatures.Num());
+        UE_LOG(LogTemp, Warning, TEXT("ValueNetwork: Input feature mismatch. Expected %d, got %d"), FeatureCount, StateFlatArray.Num());
     }
 
-    float WinProbability = RunInference(InputFeatures);
+    float WinProbability = RunInference(StateFlatArray);
 
     return FMath::Clamp(WinProbability, 0.0f, 1.0f);
 }
@@ -50,18 +48,7 @@ float UDEValueNetwork::EvaluateState(const FDEObservation& State)
 float UDEValueNetwork::RunInference(const TArray<float>& InputTensor)
 {
 
-    // 49-dim layout (from FDEObservation::ToArray()):
-    // [0-2]  = self pos / 7500
-    // [3]    = health [0.0-1.0]
-    // [4-6]  = velocity / 600
-    // [7]    = weapon cooldown
-    // [8-23] = 4 allies × [rel_pos/8000 (3), health (1)]
-    // [24-43]= 5 enemies × [rel_pos/8000 (3), visible (1)]
-    // [44-48]= capture point statuses (+1/0/-1)
-    //
-    // Feature[3]  = self health
-    // Feature[26] = nearest enemy visible flag (enemy slot 0)
-    // Feature[44] = first capture point status (proxy for objective control)
+    // V2 167-dim flat layout — see FDEObservationV2::ToFlatArray() for field offsets.
 
     float Health = InputTensor.IsValidIndex(3) ? InputTensor[3] : 0.5f;
 
