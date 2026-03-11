@@ -2,9 +2,6 @@
 
 #include "Team/DESquadManager.h"
 #include "Characters/DECharacter.h"
-#include "AI/MCTS/DETeamMCTS.h"
-#include "AI/Models/DETeamWorldModel.h"
-#include "AI/Training/DETeamDataCollector.h"
 #include "Types/DERewardTypes.h"
 #include "Actors/DECapturePoint.h"
 #include "DrawDebugHelpers.h"
@@ -53,11 +50,6 @@ UDESquadManager::UDESquadManager()
 					UE_LOG(LogTemp, Display, TEXT("  Agent %d: %s"),
 						i, *UEnum::GetValueAsString(SM->CurrentRoleAssignments[i]));
 				}
-				if (SM->TeamMCTSPlanner)
-				{
-					UE_LOG(LogTemp, Display, TEXT("  MCTS Last Iterations: %d"),
-						SM->TeamMCTSPlanner->GetLastIterationCount());
-				}
 			}
 			else
 			{
@@ -89,15 +81,6 @@ UDESquadManager::UDESquadManager()
 			if (UDESquadManager* SM = GDebugSquadManager.Get())
 			{
 				UE_LOG(LogTemp, Display, TEXT("=== Timing Stats (Team %d) ==="), SM->TeamID);
-				if (SM->TeamWorldModel)
-				{
-					UE_LOG(LogTemp, Display, TEXT("  World Model Avg Latency: %.2f ms"),
-						SM->TeamWorldModel->GetAverageLatency());
-				}
-				else 
-				{
-					UE_LOG(LogTemp, Display, TEXT("  World Model: Not initialized"));
-				}
 					
 				UE_LOG(LogTemp, Display, TEXT("  Last Planning Duration: %.2f ms"),
 					SM->LastPlanningDurationMs);
@@ -115,25 +98,6 @@ void UDESquadManager::Initialize(int32 InTeamID)
 {
 	TeamID = InTeamID;
 
-	// World model (ONNX) — path is pushed later via Configure().
-	TeamWorldModel = NewObject<UDETeamWorldModel>(this);
-
-	// MCTS planner
-	TeamMCTSPlanner = NewObject<UDETeamMCTS>(this);
-	if (TeamMCTSPlanner && TeamWorldModel)
-	{
-		FDETeamMCTSConfig MCTSConfig;
-		MCTSConfig.MaxIterations = 50;
-		// TimeBudget and BatchSize are updated when Configure() is called.
-		TeamMCTSPlanner->Setup(TeamWorldModel, MCTSConfig);
-
-		UE_LOG(LogTemp, Log, TEXT("[DESquadManager] Team %d: MCTS initialized (world model not yet loaded)"), TeamID);
-	}
-
-	// Training data collector
-	DataCollector = NewObject<UDETeamDataCollector>(this);
-	UE_LOG(LogTemp, Log, TEXT("[DESquadManager] Team %d: Data collector created"), TeamID);
-
 	// Register as the debug target (last-created wins — fine for single-env sessions)
 	GDebugSquadManager = this;
 }
@@ -141,15 +105,6 @@ void UDESquadManager::Initialize(int32 InTeamID)
 void UDESquadManager::Configure(const FDESquadConfig& InConfig)
 {
 	Config = InConfig;
-
-	// Re-apply time budget to MCTS if already constructed
-	if (TeamMCTSPlanner)
-	{
-		FDETeamMCTSConfig MCTSConfig;
-		MCTSConfig.MaxIterations = 50;
-		// Caller may expose BatchSize via Config in the future
-		TeamMCTSPlanner->Setup(TeamWorldModel, MCTSConfig);
-	}
 }
 
 void UDESquadManager::BindCapturePoints(const TArray<ADECapturePoint*>& CapturePoints)
@@ -179,7 +134,6 @@ void UDESquadManager::Reset(const TArray<ADECharacter*>& TeamAgents)
 
 	ActiveTacticalPlay    = ETacticalPlay::StandardComp;
 	PreviousTacticalPlay  = ETacticalPlay::StandardComp;
-	PreviousTeamState     = FDETeamWorldState();
 
 	CurrentRoleAssignments.Empty();
 	CurrentRoleAssignments.Init(EDEStrategyType::Assault, 5);
@@ -207,19 +161,7 @@ void UDESquadManager::TickPlanner(float DeltaTime,
 		TimeSinceLastPlan = 0.0f;
 	}
 
-	// Critical-health check
-	const FDETeamWorldState CurrentState = BuildTeamWorldState(TeamAgents, EnemyAgents);
-	const bool bIsCritical = CurrentState.IsTeamHealthCritical();
 
-	if (bIsCritical && !bHealthCriticalTriggered)
-	{
-		bHealthCriticalTriggered = true;
-		ReplanOnCriticalEvent(EDECriticalEventType::HealthCritical, nullptr, TeamAgents, EnemyAgents);
-	}
-	else if (!bIsCritical)
-	{
-		bHealthCriticalTriggered = false;
-	}
 
 	// Periodic validation log
 	ValidationTickCounter += DeltaTime;
@@ -227,18 +169,13 @@ void UDESquadManager::TickPlanner(float DeltaTime,
 	{
 		ValidationTickCounter = 0.0f;
 
-		const TArray<float> Tensor = CurrentState.ToTensor();
-		UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: tensor dims=%d (expected ~60)"),
-			TeamID, Tensor.Num());
 
 		if (CurrentRoleAssignments.Num() != 5)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[Validation] Team %d: role count=%d (expected 5)"),
 				TeamID, CurrentRoleAssignments.Num());
 		}
-		UE_LOG(LogTemp, Verbose, TEXT("[Validation] Team %d: lastPlan=%.2f ms, worldModel=%.2f ms"),
-			TeamID, LastPlanningDurationMs,
-			TeamWorldModel ? TeamWorldModel->GetAverageLatency() : 0.0f);
+
 	}
 }
 
@@ -261,123 +198,8 @@ void UDESquadManager::PerformTacticalPlanning(const TArray<ADECharacter*>& TeamA
 	{
 		return;
 	}
-
-	const float StartTime = FPlatformTime::Seconds();
-
-	// 1. Build team state from caller-supplied agent lists
-	const FDETeamWorldState GlobalState = BuildTeamWorldState(TeamAgents, EnemyAgents);
-
-	// 2. Record transition for data collection
-	if (bHasPreviousState && DataCollector && DataCollector->bIsRecording)
-	{
-		const FDECompositeReward Reward = CalculateTeamReward(PreviousTeamState, GlobalState);
-		DataCollector->RecordTransition(PreviousTeamState, PreviousTacticalPlay, GlobalState, Reward);
-	}
-
-	// 3. Select tactical play
-	const TArray<ETacticalPlay> FeasiblePlays = GetFeasiblePlays(GlobalState);
-	ETacticalPlay BestPlay = ETacticalPlay::StandardComp;
-
-	if (Config.bDataCollectionMode)
-	{
-		BestPlay = SelectEpsilonGreedyAction(GlobalState, FeasiblePlays);
-
-		if (Config.bShowDebugInfo)
-		{
-			const float Elapsed = (FPlatformTime::Seconds() - StartTime) * 1000.0f;
-			UE_LOG(LogTemp, Display,
-				TEXT("[DESquadManager] Team %d ε-Greedy: %s (%.3f ms, ε=%.2f, feasible=%d)"),
-				TeamID, *UEnum::GetValueAsString(BestPlay), Elapsed,
-				Config.ExplorationRate, FeasiblePlays.Num());
-		}
-	}
-	else if (TeamMCTSPlanner && TeamWorldModel && TeamWorldModel->IsModelLoaded())
-	{
-		BestPlay = TeamMCTSPlanner->FindBestTacticalPlay(GlobalState, FeasiblePlays);
-
-		if (Config.bShowDebugInfo)
-		{
-			const float Elapsed = (FPlatformTime::Seconds() - StartTime) * 1000.0f;
-			UE_LOG(LogTemp, Display,
-				TEXT("[DESquadManager] Team %d MCTS: %.2f ms, %d iters, feasible=%d"),
-				TeamID, Elapsed, TeamMCTSPlanner->GetLastIterationCount(), FeasiblePlays.Num());
-
-			if (Elapsed > Config.MCTSTimeBudget * 1000.0f)
-			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("[DESquadManager] Team %d MCTS exceeded budget: %.2f ms > %.2f ms"),
-					TeamID, Elapsed, Config.MCTSTimeBudget * 1000.0f);
-			}
-		}
-	}
-	else
-	{
-		// Heuristic fallback: pick by average team health
-		const float AvgHealth = GlobalState.GetAverageHealth();
-		const ETacticalPlay Preferred =
-			(AvgHealth < 0.3f) ? ETacticalPlay::FortressDefense :
-			(AvgHealth > 0.7f) ? ETacticalPlay::AggressivePush :
-			                     ETacticalPlay::StandardComp;
-
-		BestPlay = FeasiblePlays.Contains(Preferred) ? Preferred : FeasiblePlays[0];
-
-		if (Config.bShowDebugInfo)
-		{
-			UE_LOG(LogTemp, Display,
-				TEXT("[DESquadManager] Team %d: Heuristic fallback (no model), feasible=%d"),
-				TeamID, FeasiblePlays.Num());
-		}
-	}
-
-	// 4. Decode play → role array and push to agents
-	const TArray<EDEStrategyType> NewRoles = DecodeTacticalPlay(BestPlay);
-	DistributeRoles(NewRoles, TeamAgents);
-
-	// 5. Update state
-	ActiveTacticalPlay      = BestPlay;
-	CurrentRoleAssignments  = NewRoles;
-	PlanConfidence          = 0.8f;
-	PlanningCycleCount++;
-
-	PreviousTeamState       = GlobalState;
-	PreviousTacticalPlay    = BestPlay;
-	bHasPreviousState       = true;
-	LastPlanningDurationMs  = (FPlatformTime::Seconds() - StartTime) * 1000.0f;
-
-	LogPlanningDecision(BestPlay, PlanConfidence);
 }
 
-FDETeamWorldState UDESquadManager::BuildTeamWorldState(
-	const TArray<ADECharacter*>& TeamAgents,
-	const TArray<ADECharacter*>& EnemyAgents) const
-{
-	FDETeamWorldState State;
-
-	for (int32 i = 0; i < FMath::Min(5, TeamAgents.Num()); ++i)
-	{
-		if (ADECharacter* A = TeamAgents[i])
-		{
-			State.FriendlyPositions[i] = A->GetActorLocation();
-			State.FriendlyHealths[i]   = A->GetHealthPercentage();
-			State.FriendlyCooldowns[i] = A->GetWeaponCooldown();
-			State.FriendlyAlive[i]     = A->IsAlive();
-		}
-	}
-
-	for (int32 i = 0; i < FMath::Min(5, EnemyAgents.Num()); ++i)
-	{
-		if (ADECharacter* A = EnemyAgents[i])
-		{
-			State.EnemyPositions[i]   = A->GetActorLocation();
-			State.EnemyHealths[i]     = A->GetHealthPercentage();
-			State.EnemyAlive[i]       = A->IsAlive();
-			State.EnemyConfidences[i] = 1.0f;
-		}
-	}
-
-
-	return State;
-}
 
 
 
@@ -398,21 +220,7 @@ void UDESquadManager::ReplanOnCriticalEvent(EDECriticalEventType EventType,
                                           const TArray<ADECharacter*>& TeamAgents,
                                           const TArray<ADECharacter*>& EnemyAgents)
 {
-	if (Config.bRLTrainingMode)
-	{
-		// Phase 1 RL: don't replan — but check feasibility and resample if needed.
-		const FDETeamWorldState CurrentState = BuildTeamWorldState(TeamAgents, EnemyAgents);
-		if (!GetFeasiblePlays(CurrentState).Contains(ActiveTacticalPlay))
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DESquadManager] Phase 1 RL Team %d: play %s no longer feasible after event %s — resampling"),
-				TeamID, *UEnum::GetValueAsString(ActiveTacticalPlay),
-				*UEnum::GetValueAsString(EventType));
-			SampleRandomTacticalPlay(TeamAgents);
-			EventDrivenReplanCount++;
-		}
-		return;
-	}
+
 
 	if (InstigatorActor)
 	{
@@ -462,45 +270,7 @@ void UDESquadManager::SampleRandomTacticalPlay(const TArray<ADECharacter*>& Team
 		EpisodeCount, nA, nD, nS);
 }
 
-TArray<ETacticalPlay> UDESquadManager::GetFeasiblePlays(const FDETeamWorldState& State) const
-{
-	// Count alive allies
-	int32 AliveCount = 0;
-	for (bool bAlive : State.FriendlyAlive) { if (bAlive) AliveCount++; }
-	const bool bCanSupport = (AliveCount >= 2);
 
-	static const ETacticalPlay AllPlays[10] = {
-		ETacticalPlay::AllOutRush,
-		ETacticalPlay::AggressivePush,
-		ETacticalPlay::Phalanx,
-		ETacticalPlay::StandardComp,
-		ETacticalPlay::FortressDefense,
-		ETacticalPlay::TurtleFormation,
-		ETacticalPlay::BaitStrategy,
-		ETacticalPlay::PincerManeuver,
-		ETacticalPlay::HealerComp,
-		ETacticalPlay::ResourceDeny,
-	};
-
-	TArray<ETacticalPlay> Feasible;
-	for (ETacticalPlay Play : AllPlays)
-	{
-		// Support-role plays require ≥2 alive allies
-		if (DecodeTacticalPlay(Play).Contains(EDEStrategyType::Support) && !bCanSupport)
-		{
-			continue;
-		}
-		Feasible.Add(Play);
-	}
-
-	if (Feasible.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DESquadManager] Team %d: No feasible plays — falling back to AllOutRush"), TeamID);
-		Feasible.Add(ETacticalPlay::AllOutRush);
-	}
-	return Feasible;
-}
 
 TArray<EDEStrategyType> UDESquadManager::DecodeTacticalPlay(ETacticalPlay Play) const
 {
@@ -575,55 +345,6 @@ void UDESquadManager::DrawDebugVisualization(const TArray<ADECharacter*>& TeamAg
 }
 
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reward
-// ─────────────────────────────────────────────────────────────────────────────
-
-FDECompositeReward UDESquadManager::CalculateTeamReward(const FDETeamWorldState& OldState,
-                                                    const FDETeamWorldState& NewState) const
-{
-	FDECompositeReward Reward;
-
-	// Health delta sum
-	float HealthDeltaSum = 0.0f;
-	int32 AliveCount = 0;
-	for (int32 i = 0; i < 5; ++i)
-	{
-		if (OldState.FriendlyAlive[i] || NewState.FriendlyAlive[i])
-		{
-			const float OldH = OldState.FriendlyAlive[i] ? OldState.FriendlyHealths[i] : 0.0f;
-			const float NewH = NewState.FriendlyAlive[i] ? NewState.FriendlyHealths[i] : 0.0f;
-			HealthDeltaSum += (NewH - OldH);
-		}
-		if (NewState.FriendlyAlive[i]) AliveCount++;
-	}
-	Reward.HealthDelta = HealthDeltaSum;
-
-	// Win probability (alive ratio × 0.6 + health ratio × 0.4)
-	int32 EnemyAliveCount = 0;
-	float EnemyHealthSum = 0.0f, TeamHealthSum = 0.0f;
-	for (int32 i = 0; i < 5; ++i)
-	{
-		if (NewState.EnemyAlive[i])   { EnemyAliveCount++; EnemyHealthSum  += NewState.EnemyHealths[i]; }
-		if (NewState.FriendlyAlive[i])                     TeamHealthSum   += NewState.FriendlyHealths[i];
-	}
-	const float AliveRatio  = EnemyAliveCount > 0
-		? float(AliveCount) / float(EnemyAliveCount + AliveCount) : 1.0f;
-	const float HealthRatio = (EnemyHealthSum + TeamHealthSum) > 0.0f
-		? TeamHealthSum / (EnemyHealthSum + TeamHealthSum) : 0.5f;
-	Reward.WinProb = FMath::Clamp(AliveRatio * 0.6f + HealthRatio * 0.4f, 0.0f, 1.0f);
-
-	// Objective score (friendly points − enemy points, normalised to [-1, 1])
-	int32 FriendlyPoints = 0, EnemyPoints = 0;
-	for (int32 i = 0; i < 5; ++i)
-	{
-		if      (NewState.CapturePointOwnership[i] ==  1) FriendlyPoints++;
-		else if (NewState.CapturePointOwnership[i] == -1) EnemyPoints++;
-	}
-	Reward.ObjectiveScore = (FriendlyPoints - EnemyPoints) / 5.0f;
-
-	return Reward;
-}
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -631,7 +352,6 @@ FDECompositeReward UDESquadManager::CalculateTeamReward(const FDETeamWorldState&
 // ─────────────────────────────────────────────────────────────────────────────
 
 ETacticalPlay UDESquadManager::SelectEpsilonGreedyAction(
-	const FDETeamWorldState& TeamState,
 	const TArray<ETacticalPlay>& FeasiblePlays) const
 {
 	// Sampling weights (per play index, matching ETacticalPlay enum order)
@@ -677,34 +397,16 @@ ETacticalPlay UDESquadManager::SelectEpsilonGreedyAction(
 		return FeasiblePlays[0];
 	}
 
-	// Exploitation: health-based heuristic
-	const float AvgHealth = TeamState.GetAverageHealth();
-	if (AvgHealth < 0.25f)
-	{
-		const ETacticalPlay Prefs[] = { ETacticalPlay::FortressDefense, ETacticalPlay::TurtleFormation, ETacticalPlay::BaitStrategy, ETacticalPlay::AllOutRush };
-		return PickFeasible(Prefs);
-	}
-	else if (AvgHealth < 0.5f)
-	{
-		const ETacticalPlay Prefs[] = { ETacticalPlay::StandardComp, ETacticalPlay::Phalanx, ETacticalPlay::HealerComp, ETacticalPlay::AllOutRush };
-		return PickFeasible(Prefs);
-	}
-	else if (AvgHealth > 0.75f)
-	{
-		const ETacticalPlay Prefs[] = { ETacticalPlay::AggressivePush, ETacticalPlay::AllOutRush, ETacticalPlay::PincerManeuver, ETacticalPlay::StandardComp };
-		return PickFeasible(Prefs);
-	}
-	else
-	{
-		// Mid-health: shuffle the preferred candidate
-		static const ETacticalPlay MidCandidates[4] = {
-			ETacticalPlay::StandardComp, ETacticalPlay::HealerComp,
-			ETacticalPlay::PincerManeuver, ETacticalPlay::BaitStrategy
-		};
-		const int32 Pick = Config.RandomStream.RandRange(0, 3);
-		const ETacticalPlay Prefs[] = { MidCandidates[Pick], ETacticalPlay::StandardComp, ETacticalPlay::AllOutRush };
-		return PickFeasible(Prefs);
-	}
+
+	// shuffle the preferred candidate
+	static const ETacticalPlay MidCandidates[4] = {
+		ETacticalPlay::StandardComp, ETacticalPlay::HealerComp,
+		ETacticalPlay::PincerManeuver, ETacticalPlay::BaitStrategy
+	};
+	const int32 Pick = Config.RandomStream.RandRange(0, 3);
+	const ETacticalPlay Prefs[] = { MidCandidates[Pick], ETacticalPlay::StandardComp, ETacticalPlay::AllOutRush };
+	return PickFeasible(Prefs);
+	
 }
 
 

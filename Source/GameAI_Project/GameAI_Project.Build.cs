@@ -32,7 +32,8 @@ public class GameAI_Project : ModuleRules
             "SlateCore",
             "GameplayAbilities",
             "GameplayTags",
-            "GameplayTasks"
+            "GameplayTasks",
+            "DynamicEQS"
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]

@@ -4,7 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Actuators/AbstractActuators.h"
+#include "Schola/Base/DynamicEQSActuatorBase.h"
 #include "Types/DEStrategyTypes.h"
 #include "Types/DEEQSTypes.h"
 #include "DETacticalParameterActuator.generated.h"
@@ -33,7 +33,7 @@ class AAbstractTrainer;
  * - Triggers movement via PerformTacticalAction() (unified for training + inference)
  */ //============================================================
 UCLASS(BlueprintType, meta = (DisplayName = "v10.2 Tactical Parameter Actuator"))
-class GAMEAI_PROJECT_API UDETacticalParameterActuator : public UBoxActuator
+class GAMEAI_PROJECT_API UDETacticalParameterActuator : public UDynamicEQSActuatorBase
 {
 	GENERATED_BODY()
 
@@ -41,7 +41,7 @@ public:
 	UDETacticalParameterActuator();
 
 	//============================================================
-	// UBoxActuator interface
+	// UDynamicEQSActuatorBase interface
 	//============================================================
 	virtual FBoxSpace GetActionSpace() override;
 	virtual void TakeAction(const FBoxPoint& Action) override;

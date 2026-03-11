@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Observers/AbstractObservers.h"
+#include "Schola/Base/DynamicEQSObserverBase.h"
 #include "Types/DEStrategyTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "DETacticalObserver.generated.h"
@@ -17,7 +17,7 @@ class UDEScholaAgent;
  *
  * Purpose:
  * Collects observations for executor agent RL policy training in v10.2 architecture.
- * Extends Schola's UBoxObserver for proper integration with Schola training pipeline.
+ * Extends UDynamicEQSObserverBase (which wraps UBoxObserver) for Schola training pipeline integration.
  *
  * Architecture Context:
  * - Layer 1 (Squad Commander): Uses FDETeamState (60-dim) for centralized MCTS
@@ -39,7 +39,7 @@ class UDEScholaAgent;
  * - Output: FBoxPoint with 170 continuous values
  */
 UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "DE Tactical Observer"))
-class GAMEAI_PROJECT_API UDETacticalObserver : public UBoxObserver
+class GAMEAI_PROJECT_API UDETacticalObserver : public UDynamicEQSObserverBase
 {
 	GENERATED_BODY()
 
@@ -47,7 +47,7 @@ public:
 	UDETacticalObserver();
 
 	//========================================
-	// UBoxObserver Interface
+	// UDynamicEQSObserverBase Interface
 	//========================================
 
 	/**
