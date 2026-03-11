@@ -111,7 +111,15 @@ float UDERewardSubsystem::ComputeStepReward(
 	const FDEAgentSnapshot& Current,
 	const FDEEQSWeightParameters& Action)
 {
-	if (!Agent || !CachedRewardData) return 0.0f;
+	if (!Agent) {
+		UE_LOG(LogTemp, Error, TEXT("DERewardSubsystem: Invalid Agent reference, returning 0 reward"));
+		return 0.0f;
+	}
+	if (!CachedRewardData)
+	{
+		UE_LOG(LogTemp, Error, TEXT("DERewardSubsystem: Missing CachedRewardData, returning 0 reward"));
+		return 0.0f;
+	}
 
 	const UDERewardData* Settings = CachedRewardData;
 

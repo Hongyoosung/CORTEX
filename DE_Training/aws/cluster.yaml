@@ -126,7 +126,7 @@ file_mounts:
 rsync_exclude:
   - "**/__pycache__"
   - "**/*.pyc"
-  - "**/training_results_"
+  - "**/training_results"
   - "**/.git"
 
 ###############################################################################

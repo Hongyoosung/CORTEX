@@ -121,7 +121,7 @@ docker-compose --profile v10.2-demo up training-v10.2-example
 
 **Training Results:**
 ```
-DE_Training/training_results_/_<timestamp>/
+DE_Training/training_results/_<timestamp>/
 ├── de_policy.onnx    # Trained model for UE5
 ├── checkpoint_NNNNNN/       # Training checkpoints
 ├── best/                    # Best performing checkpoint

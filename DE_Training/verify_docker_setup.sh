@@ -65,16 +65,16 @@ else
 fi
 
 # Check training scripts
-if [ -f "training/policy_training.py" ]; then
-    check_pass "policy_training.py"
+if [ -f "training/policy.py" ]; then
+    check_pass "policy.py"
 else
-    check_fail "policy_training.py (missing)"
+    check_fail "policy.py (missing)"
 fi
 
-if [ -f "training/de_env.py" ]; then
-    check_pass "de_env.py"
+if [ -f "training/env_wrapper.py" ]; then
+    check_pass "env_wrapper.py"
 else
-    check_fail "de_env.py (missing)"
+    check_fail "env_wrapper.py (missing)"
 fi
 
 # Check documentation
@@ -129,10 +129,10 @@ else
 fi
 
 # Check output directories (will be created if missing)
-if [ -d "training_results_" ]; then
-    check_pass "training_results_ directory exists"
+if [ -d "training_results" ]; then
+    check_pass "training_results directory exists"
 else
-    check_warn "training_results_ directory missing (will be auto-created)"
+    check_warn "training_results directory missing (will be auto-created)"
 fi
 
 if [ -d "models" ]; then

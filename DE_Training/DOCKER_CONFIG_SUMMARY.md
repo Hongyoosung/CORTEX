@@ -31,7 +31,7 @@
 - Profile: `v10.2`
 - Command: `python training/policy_training.py --mode rllib --iterations 100`
 - Volumes:
-  - `./training_results_:/app/training_results_`
+  - `./training_results:/app/training_results`
   - `./models:/app/models`
 - Environment:
   - `NUM_WORKERS=0` (Windows compatibility)
@@ -48,7 +48,7 @@
 #### `tensorboard-v10.2` (Monitoring)
 - Profile: `v10.2`
 - Port: `6006:6006`
-- LogDir: `/app/training_results_`
+- LogDir: `/app/training_results`
 
 **Legacy Services Updated:**
 - Added `legacy` profile to existing services
@@ -189,7 +189,7 @@ DE/
     │   ├── train_.py                  # Quick start script
     │   └── README_.md                 # Full documentation
     │
-    ├── training_results_/             # Training output (auto-created)
+    ├── training_results/             # Training output (auto-created)
     │   └── _<timestamp>/
     │       ├── de_policy.onnx       # Exported model
     │       ├── checkpoint_NNNNNN/          # Checkpoints

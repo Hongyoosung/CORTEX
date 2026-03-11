@@ -22,7 +22,7 @@ public:
     // Data Asset Registration
     //========================================
 
-    void SetRewardData(UDERewardData* Data) { CachedRewardData = Data; }
+    void SetRewardData(UDERewardData* Data) { if (Data) CachedRewardData = Data; }
     UDERewardData* GetRewardData() const { return CachedRewardData; }
 
 

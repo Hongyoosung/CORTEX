@@ -27,7 +27,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from training.policy_training import SingleHeadPolicy
+from training.policy import SingleHeadPolicy
 
 
 class ScholaInferenceWrapper(nn.Module):

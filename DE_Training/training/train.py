@@ -28,7 +28,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from policy import (
     EntityCentricPolicy, PPOTrainer, ReplayBuffer, Transition,
-    collate_fn, OBS_DIM, ACTION_DIM, EQS_DIM, EQS_LABELS,
+    collate_fn, OBS_DIM, EQS_DIM, EQS_LABELS,
 )
 
 try:
@@ -106,7 +106,7 @@ class DETrainingConfig:
         [2_500_000,  0.0005],
     ]
 
-    OUTPUT_DIR = "training_results"
+    OUTPUT_DIR = "/app/training_results"
 
 
 # ── RLlib helpers ─────────────────────────────────────────────────────────────
@@ -152,6 +152,7 @@ if RLLIB_AVAILABLE:
     def create_ppo_config():
         """Build RLlib PPO config — single shared EntityCentricPolicy."""
         from ray.rllib.algorithms.ppo import PPOConfig
+        from ray.rllib.policy.policy import PolicySpec
 
         config = PPOConfig()
         config = config.environment(
@@ -176,7 +177,7 @@ if RLLIB_AVAILABLE:
         )
         # Single shared policy — all agents mapped here
         config = config.multi_agent(
-            policies={"entity_centric_policy": None},
+            policies={"entity_centric_policy": PolicySpec()},
             policy_mapping_fn=lambda agent_id, episode, worker, **kw: "entity_centric_policy",
             count_steps_by="agent_steps",
         )
@@ -257,7 +258,7 @@ def train_with_rllib(args):
     ModelCatalog.register_custom_model("entity_centric_model", EntityCentricRLlibModel)
 
     timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = f"{DETrainingConfig.OUTPUT_DIR}_{timestamp}"
+    output_dir = os.path.join(DETrainingConfig.OUTPUT_DIR, timestamp)
     latest_dir = os.path.join(output_dir, "latest")
     os.makedirs(output_dir, exist_ok=True)
     print(f"Output: {output_dir}")

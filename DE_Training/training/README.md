@@ -73,7 +73,7 @@ Then open: http://localhost:6006
 
 #### 5. Access Results
 
-Training results are saved to `MOC_Training/training_results_/` on your host machine.
+Training results are saved to `MOC_Training/training_results/` on your host machine.
 Model checkpoints are saved to `MOC_Training/models/`.
 
 ---
@@ -173,7 +173,7 @@ GRAD_CLIP = 0.5
 
 ## Output
 
-Training produces the following outputs in `training_results_/_YYYYMMDD_HHMMSS/`:
+Training produces the following outputs in `training_results/_YYYYMMDD_HHMMSS/`:
 
 - **`de_policy.onnx`** - Trained policy for UE5 inference
 - **`checkpoint_NNNNNN/`** - Periodic training checkpoints
@@ -205,7 +205,7 @@ Columns:
 
 Launch TensorBoard to view detailed metrics:
 ```bash
-tensorboard --logdir training_results_
+tensorboard --logdir training_results
 ```
 
 Key metrics:

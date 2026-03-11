@@ -256,7 +256,7 @@ def main() -> int:
         # ── 4. Sync final artefacts to S3 ────────────────────────────────────
         print("\n[launch] === Syncing final artefacts to S3 ===")
         run(
-            ["aws", "s3", "sync", "training_results_/",
+            ["aws", "s3", "sync", "training_results/",
              f"s3://{args.s3_bucket}/results/", "--exclude", "*.pyc"],
             check=False,
         )

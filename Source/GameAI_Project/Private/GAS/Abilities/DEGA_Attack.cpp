@@ -20,6 +20,12 @@ UDEGA_Attack::UDEGA_Attack()
 	AbilityTags.AddTag(DEGameplayTags::Ability_Attack);
 	ActivationBlockedTags.AddTag(DEGameplayTags::State_Dead);
 	// CooldownGameplayEffectClass must be assigned via Blueprint (GE_Cooldown_Attack)
+
+	// Allow activation via SendGameplayEventToActor (passes BB target through TriggerEventData)
+	FAbilityTriggerData TriggerData;
+	TriggerData.TriggerTag    = DEGameplayTags::Ability_Attack;
+	TriggerData.TriggerSource = EGameplayAbilityTriggerSource::GameplayEvent;
+	AbilityTriggers.Add(TriggerData);
 }
 
 bool UDEGA_Attack::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,

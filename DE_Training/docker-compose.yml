@@ -9,9 +9,9 @@ services:
     build:
       context: ..
       dockerfile: DE_Training/Dockerfile
-    container_name: DE_training_
+    container_name: DE_training
     volumes:
-      - ./training_results_:/app/training_results_
+      - ./training_results:/app/training_results
       - ./models:/app/models
     environment:
       # Passed through from the host shell (or training.bat).
@@ -23,12 +23,13 @@ services:
       - PORT=50051
       - IS_DOCKER=true                            # Enable Docker-specific gRPC settings
       - RESUME_CHECKPOINT=${RESUME_CHECKPOINT:-}  # Optional: path to checkpoint to resume from
+      - PYTHONUNBUFFERED=1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # $$VAR is expanded by the container shell (not by Compose),
     # so the value comes from the environment section above.
     command: >-
-      sh -c "python training/policy_training.py
+      sh -c "python training/train.py
       --mode rllib
       --iterations $$NUM_ITERATIONS
       --host host.docker.internal
@@ -49,10 +50,10 @@ services:
       dockerfile: DE_Training/Dockerfile
     container_name: DE_tensorboard_
     volumes:
-      - ./training_results_:/app/training_results_
+      - ./training_results:/app/training_results
     ports:
       - "6006:6006"
-    command: tensorboard --logdir=/app/training_results_ --host=0.0.0.0
+    command: tensorboard --logdir=/app/training_results --host=0.0.0.0
     profiles:
       - monitor
 
