@@ -39,21 +39,6 @@ class DYNAMICEQS_API UDynamicEQSAgentComponent : public UInferenceComponent
 public:
 	UDynamicEQSAgentComponent();
 
-	// -------------------------------------------------------------------------
-	// Sub-object wiring
-	// -------------------------------------------------------------------------
-
-	/** Collects the observation vector each step. */
-	UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "DynamicEQS|Agent")
-	TObjectPtr<UDynamicEQSObserverBase> Observer;
-
-	/** Translates policy output into EQS weight updates. */
-	UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "DynamicEQS|Agent")
-	TObjectPtr<UDynamicEQSActuatorBase> Actuator;
-
-	/** Owns reward / termination / reset logic for the episode. */
-	UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "DynamicEQS|Agent")
-	TObjectPtr<UDynamicEQSTrainerBase> Trainer;
 
 	// -------------------------------------------------------------------------
 	// Configuration

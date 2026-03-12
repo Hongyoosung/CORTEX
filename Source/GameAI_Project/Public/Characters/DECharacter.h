@@ -34,7 +34,7 @@ class UWidgetComponent;
 class ADECharacter;
 class UDERewardSubsystem;
 class UDEScholaAgent;
-class UDEEQSExecutor;
+class UDynamicEQSExecutor;
 struct FDEDeathEventData;
 struct FDETeamInfo;
 
@@ -196,7 +196,7 @@ public:
 	void SetCommandedStrategy(EDEStrategyType NewStrategy);
 
 	UFUNCTION(BlueprintPure, Category = "Character|Commands")
-	EDEStrategyType GetCommandedStrategy() const { return CommandedStrategy; }
+	EDEStrategyType GetCommandedStrategy() const;
 
 
 	//========================================
@@ -250,9 +250,6 @@ protected:
 
 	/** Handle death */
 	void HandleDeath(AActor* Killer, float FinalDamage);
-
-	/** Apply strategy-specific stat multipliers */
-	void ApplyStrategyStatModifiers(EDEStrategyType Strategy);
 
 
 public:
@@ -310,7 +307,7 @@ public:
 	TObjectPtr<UAIPerceptionStimuliSourceComponent> StimuliSource = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UDEEQSExecutor> EQSExecutor = nullptr;
+	TObjectPtr<UDynamicEQSExecutor> EQSExecutor = nullptr;
 
 
 	//========================================
@@ -400,14 +397,6 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FVector LastEQSTargetLocation = FVector::ZeroVector;
-
-	/** Initial strategy applied at BeginPlay. Set per-agent in the Details panel. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Strategy",
-		meta = (DisplayName = "Default Strategy"))
-	EDEStrategyType DefaultStrategy = EDEStrategyType::Assault;
-
-	UPROPERTY(BlueprintReadOnly, Category = "AI|Strategy")
-	EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
 
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FDEEQSWeightParameters CurrentEQSWeights;

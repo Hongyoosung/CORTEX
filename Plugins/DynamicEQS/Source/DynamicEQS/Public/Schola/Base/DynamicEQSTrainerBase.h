@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
+#include "Training/AbstractTrainer.h"
 #include "Reward/DynamicEQSRewardData.h"
 
 #include "DynamicEQSTrainerBase.generated.h"
@@ -23,13 +23,14 @@ enum class EDynamicEQSTerminationReason : uint8
 };
 
 /**
- * UDynamicEQSTrainerBase
+ * ADynamicEQSTrainerBase
  * Abstract base that owns per-episode logic: reward computation,
  * termination checking, episode reset, and debug telemetry.
- * Subclass in C++ or Blueprint; assign to UDynamicEQSAgentComponent::Trainer.
+ * Inherits from AAbstractTrainer (AAIController) to integrate with Schola.
+ * Subclass in C++ or Blueprint; place in the level and assign to the agent.
  */
 UCLASS(Abstract, Blueprintable, meta = (DisplayName = "Dynamic EQS Trainer"))
-class DYNAMICEQS_API UDynamicEQSTrainerBase : public UObject
+class DYNAMICEQS_API ADynamicEQSTrainerBase : public AAbstractTrainer
 {
 	GENERATED_BODY()
 
@@ -56,34 +57,49 @@ public:
 	TObjectPtr<UDynamicEQSRewardData> RewardData;
 
 	// -------------------------------------------------------------------------
-	// Pure-virtual episode interface
+	// AAbstractTrainer overrides
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Compute the scalar reward for the current step.
-	 * Called once per step by the agent component.
+	 * Compute scalar reward for the current step.
+	 * Called by Schola's training loop each step.
 	 */
-	virtual float ComputeReward()
-		PURE_VIRTUAL(UDynamicEQSTrainerBase::ComputeReward, return 0.0f;);
+	virtual float ComputeReward() override
+		PURE_VIRTUAL(ADynamicEQSTrainerBase::ComputeReward, return 0.0f;);
+
+	/**
+	 * Map EDynamicEQSTerminationReason to EAgentTrainingStatus for Schola.
+	 * Calls ComputeTermination() internally — override ComputeTermination() in subclasses.
+	 */
+	virtual EAgentTrainingStatus ComputeStatus() override;
+
+	/** Populates the info map from GetDebugInfo(). */
+	virtual void GetInfo(TMap<FString, FString>& Info) override;
+
+	/** Delegates to ResetEpisode(). */
+	virtual void ResetTrainer() override;
+
+	/** Default empty implementation. Override if episode-end cleanup is needed. */
+	virtual void OnCompletion() override;
+
+	// -------------------------------------------------------------------------
+	// Episode interface (override in subclasses instead of AAbstractTrainer)
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Determine whether and why the episode should terminate.
 	 * Return EDynamicEQSTerminationReason::None to continue.
 	 */
 	virtual EDynamicEQSTerminationReason ComputeTermination()
-		PURE_VIRTUAL(UDynamicEQSTrainerBase::ComputeTermination,
+		PURE_VIRTUAL(ADynamicEQSTrainerBase::ComputeTermination,
 			return EDynamicEQSTerminationReason::None;);
-
-	// -------------------------------------------------------------------------
-	// Virtual (overridable) helpers
-	// -------------------------------------------------------------------------
 
 	/** Reset all episode-level state. Called at the start of each new episode. */
 	virtual void ResetEpisode();
 
 	/**
 	 * Return a map of named debug scalars (e.g., distance to goal, step count).
-	 * Used by the environment actor for logging and visualisation.
+	 * Used for logging and visualisation.
 	 */
 	virtual TMap<FString, float> GetDebugInfo();
 };

@@ -9,7 +9,33 @@
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
 
+// ==================== UDynamicEQSRewardCalculatorBase Overrides ====================
+
+float UDERewardSubsystem::CalculateStepReward(const FDynamicEQSStepContext& Context)
+{
+	// Full per-step reward requires game context (character, snapshot, strategy).
+	// Use ComputeStepReward() directly. This override satisfies the base class contract.
+	return 0.0f;
+}
+
+float UDERewardSubsystem::CalculateTerminalReward(bool bWon)
+{
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
+	return bWon ? Settings->TerminalWinReward : Settings->TerminalLossReward;
+}
+
+void UDERewardSubsystem::Reset()
+{
+	Super::Reset();
+}
+
 // ==================== Internal Helpers ====================
+
+const UDERewardData* UDERewardSubsystem::GetSettings() const
+{
+	return Cast<UDERewardData>(RewardData);
+}
 
 float UDERewardSubsystem::GetStrategyScale(EDEStrategyType Strategy, float AssaultScale, float DefendScale, float SupportScale) const
 {
@@ -18,15 +44,16 @@ float UDERewardSubsystem::GetStrategyScale(EDEStrategyType Strategy, float Assau
 	case EDEStrategyType::Assault: return AssaultScale;
 	case EDEStrategyType::Defend:  return DefendScale;
 	case EDEStrategyType::Support: return SupportScale;
-	default:                     return 1.0f;
+	default:                       return 1.0f;
 	}
 }
 
 
 float UDERewardSubsystem::DrainSparseReward(FDERewardState& InOutState, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
-	const float Drained = InOutState.CumulativeReward * CachedRewardData->SparseRewardScale;
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
+	const float Drained = InOutState.CumulativeReward * Settings->SparseRewardScale;
 	InOutState.CumulativeReward = 0.0f;
 	return Drained;
 }
@@ -35,67 +62,75 @@ float UDERewardSubsystem::DrainSparseReward(FDERewardState& InOutState, int32 Ag
 
 float UDERewardSubsystem::CalculateKillReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
 	InOutState.bSparseKillFiredThisStep = true;
-	float Scale = GetStrategyScale(ActiveStrategy, CachedRewardData->AssaultReward.KillRewardScale, CachedRewardData->DefendReward.KillRewardScale, CachedRewardData->SupportReward.KillRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Kill, ActiveStrategy, CachedRewardData->KillReward * Scale, AgentID);
+	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.KillRewardScale, Settings->DefendReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Kill, ActiveStrategy, Settings->KillReward * Scale, AgentID);
 }
 
 float UDERewardSubsystem::CalculateAssistReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DamageDealt, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
 	float DamageNorm = FMath::Clamp(DamageDealt / 100.0f, 0.0f, 1.0f);
-	float Scale = GetStrategyScale(ActiveStrategy, CachedRewardData->AssaultReward.KillRewardScale, CachedRewardData->DefendReward.KillRewardScale, CachedRewardData->SupportReward.KillRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Assist, ActiveStrategy, CachedRewardData->KillReward * CachedRewardData->AssistRewardScale * DamageNorm * Scale, AgentID);
+	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.KillRewardScale, Settings->DefendReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Assist, ActiveStrategy, Settings->KillReward * Settings->AssistRewardScale * DamageNorm * Scale, AgentID);
 }
 
 float UDERewardSubsystem::CalculateDeathPenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, CachedRewardData->AssaultReward.DeathScale, CachedRewardData->DefendReward.DeathScale, CachedRewardData->SupportReward.DeathScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Death, ActiveStrategy, -CachedRewardData->DeathPenaltyReward * Scale, AgentID);
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
+	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.DeathScale, Settings->DefendReward.DeathScale, Settings->SupportReward.DeathScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Death, ActiveStrategy, -Settings->DeathPenaltyReward * Scale, AgentID);
 }
 
 float UDERewardSubsystem::CalculateTeamWipePenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, CachedRewardData->AssaultReward.DeathScale, CachedRewardData->DefendReward.DeathScale, CachedRewardData->SupportReward.DeathScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveStrategy, -CachedRewardData->TeamWipePenalty * Scale, AgentID);
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
+	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.DeathScale, Settings->DefendReward.DeathScale, Settings->SupportReward.DeathScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveStrategy, -Settings->TeamWipePenalty * Scale, AgentID);
 }
 
 float UDERewardSubsystem::CalculateCaptureReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, CachedRewardData->AssaultReward.CaptureRewardScale, CachedRewardData->DefendReward.CaptureRewardScale, CachedRewardData->SupportReward.CaptureRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::DECapturePoint, ActiveStrategy, CachedRewardData->CaptureReward * Scale, AgentID);
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
+	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.CaptureRewardScale, Settings->DefendReward.CaptureRewardScale, Settings->SupportReward.CaptureRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::DECapturePoint, ActiveStrategy, Settings->CaptureReward * Scale, AgentID);
 }
 
 float UDERewardSubsystem::CalculateLosePointPenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, CachedRewardData->AssaultReward.LossCaptureRewardScale, CachedRewardData->DefendReward.LossCaptureRewardScale, CachedRewardData->SupportReward.LossCaptureRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::LosePoint, ActiveStrategy, CachedRewardData->LossCaptureReward * Scale, AgentID);
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
+	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.LossCaptureRewardScale, Settings->DefendReward.LossCaptureRewardScale, Settings->SupportReward.LossCaptureRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::LosePoint, ActiveStrategy, Settings->LossCaptureReward * Scale, AgentID);
 }
 
 float UDERewardSubsystem::CalculateSurvivalReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float CurrentHP, float MaxHP, int32 AgentID)
 {
-	if (!CachedRewardData || MaxHP <= 0.0f) return 0.0f;
-	if (CurrentHP / MaxHP < CachedRewardData->SurvivalHPThreshold) return 0.0f;
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings || MaxHP <= 0.0f) return 0.0f;
+	if (CurrentHP / MaxHP < Settings->SurvivalHPThreshold) return 0.0f;
 	const float Scale = GetStrategyScale(ActiveStrategy,
-		CachedRewardData->AssaultReward.SurvivalRewardScale,
-		CachedRewardData->DefendReward.SurvivalRewardScale,
-		CachedRewardData->SupportReward.SurvivalRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Survival, ActiveStrategy, CachedRewardData->SurvivalReward * Scale, AgentID);
+		Settings->AssaultReward.SurvivalRewardScale,
+		Settings->DefendReward.SurvivalRewardScale,
+		Settings->SupportReward.SurvivalRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Survival, ActiveStrategy, Settings->SurvivalBonus * Scale, AgentID);
 }
 
 float UDERewardSubsystem::CalculateDistanceShaping(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DistanceToTarget, int32 AgentID)
 {
-	if (!CachedRewardData) return 0.0f;
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
 	const float Scale = GetStrategyScale(ActiveStrategy,
-		CachedRewardData->AssaultReward.PenaltyPerMeterScale,
-		CachedRewardData->DefendReward.PenaltyPerMeterScale,
-		CachedRewardData->SupportReward.PenaltyPerMeterScale);
-	const float Reward = CachedRewardData->PenaltyPerMeter * Scale * (DistanceToTarget / 100.0f);
+		Settings->AssaultReward.PenaltyPerMeterScale,
+		Settings->DefendReward.PenaltyPerMeterScale,
+		Settings->SupportReward.PenaltyPerMeterScale);
+	const float Reward = Settings->PenaltyPerMeter * Scale * (DistanceToTarget / 100.0f);
 	return ApplyAndLogReward(InOutState, EDERewardEventType::DistanceShaping, ActiveStrategy, Reward, AgentID);
 }
 
@@ -115,13 +150,12 @@ float UDERewardSubsystem::ComputeStepReward(
 		UE_LOG(LogTemp, Error, TEXT("DERewardSubsystem: Invalid Agent reference, returning 0 reward"));
 		return 0.0f;
 	}
-	if (!CachedRewardData)
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings)
 	{
-		UE_LOG(LogTemp, Error, TEXT("DERewardSubsystem: Missing CachedRewardData, returning 0 reward"));
+		UE_LOG(LogTemp, Error, TEXT("DERewardSubsystem: Missing RewardData, returning 0 reward"));
 		return 0.0f;
 	}
-
-	const UDERewardData* Settings = CachedRewardData;
 
 	float Reward = 0.0f;
 	const float PositionChange = FVector::Dist(Prev.Position, Current.Position);
@@ -348,7 +382,7 @@ float UDERewardSubsystem::ComputeStepReward(
 						const float DefendApproachScale = bIsolated ? Settings->IsolationApproachMultiplier : 1.0f;
 						Reward += Settings->DefendReward.ZoneApproachReward * DefendApproachScale * FMath::Max(ApproachDelta, 0.0f);
 					}
-					const float DistPenalty = FMath::Min(CurrNearestFriendlyDist / 10000.0f, 1.0f) * 0.3f;
+					const float DistPenalty = FMath::Min(CurrNearestFriendlyDist / 10000.0f, 1.0f) * Settings->DefendReward.OutOfZonePenaltyScale;
 					Reward -= DistPenalty;
 				}
 			}
@@ -400,12 +434,29 @@ float UDERewardSubsystem::ComputeStepReward(
 
 			if (bShouldReevalTarget)
 			{
+				// Collect live ally characters to check strategy (prevents support-on-support heal loops)
+				TArray<ADECharacter*> AllyChars;
+				if (ADEMatchManager* MatchMgr = Agent->GetMatchManager())
+					AllyChars = MatchMgr->GetTeamAgents(MyTeamID);
+
+				bool bAnyNonSupportAlive = false;
+				for (ADECharacter* Ally : AllyChars)
+				{
+					if (Ally && Ally != Agent && Ally->IsAlive() &&
+						Ally->GetCommandedStrategy() != EDEStrategyType::Support)
+					{ bAnyNonSupportAlive = true; break; }
+				}
+
 				float LowestAllyHealth = FLT_MAX;
 				int32 NewInjuredIdx = -1;
 				for (int32 i = 0; i < Current.AllyHealths.Num(); ++i)
 				{
 					const float AllyHP = Current.AllyHealths[i];
 					if (AllyHP <= 0.0f) continue;
+					// Skip support allies when non-support allies are alive
+					if (bAnyNonSupportAlive && i < AllyChars.Num() && AllyChars[i] &&
+						AllyChars[i]->GetCommandedStrategy() == EDEStrategyType::Support)
+						continue;
 					if (AllyHP < LowestAllyHealth)
 					{
 						LowestAllyHealth = AllyHP;
@@ -519,9 +570,7 @@ float UDERewardSubsystem::ComputeStepReward(
 		CalculateSurvivalReward(InOutState, Strategy, Current.Health, 1.0f, Agent->AgentID);
 	}
 
-	// Minimum combat range penalty (common to all strategies)
-	// Penalizes agents when a visible enemy is within MinCombatRange to discourage point-blank combat
-	// and reinforce the CombatRange EQS weight as a meaningful positioning signal.
+	// Minimum combat range penalty
 	if (!bIsRespawnStep && Settings->MinCombatRange > 0.0f && Settings->TooCloseEnemyPenalty > 0.0f)
 	{
 		const float MinRangeSq = FMath::Square(Settings->MinCombatRange);
@@ -532,12 +581,12 @@ float UDERewardSubsystem::ComputeStepReward(
 				if (FVector::DistSquared(Current.Position, Current.EnemyPositions[i]) < MinRangeSq)
 				{
 					Reward -= Settings->TooCloseEnemyPenalty;
-					break; // one penalty per step regardless of how many close enemies
+					break;
 				}
 			}
 		}
 	}
-	// Close-range kill tracking — flags whether the agent was too close when a kill fired this step
+	// Close-range kill tracking
 	if (!bIsRespawnStep && Settings->CloseRangeKillThreshold > 0.0f)
 	{
 		const float KillRangeSq = FMath::Square(Settings->CloseRangeKillThreshold);
@@ -571,11 +620,13 @@ float UDERewardSubsystem::ComputeStepReward(
 		Reward += Settings->ZoneControlRewardPerBase * ZoneControlScale * NetControl;
 	}
 
-	// Cooperative base occupation shaping (Phase 5)
-	Reward += ComputeBaseCooperationReward(Agent, InOutState);
+	// Cooperative base occupation shaping
+	Reward += ComputeBaseCooperationReward(Agent, InOutState, Strategy);
 
-	float EffectiveTimePenalty = (Strategy == EDEStrategyType::Assault) ? Settings->AssaultReward.TimePenalty : Settings->TimePenalty;
-	Reward -= EffectiveTimePenalty;
+	// Step penalty — StepPenalty is negative (inherited from UDynamicEQSRewardData)
+	const float AssaultStepPenalty = Settings->AssaultReward.TimePenalty;
+	const float EffectiveStepPenalty = (Strategy == EDEStrategyType::Assault) ? AssaultStepPenalty : -Settings->StepPenalty;
+	Reward -= EffectiveStepPenalty;
 
 	float DrainedSparse = DrainSparseReward(InOutState, Agent->AgentID);
 	if (InOutState.bWasTooCloseAtKill && InOutState.bSparseKillFiredThisStep)
@@ -583,7 +634,7 @@ float UDERewardSubsystem::ComputeStepReward(
 		DrainedSparse *= Settings->CloseRangeKillPenaltyScale;
 	}
 	Reward += DrainedSparse;
-	Reward *= Settings->GlobalRewardScale;
+	Reward *= Settings->RewardScale;
 	Reward = FMath::Clamp(Reward, Settings->StepRewardClampMin, Settings->StepRewardClampMax);
 
 	InOutState.bSparseKillFiredThisStep = false;
@@ -618,9 +669,10 @@ float UDERewardSubsystem::ComputeStepReward(
 	return Reward;
 }
 
-float UDERewardSubsystem::ComputeBaseCooperationReward(ADECharacter* Agent, FDERewardState& InOutState)
+float UDERewardSubsystem::ComputeBaseCooperationReward(ADECharacter* Agent, FDERewardState& InOutState, EDEStrategyType Strategy)
 {
-	if (!CachedRewardData || !Agent) return 0.0f;
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings || !Agent) return 0.0f;
 
 	ADEMatchManager* MatchMgr = Agent->GetMatchManager();
 	if (!MatchMgr) return 0.0f;
@@ -629,26 +681,77 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADECharacter* Agent, FDER
 	if (CPs.Num() == 0) return 0.0f;
 
 	const int32 MyTeamID = Agent->GetTeamID_Implementation();
-	const FVector MyPos  = Agent->GetActorLocation();
-	const float Radius   = CachedRewardData->BaseOccupationRadius;
+	const FVector MyPos = Agent->GetActorLocation();
+	const float Radius = Settings->BaseOccupationRadius;
 	const float RadiusSq = Radius * Radius;
 
 	TArray<ADECharacter*> Teammates = MatchMgr->GetTeamAgents(MyTeamID);
 
+	// =========================================================
+	// 1. 전선(Frontline) 거점 식별 로직
+	// 적/중립 거점과 가장 가까운 아군 거점들을 찾아냅니다.
+	// =========================================================
+	TArray<ADECapturePoint*> FriendlyBases;
+	TArray<ADECapturePoint*> HostileBases;
+
+	for (ADECapturePoint* CP : CPs)
+	{
+		if (!CP) continue;
+		if (CP->GetTeamID_Implementation() == MyTeamID) FriendlyBases.Add(CP);
+		else HostileBases.Add(CP);
+	}
+
+	TArray<ADECapturePoint*> FrontlineBases;
+	if (HostileBases.Num() > 0 && FriendlyBases.Num() > 0)
+	{
+		float MinDistSqToFront = FLT_MAX;
+
+		// 가장 가까운 적/중립 거점과의 최소 거리 탐색
+		for (ADECapturePoint* FBase : FriendlyBases)
+		{
+			for (ADECapturePoint* HBase : HostileBases)
+			{
+				const float DistSq = FVector::DistSquared(FBase->GetActorLocation(), HBase->GetActorLocation());
+				if (DistSq < MinDistSqToFront) MinDistSqToFront = DistSq;
+			}
+		}
+
+		// 최소 거리 기준, 약간의 여유(약 1.2배 거리) 내에 있는 거점들을 모두 전선으로 간주
+		const float FrontlineMarginSq = MinDistSqToFront * 1.44f;
+		for (ADECapturePoint* FBase : FriendlyBases)
+		{
+			for (ADECapturePoint* HBase : HostileBases)
+			{
+				if (FVector::DistSquared(FBase->GetActorLocation(), HBase->GetActorLocation()) <= FrontlineMarginSq)
+				{
+					FrontlineBases.Add(FBase);
+					break; // 이 아군 거점은 전선임
+				}
+			}
+		}
+	}
+	else
+	{
+		// 적 거점이 없거나(승리 직전) 아군 거점이 없다면 모든 아군 거점을 동일하게 취급
+		FrontlineBases = FriendlyBases;
+	}
+
+	// =========================================================
+	// 2. 역할별 보상 계산 로직
+	// =========================================================
 	float Reward = 0.0f;
 
-	// ---- Per-base pass ----
 	for (int32 i = 0; i < CPs.Num(); ++i)
 	{
 		ADECapturePoint* CP = CPs[i];
 		if (!CP) continue;
 
-		const FVector CPPos   = CP->GetActorLocation();
-		const int32   Owner   = CP->GetTeamID_Implementation();
-		const float   DistSq  = FVector::DistSquared(MyPos, CPPos);
+		const FVector CPPos = CP->GetActorLocation();
+		const int32   Owner = CP->GetTeamID_Implementation();
+		const float   DistSq = FVector::DistSquared(MyPos, CPPos);
 		const bool    bNearMe = (DistSq <= RadiusSq);
+		const bool    bIsFrontline = FrontlineBases.Contains(CP);
 
-		// Count allies near this base (excluding self)
 		int32 AlliesNear = 0;
 		for (ADECharacter* Mate : Teammates)
 		{
@@ -661,29 +764,54 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADECharacter* Agent, FDER
 
 		if (bNearMe)
 		{
-			// Solo occupation of an uncontrolled base
+			// 1) 내가 거점 안에 있을 때의 보상/페널티
 			if (Owner != MyTeamID && AlliesNear == 0)
 			{
-				Reward += CachedRewardData->BaseOccupationReward;
+				// 적/중립 거점에 진입 (Assault가 주로 받을 보상)
+				Reward += Settings->BaseOccupationReward;
 			}
-			// Co-occupation penalty (2+ allies on same base)
-			if (AlliesNear >= 1)
+			else if (Owner == MyTeamID && Strategy == EDEStrategyType::Defend)
 			{
-				Reward -= CachedRewardData->CoOccupationPenalty;
+				// 아군 거점 방어 (Defend 전용)
+				if (bIsFrontline && AlliesNear == 0)
+				{
+					Reward += Settings->BaseOccupationReward; // 전선 방어 보상
+				}
+				else if (!bIsFrontline)
+				{
+					Reward -= Settings->BaseOccupationReward * 0.5f; // 후방 캠핑 페널티
+				}
 			}
 
-			// Assigned-base reach reward (once per episode)
+			// 2) 겹침 페널티 (CoOccupationPenalty)
+			if (AlliesNear >= 1)
+			{
+				if (Strategy == EDEStrategyType::Defend)
+				{
+					Reward -= Settings->CoOccupationPenalty; // 수비수는 넓게 퍼져야 함
+				}
+				else if (Strategy == EDEStrategyType::Assault && Owner == MyTeamID)
+				{
+					Reward -= Settings->CoOccupationPenalty * 0.5f; // 강습조도 본진에 뭉쳐있으면 페널티
+				}
+			}
+
+			// 3) 할당된 베이스 도달 보상
 			if (!InOutState.bHasReachedAssignedBase && Agent->AssignedBaseIndex == i)
 			{
 				InOutState.bHasReachedAssignedBase = true;
-				Reward += CachedRewardData->AssignedBaseReachReward;
+				Reward += Settings->AssignedBaseReachReward;
 			}
 		}
 
-		// Undefended friendly base penalty (shared, no ally nearby)
+		// 3) 빈집 페널티 (UndefendedBasePenalty)
+		// 오직 Defend 전략을 가진 에이전트에게만, 그리고 '전선(Frontline)' 거점이 비었을 때만 부여합니다.
 		if (Owner == MyTeamID && AlliesNear == 0 && !bNearMe)
 		{
-			Reward -= CachedRewardData->UndefendedBasePenalty;
+			if (Strategy == EDEStrategyType::Defend && bIsFrontline)
+			{
+				Reward -= Settings->UndefendedBasePenalty;
+			}
 		}
 	}
 
@@ -699,10 +827,8 @@ float UDERewardSubsystem::ApplyAndLogReward(FDERewardState& InOutAgentState, EDE
 
 void UDERewardSubsystem::ApplyMatchEndReward(int32 WinnerTeamID, const TArray<ADECharacter*>& AllAgents)
 {
-	if (!CachedRewardData) return;
-
-	const float WinReward  = CachedRewardData->MatchWinReward;
-	const float LossReward = CachedRewardData->MatchLossReward;
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return;
 
 	for (ADECharacter* Agent : AllAgents)
 	{
@@ -716,8 +842,7 @@ void UDERewardSubsystem::ApplyMatchEndReward(int32 WinnerTeamID, const TArray<AD
 			continue;
 		}
 
-		const float TerminalReward = (AgentTeam == WinnerTeamID) ? WinReward : LossReward;
-		// Queue into sparse reward buffer so DrainSparseReward() picks it up on the next step
+		const float TerminalReward = CalculateTerminalReward(AgentTeam == WinnerTeamID);
 		Agent->RewardState.CumulativeReward += TerminalReward;
 
 		UE_LOG(LogTemp, Log, TEXT("[DERewardSubsystem] Match end: Agent %d (Team %d) gets %.1f (%s)"),

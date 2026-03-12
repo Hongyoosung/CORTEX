@@ -7,6 +7,8 @@
 #include "Team/DEMatchManager.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
+#include "AIController.h"
+#include "Perception/AIPerceptionComponent.h"
 
 UDEGA_Heal::UDEGA_Heal()
 {
@@ -111,20 +113,51 @@ ADECharacter* UDEGA_Heal::FindNearestInjuredAlly() const
 	const ADECharacter* OwnerChar = Cast<ADECharacter>(AvatarActor);
 	if (!OwnerChar) return nullptr;
 
-	if (!CachedMatchManager)
-	{
-		CachedMatchManager = const_cast<UDEGA_Heal*>(this)->GetMatchManager();
-	}
-	if (!CachedMatchManager) return nullptr;
+	// --- Inference mode: use AIPerception to find allies by TeamID ---
+	// Falls back to MatchManager if no AIController / perception available.
+	AAIController* AIC = Cast<AAIController>(OwnerChar->GetController());
+	const UAIPerceptionComponent* Perception = AIC ? AIC->GetPerceptionComponent() : nullptr;
 
-	TArray<ADECharacter*> Allies = CachedMatchManager->GetTeamAgents(OwnerChar->GetTeamID_Implementation());
+	TArray<ADECharacter*> Candidates;
+
+	if (Perception)
+	{
+		TArray<AActor*> PerceivedActors;
+		Perception->GetCurrentlyPerceivedActors(nullptr, PerceivedActors);
+
+		for (AActor* Actor : PerceivedActors)
+		{
+			ADECharacter* Other = Cast<ADECharacter>(Actor);
+			if (!Other || Other == OwnerChar || !Other->IsAlive()) continue;
+			// Same team, same environment
+			if (Other->GetTeamID_Implementation() != OwnerChar->GetTeamID_Implementation()) continue;
+			if (Other->GetEnvID_Implementation()  != OwnerChar->GetEnvID_Implementation())  continue;
+			Candidates.Add(Other);
+		}
+	}
+	else
+	{
+		// Fallback: MatchManager (training mode)
+		if (!CachedMatchManager)
+		{
+			CachedMatchManager = const_cast<UDEGA_Heal*>(this)->GetMatchManager();
+		}
+		if (CachedMatchManager)
+		{
+			TArray<ADECharacter*> TeamAgents = CachedMatchManager->GetTeamAgents(OwnerChar->GetTeamID_Implementation());
+			for (ADECharacter* A : TeamAgents)
+			{
+				if (A && A != OwnerChar && A->IsAlive()) Candidates.Add(A);
+			}
+		}
+	}
+
 	ADECharacter* BestTarget = nullptr;
 	float MinDistSq = FMath::Square(Config.Range);
 	FVector MyLoc = OwnerChar->GetActorLocation();
 
-	for (ADECharacter* Ally : Allies)
+	for (ADECharacter* Ally : Candidates)
 	{
-		if (!Ally || Ally == OwnerChar || !Ally->IsAlive()) continue;
 		if (Ally->GetHealthPercentage() >= 1.0f) continue;
 
 		float DistSq = FVector::DistSquared(Ally->GetActorLocation(), MyLoc);

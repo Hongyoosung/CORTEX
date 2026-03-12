@@ -64,7 +64,7 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
         if (TransitionLogger)
         {
             TransitionLogger->Initialize(TransitionLogPath);
-            UE_LOG(LogTemp, Log, TEXT("[DETrainer] Transition logging enabled: %s"), *TransitionLogPath);
+            //UE_LOG(LogTemp, Log, TEXT("[DETrainer] Transition logging enabled: %s"), *TC->TransitionLogPath.ToString());
         }
         else
         {
@@ -178,7 +178,8 @@ void ADETrainer::Tick(float DeltaTime)
             // auto-reset from firing and leaving alive agents permanently stuck in Truncated.
             CurrentEpisodeSteps++;
             UE_LOG(LogTemp, Log, TEXT("[DETrainer] %s (DEAD): action drained (step %d/%d)"),
-                *ControlledCharacter->GetName(), CurrentEpisodeSteps, MaxEpisodeSteps);
+                *ControlledCharacter->GetName(), CurrentEpisodeSteps,
+                MaxEpisodeSteps);
         }
         bWasDeadLastTick = true;
         return;
@@ -337,7 +338,8 @@ float ADETrainer::ComputeReward()
 bool ADETrainer::IsEpisodeDone()
 {
     // 종료 조건
-    if (CurrentEpisodeSteps >= MaxEpisodeSteps)
+    const int32 MaxSteps = MaxEpisodeSteps;
+    if (CurrentEpisodeSteps >= MaxSteps)
     {
         UE_LOG(LogTemp, Log, TEXT("Episode ended: Max steps reached"));
         return true;
@@ -570,23 +572,15 @@ void ADETrainer::DrawTrainingDebug(float DeltaTime)
     FVector CharLocation = ControlledCharacter->GetActorLocation();
 
     // === Agent Info Text ===
-    // Check if training override is active
-    FString StrategyInfo = UEnum::GetValueAsString(CachedCommandedStrategy);
-    if (DEAgent && DEAgent->bUseTrainingStrategyOverride)
-    {
-        StrategyInfo += TEXT(" [TRAINING OVERRIDE]");
-    }
 
-    /*FString DebugText = FString::Printf(
-        TEXT("Strategy: %s\n")
+    FString DebugText = FString::Printf(
         TEXT("Steps: %d / %d\n")
         TEXT("Episode Reward: %.2f\n")
         TEXT("Total Episodes: %d\n")
         TEXT("---EQS Weights---\n")
         TEXT("EnemyObj: %.2f | AllyObj: %.2f\n")
         TEXT("Cover: %.2f | Visibility: %.2f\n")
-        TEXT("AllyProx: %.2f | Range: %.2f\n")
-        *StrategyInfo,
+        TEXT("AllyProx: %.2f | Range: %.2f\n"),
         CurrentEpisodeSteps,
         MaxEpisodeSteps,
         EpisodeReward,
@@ -596,15 +590,16 @@ void ADETrainer::DrawTrainingDebug(float DeltaTime)
         LastAction.CoverDensity,
         LastAction.EnemyVisibility,
         LastAction.AllyProximity,
-        LastAction.CombatRange,
-    );*/
+        LastAction.CombatRange
+    );
 
-    FString DebugText = FString::Printf(
+    const int32 MaxStepsDebug = MaxEpisodeSteps;
+    FString DebugText2 = FString::Printf(
         TEXT("Steps: %d / %d\n")
         TEXT("Episode Reward: %.2f\n")
         TEXT("Total Episodes: %d\n"),
         CurrentEpisodeSteps,
-        MaxEpisodeSteps,
+        MaxStepsDebug,
         EpisodeReward,
         TotalEpisodes
     );
@@ -715,10 +710,11 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
     // v10.2 FIX: Added detailed logging to track episode completion causes
 
     // Check termination conditions
-    if (CurrentEpisodeSteps >= MaxEpisodeSteps)
+    const int32 MaxStepsCS = MaxEpisodeSteps;
+    if (CurrentEpisodeSteps >= MaxStepsCS)
     {
         UE_LOG(LogTemp, Warning, TEXT("[DETrainer] Episode TRUNCATED - MaxSteps reached (Step %d/%d) - Agent: %s"),
-            CurrentEpisodeSteps, MaxEpisodeSteps, *GetName());
+            CurrentEpisodeSteps, MaxStepsCS, *GetName());
         return EAgentTrainingStatus::Truncated; // Episode truncated due to max steps
     }
 

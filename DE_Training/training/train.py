@@ -292,10 +292,16 @@ def train_with_rllib(args):
         dt     = time.time() - t0
 
         env_r  = result.get("env_runners", {})
+        
+        # 1. 기존 지표 추출
         reward = env_r.get("episode_reward_mean") or 0.0
         ep_len = env_r.get("episode_len_mean")    or 0.0
         eps    = env_r.get("episodes_this_iter",  0)
         steps  = result.get("num_agent_steps_sampled", 0)
+        
+        # 2. 신규 지표 추가 추출 (최대/최소 보상)
+        reward_max = env_r.get("episode_reward_max")
+        reward_min = env_r.get("episode_reward_min")
 
         reward = 0.0 if reward is None or (isinstance(reward, float) and np.isnan(reward)) else reward
         ep_len = 0.0 if ep_len is None or (isinstance(ep_len, float) and np.isnan(ep_len))  else ep_len
@@ -303,8 +309,25 @@ def train_with_rllib(args):
         cumul_episodes += eps
         cumul_steps    += steps
 
-        tb.add_scalar("reward/mean",   reward, cumul_steps)
-        tb.add_scalar("reward/ep_len", ep_len, cumul_steps)
+        # ---------------------------------------------------------------------
+        # [수정된 텐서보드 기록 부분]
+        # ---------------------------------------------------------------------
+        
+        # 에피소드 보상 (평균, 최대, 최소)
+        tb.add_scalar("reward/episode_reward_mean", reward, cumul_steps)
+        
+        if reward_max is not None and not np.isnan(float(reward_max)):
+            tb.add_scalar("reward/episode_reward_max", float(reward_max), cumul_steps)
+        if reward_min is not None and not np.isnan(float(reward_min)):
+            tb.add_scalar("reward/episode_reward_min", float(reward_min), cumul_steps)
+
+        # 에피소드 길이 및 횟수
+        tb.add_scalar("env/episode_len_mean", ep_len, cumul_steps)
+        tb.add_scalar("env/episodes_completed", eps, cumul_steps)
+        
+        # 시스템 퍼포먼스 (초당 스텝 처리량)
+        steps_per_sec = steps / max(dt, 1e-6)
+        tb.add_scalar("performance/steps_per_sec", steps_per_sec, cumul_steps)
 
         # Per-strategy reward custom_metrics (populated by env_wrapper)
         custom = env_r.get("custom_metrics", {})
@@ -332,7 +355,6 @@ def train_with_rllib(args):
         stats = policy_stats.get("learner_stats", policy_stats)
 
         TRAIN_METRICS = {
-            # tag: candidate keys (first match wins)
             "losses/policy_loss":  ["policy_loss",  "mean_policy_loss"],
             "losses/vf_loss":      ["vf_loss",      "mean_vf_loss"],
             "losses/total_loss":   ["total_loss",   "mean_total_loss"],

@@ -7,6 +7,7 @@
 #include "Characters/DECharacter.h"
 #include "GameFramework/Pawn.h"
 
+
 UBTDecorator_DEHasEnemyTarget::UBTDecorator_DEHasEnemyTarget()
 {
 	NodeName = "Has Enemy Target";
@@ -16,6 +17,8 @@ UBTDecorator_DEHasEnemyTarget::UBTDecorator_DEHasEnemyTarget()
 	TargetEnemyKey.SelectedKeyName = "TargetEnemy";
 	HasTargetKey.SelectedKeyName = "HasTarget";
 
+	bAllowAbortNone = true;
+	bAllowAbortLowerPri = true;
 	FlowAbortMode = EBTFlowAbortMode::Both;
 }
 
@@ -30,12 +33,14 @@ bool UBTDecorator_DEHasEnemyTarget::CalculateRawConditionValue(UBehaviorTreeComp
 	bool bHasTarget = BlackboardComp->GetValueAsBool(HasTargetKey.SelectedKeyName);
 	if (!bHasTarget)
 	{
+		UE_LOG(LogTemp, Error, TEXT("1111111111111111111"));
 		return false;
 	}
 
 	AActor* Target = Cast<AActor>(BlackboardComp->GetValueAsObject(TargetEnemyKey.SelectedKeyName));
 	if (!Target)
 	{
+		UE_LOG(LogTemp, Error, TEXT("222222222222222222222"));
 		return false;
 	}
 
@@ -46,6 +51,7 @@ bool UBTDecorator_DEHasEnemyTarget::CalculateRawConditionValue(UBehaviorTreeComp
 		{
 			if (!TargetChar->IsAlive())
 			{
+				UE_LOG(LogTemp, Error, TEXT("3333333333333333"));
 				return false;
 			}
 		}
@@ -54,12 +60,14 @@ bool UBTDecorator_DEHasEnemyTarget::CalculateRawConditionValue(UBehaviorTreeComp
 	AAIController* AIController = OwnerComp.GetAIOwner();
 	if (!AIController)
 	{
+		UE_LOG(LogTemp, Error, TEXT("444444444444444444444"));
 		return false;
 	}
 
 	APawn* OwnerPawn = AIController->GetPawn();
 	if (!OwnerPawn)
 	{
+		UE_LOG(LogTemp, Error, TEXT("5555555555555555555"));
 		return false;
 	}
 
@@ -68,6 +76,7 @@ bool UBTDecorator_DEHasEnemyTarget::CalculateRawConditionValue(UBehaviorTreeComp
 		float Distance = FVector::Dist(OwnerPawn->GetActorLocation(), Target->GetActorLocation());
 		if (Distance > MaxRange)
 		{
+			UE_LOG(LogTemp, Error, TEXT("66666666666666666666"));
 			return false;
 		}
 	}
@@ -90,6 +99,7 @@ bool UBTDecorator_DEHasEnemyTarget::CalculateRawConditionValue(UBehaviorTreeComp
 
 		if (bHit && HitResult.GetActor() != Target)
 		{
+			UE_LOG(LogTemp, Error, TEXT("7777777777777777"));
 			return false;
 		}
 	}
@@ -109,4 +119,16 @@ FString UBTDecorator_DEHasEnemyTarget::GetStaticDescription() const
 	}
 
 	return Description;
+}
+
+void UBTDecorator_DEHasEnemyTarget::InitializeFromAsset(UBehaviorTree& Asset)
+{
+	Super::InitializeFromAsset(Asset);
+
+	UBlackboardData* BBAsset = GetBlackboardAsset();
+	if (ensure(BBAsset))
+	{
+		TargetEnemyKey.ResolveSelectedKey(*BBAsset);
+		HasTargetKey.ResolveSelectedKey(*BBAsset);
+	}
 }

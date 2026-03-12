@@ -7,8 +7,11 @@
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EQS/DynamicEQSWeightParameters.h"
-
 #include "DynamicEQSExecutor.generated.h"
+
+
+struct FEnvQueryRequest;
+
 
 /** Delegate called when an async EQS query completes with an optional best location. */
 DECLARE_DELEGATE_OneParam(FOnDynamicEQSQueryComplete, TOptional<FVector>);
@@ -42,6 +45,15 @@ public:
 	/** Global multiplier applied to all weights before submitting to EQS. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DynamicEQS|Executor")
 	float WeightScaleFactor = 1.0f;
+
+	/**
+	 * Optional semantic names for each weight slot.
+	 * If set, Weight[i] is submitted to EQS as WeightParamNames[i] instead of "Weight<i>".
+	 * Leave empty to use the generic "Weight0", "Weight1", ... naming.
+	 * Must match the float parameter names configured in the EQS query asset.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DynamicEQS|Executor")
+	TArray<FName> WeightParamNames;
 
 	// -------------------------------------------------------------------------
 	// Runtime API
@@ -80,4 +92,7 @@ private:
 
 	/** Internal EQS finish handler. */
 	void OnQueryFinished(TSharedPtr<FEnvQueryResult> Result);
+
+	/** Apply CurrentWeights to a query request using WeightParamNames (if set) or "Weight<i>" fallback. */
+	void ApplyWeightsToRequest(FEnvQueryRequest& Request);
 };

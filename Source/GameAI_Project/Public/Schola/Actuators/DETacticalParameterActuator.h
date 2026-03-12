@@ -32,7 +32,7 @@ class AAbstractTrainer;
  * - Writes weights to DECharacter via UpdateTacticalWeights()
  * - Triggers movement via PerformTacticalAction() (unified for training + inference)
  */ //============================================================
-UCLASS(BlueprintType, meta = (DisplayName = "v10.2 Tactical Parameter Actuator"))
+UCLASS(BlueprintType, meta = (DisplayName = "DE Tactical Parameter Actuator"))
 class GAMEAI_PROJECT_API UDETacticalParameterActuator : public UDynamicEQSActuatorBase
 {
 	GENERATED_BODY()

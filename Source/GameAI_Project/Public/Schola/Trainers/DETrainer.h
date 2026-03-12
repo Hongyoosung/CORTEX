@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Training/AbstractTrainer.h"
+#include "Schola/Base/DynamicEQSTrainerBase.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Types/DERewardTypes.h"
 #include "Types/DEEQSTypes.h"
@@ -18,6 +18,7 @@ class ADECapturePoint;
 class ADEMatchManager;
 class ADEScholaEnvironment;
 
+
 /**
  * Schola Trainer
  *
@@ -30,9 +31,12 @@ class ADEScholaEnvironment;
  *
  * Action Space: Box(7) - Continuous EQS weights [-1, 1]
  * Observation Space: Box(167) - Entity-centric V2 (handled by DETacticalObserver)
+ *
+ * Inherits MaxEpisodeSteps, bLogTransitions, TransitionLogPath, RewardData
+ * from ADynamicEQSTrainerBase.
  */
 UCLASS(Blueprintable)
-class GAMEAI_PROJECT_API ADETrainer : public AAbstractTrainer
+class GAMEAI_PROJECT_API ADETrainer : public ADynamicEQSTrainerBase
 {
     GENERATED_BODY()
 
@@ -51,13 +55,14 @@ public:
 
 
     //=========================================
-    // AAbstractTrainer Overrides
+    // ADynamicEQSTrainerBase Overrides
     //=========================================
 
     virtual float ComputeReward() override;
     virtual EAgentTrainingStatus ComputeStatus() override;
     virtual void GetInfo(TMap<FString, FString>& Info) override;
     virtual void ResetTrainer() override;
+    virtual void ResetEpisode() override;
     virtual void OnCompletion() override;
 
 
@@ -70,9 +75,6 @@ public:
 
     /** Checks if the current episode should terminate */
     bool IsEpisodeDone();
-
-    /** Legacy Schola interface for episode reset */
-    void ResetEpisode();
 
 
     //=========================================
@@ -95,11 +97,18 @@ public:
     bool ValidateEQSWeights(const FDEEQSWeightParameters& Weights) const;
 
 
+    //=========================================
+    // Public Training Configuration
+    //=========================================
+
+    /** Toggle for visual debug helpers */
+    UPROPERTY(EditAnywhere, Category = "Debug")
+    bool bEnableDebugVisualization = false;
 
 
 protected:
     //=========================================
-    // Internal Helper Functions (Private/Protected Logic)
+    // Internal Helper Functions
     //=========================================
 
     /** Collects per-step agent state snapshot for reward computation */
@@ -123,31 +132,6 @@ protected:
     void UpdateTrainingStatistics();
 
 
-
-public:
-    //=========================================
-    // Public Training Configuration
-    //=========================================
-
-    /** Maximum steps allowed per episode */
-    UPROPERTY(EditAnywhere, Category = "Training")
-    int32 MaxEpisodeSteps = 3000;
-
-    /** Path to save transition logs */
-    UPROPERTY(EditAnywhere, Category = "Training|Logging")
-    FString TransitionLogPath = TEXT("Saved/Transitions/cortex_v10.2_executor.json");
-
-    /** Toggle for transition logging (World Model training) */
-    UPROPERTY(EditAnywhere, Category = "Training|Logging")
-    bool bLogTransitions = true;
-
-    /** Toggle for visual debug helpers */
-    UPROPERTY(EditAnywhere, Category = "Debug")
-    bool bEnableDebugVisualization = false;
-
-
-
-protected:
     //=========================================
     // Internal State - Actor & Component References
     //=========================================
@@ -179,7 +163,7 @@ protected:
 
     //=========================================
     // Internal State - RL Data & Observations
-    ///=========================================
+    //=========================================
 
     /** Snapshots for reward calculation (previous and current step) */
     FDEAgentSnapshot PreviousObservation;

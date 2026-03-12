@@ -68,14 +68,6 @@ void UDEGA_Attack::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
 	if (Target)
 	{
-		// Set AI focus so ControlRotation tracks the target (drives Aim Offset in AnimBP)
-		if (APawn* OwnerPawn = Cast<APawn>(GetAvatarActorFromActorInfo()))
-		{
-			if (AAIController* AICtrl = Cast<AAIController>(OwnerPawn->GetController()))
-			{
-				AICtrl->SetFocus(Target);
-			}
-		}
 		FireAtTarget(Target, ActorInfo);
 	}
 

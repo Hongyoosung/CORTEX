@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "Reward/DynamicEQSRewardCalculatorBase.h"
 #include "Types/DERewardTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "DERewardSubsystem.generated.h"
@@ -12,18 +12,26 @@ struct FDEEQSWeightParameters;
 
 
 UCLASS()
-class GAMEAI_PROJECT_API UDERewardSubsystem : public UWorldSubsystem
+class GAMEAI_PROJECT_API UDERewardSubsystem : public UDynamicEQSRewardCalculatorBase
 {
     GENERATED_BODY()
 
 public:
 
-    //========================================
-    // Data Asset Registration
-    //========================================
+    // -------------------------------------------------------------------------
+    // UDynamicEQSRewardCalculatorBase overrides
+    // -------------------------------------------------------------------------
 
-    void SetRewardData(UDERewardData* Data) { if (Data) CachedRewardData = Data; }
-    UDERewardData* GetRewardData() const { return CachedRewardData; }
+    /**
+     * Required override. Per-step reward from flat observation context.
+     * Use ComputeStepReward() directly for full game-context reward computation.
+     */
+    virtual float CalculateStepReward(const FDynamicEQSStepContext& Context) override;
+
+    /** Terminal reward: win => TerminalWinReward, loss => TerminalLossReward. */
+    virtual float CalculateTerminalReward(bool bWon) override;
+
+    virtual void Reset() override;
 
 
     //========================================
@@ -59,9 +67,10 @@ public:
      *
      * @param Agent       The agent being evaluated
      * @param InOutState  Agent reward state (HasReachedAssignedBase flag stored here)
+     * @param Strategy    The current strategy of the agent (Assault, Defend, Support)
      * @return            Shaped reward value (not yet scaled by GlobalRewardScale)
      */
-    float ComputeBaseCooperationReward(ADECharacter* Agent, FDERewardState& InOutState);
+    float ComputeBaseCooperationReward(ADECharacter* Agent, FDERewardState& InOutState, EDEStrategyType Strategy);
 
     float GetStrategyScale(EDEStrategyType Strategy, float AssaultScale, float DefendScale, float SupportScale) const;
     float DrainSparseReward(FDERewardState& InOutState, int32 AgentID);
@@ -82,6 +91,6 @@ public:
 private:
     float ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEStrategyType Strategy, float RewardValue, int32 AgentID);
 
-    UPROPERTY()
-    UDERewardData* CachedRewardData = nullptr;
+    /** Cast helper — returns the project-specific reward data asset. */
+    const UDERewardData* GetSettings() const;
 };

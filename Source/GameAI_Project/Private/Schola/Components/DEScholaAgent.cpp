@@ -2,8 +2,8 @@
 #include "Characters/DECharacter.h"
 
 
-UDEScholaAgent::UDEScholaAgent(const FObjectInitializer& ObjectInitializer)
-    : Super(ObjectInitializer)
+UDEScholaAgent::UDEScholaAgent()
+    : Super()
 {
     // Default configuration
     PrimaryComponentTick.bCanEverTick = false; // Schola handles Think/Act ticking
@@ -23,18 +23,10 @@ void UDEScholaAgent::BeginPlay()
     }
 
     // Log mode for debugging
-    const FString ModeStr = (CurrentMode == EDEAgentMode::Training) ? TEXT("Training (Python RLlib)") : TEXT("Inference (Local ONNX)");
+    const FString ModeStr = (AgentMode == EDynamicEQSAgentMode::Training) ? TEXT("Training (Python RLlib)") : TEXT("Inference (Local ONNX)");
     UE_LOG(LogTemp, Log, TEXT("[DEScholaAgent] Initialized for Agent %d in %s mode"),
         OwnerCharacter->AgentID, *ModeStr);
 
-    // Log training override status (Phase 1)
-    if (bUseTrainingStrategyOverride)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DEScholaAgent] Agent %d: TRAINING OVERRIDE ENABLED - Strategy locked to %s"),
-            OwnerCharacter->AgentID,
-            *UEnum::GetValueAsString(TrainingStrategyOverride));
-        UE_LOG(LogTemp, Warning, TEXT("[DEScholaAgent] DESquadManager commands will be IGNORED. Disable this for Phase 3!"));
-    }
 
     // Schola's Initialize() is called by parent BeginPlay()
     // This sets up Observers, Policy, Brain, Actuators

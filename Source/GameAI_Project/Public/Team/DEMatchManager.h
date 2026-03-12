@@ -15,6 +15,7 @@ class UDESquadManager;
 class UDETeamData;
 class ADESpawnArea;
 class UDERewardData;
+class UDERewardSubsystem;
 
 /**
  * Team configuration — data-driven via UDETeamData asset.
@@ -338,6 +339,9 @@ public:
 	/** Convenience: build an FDESquadConfig snapshot from current properties */
 	FDESquadConfig MakeSquadConfig() const;
 
+	/** Reward calculator owned by this match manager (one per environment). */
+	UDERewardSubsystem* GetRewardCalculator() const { return RewardCalculator; }
+
 
 	//========================================
 	// Owned Objects
@@ -345,6 +349,10 @@ public:
 
 	UPROPERTY()
 	TMap<int32, UDESquadManager*> SquadCommanders;
+
+	/** Per-environment reward calculator (instantiated in BeginPlay). */
+	UPROPERTY()
+	TObjectPtr<UDERewardSubsystem> RewardCalculator;
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "DEMatchManager|Env")
 	TArray<ADECapturePoint*> EnvCapturePoints;

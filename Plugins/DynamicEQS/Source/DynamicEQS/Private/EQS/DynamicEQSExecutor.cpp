@@ -2,7 +2,6 @@
 
 #include "EQS/DynamicEQSExecutor.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
-#include "EnvironmentQuery/EnvQueryTypes.h"
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
 
@@ -15,6 +14,19 @@ void UDynamicEQSExecutor::BeginPlay()
 {
 	Super::BeginPlay();
 	UE_LOG(LogTemp, Log, TEXT("DynamicEQSExecutor: Ready on '%s'."), *GetOwner()->GetName());
+}
+
+void UDynamicEQSExecutor::ApplyWeightsToRequest(FEnvQueryRequest& Request)
+{
+	const TArray<float>& WeightArray = CurrentWeights.Weights;
+	for (int32 i = 0; i < WeightArray.Num(); ++i)
+	{
+		FName ParamName = (WeightParamNames.IsValidIndex(i) && !WeightParamNames[i].IsNone())
+			? WeightParamNames[i]
+			: *FString::Printf(TEXT("Weight%d"), i);
+
+		Request.SetFloatParam(ParamName, WeightArray[i] * WeightScaleFactor);
+	}
 }
 
 void UDynamicEQSExecutor::SetWeights(const FDynamicEQSWeightParameters& InWeights)
@@ -48,13 +60,7 @@ void UDynamicEQSExecutor::ExecuteQuery(FOnDynamicEQSQueryComplete OnComplete)
 
 	FEnvQueryRequest QueryRequest(QueryTemplate, GetOwner());
 
-	// Pass each weight as a named float param: "Weight0", "Weight1", ...
-	const TArray<float>& WeightArray = CurrentWeights.Weights;
-	for (int32 i = 0; i < WeightArray.Num(); ++i)
-	{
-		FName ParamName = *FString::Printf(TEXT("Weight%d"), i);
-		QueryRequest.SetFloatParam(ParamName, WeightArray[i] * WeightScaleFactor);
-	}
+	ApplyWeightsToRequest(QueryRequest);
 
 	QueryRequest.Execute(EEnvQueryRunMode::SingleResult, this,
 		&UDynamicEQSExecutor::OnQueryFinished);
@@ -75,13 +81,7 @@ TOptional<FVector> UDynamicEQSExecutor::ExecuteQuerySynchronous()
 	}
 
 	FEnvQueryRequest QueryRequest(QueryTemplate, GetOwner());
-
-	const TArray<float>& WeightArray = CurrentWeights.Weights;
-	for (int32 i = 0; i < WeightArray.Num(); ++i)
-	{
-		FName ParamName = *FString::Printf(TEXT("Weight%d"), i);
-		QueryRequest.SetFloatParam(ParamName, WeightArray[i] * WeightScaleFactor);
-	}
+	ApplyWeightsToRequest(QueryRequest);
 
 	TSharedPtr<FEnvQueryResult> Result = QueryManager->RunInstantQuery(QueryRequest,
 		EEnvQueryRunMode::SingleResult);

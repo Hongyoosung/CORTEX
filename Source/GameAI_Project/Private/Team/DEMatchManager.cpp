@@ -3,6 +3,7 @@
 #include "Team/DEMatchManager.h"
 #include "Team/DESquadManager.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
+#include "Data/DERewardData.h"
 #include "Characters/DECharacter.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
@@ -14,6 +15,7 @@
 #include "Data/DETeamData.h"
 #include "Data/DERewardData.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -34,10 +36,11 @@ void ADEMatchManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Register reward data with the subsystem so all agents share one instance.
-	if (UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>())
+	// Create per-environment reward calculator and configure it with this environment's reward data.
+	RewardCalculator = NewObject<UDERewardSubsystem>(this);
+	if (RewardCalculator)
 	{
-		RS->SetRewardData(RewardData);
+		RewardCalculator->RewardData = RewardData;
 	}
 
 	// Initialise runtime state and create one UDESquadManager per configured team.
@@ -65,6 +68,38 @@ void ADEMatchManager::BeginPlay()
 		CapturePointInitialize();
 		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Standalone mode — capture points auto-initialized (%d points)"),
 			EnvCapturePoints.Num());
+
+		// Register pre-placed ADECharacter actors that were not spawned by SpawnTeams().
+		// We defer one tick so all characters have completed their own BeginPlay first.
+		FTimerHandle DummyHandle;
+		GetWorld()->GetTimerManager().SetTimerForNextTick([this]()
+		{
+			TArray<AActor*> FoundActors;
+			UGameplayStatics::GetAllActorsOfClass(GetWorld(), ADECharacter::StaticClass(), FoundActors);
+			for (AActor* A : FoundActors)
+			{
+				ADECharacter* Agent = Cast<ADECharacter>(A);
+				if (!Agent || AllAgents.Contains(Agent)) { continue; }
+
+				const int32 TID = Agent->GetTeamID_Implementation();
+				AllAgents.Add(Agent);
+				FDETeamState& State = TeamStates.FindOrAdd(TID);
+				State.TeamID = TID;
+				State.ActiveAgents.AddUnique(Agent);
+
+				UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Standalone: registered pre-placed agent %s (Team %d)"),
+					*Agent->GetName(), TID);
+			}
+
+			// Assign base targets to all registered agents.
+			for (const FDETeamConfiguration& Cfg : TeamConfigs)
+			{
+				AssignBasesToAgents(Cfg.TeamID);
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Standalone: base assignment complete for %d pre-placed agents"),
+				AllAgents.Num());
+		});
 	}
 }
 
@@ -343,16 +378,13 @@ void ADEMatchManager::QueueRespawn(ADECharacter* Agent, int32 TeamID)
 			TeamID, RespawnDelay, State.RespawnQueue.Num());
 
 		// Apply team wipe penalty to the last agent to die and all already-queued agents
-		if (UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>())
+		if (RewardCalculator && RewardCalculator->RewardData)
 		{
-			if (RS->GetRewardData())
+			RewardCalculator->CalculateTeamWipePenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+			for (ADECharacter* Queued : State.RespawnQueue)
 			{
-				RS->CalculateTeamWipePenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
-				for (ADECharacter* Queued : State.RespawnQueue)
-				{
-					if (Queued)
-						RS->CalculateTeamWipePenalty(Queued->RewardState, Queued->GetCommandedStrategy(), Queued->AgentID);
-				}
+				if (Queued)
+					RewardCalculator->CalculateTeamWipePenalty(Queued->RewardState, Queued->GetCommandedStrategy(), Queued->AgentID);
 			}
 		}
 	}
@@ -551,13 +583,12 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 		AddTeamScore(NewTeam, CaptureScorePoints);
 	}
 
-	UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>();
-	if (!RS || !RS->GetRewardData()) return;
+	if (!RewardCalculator || !RewardCalculator->RewardData) return;
 
 	for (ADECharacter* Agent : GetTeamAgents(NewTeam))
 	{
 		if (Agent && Agent->IsAlive())
-			RS->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+			RewardCalculator->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 	}
 
 	if (PreviousTeam != -1)
@@ -565,7 +596,7 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 		for (ADECharacter* Agent : GetTeamAgents(PreviousTeam))
 		{
 			if (Agent && Agent->IsAlive())
-				RS->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+				RewardCalculator->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 		}
 	}
 
@@ -579,8 +610,8 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 
 void ADEMatchManager::OnAgentDied(ADECharacter* DeadAgent, ADECharacter* Killer)
 {
-	UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>();
-	if (!RS || !RS->GetRewardData()) return;
+	if (!RewardCalculator || !RewardCalculator->RewardData) return;
+	UDERewardSubsystem* RS = RewardCalculator;
 
 	if (DeadAgent)
 		RS->CalculateDeathPenalty(DeadAgent->RewardState, DeadAgent->GetCommandedStrategy(), DeadAgent->AgentID);

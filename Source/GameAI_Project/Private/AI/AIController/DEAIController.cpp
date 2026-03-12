@@ -23,7 +23,7 @@ ADEAIController::ADEAIController(const FObjectInitializer& ObjectInitializer)
     SightConfig->LoseSightRadius = 3500.0f;
     SightConfig->PeripheralVisionAngleDegrees = 90.0f;
     SightConfig->DetectionByAffiliation.bDetectEnemies = true;
-    SightConfig->DetectionByAffiliation.bDetectNeutrals = false;
+    SightConfig->DetectionByAffiliation.bDetectNeutrals = true;   // DECharacter uses custom TeamID, not IGenericTeamAgentInterface → all actors appear Neutral to UE5
     SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
 
     HearingConfig = CreateDefaultSubobject<UAISenseConfig_Hearing>(TEXT("HearingConfig"));
@@ -41,8 +41,9 @@ ADEAIController::ADEAIController(const FObjectInitializer& ObjectInitializer)
     AIPerception->OnPerceptionUpdated.AddDynamic(this, &ADEAIController::OnPerceptionUpdated);
     AIPerception->OnTargetPerceptionUpdated.AddDynamic(this, &ADEAIController::OnTargetPerceptionUpdated);
 
-    // Tick 비활성화 — EQS weight inference는 ScholaDEAgent가 담당
-    PrimaryActorTick.bCanEverTick = false;
+    // Tick must stay enabled — AAIController::Tick() drives UpdateControlRotation()
+    // which rotates the pawn toward the focus point (enemy target).
+    PrimaryActorTick.bCanEverTick = true;
 }
 
 void ADEAIController::BeginPlay()
@@ -131,9 +132,18 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
 
     if (Self)
     {
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC] OnPerceptionUpdated: Self=%s EnvID=%d TeamID=%d — %d actors in sight"),
+            *GetName(), Self->GetEnvID_Implementation(), Self->GetTeamID_Implementation(), PerceivedActors.Num());
+
         for (AActor* Actor : PerceivedActors)
         {
             ADECharacter* Other = Cast<ADECharacter>(Actor);
+            UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   Perceived: %s (DECharacter=%s EnvID=%d TeamID=%d)"),
+                *Actor->GetName(),
+                Other ? TEXT("YES") : TEXT("NO"),
+                Other ? Other->GetEnvID_Implementation() : -1,
+                Other ? Other->GetTeamID_Implementation() : -1);
+
             if (Other && Other->GetEnvID_Implementation() == Self->GetEnvID_Implementation() && Other->GetTeamID_Implementation() != Self->GetTeamID_Implementation())
             {
                 BestEnemy = Other;
@@ -146,12 +156,10 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     {
         BB->SetValueAsObject(TEXT("TargetEnemy"), BestEnemy);
         BB->SetValueAsBool(TEXT("HasTarget"), true);
-        SetFocus(BestEnemy);
     }
     else
     {
         BB->SetValueAsBool(TEXT("HasTarget"), false);
-        ClearFocus(EAIFocusPriority::Gameplay);
     }
 }
 
