@@ -297,20 +297,24 @@ def train_with_rllib(args):
         reward = env_r.get("episode_reward_mean") or 0.0
         ep_len = env_r.get("episode_len_mean")    or 0.0
         eps    = env_r.get("episodes_this_iter",  0)
-        steps  = result.get("num_agent_steps_sampled", 0)
+        
+        # [수정됨] RLlib은 이미 누적된 스텝 수를 반환하므로, 기존 누적 변수에 더하지 않고 덮어씁니다.
+        cumul_steps = result.get("num_agent_steps_sampled", 0) 
+        
+        # 이번 이터레이션에서 샘플링된 스텝 수 (초당 처리량 계산용)
+        steps_this_iter = result.get("num_agent_steps_sampled_this_iter", 0)
         
         # 2. 신규 지표 추가 추출 (최대/최소 보상)
         reward_max = env_r.get("episode_reward_max")
         reward_min = env_r.get("episode_reward_min")
 
         reward = 0.0 if reward is None or (isinstance(reward, float) and np.isnan(reward)) else reward
-        ep_len = 0.0 if ep_len is None or (isinstance(ep_len, float) and np.isnan(ep_len))  else ep_len
+        ep_len = 0.0 if ep_len is None or (isinstance(ep_len, float) and np.isnan(ep_len)) else ep_len
 
         cumul_episodes += eps
-        cumul_steps    += steps
 
         # ---------------------------------------------------------------------
-        # [수정된 텐서보드 기록 부분]
+        # 텐서보드 기록
         # ---------------------------------------------------------------------
         
         # 에피소드 보상 (평균, 최대, 최소)
@@ -326,20 +330,20 @@ def train_with_rllib(args):
         tb.add_scalar("env/episodes_completed", eps, cumul_steps)
         
         # 시스템 퍼포먼스 (초당 스텝 처리량)
-        steps_per_sec = steps / max(dt, 1e-6)
+        # 누적 스텝(cumul_steps)이 아닌 이번 이터레이션 스텝(steps_this_iter)으로 계산해야 정확합니다.
+        steps_per_sec = steps_this_iter / max(dt, 1e-6)
         tb.add_scalar("performance/steps_per_sec", steps_per_sec, cumul_steps)
 
-        # Per-strategy reward custom_metrics (populated by env_wrapper)
+        # Custom env metrics
         custom = env_r.get("custom_metrics", {})
         for strat in ("assault", "defend", "support"):
             key_mean = f"reward_strategy_{strat}_mean"
             key_sum  = f"reward_strategy_{strat}_sum"
             if key_mean in custom:
-                tb.add_scalar(f"reward/strategy_{strat}_mean", custom[key_mean], cumul_steps)
+                tb.add_scalar(f"reward/strategy_{strat}_mean", float(custom[key_mean]), cumul_steps)
             if key_sum in custom:
-                tb.add_scalar(f"reward/strategy_{strat}_sum",  custom[key_sum],  cumul_steps)
+                tb.add_scalar(f"reward/strategy_{strat}_sum",  float(custom[key_sum]),  cumul_steps)
 
-        # Per reward-component custom_metrics
         REWARD_COMPONENTS = [
             "BaseOccupationReward", "CoOccupationPenalty",
             "BaseCaptureCreditReward", "UndefendedBasePenalty",
@@ -348,33 +352,41 @@ def train_with_rllib(args):
         for comp in REWARD_COMPONENTS:
             ckey = f"reward_component_{comp}_mean"
             if ckey in custom:
-                tb.add_scalar(f"reward/component_{comp}", custom[ckey], cumul_steps)
+                tb.add_scalar(f"reward/component_{comp}", float(custom[ckey]), cumul_steps)
 
-        # Learner / training metrics — try both old and new RLlib result layouts
+        # [수정됨] Learner Metrics 추출 - numpy.float32 등의 타입 호환성 문제 해결
         policy_stats = result.get("info", {}).get("learner", {}).get("entity_centric_policy", {})
         stats = policy_stats.get("learner_stats", policy_stats)
 
+        # RLlib 버전에 대비해 키 후보군(candidates)을 보강했습니다.
         TRAIN_METRICS = {
-            "losses/policy_loss":  ["policy_loss",  "mean_policy_loss"],
-            "losses/vf_loss":      ["vf_loss",      "mean_vf_loss"],
-            "losses/total_loss":   ["total_loss",   "mean_total_loss"],
-            "kl/value":            ["kl",           "mean_kl_loss", "kl_loss"],
-            "kl/coeff":            ["cur_kl_coeff"],
-            "entropy/value":       ["entropy",      "mean_entropy"],
-            "lr/value":            ["cur_lr"],
-            "vf/explained_var":    ["vf_explained_var"],
+            "losses/policy_loss":  ["policy_loss", "mean_policy_loss"],
+            "losses/vf_loss":      ["vf_loss", "mean_vf_loss"],
+            "losses/total_loss":   ["total_loss", "mean_total_loss"],
+            "kl/value":            ["kl", "mean_kl_loss", "kl_loss", "KL"],
+            "kl/coeff":            ["cur_kl_coeff", "kl_coeff"],
+            "entropy/value":       ["entropy", "mean_entropy", "entropy_coeff"],
+            "lr/value":            ["cur_lr", "lr"],
+            "vf/explained_var":    ["vf_explained_var", "explained_variance"],
         }
+        
         for tag, candidates in TRAIN_METRICS.items():
             for k in candidates:
-                v = stats.get(k)
-                if v is not None and isinstance(v, (int, float)) and not np.isnan(float(v)):
-                    tb.add_scalar(tag, float(v), cumul_steps)
-                    break
+                if k in stats:
+                    v = stats[k]
+                    try:
+                        # numpy 데이터 타입이 섞여 있어도 강제로 float으로 변환하여 기록합니다.
+                        val = float(v)
+                        if not np.isnan(val):
+                            tb.add_scalar(tag, val, cumul_steps)
+                            break # 값을 찾았으면 다음 태그로 넘어감
+                    except (ValueError, TypeError):
+                        pass
 
         tb.flush()
 
         print(f"{i+1:>3}/{args.iterations:<3}  {reward:>10.2f}  "
-              f"{ep_len:>8.1f}  {steps:>12}  {dt:>7.1f}s")
+              f"{ep_len:>8.1f}  {cumul_steps:>12}  {dt:>7.1f}s")
 
         if (i + 1) % args.checkpoint_freq == 0:
             algo.save(output_dir)
