@@ -68,7 +68,27 @@ void UDEGA_Attack::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
 	if (Target)
 	{
+		ADECharacter* OwnerChar = Cast<ADECharacter>(ActorInfo->AvatarActor.Get());
+		if (OwnerChar)
+		{
+			if (AAIController* AIC = Cast<AAIController>(OwnerChar->GetController()))
+			{
+				AIC->SetFocus(Target);
+			}
+		}
+
 		FireAtTarget(Target, ActorInfo);
+	}
+	else
+	{
+		ADECharacter* OwnerChar = Cast<ADECharacter>(ActorInfo->AvatarActor.Get());
+		if (OwnerChar)
+		{
+			if (AAIController* AIC = Cast<AAIController>(OwnerChar->GetController()))
+			{
+				AIC->ClearFocus(EAIFocusPriority::Gameplay);
+			}
+		}
 	}
 
 	EndAbility(Handle, ActorInfo, ActivationInfo, true, false);

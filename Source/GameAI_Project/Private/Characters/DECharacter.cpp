@@ -67,14 +67,12 @@ ADECharacter::ADECharacter()
 	AgentCamera->SetupAttachment(CameraSpringArm, USpringArmComponent::SocketName);
 	AgentCamera->bUsePawnControlRotation = false;
 
-	// Configure movement
+
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
 		MovementComp->MaxWalkSpeed = 600.0f;
-		// Keep body facing the movement direction so directional (strafe) blend spaces work.
-		// Upper-body aiming toward the focus target is handled via AimYaw/AimPitch → Aim Offset in AnimBP.
-		MovementComp->bOrientRotationToMovement = true;
-		MovementComp->bUseControllerDesiredRotation = false;
+		MovementComp->bOrientRotationToMovement = false;
+		MovementComp->bUseControllerDesiredRotation = true;
 		MovementComp->bUseRVOAvoidance = true;
 		MovementComp->AvoidanceConsiderationRadius = 120.f;
 	}
