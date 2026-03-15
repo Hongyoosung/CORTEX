@@ -15,7 +15,7 @@ UDETacticalParameterActuator::UDETacticalParameterActuator()
 
 FBoxSpace UDETacticalParameterActuator::GetActionSpace()
 {
-	// v10.2 Action Space: Box([-1, 1]^7)
+	// Action Space: Box([-1, 1]^7)
 	// 7 continuous values representing EQS weights
 	//
 	// Dimension mapping:
@@ -25,11 +25,12 @@ FBoxSpace UDETacticalParameterActuator::GetActionSpace()
 	// [3]: EnemyVisibility
 	// [4]: AllyProximity
 	// [5]: CombatRange
+	// [6]: AssignedBaseProximity
 
 	FBoxSpace Space;
-	for (int32 i = 0; i < 6; ++i)  // v10.2: 6 EQS weight dimensions
+	for (int32 i = 0; i < FDEEQSWeightParameters::NumWeights; ++i)
 	{
-		Space.Add(-1.0f, 1.0f);  // All weights in range [-1, 1]
+		Space.Add(-1.0f, 1.0f);
 	}
 
 	return Space;
@@ -40,14 +41,14 @@ void UDETacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 	// === DIAGNOSTIC: Log every TakeAction call for first 10 actions ===
 	if (ActionCount < 10)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] TakeAction() CALLED (action #%d) — Values.Num()=%d"),
-			ActionCount + 1, Action.Values.Num());
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] TakeAction() CALLED (action #%d) — Values.Num()=%d (expected %d)"),
+			ActionCount + 1, Action.Values.Num(), FDEEQSWeightParameters::NumWeights);
 	}
 
-	if (Action.Values.Num() != 6)
+	if (!ensureMsgf(Action.Values.Num() == FDEEQSWeightParameters::NumWeights,
+		TEXT("[TacticalActuator] ACTION REJECTED — expected %d values, got %d. Check action space mismatch."),
+		FDEEQSWeightParameters::NumWeights, Action.Values.Num()))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] ACTION REJECTED — expected 6 values, got %d! Check action space mismatch."),
-			Action.Values.Num());
 		return;
 	}
 
@@ -85,11 +86,11 @@ void UDETacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 		if (ActionCount <= 10)
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("[TacticalActuator] %s action #%d DELIVERED: [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f] | Controller=%s"),
+				TEXT("[TacticalActuator] %s action #%d DELIVERED: [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f] | Controller=%s"),
 				*DEAgent->GetName(), ActionCount,
 				Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity,
 				Weights.CoverDensity, Weights.EnemyVisibility,
-				Weights.AllyProximity, Weights.CombatRange,
+				Weights.AllyProximity, Weights.CombatRange, Weights.AssignedBaseProximity,
 				DEAgent->GetController() ? *DEAgent->GetController()->GetName() : TEXT("NULL"));
 		}
 	}
@@ -237,8 +238,6 @@ FDEEQSWeightParameters UDETacticalParameterActuator::ActionToEQSWeights(const FB
 	// Direct mapping from 7-dim Box action to FDEEQSWeightParameters
 	// Box action space is [-1, 1]^7, matching the weight range
 
-	check(Action.Values.Num() == 6);
-
 	FDEEQSWeightParameters Weights;
 	Weights.EnemyObjectiveProximity = Action.Values[0];
 	Weights.AllyObjectiveProximity = Action.Values[1];
@@ -246,6 +245,7 @@ FDEEQSWeightParameters UDETacticalParameterActuator::ActionToEQSWeights(const FB
 	Weights.EnemyVisibility = Action.Values[3];
 	Weights.AllyProximity = Action.Values[4];
 	Weights.CombatRange = Action.Values[5];
+	Weights.AssignedBaseProximity = Action.Values[6];
 
 	return Weights;
 }

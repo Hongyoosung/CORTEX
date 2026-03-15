@@ -34,7 +34,7 @@ void ADEScholaEnvironment::BeginPlay()
 
 	if (OwnedMatchManager)
 	{
-		OwnedMatchManager->SetEnvID(ScholaEnvID);
+		OwnedMatchManager->SetEnvID(EnvironmentId);
 		OwnedMatchManager->CapturePointInitialize();
 	}
 
@@ -105,9 +105,41 @@ void ADEScholaEnvironment::Tick(float DeltaTime)
 				: EDEMatchState::BlueTeamWon;
 			UE_LOG(LogTemp, Warning,
 				TEXT("[ScholaEnv] Env %d: Team %d reached winning score %d — ending match"),
-				ScholaEnvID, TeamID, WinningScore);
+				EnvironmentId, TeamID, WinningScore);
 			EndMatch(WinState);
 			return;
+		}
+	}
+
+	// ── Domination win condition: one team owns ALL capture points ──
+	if (bDominationWinEnabled)
+	{
+		const TArray<ADECapturePoint*>& CPs = OwnedMatchManager->GetCapturePoints();
+		if (CPs.Num() > 0)
+		{
+			for (int32 TeamID = 0; TeamID <= 1; ++TeamID)
+			{
+				bool bOwnsAll = true;
+				for (const ADECapturePoint* CP : CPs)
+				{
+					if (!CP || CP->GetTeamID_Implementation() != TeamID)
+					{
+						bOwnsAll = false;
+						break;
+					}
+				}
+				if (bOwnsAll)
+				{
+					const EDEMatchState WinState = (TeamID == 0)
+						? EDEMatchState::RedTeamWon
+						: EDEMatchState::BlueTeamWon;
+					UE_LOG(LogTemp, Warning,
+						TEXT("[ScholaEnv] Env %d: Team %d achieved domination (all %d caps) — ending match"),
+						EnvironmentId, TeamID, CPs.Num());
+					EndMatch(WinState);
+					return;
+				}
+			}
 		}
 	}
 
@@ -125,7 +157,7 @@ void ADEScholaEnvironment::Tick(float DeltaTime)
 			: FString::Printf(TEXT("Team %d wins"), LeadTeam);
 		UE_LOG(LogTemp, Warning,
 			TEXT("[ScholaEnv] Env %d: Timeout — Scores [%d, %d] → %s"),
-			ScholaEnvID,
+			EnvironmentId,
 			OwnedMatchManager->GetTeamScore(0),
 			OwnedMatchManager->GetTeamScore(1),
 			*ResultStr);
@@ -154,7 +186,7 @@ void ADEScholaEnvironment::StartMatch()
 		OwnedMatchManager->SpawnTeams();
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] %s: Match started (EnvID: %d)"), *GetName(), ScholaEnvID);
+	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] %s: Match started (EnvID: %d)"), *GetName(), EnvironmentId);
 }
 
 void ADEScholaEnvironment::EndMatch(EDEMatchState WinnerState)
@@ -176,7 +208,7 @@ void ADEScholaEnvironment::EndMatch(EDEMatchState WinnerState)
 	const FString WinnerStr = (WinningTeamID == -1)
 		? TEXT("Tie") : FString::Printf(TEXT("Team %d"), WinningTeamID);
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Env %d: Match ended — State=%d | Winner=%s | Scores=[%d, %d]"),
-		ScholaEnvID,
+		EnvironmentId,
 		static_cast<int32>(WinnerState),
 		*WinnerStr,
 		OwnedMatchManager ? OwnedMatchManager->GetTeamScore(0) : -1,
@@ -185,7 +217,7 @@ void ADEScholaEnvironment::EndMatch(EDEMatchState WinnerState)
 	// Distribute terminal win/loss reward to all agents' sparse reward buffers.
 	// DETrainer::ComputeReward() will drain them on the next step, before ComputeStatus()
 	// returns Truncated. This guarantees Python receives the reward in the terminal transition.
-	UDERewardSubsystem* RewardSubsystem = GetWorld()->GetSubsystem<UDERewardSubsystem>();
+	UDERewardSubsystem* RewardSubsystem = OwnedMatchManager ? OwnedMatchManager->GetRewardCalculator() : nullptr;
 	if (RewardSubsystem && OwnedMatchManager)
 	{
 		// Collect all agents from both teams (active + queued respawn)
@@ -211,7 +243,7 @@ void ADEScholaEnvironment::InitializeEnvironment()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] InitializeEnvironment() called on %s (EnvID: %d)"), *GetName(), ScholaEnvID);
+	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] InitializeEnvironment() called on %s (EnvID: %d)"), *GetName(), EnvironmentId);
 
 	// v10.2: Discover agents from OwnedMatchManager (scoped, not world-wide)
 	if (bAutoDiscoverAgents && OwnedMatchManager)
@@ -242,7 +274,7 @@ void ADEScholaEnvironment::InitializeEnvironment()
 		}
 
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] Scoped discovery complete: %d agents for EnvID %d"),
-			RegisteredAgents.Num(), ScholaEnvID);
+			RegisteredAgents.Num(), EnvironmentId);
 	}
 
 
@@ -265,7 +297,7 @@ void ADEScholaEnvironment::ResetEnvironment()
 
 	bTrainingActive = true;
 
-	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET v10.2] %s (EnvID: %d) - resetting"), *GetName(), ScholaEnvID);
+	UE_LOG(LogTemp, Warning, TEXT("[SCHOLA RESET v10.2] %s (EnvID: %d) - resetting"), *GetName(), EnvironmentId);
 
 	if (EpisodeManager)
 	{
@@ -296,7 +328,7 @@ void ADEScholaEnvironment::ResetEnvironment()
 void ADEScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPawns)
 {
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv v10.2] RegisterAgents on %s (EnvID: %d, Agents: %d)"),
-		*GetName(), ScholaEnvID, RegisteredAgents.Num());
+		*GetName(), EnvironmentId, RegisteredAgents.Num());
 
 	if (!bTrainingMode)
 	{
@@ -306,8 +338,9 @@ void ADEScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPa
 
 	if (bAgentsRegistered)
 	{
-		for (UDEScholaAgent* Agent : RegisteredAgents)
+		for (UDynamicEQSAgentComponent* AgentComp : RegisteredAgents)
 		{
+			UDEScholaAgent* Agent = Cast<UDEScholaAgent>(AgentComp);
 			if (Agent && Agent->GetOwner())
 			{
 				APawn* Pawn = Cast<APawn>(Agent->GetOwner());
@@ -333,7 +366,7 @@ void ADEScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPa
 
 	for (int32 i = 0; i < RegisteredAgents.Num(); i++)
 	{
-		UDEScholaAgent* Agent = RegisteredAgents[i];
+		UDEScholaAgent* Agent = Cast<UDEScholaAgent>(RegisteredAgents[i]);
 		if (!Agent || !Agent->GetOwner()) continue;
 
 		ADECharacter* DEChar = Cast<ADECharacter>(Agent->GetOwner());
@@ -391,7 +424,7 @@ void ADEScholaEnvironment::RegisterAgents(TArray<APawn*>& OutTrainerControlledPa
 
 void ADEScholaEnvironment::SeedEnvironment(int Seed)
 {
-	int32 UniqueSeed = Seed + (ScholaEnvID * 1337);
+	int32 UniqueSeed = Seed + (EnvironmentId * 1337);
 	EnvRandomStream.Initialize(UniqueSeed);
 
 	if (OwnedMatchManager)
@@ -399,5 +432,18 @@ void ADEScholaEnvironment::SeedEnvironment(int Seed)
 		OwnedMatchManager->SetEnvRandomStream(EnvRandomStream);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] SeedEnvironment: EnvID %d initialized RandomStream with seed %d"), ScholaEnvID, UniqueSeed);
+	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv v10.2] SeedEnvironment: EnvID %d initialized RandomStream with seed %d"), EnvironmentId, UniqueSeed);
+}
+
+void ADEScholaEnvironment::RegisterAgent(UDynamicEQSAgentComponent* Agent)
+{
+	if (Agent && !RegisteredAgents.Contains(Agent))
+	{
+		RegisteredAgents.Add(Agent);
+	}
+}
+
+void ADEScholaEnvironment::UnregisterAgent(UDynamicEQSAgentComponent* Agent)
+{
+	RegisteredAgents.Remove(Agent);
 }

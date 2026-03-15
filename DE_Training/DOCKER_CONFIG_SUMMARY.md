@@ -31,7 +31,7 @@
 - Profile: `v10.2`
 - Command: `python training/policy_training.py --mode rllib --iterations 100`
 - Volumes:
-  - `./training_results_v10_2:/app/training_results_v10_2`
+  - `./training_results:/app/training_results`
   - `./models:/app/models`
 - Environment:
   - `NUM_WORKERS=0` (Windows compatibility)
@@ -48,7 +48,7 @@
 #### `tensorboard-v10.2` (Monitoring)
 - Profile: `v10.2`
 - Port: `6006:6006`
-- LogDir: `/app/training_results_v10_2`
+- LogDir: `/app/training_results`
 
 **Legacy Services Updated:**
 - Added `legacy` profile to existing services
@@ -59,13 +59,13 @@
 
 ### 3. Created Documentation
 
-#### `training/README_v10_2.md` (Updated)
+#### `training/README_.md` (Updated)
 - Added comprehensive Docker section
 - Docker vs Native Python comparison
 - Troubleshooting guide
 - Custom configuration examples
 
-#### `DOCKER_QUICK_START_v10_2.md` (New)
+#### `DOCKER_QUICK_START_.md` (New)
 - Quick reference guide
 - Common commands
 - Prerequisites checklist
@@ -179,18 +179,18 @@ DE/
 └── DE_Training/
     ├── Dockerfile                           # v10.2 training image
     ├── docker-compose.yml                   # Service definitions
-    ├── DOCKER_QUICK_START_v10_2.md         # Quick reference
+    ├── DOCKER_QUICK_START.md         # Quick reference
     ├── DOCKER_CONFIG_SUMMARY.md            # This file
     ├── requirements.txt                     # Python dependencies
     │
     ├── training/
     │   ├── policy_training.py # Main training script
     │   ├── de_env.py                # Environment wrapper
-    │   ├── train_v10_2.py                  # Quick start script
-    │   └── README_v10_2.md                 # Full documentation
+    │   ├── train_.py                  # Quick start script
+    │   └── README_.md                 # Full documentation
     │
-    ├── training_results_v10_2/             # Training output (auto-created)
-    │   └── v10_2_<timestamp>/
+    ├── training_results/             # Training output (auto-created)
+    │   └── _<timestamp>/
     │       ├── de_policy.onnx       # Exported model
     │       ├── checkpoint_NNNNNN/          # Checkpoints
     │       └── best/                       # Best checkpoint

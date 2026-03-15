@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Training/AbstractTrainer.h"
+#include "Schola/Base/DynamicEQSTrainerBase.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Types/DERewardTypes.h"
 #include "Types/DEEQSTypes.h"
@@ -18,6 +18,7 @@ class ADECapturePoint;
 class ADEMatchManager;
 class ADEScholaEnvironment;
 
+
 /**
  * Schola Trainer
  *
@@ -28,11 +29,14 @@ class ADEScholaEnvironment;
  * - Action collection and application in the form of EQS weights
  * - Team-level reward calculation based on assigned strategy from Squad Commander
  *
- * Action Space: Box(6) - Continuous EQS weights [-1, 1]
- * Observation Space: Box(52) - Agent State only (Strategy is commanded externally)
+ * Action Space: Box(7) - Continuous EQS weights [-1, 1]
+ * Observation Space: Box(167) - Entity-centric V2 (handled by DETacticalObserver)
+ *
+ * Inherits MaxEpisodeSteps, bLogTransitions, TransitionLogPath, RewardData
+ * from ADynamicEQSTrainerBase.
  */
 UCLASS(Blueprintable)
-class GAMEAI_PROJECT_API ADETrainer : public AAbstractTrainer
+class GAMEAI_PROJECT_API ADETrainer : public ADynamicEQSTrainerBase
 {
     GENERATED_BODY()
 
@@ -51,13 +55,14 @@ public:
 
 
     //=========================================
-    // AAbstractTrainer Overrides
+    // ADynamicEQSTrainerBase Overrides
     //=========================================
 
     virtual float ComputeReward() override;
     virtual EAgentTrainingStatus ComputeStatus() override;
     virtual void GetInfo(TMap<FString, FString>& Info) override;
     virtual void ResetTrainer() override;
+    virtual void ResetEpisode() override;
     virtual void OnCompletion() override;
 
 
@@ -65,17 +70,11 @@ public:
     // Schola RL Interface
     //=========================================
 
-    /**
-     * Returns current observation (sent to Python)
-     * @return 52-dim vector: Agent state
-     */
+    /** Legacy utility — not called by Schola (DETacticalObserver handles observations) */
     TArray<float> GetObservation();
 
     /** Checks if the current episode should terminate */
     bool IsEpisodeDone();
-
-    /** Legacy Schola interface for episode reset */
-    void ResetEpisode();
 
 
     //=========================================
@@ -97,62 +96,42 @@ public:
     /** Validates if the EQS weights are within valid ranges */
     bool ValidateEQSWeights(const FDEEQSWeightParameters& Weights) const;
 
-    /** Validates integrity of the gathered observation */
-    bool ValidateObservation(const FDEObservation& Obs) const;
 
-
-
-protected:
-    //=========================================
-    // Internal Helper Functions (Private/Protected Logic)
-    //=========================================
-
-    /** Collects 52-dim state observation from the environment */
-    FDEObservation GatherStateObservation();
-
-    /** Computes team-aligned reward based on commanded strategy quality */
-    float ComputeCommandedStrategyReward(EDEStrategyType CommandedStrategy,
-        const FDEObservation& Prev,
-        const FDEObservation& Current,
-        const FDEEQSWeightParameters& Action);
-
-    /** Logs transitions for World Model offline training */
-    void LogTransition(const FDEObservation& InState,
-        EDEStrategyType CommandedStrategy,
-        const FDEEQSWeightParameters& Action,
-        float Reward,
-        const FDEObservation& NextState,
-        bool bDone);
-
-    /** Updates internal training metrics and averages */
-    void UpdateTrainingStatistics();
-
-
-
-public:
     //=========================================
     // Public Training Configuration
     //=========================================
-
-    /** Maximum steps allowed per episode */
-    UPROPERTY(EditAnywhere, Category = "Training")
-    int32 MaxEpisodeSteps = 3000;
-
-    /** Path to save transition logs */
-    UPROPERTY(EditAnywhere, Category = "Training|Logging")
-    FString TransitionLogPath = TEXT("Saved/Transitions/cortex_v10.2_executor.json");
-
-    /** Toggle for transition logging (World Model training) */
-    UPROPERTY(EditAnywhere, Category = "Training|Logging")
-    bool bLogTransitions = true;
 
     /** Toggle for visual debug helpers */
     UPROPERTY(EditAnywhere, Category = "Debug")
     bool bEnableDebugVisualization = false;
 
 
-
 protected:
+    //=========================================
+    // Internal Helper Functions
+    //=========================================
+
+    /** Collects per-step agent state snapshot for reward computation */
+    FDEAgentSnapshot GatherStateSnapshot();
+
+    /** Computes team-aligned reward based on commanded strategy quality */
+    float ComputeCommandedStrategyReward(EDEStrategyType CommandedStrategy,
+        const FDEAgentSnapshot& Prev,
+        const FDEAgentSnapshot& Current,
+        const FDEEQSWeightParameters& Action);
+
+    /** Logs transitions for World Model offline training */
+    void LogTransition(const FDEAgentSnapshot& InState,
+        EDEStrategyType CommandedStrategy,
+        const FDEEQSWeightParameters& Action,
+        float Reward,
+        const FDEAgentSnapshot& NextState,
+        bool bDone);
+
+    /** Updates internal training metrics and averages */
+    void UpdateTrainingStatistics();
+
+
     //=========================================
     // Internal State - Actor & Component References
     //=========================================
@@ -184,11 +163,11 @@ protected:
 
     //=========================================
     // Internal State - RL Data & Observations
-    ///=========================================
+    //=========================================
 
-    /** Observations for reward calculation */
-    FDEObservation PreviousObservation;
-    FDEObservation CurrentObservation;
+    /** Snapshots for reward calculation (previous and current step) */
+    FDEAgentSnapshot PreviousObservation;
+    FDEAgentSnapshot CurrentObservation;
 
     /** Most recent action applied */
     FDEEQSWeightParameters LastAction;

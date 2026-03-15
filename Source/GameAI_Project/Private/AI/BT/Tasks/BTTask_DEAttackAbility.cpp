@@ -5,6 +5,7 @@
 #include "GAS/DEGameplayTags.h"
 #include "GAS/Abilities/DEGA_Attack.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemBlueprintLibrary.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "AIController.h"
 
@@ -12,6 +13,7 @@ UBTTask_DEAttackAbility::UBTTask_DEAttackAbility()
 {
 	NodeName = TEXT("Attack Ability");
 	bNotifyTick = true;
+	bCreateNodeInstance = true;  // bIsFiring is per-instance state; must not be shared across agents
 	TargetEnemyKey.AddObjectFilter(this, GET_MEMBER_NAME_CHECKED(UBTTask_DEAttackAbility, TargetEnemyKey), AActor::StaticClass());
 	HasTargetKey.AddBoolFilter(this, GET_MEMBER_NAME_CHECKED(UBTTask_DEAttackAbility, HasTargetKey));
 
@@ -41,10 +43,12 @@ EBTNodeResult::Type UBTTask_DEAttackAbility::ExecuteTask(UBehaviorTreeComponent&
 	AActor* Target = Cast<AActor>(BB->GetValueAsObject(TargetEnemyKey.SelectedKeyName));
 	if (!Target || !Ability->IsTargetValid(Target)) return EBTNodeResult::Failed;
 
-	FGameplayTagContainer AttackTag;
-	AttackTag.AddTag(DEGameplayTags::Ability_Attack);
-	const bool bActivated = Character->GetAbilitySystemComponent()->TryActivateAbilitiesByTag(AttackTag);
-	return bActivated ? EBTNodeResult::Succeeded : EBTNodeResult::Failed;
+	FGameplayEventData Payload;
+	Payload.EventTag = DEGameplayTags::Ability_Attack;
+	Payload.Target   = Target;
+	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Character, DEGameplayTags::Ability_Attack, Payload);
+
+	return EBTNodeResult::Succeeded;
 }
 
 EBTNodeResult::Type UBTTask_DEAttackAbility::AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
@@ -90,8 +94,10 @@ void UBTTask_DEAttackAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8*
 
 	if (Ability->CanFire())
 	{
-		FGameplayTagContainer AttackTag;
-		AttackTag.AddTag(DEGameplayTags::Ability_Attack);
-		Character->GetAbilitySystemComponent()->TryActivateAbilitiesByTag(AttackTag);
+		FGameplayEventData Payload;
+		Payload.EventTag = DEGameplayTags::Ability_Attack;
+		Payload.Target   = Target;
+		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
+			Character, DEGameplayTags::Ability_Attack, Payload);
 	}
 }

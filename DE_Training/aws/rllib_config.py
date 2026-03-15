@@ -137,7 +137,7 @@ def _sync_to_s3(local_path: str, bucket: str, prefix: str = "checkpoints/") -> N
 
 
 ###############################################################################
-# Policy / Obs / Action Specs (must match policy_training.py)
+# Policy / Obs / Action Specs (must match policy.py)
 ###############################################################################
 
 OBS_DIM    = 54   # 51 agent obs + 3 strategy one-hot
@@ -319,7 +319,7 @@ def run_tune(
     wandb_project:    str   = "de-v10-2",
     wandb_api_key:    str   = "",
     num_workers:      int   = 4,
-    local_dir:        str   = "./training_results_v10_2",
+    local_dir:        str   = "./training_results",
     restore:          Optional[str] = None,
 ) -> tune.ExperimentAnalysis:
     """Single-call entry point used by launch_training.py."""
@@ -366,7 +366,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb-project",    default="de-v10-2")
     parser.add_argument("--wandb-api-key",    default=os.environ.get("WANDB_API_KEY", ""))
     parser.add_argument("--num-workers",      type=int, default=4)
-    parser.add_argument("--local-dir",        default="./training_results_v10_2")
+    parser.add_argument("--local-dir",        default="./training_results")
     parser.add_argument("--restore",          default=None)
     args = parser.parse_args()
 

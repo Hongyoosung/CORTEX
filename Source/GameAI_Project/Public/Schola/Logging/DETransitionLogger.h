@@ -20,9 +20,9 @@ struct FDETransition
 {
 	GENERATED_BODY()
 
-	/** Current state observation (52-dim) */
+	/** Current state flat array (legacy logger — unused by active training path) */
 	UPROPERTY(BlueprintReadOnly)
-	FDEObservation State;
+	TArray<float> State;
 
 	/** Active strategy option */
 	UPROPERTY(BlueprintReadOnly)
@@ -44,9 +44,9 @@ struct FDETransition
 	UPROPERTY(BlueprintReadOnly)
 	float Reward = 0.0f;
 
-	/** Next state observation (52-dim) */
+	/** Next state flat array */
 	UPROPERTY(BlueprintReadOnly)
-	FDEObservation NextState;
+	TArray<float> NextState;
 
 	/** Episode terminated */
 	UPROPERTY(BlueprintReadOnly)
@@ -104,13 +104,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void LogTransition(
-		const FDEObservation& State,
+		const TArray<float>& State,
 		EDEStrategyType OptionType,
 		const FVector& TargetPosition,
 		float OptionDuration,
 		const TArray<float>& EQSWeights,
 		float Reward,
-		const FDEObservation& NextState,
+		const TArray<float>& NextState,
 		bool bDone
 	);
 
@@ -198,7 +198,7 @@ private:
 	/**
 	 * Serialize observation to string
 	 */
-	FString SerializeObservation(const FDEObservation& Obs) const;
+	FString SerializeObservation(const TArray<float>& Obs) const;
 
 	/**
 	 * Get CSV file path

@@ -2,22 +2,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Inference/InferenceComponent.h"
+#include "Schola/DynamicEQSAgentComponent.h"
 #include "Types/DEStrategyTypes.h"
 #include "DEScholaAgent.generated.h"
-
-
-/**
- * Agent Operation Mode
- * - Training: Python (RLlib) controls actions via Schola Policy
- * - Inference: Local ONNX models execute via Schola Policy
- */
-UENUM(BlueprintType)
-enum class EDEAgentMode : uint8
-{
-    Training    UMETA(DisplayName = "Training Mode (Python RLlib)"),
-    Inference   UMETA(DisplayName = "Inference Mode (Local ONNX)")
-};
 
 
 /**
@@ -38,7 +25,7 @@ enum class EDEAgentMode : uint8
  * Responsibilities (What this class DOES):
  * - Store commanded strategy from DESquadManager
  * - Provide strategy to Observers (via GetCommandedStrategy)
- * - Support mode switching (Training vs Inference)
+ * - Support mode switching (Training vs Inference) via inherited AgentMode
  * - Configure Schola components in BeginPlay
  *
  * Non-Responsibilities (What this class does NOT do):
@@ -51,17 +38,17 @@ enum class EDEAgentMode : uint8
  * Usage:
  * 1. Add to ADECharacter as component
  * 2. Configure Observers/Actuators in Blueprint
- * 3. Set CurrentMode (Training/Inference)
+ * 3. Set AgentMode (Training/Inference) — inherited from UDynamicEQSAgentComponent
  * 4. DESquadManager calls UpdateCommandedStrategy()
  * 5. Schola's Think/Act cycle handles rest automatically
  */
 UCLASS(ClassGroup = (AI), meta = (BlueprintSpawnableComponent))
-class GAMEAI_PROJECT_API UDEScholaAgent : public UInferenceComponent
+class GAMEAI_PROJECT_API UDEScholaAgent : public UDynamicEQSAgentComponent
 {
     GENERATED_BODY()
 
 public:
-    UDEScholaAgent(const FObjectInitializer& ObjectInitializer);
+    UDEScholaAgent();
 
     virtual void BeginPlay() override;
 
@@ -90,7 +77,7 @@ public:
     UFUNCTION(BlueprintPure, Category = "DE|Commands")
     EDEStrategyType GetCommandedStrategy() const
     {
-        return bUseTrainingStrategyOverride ? TrainingStrategyOverride : CommandedStrategy;
+        return CommandedStrategy;
     }
 
 
@@ -103,53 +90,9 @@ public:
     void ResetAgent();
 
 
-    //========================================
-    // Mode Management
-    //========================================
 
-    /**
-     * Current operation mode
-     * - Training: Schola Policy connects to Python (RLlib)
-     * - Inference: Schola Policy uses local ONNX models
-     */
-    // NOTE: Must be set to Training in BP_Agent Blueprint defaults when connecting to Python.
-    // Affects: ProcessTrainingAbilities timer (weapons/heal), PerformTacticalAction branch.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DE")
-    EDEAgentMode CurrentMode = EDEAgentMode::Training;
+public:
 
-
-    //========================================
-    // Phase 1 Training Configuration
-    //========================================
-
-    /**
-     * Enable Training Strategy Override (Phase 1 Only)
-     * When enabled, ignores DESquadManager commands and uses TrainingStrategyOverride instead.
-     * This allows training separate policies per strategy (Assault, Defend, Support).
-     *
-     * IMPORTANT: Disable this in Phase 3 when testing centralized planning!
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DE|Phase1Training",
-        meta = (DisplayName = "Override Strategy (Phase 1 Training)"))
-    bool bUseTrainingStrategyOverride = false;
-
-    /**
-     * Training Strategy Override (Phase 1 Only)
-     * The strategy to train when bUseTrainingStrategyOverride is enabled.
-     * Set all agents to the same strategy to train a single policy.
-     *
-     * Training Plan:
-     * - Day 1: Set to Assault, train assault policy
-     * - Day 2: Set to Defend, train defend policy
-     * - Day 3: Set to Support, train support policy
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DE|Phase1Training",
-        meta = (DisplayName = "Training Strategy", EditCondition = "bUseTrainingStrategyOverride"))
-    EDEStrategyType TrainingStrategyOverride = EDEStrategyType::Assault;
-
-
-
-private:
     //========================================
     // Runtime State
     //========================================
@@ -159,5 +102,6 @@ private:
      * Injected into observation space by Observers
      * Used by Policy to condition EQS weight output
      */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy")
     EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
 };

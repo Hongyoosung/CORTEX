@@ -4,6 +4,7 @@
 #include "EnvironmentQuery/EnvQueryTypes.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_Point.h"
 #include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "Perception/AIPerceptionComponent.h"
@@ -11,6 +12,7 @@
 
 #include "Characters/DECharacter.h"
 #include "Actors/DECapturePoint.h"
+#include "Team/DEMatchManager.h"
 
 void UEnvQueryContext_DEQuerier::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
@@ -258,6 +260,136 @@ void UEnvQueryContext_DEAllyObjective::ProvideContext(FEnvQueryInstance& QueryIn
 			UEnvQueryItemType_Point::SetContextHelper(ContextData, CP->GetActorLocation());
 			return;
 		}
+	}
+}
+
+
+void UEnvQueryContext_DEAssignedBase::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
+{
+	ADECharacter* DEChar = Cast<ADECharacter>(QueryInstance.Owner.Get());
+	if (!DEChar)
+	{
+		AAIController* AIC = Cast<AAIController>(QueryInstance.Owner.Get());
+		if (AIC) DEChar = Cast<ADECharacter>(AIC->GetPawn());
+	}
+
+	if (!DEChar) return;
+
+	// Read AssignedBaseIndex from Blackboard
+	int32 AssignedIndex = DEChar->AssignedBaseIndex;
+
+	AAIController* AIC = Cast<AAIController>(DEChar->GetController());
+	if (AIC)
+	{
+		if (UBlackboardComponent* BB = AIC->GetBlackboardComponent())
+		{
+			AssignedIndex = BB->GetValueAsInt(TEXT("AssignedBaseIndex"));
+		}
+	}
+
+	// Look up the capture point position from MatchManager
+	ADEMatchManager* MatchMgr = DEChar->GetMatchManager();
+	if (!MatchMgr) return;
+
+	const TArray<ADECapturePoint*>& CPs = MatchMgr->GetCapturePoints();
+	if (CPs.IsValidIndex(AssignedIndex) && CPs[AssignedIndex])
+	{
+		UEnvQueryItemType_Point::SetContextHelper(ContextData, CPs[AssignedIndex]->GetActorLocation());
+	}
+}
+
+
+void UEnvQueryContext_DECombatRange::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
+{
+	ADECharacter* DEChar = Cast<ADECharacter>(QueryInstance.Owner.Get());
+	if (!DEChar)
+	{
+		AAIController* AIC = Cast<AAIController>(QueryInstance.Owner.Get());
+		if (AIC) DEChar = Cast<ADECharacter>(AIC->GetPawn());
+	}
+	if (!DEChar) return;
+
+	const int32 MyTeamID = DEChar->GetTeamID_Implementation();
+	const int32 MyEnvID  = DEChar->GetEnvID_Implementation();
+	const FVector MyLocation = DEChar->GetActorLocation();
+
+	ADECharacter* NearestEnemy = nullptr;
+	float NearestDistSq = FLT_MAX;
+
+	AAIController* AIC = Cast<AAIController>(DEChar->GetController());
+	UAIPerceptionComponent* PerceptionComp = AIC ? AIC->GetAIPerceptionComponent() : nullptr;
+
+	if (PerceptionComp)
+	{
+		// Runtime path: use perception system
+		TArray<AActor*> PerceivedActors;
+		PerceptionComp->GetKnownPerceivedActors(UAISense_Sight::StaticClass(), PerceivedActors);
+
+		for (AActor* Actor : PerceivedActors)
+		{
+			ADECharacter* Candidate = Cast<ADECharacter>(Actor);
+			if (!Candidate || !Candidate->IsAlive() ||
+				Candidate->GetTeamID_Implementation() == MyTeamID ||
+				Candidate->GetEnvID_Implementation()  != MyEnvID)
+			{
+				continue;
+			}
+
+			FActorPerceptionBlueprintInfo Info;
+			PerceptionComp->GetActorsPerception(Actor, Info);
+			for (const FAIStimulus& Stimulus : Info.LastSensedStimuli)
+			{
+				if (Stimulus.Type == UAISense::GetSenseID<UAISense_Sight>() && Stimulus.WasSuccessfullySensed())
+				{
+					const float DistSq = FVector::DistSquared(MyLocation, Candidate->GetActorLocation());
+					if (DistSq < NearestDistSq)
+					{
+						NearestDistSq = DistSq;
+						NearestEnemy  = Candidate;
+					}
+					break;
+				}
+			}
+		}
+	}
+	else
+	{
+		// Training path: manual LOS check
+		UWorld* World = DEChar->GetWorld();
+		if (!World) return;
+
+		const float VisionRangeSq = FMath::Square(DEChar->VisionRange);
+		FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(DECombatRangeLOS), true, DEChar);
+
+		for (TActorIterator<ADECharacter> It(World); It; ++It)
+		{
+			ADECharacter* Candidate = *It;
+			if (!Candidate || Candidate == DEChar || !Candidate->IsAlive() ||
+				Candidate->GetTeamID_Implementation() == MyTeamID ||
+				Candidate->GetEnvID_Implementation()  != MyEnvID)
+			{
+				continue;
+			}
+
+			const FVector CandidateLocation = Candidate->GetActorLocation();
+			const float DistSq = FVector::DistSquared(MyLocation, CandidateLocation);
+			if (DistSq > VisionRangeSq || DistSq >= NearestDistSq) continue;
+
+			FHitResult Hit;
+			const bool bBlocked = World->LineTraceSingleByChannel(
+				Hit, MyLocation, CandidateLocation, ECC_Visibility, TraceParams);
+
+			if (!bBlocked || Hit.GetActor() == Candidate)
+			{
+				NearestDistSq = DistSq;
+				NearestEnemy  = Candidate;
+			}
+		}
+	}
+
+	if (NearestEnemy)
+	{
+		UEnvQueryItemType_Point::SetContextHelper(ContextData, NearestEnemy->GetActorLocation());
 	}
 }
 

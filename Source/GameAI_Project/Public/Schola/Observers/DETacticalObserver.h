@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Observers/AbstractObservers.h"
+#include "Schola/Base/DynamicEQSObserverBase.h"
 #include "Types/DEStrategyTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "DETacticalObserver.generated.h"
@@ -17,25 +17,15 @@ class UDEScholaAgent;
  *
  * Purpose:
  * Collects observations for executor agent RL policy training in v10.2 architecture.
- * Extends Schola's UBoxObserver for proper integration with Schola training pipeline.
+ * Extends UDynamicEQSObserverBase (which wraps UBoxObserver) for Schola training pipeline integration.
  *
  * Architecture Context:
  * - Layer 1 (Squad Commander): Uses FDETeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
- * Observation Space (51-dim):
- * - Base State (48-dim): Agent's local observation (FDEObservation)
- *   • Self  (7): Position/7500(3), Health(1), Velocity/600(3)
- *   • Allies(16): 4 agents × [RelPos/8000(3), Health(1)]  — always known
- *   • Enemies(20): 5 agents × [RelPos/8000_if_visible(3), Visible(1)]  — LoS only
- *   • Map   (5): PointStatus×5 (+1=friendly / 0=neutral / -1=enemy)
- *   Ally/enemy positions are agent-relative (offset from self) so the same
- *   tactical geometry produces identical features anywhere on the map.
- *
- * - Commanded Strategy (3-dim): One-hot encoding of EDEStrategyType
- *   • [1,0,0] = Assault
- *   • [0,1,0] = Defend
- *   • [0,0,1] = Support
+ * Observation Space (170-dim, entity-centric V2):
+ *   Self (7) + Allies 8×5 (40) + Enemies 8×5 (40) + Bases 8×7 (56) + Masks 8+8+8 (24) + Strategy (3) = 170
+ *   Serialised as a fixed-size padded flat array via FDEObservationV2::ToFlatArray().
  *
  * Usage:
  * 1. Add to ADETrainer.Observers array (Blueprint or C++)
@@ -46,10 +36,10 @@ class UDEScholaAgent;
  * Integration:
  * - Owner: ADETrainer (Schola trainer)
  * - Data Source: ADECharacter (via trainer reference)
- * - Output: FBoxPoint with 51 continuous values
+ * - Output: FBoxPoint with 170 continuous values
  */
 UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "DE Tactical Observer"))
-class GAMEAI_PROJECT_API UDETacticalObserver : public UBoxObserver
+class GAMEAI_PROJECT_API UDETacticalObserver : public UDynamicEQSObserverBase
 {
 	GENERATED_BODY()
 
@@ -57,18 +47,18 @@ public:
 	UDETacticalObserver();
 
 	//========================================
-	// UBoxObserver Interface
+	// UDynamicEQSObserverBase Interface
 	//========================================
 
 	/**
 	 * Define observation space bounds
-	 * @return FBoxSpace with 51 dimensions, normalized ranges
+	 * @return FBoxSpace with 170 dimensions, normalized ranges
 	 */
 	virtual FBoxSpace GetObservationSpace() const override;
 
 	/**
 	 * Collect current observation from character
-	 * @param OutObservations - FBoxPoint to fill with 51-dim observation vector
+	 * @param OutObservations - FBoxPoint to fill with 170-dim observation vector
 	 */
 	virtual void CollectObservations(FBoxPoint& OutObservations) override;
 
@@ -116,10 +106,10 @@ protected:
 	//========================================
 
 	/**
-	 * Gather 48-dim base observation from character
-	 * @return FDEObservation with normalized values
+	 * Gather entity-centric V2 observation (170-dim padded flat).
+	 * Populates ally, enemy, and base tokens from MatchManager.
 	 */
-	FDEObservation GatherBaseObservation() const;
+	FDEObservationV2 GatherObservationV2() const;
 
 	/**
 	 * Convert commanded strategy to one-hot encoding

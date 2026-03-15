@@ -27,7 +27,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from training.policy_training import SingleHeadPolicy_v10_2
+from training.policy import SingleHeadPolicy
 
 
 class ScholaInferenceWrapper(nn.Module):
@@ -42,7 +42,7 @@ class ScholaInferenceWrapper(nn.Module):
     via argmax and passed to the inner policy's strategy_idx argument.
     """
 
-    def __init__(self, inner_policy: SingleHeadPolicy_v10_2):
+    def __init__(self, inner_policy: SingleHeadPolicy):
         super().__init__()
         self.inner = inner_policy
 
@@ -54,7 +54,7 @@ class ScholaInferenceWrapper(nn.Module):
         return self.inner(base_obs, strategy_idx)
 
 
-def load_policy_from_rllib(checkpoint_path: str, policy_name: str) -> SingleHeadPolicy_v10_2:
+def load_policy_from_rllib(checkpoint_path: str, policy_name: str) -> SingleHeadPolicy:
     """Load a single-strategy policy directly from RLlib checkpoint pickle."""
     import pickle
 
@@ -75,14 +75,14 @@ def load_policy_from_rllib(checkpoint_path: str, policy_name: str) -> SingleHead
             inner_state_dict[inner_key] = torch.tensor(value) if not isinstance(value, torch.Tensor) else value
 
     strategy_name = policy_name.replace("_policy", "")
-    policy = SingleHeadPolicy_v10_2(obs_dim=51, strategy_dim=3, eqs_dim=6, strategy_name=strategy_name)
+    policy = SingleHeadPolicy(obs_dim=51, strategy_dim=3, eqs_dim=6, strategy_name=strategy_name)
     policy.load_state_dict(inner_state_dict, strict=False)
     print(f"Loaded policy '{policy_name}' from: {checkpoint_path}")
     print(f"  Loaded {len(inner_state_dict)} weight tensors")
     return policy
 
 
-def export_schola_onnx(policy: SingleHeadPolicy_v10_2, output_path: str):
+def export_schola_onnx(policy: SingleHeadPolicy, output_path: str):
     """Export wrapped model compatible with Schola InferencePolicy."""
     wrapper = ScholaInferenceWrapper(policy)
     wrapper.eval()

@@ -163,91 +163,101 @@ Base assignment logic (initial): distribute agents across uncontrolled/threatene
 ## 5. Implementation Phases
 
 ### Phase 0 — Preparation (no functional change)
-- [ ] Add `FVector` positions of capture points to `FDEObservation` (currently only ownership status is stored)
-- [ ] Add `CaptureProgress` float per point to `FDEObservation`
-- [ ] Add `AssignedBaseIndex` int32 to Blackboard (`BB_DEAgent`)
-- [ ] Verify `UEnvQueryContext_DECapturePoints` returns positions (not just statuses)
+- [x] Add `FVector` positions of capture points to `FDEObservation` (currently only ownership status is stored)
+- [x] Add `CaptureProgress` float per point to `FDEObservation`
+- [ ] Add `AssignedBaseIndex` int32 to Blackboard (`BB_DEAgent`) — **manual editor step**: open `BB_DEAgent` and add an Int key named `AssignedBaseIndex` with default -1
+- [x] Verify `UEnvQueryContext_DECapturePoints` returns positions (not just statuses) — confirmed, already returns `CP->GetActorLocation()`
 
 ### Phase 1 — New C++ Observation Types
 **File:** `Public/Types/DEObservationTypes.h`
 
-- [ ] Define `FDEEntityToken` struct (variable-dim via TArray<float>)
-- [ ] Define `FDEObservationV2` with `TArray<FDEEntityToken>` for allies, enemies, bases
-- [ ] Implement `FDEObservationV2::ToDict()` → returns named TMap for Schola gRPC serialization
-- [ ] Keep `FDEObservation` (v1) intact — do not delete until training is validated
+- [x] Define `FDEEntityToken` struct (variable-dim via TArray<float>)
+- [x] Define `FDEObservationV2` with `TArray<FDEEntityToken>` for allies, enemies, bases
+- [x] Implement `FDEObservationV2::ToDict()` → returns named TMap for Schola gRPC serialization
+- [x] Implement `FDEObservationV2::ToFlatArray()` → 167-dim padded flat (NNE compatible)
+- [x] Keep `FDEObservation` (v1) intact — do not delete until training is validated
 
 **File:** `Public/Types/DEEQSTypes.h`
 
-- [ ] Add `AssignedBaseProximity` as 7th field to `FDEEQSWeightParameters`
-- [ ] Update clamp/scale logic for 7 weights
+- [x] Add `AssignedBaseProximity` as 7th field to `FDEEQSWeightParameters`
+- [x] Update clamp/scale logic for 7 weights
 
 ### Phase 2 — Observer Update
 **File:** `Private/Schola/Observers/DETacticalObserver.cpp`
 
-- [ ] Replace `FDEObservation` population with `FDEObservationV2`
-- [ ] Populate `Allies` tokens from `AMatchManager` ally list (variable N)
-- [ ] Populate `Enemies` tokens from `ADEAIController` perception (variable N)
-- [ ] Populate `Bases` tokens from `AMatchManager` capture point list (variable N)
-  - Set `is_assigned_target = 1.0` for the index matching `AssignedBaseIndex` BB key
-- [ ] Update `CollectObservations()` to serialize `ToDict()` format for Schola
+- [x] Replace `FDEObservation` population with `FDEObservationV2`
+- [x] Populate `Allies` tokens from `AMatchManager` ally list (variable N, capped at DE_MAX_ALLIES=8)
+- [x] Populate `Enemies` tokens from inline LOS check (variable N, capped at DE_MAX_ENEMIES=8)
+- [x] Populate `Bases` tokens from `AMatchManager` capture point list (variable N)
+  - Set `is_assigned_target = 1.0` for the index matching `AssignedBaseIndex` on the character
+- [x] Update `CollectObservations()` to serialize via `ToFlatArray()` (167-dim padded flat)
+- Note: `GatherBaseObservation()` retained for reward subsystem (v1 untouched)
 
 ### Phase 3 — EQS Context and Query Update
 **File:** `Public/AI/EQS/DEEQSContext.h` + `Private/AI/EQS/DEEQSContext.cpp`
 
-- [ ] Add `UEnvQueryContext_DEAssignedBase` — reads `AssignedBaseLocation` from Blackboard
-- [ ] Update existing EQS query template (`EQS_DEAgent`) to include the 7th test using `UEnvQueryContext_DEAssignedBase`
+- [x] Add `UEnvQueryContext_DEAssignedBase` — reads `AssignedBaseIndex` from Blackboard, looks up position in MatchManager
+- [ ] Update existing EQS query template (`EQS_DEAgent`) to include the 7th test using `UEnvQueryContext_DEAssignedBase` — **manual editor step**
 
 **File:** `Public/AI/EQS/DEEQSExecutor.h`
 
-- [ ] Update `ExecuteTacticalQuery()` signature and weight-passing logic for 7 weights
+- [x] `ExecuteTacticalQuery()` already accepts `FDEEQSWeightParameters` by struct — 7th field added, no signature change needed
 
 ### Phase 4 — Squad Commander Base Assignment
 **File:** `Private/Team/DEMatchManager.cpp` (or `SquadManager` if separate)
 
-- [ ] Add `AssignBasesToAgents()` method — distributes bases to agents by role and proximity
-- [ ] Call on tactical play change and on base flip event
-- [ ] Write `AssignedBaseIndex` to each agent's Blackboard via `UBlackboardComponent::SetValueAsInt`
+- [x] Add `AssignBasesToAgents()` method — distributes bases to agents by role and proximity (Defend=unique, Assault=nearest enemy/neutral, Support=nearest any)
+- [x] Call on base flip event (`OnPointCaptured`) for both affected teams
+- [x] Call after initial `SpawnTeams()` on episode start
+- [x] Write `AssignedBaseIndex` to each agent's Blackboard via `UBlackboardComponent::SetValueAsInt`
+- Note: also mirrored to `ADECharacter::AssignedBaseIndex` for immediate EQS context access
 
 ### Phase 5 — Reward Update
 **File:** `Public/Data/DERewardData.h`
 
-- [ ] Add cooperative base occupation reward parameters (see Section 3)
+- [x] Add cooperative base occupation reward parameters: `BaseOccupationReward`, `CoOccupationPenalty`, `BaseCaptureCreditReward`, `UndefendedBasePenalty`, `AssignedBaseReachReward`, `BaseOccupationRadius`
 
 **File:** `Private/Core/Subsystems/DERewardSubsystem.cpp`
 
-- [ ] Implement `ComputeBaseCooperationReward()` — queries ally positions vs. base positions
-- [ ] Integrate into `ComputeReward()` pipeline after strategy-specific reward
+- [x] Implement `ComputeBaseCooperationReward()` — queries ally positions vs. base positions per capture point
+- [x] Integrate into `ComputeStepReward()` pipeline before time penalty and clamping
 
 ### Phase 6 — Python Policy Rewrite
 **File:** `DE_Training/` (new training directory)
 
-- [ ] Replace flat `LinearPolicy` with `EntityCentricPolicy` (see Section 2.3)
-- [ ] Update environment wrapper to handle dict observations from Schola
-- [ ] Implement `collate_fn` with padding and mask generation for variable-length sets
-- [ ] Update ONNX export: export with dynamic axes for ally/enemy/base sequence dims
-  ```python
-  torch.onnx.export(model, example_inputs, "policy.onnx",
-      dynamic_axes={
-          "allies":  {1: "n_allies"},
-          "enemies": {1: "n_enemies"},
-          "bases":   {1: "n_bases"},
-      })
-  ```
-- [ ] Update reward config for new cooperative terms
+- [x] Replace flat `LinearPolicy` with `EntityCentricPolicy` (see Section 2.3) — `DE_Training/policy.py`
+- [x] Update environment wrapper to handle dict observations from Schola — `DE_Training/env_wrapper.py`
+- [x] Implement `collate_fn` with padding and mask generation for variable-length sets — `env_wrapper.py::collate_fn`
+- [x] Update ONNX export: export with dynamic axes for ally/enemy/base sequence dims — `policy.py::export_policy_onnx(fixed_shape=False)`
+  - Also exports fixed-shape variant (`fixed_shape=True`) for UE5 NNE compatibility
+- [x] Update reward config for new cooperative terms — `train.py::REWARD_CONFIG` + `env_wrapper.py::process_reward()`
 
 ### Phase 7 — Inference Integration
 **File:** `Public/Schola/Agents/DEScholaAgent.h` + `.cpp`
 
-- [ ] Update `DistributeActions()` to read 7 weights instead of 6
+- [x] Update `DETacticalParameterActuator` to read/write 7 weights instead of 6 (`GetActionSpace`, `TakeAction`, `ActionToEQSWeights`)
 - [ ] Verify ONNX model dynamic axes work with UE5 NNE runtime
   - NNE may require fixed shapes — if so, pad to `MAX_ALLIES`, `MAX_ENEMIES`, `MAX_BASES` with mask input
 
 ### Phase 8 — Testing
-- [ ] Unit test: `FDEObservationV2::ToDict()` produces correct token counts for 3v3, 5v5, 3v8
-- [ ] Unit test: `AssignBasesToAgents()` covers all agents, no two Defend agents on same base
+- [x] Unit test: `FDEObservationV2::ToDict()` produces correct token counts for 3v3, 5v5, 3v8
+      → `Private/Tests/DEEntityCentricTests.cpp` — `CORTEX.EntityCentric.ObsV2.ToDict.TokenCounts`
+- [x] Unit test: `AssignBasesToAgents()` covers all agents, no two Defend agents on same base
+      → `Private/Tests/DEEntityCentricTests.cpp` — `CORTEX.EntityCentric.AssignBases.PureLogic`
+      (mirrors greedy algorithm; 3 scenarios: StandardComp/3-base, TurtleFormation/3-base, AllOutRush/5-base)
+- [x] Unit test: `FDEObservationV2::ToFlatArray()` dimension == 167 for all entity-count combinations
+      → `Private/Tests/DEEntityCentricTests.cpp` — `CORTEX.EntityCentric.ObsV2.ToFlatArray.Dimension`
+- [x] Unit test: reward data cooperative defaults match plan spec (Section 3)
+      → `Private/Tests/DEEntityCentricTests.cpp` — `CORTEX.EntityCentric.RewardData.CoopDefaults`
 - [ ] Integration test: EQS query #6 (`AssignedBase`) fires with non-zero weight
+      **Manual / PIE**: place agent in level, trigger `AssignBasesToAgents(0)`, verify BB key
+      `AssignedBaseIndex` ≥ 0, then run EQS with weight[6] > 0 and confirm score > 0 in EQS debugger.
 - [ ] Integration test: agents spread across 3 bases (no stacking) within 60 seconds
+      **Manual / PIE**: run 5v5 match for 60 s, check that no base has >1 Defend agent in
+      `ADEMatchManager::AssignBasesToAgents` log output (`[DEMatchManager] AssignBasesToAgents`).
 - [ ] Training smoke test: 10k steps without NaN reward or observation shape errors
+      **Python**: run `DE_Training/train.py` for 10 000 steps; confirm no NaN in reward log and
+      obs shape is (167,) at every step.
 
 ---
 

@@ -49,13 +49,13 @@ void UDETransitionLogger::EndPlay(const EEndPlayReason::Type EndPlayReason)
 }
 
 void UDETransitionLogger::LogTransition(
-	const FDEObservation& State,
+	const TArray<float>& State,
 	EDEStrategyType OptionType,
 	const FVector& TargetPosition,
 	float OptionDuration,
 	const TArray<float>& EQSWeights,
 	float Reward,
-	const FDEObservation& NextState,
+	const TArray<float>& NextState,
 	bool bDone)
 {
 	if (!bLoggingEnabled)
@@ -223,9 +223,8 @@ void UDETransitionLogger::WriteToCSV(const TArray<FDETransition>& Transitions)
 	);
 }
 
-FString UDETransitionLogger::SerializeObservation(const FDEObservation& Obs) const
+FString UDETransitionLogger::SerializeObservation(const TArray<float>& ObsArray) const
 {
-	TArray<float> ObsArray = Obs.ToArray();
 	FString Result;
 
 	for (int32 i = 0; i < ObsArray.Num(); ++i)
@@ -235,13 +234,6 @@ FString UDETransitionLogger::SerializeObservation(const FDEObservation& Obs) con
 		{
 			Result += TEXT(",");
 		}
-	}
-
-	// Pad to 52 dimensions if necessary
-	while (ObsArray.Num() < 52)
-	{
-		Result += TEXT(",0.0");
-		ObsArray.Add(0.0f);
 	}
 
 	return Result;

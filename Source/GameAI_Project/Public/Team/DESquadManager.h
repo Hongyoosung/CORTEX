@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "Team/DETeamWorldState.h"
 #include "Types/DEStrategyTypes.h"
 #include "Types/DEEventTypes.h"
 #include "Types/DERewardTypes.h"
@@ -12,11 +11,8 @@
 #include "DESquadManager.generated.h"
 
 
-class UDETeamMCTS;
 class ADECharacter;
-class UDETeamDataCollector;
 class ADECapturePoint;
-class UDETeamWorldModel;
 
 /**
  * Squad-level planning configuration.
@@ -135,9 +131,6 @@ public:
 	void PerformTacticalPlanning(const TArray<ADECharacter*>& TeamAgents,
 	                             const TArray<ADECharacter*>& EnemyAgents);
 
-	/** Build and return the current team world state from the supplied agent lists */
-	FDETeamWorldState BuildTeamWorldState(const TArray<ADECharacter*>& TeamAgents,
-	                                    const TArray<ADECharacter*>& EnemyAgents) const;
 
 	/**
 	 * Get the assigned strategy for a specific agent slot.
@@ -191,10 +184,8 @@ public:
 
 
 private:
-	FDECompositeReward CalculateTeamReward(const FDETeamWorldState& OldState,
-		const FDETeamWorldState& NewState) const;
 
-	ETacticalPlay SelectEpsilonGreedyAction(const FDETeamWorldState& TeamState,
+	ETacticalPlay SelectEpsilonGreedyAction(
 		const TArray<ETacticalPlay>& FeasiblePlays) const;
 
 	//========================================
@@ -216,11 +207,6 @@ protected:
 	/** Sample a round-robin tactical play for Phase 1 RL training */
 	void SampleRandomTacticalPlay(const TArray<ADECharacter*>& TeamAgents);
 
-	/**
-	 * Returns the subset of all tactical plays that are feasible for the current state.
-	 * Falls back to AllOutRush if nothing is feasible.
-	 */
-	TArray<ETacticalPlay> GetFeasiblePlays(const FDETeamWorldState& State) const;
 
 	/** Convert ETacticalPlay to a 5-element role array */
 	TArray<EDEStrategyType> DecodeTacticalPlay(ETacticalPlay Play) const;
@@ -234,20 +220,6 @@ protected:
 
 	/** Draw 3-D debug labels above agents */
 	void DrawDebugVisualization(const TArray<ADECharacter*>& TeamAgents) const;
-
-
-	//========================================
-	// Sub-systems (owned objects)
-	//========================================
-
-	UPROPERTY()
-	UDETeamMCTS* TeamMCTSPlanner = nullptr;
-
-	UPROPERTY()
-	UDETeamWorldModel* TeamWorldModel = nullptr;
-
-	UPROPERTY()
-	UDETeamDataCollector* DataCollector = nullptr;
 
 
 	//========================================
@@ -266,7 +238,7 @@ protected:
 	int32 PlanningCycleCount      = 0;
 	int32 EventDrivenReplanCount  = 0;
 
-	FDETeamWorldState PreviousTeamState;
+
 	ETacticalPlay PreviousTacticalPlay = ETacticalPlay::StandardComp;
 	bool bHasPreviousState        = false;
 

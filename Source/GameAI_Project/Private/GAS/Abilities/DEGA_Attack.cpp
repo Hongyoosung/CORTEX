@@ -20,6 +20,12 @@ UDEGA_Attack::UDEGA_Attack()
 	AbilityTags.AddTag(DEGameplayTags::Ability_Attack);
 	ActivationBlockedTags.AddTag(DEGameplayTags::State_Dead);
 	// CooldownGameplayEffectClass must be assigned via Blueprint (GE_Cooldown_Attack)
+
+	// Allow activation via SendGameplayEventToActor (passes BB target through TriggerEventData)
+	FAbilityTriggerData TriggerData;
+	TriggerData.TriggerTag    = DEGameplayTags::Ability_Attack;
+	TriggerData.TriggerSource = EGameplayAbilityTriggerSource::GameplayEvent;
+	AbilityTriggers.Add(TriggerData);
 }
 
 bool UDEGA_Attack::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -62,15 +68,27 @@ void UDEGA_Attack::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
 	if (Target)
 	{
-		// Set AI focus so ControlRotation tracks the target (drives Aim Offset in AnimBP)
-		if (APawn* OwnerPawn = Cast<APawn>(GetAvatarActorFromActorInfo()))
+		ADECharacter* OwnerChar = Cast<ADECharacter>(ActorInfo->AvatarActor.Get());
+		if (OwnerChar)
 		{
-			if (AAIController* AICtrl = Cast<AAIController>(OwnerPawn->GetController()))
+			if (AAIController* AIC = Cast<AAIController>(OwnerChar->GetController()))
 			{
-				AICtrl->SetFocus(Target);
+				AIC->SetFocus(Target);
 			}
 		}
+
 		FireAtTarget(Target, ActorInfo);
+	}
+	else
+	{
+		ADECharacter* OwnerChar = Cast<ADECharacter>(ActorInfo->AvatarActor.Get());
+		if (OwnerChar)
+		{
+			if (AAIController* AIC = Cast<AAIController>(OwnerChar->GetController()))
+			{
+				AIC->ClearFocus(EAIFocusPriority::Gameplay);
+			}
+		}
 	}
 
 	EndAbility(Handle, ActorInfo, ActivationInfo, true, false);

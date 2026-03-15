@@ -92,3 +92,33 @@ class GAMEAI_PROJECT_API UEnvQueryContext_DECoverPoints : public UEnvQueryContex
 public:
 	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
 };
+
+/**
+ * EQS Context: Provides the agent's squad-assigned base location.
+ * Reads AssignedBaseIndex from the agent's Blackboard and returns the
+ * world position of the corresponding capture point.
+ * Used for Weight [6] - AssignedBaseProximity (Phase 3 — entity-centric refactor).
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_DEAssignedBase : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};
+
+/**
+ * EQS Context: Provides the nearest visible enemy position for engagement-range scoring.
+ * Returns a single point so that EQS distance tests produce a clear preferred-range score.
+ * Used for Weight [5] - CombatRange: positive weight pushes the agent toward the ideal
+ * engagement distance from the enemy; negative weight keeps it further away.
+ */
+UCLASS()
+class GAMEAI_PROJECT_API UEnvQueryContext_DECombatRange : public UEnvQueryContext
+{
+	GENERATED_BODY()
+
+public:
+	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
+};

@@ -146,7 +146,7 @@ void ADESpectatorHUD::DrawEQSWeights(const FDEEQSWeightParameters& Weights)
 	const float MarginY   = 24.0f;
 	const float RowHeight = 20.0f;
 
-	const int32 NumRows = 6;
+	const int32 NumRows = 7;
 	const float StartY = Canvas->SizeY - MarginY - NumRows * RowHeight - 20.0f;
 
 	FCanvasTextItem Header(
@@ -164,6 +164,7 @@ void ADESpectatorHUD::DrawEQSWeights(const FDEEQSWeightParameters& Weights)
 	DrawWeightRow(TEXT("Visibil "), Weights.EnemyVisibility,         MarginX, StartY + RowHeight * 4.0f);
 	DrawWeightRow(TEXT("AllyProx"), Weights.AllyProximity,           MarginX, StartY + RowHeight * 5.0f);
 	DrawWeightRow(TEXT("Range   "), Weights.CombatRange,             MarginX, StartY + RowHeight * 6.0f);
+	DrawWeightRow(TEXT("AssBase "), Weights.AssignedBaseProximity,   MarginX, StartY + RowHeight * 7.0f);
 }
 
 void ADESpectatorHUD::DrawWeightRow(const FString& Label, float Value, float X, float Y)

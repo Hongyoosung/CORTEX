@@ -15,6 +15,7 @@ class UDESquadManager;
 class UDETeamData;
 class ADESpawnArea;
 class UDERewardData;
+class UDERewardSubsystem;
 
 /**
  * Team configuration — data-driven via UDETeamData asset.
@@ -194,6 +195,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager")
 	UDESquadManager* GetSquadCommander(int32 TeamID) const;
 
+	/**
+	 * Assign a capture-point base index to each agent on a team.
+	 * Uses a greedy, role-aware algorithm that guarantees uniqueness
+	 * (no two Defend agents share the same base).
+	 * Writes AssignedBaseIndex to the agent and to its Blackboard key.
+	 * Call after a tactical play change or a base-flip event.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DEMatchManager|Squad")
+	void AssignBasesToAgents(int32 TeamID);
+
 
 	//========================================
 	// Environment Context (injected by ADEScholaEnvironment)
@@ -328,6 +339,9 @@ public:
 	/** Convenience: build an FDESquadConfig snapshot from current properties */
 	FDESquadConfig MakeSquadConfig() const;
 
+	/** Reward calculator owned by this match manager (one per environment). */
+	UDERewardSubsystem* GetRewardCalculator() const { return RewardCalculator; }
+
 
 	//========================================
 	// Owned Objects
@@ -335,6 +349,10 @@ public:
 
 	UPROPERTY()
 	TMap<int32, UDESquadManager*> SquadCommanders;
+
+	/** Per-environment reward calculator (instantiated in BeginPlay). */
+	UPROPERTY()
+	TObjectPtr<UDERewardSubsystem> RewardCalculator;
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "DEMatchManager|Env")
 	TArray<ADECapturePoint*> EnvCapturePoints;

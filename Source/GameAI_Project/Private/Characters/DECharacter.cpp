@@ -6,9 +6,8 @@
 #include "GAS/Abilities/DEGA_Attack.h"
 #include "GAS/Abilities/DEGA_Heal.h"
 #include "Schola/Components/DEScholaAgent.h"
-#include "Schola/Actuators/DETacticalParameterActuator.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
-#include "AI/EQS/DEEQSExecutor.h"
+#include "EQS/DynamicEQSExecutor.h"
 #include "Data/DEAbilityData.h"
 
 #include "AbilitySystemComponent.h"
@@ -42,7 +41,7 @@ ADECharacter::ADECharacter()
 	// Create other components
 	ScholaAgent =	CreateDefaultSubobject<UDEScholaAgent>(TEXT("ScholaAgent"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
-	EQSExecutor =	CreateDefaultSubobject<UDEEQSExecutor>(TEXT("EQSExecutor"));
+	EQSExecutor =	CreateDefaultSubobject<UDynamicEQSExecutor>(TEXT("EQSExecutor"));
 
 	// Overhead strategy + health widget (screen space)
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadWidget"));
@@ -68,14 +67,12 @@ ADECharacter::ADECharacter()
 	AgentCamera->SetupAttachment(CameraSpringArm, USpringArmComponent::SocketName);
 	AgentCamera->bUsePawnControlRotation = false;
 
-	// Configure movement
+
 	if (UCharacterMovementComponent* MovementComp = GetCharacterMovement())
 	{
 		MovementComp->MaxWalkSpeed = 600.0f;
-		// Keep body facing the movement direction so directional (strafe) blend spaces work.
-		// Upper-body aiming toward the focus target is handled via AimYaw/AimPitch → Aim Offset in AnimBP.
-		MovementComp->bOrientRotationToMovement = true;
-		MovementComp->bUseControllerDesiredRotation = false;
+		MovementComp->bOrientRotationToMovement = false;
+		MovementComp->bUseControllerDesiredRotation = true;
 		MovementComp->bUseRVOAvoidance = true;
 		MovementComp->AvoidanceConsiderationRadius = 120.f;
 	}
@@ -102,6 +99,13 @@ void ADECharacter::BeginPlay()
 			UDEAttributeSet::GetHealthAttribute()).AddUObject(this, &ADECharacter::OnHealthChanged);
 	}
 
+	// Configure EQS executor with semantic weight parameter names so the query
+	// asset uses readable identifiers instead of generic Weight0..WeightN.
+	if (EQSExecutor)
+	{
+		EQSExecutor->WeightParamNames = FDEEQSWeightParameters::GetParamNames();
+	}
+
 	// Register perception stimuli
 	if (StimuliSource)
 	{
@@ -109,12 +113,12 @@ void ADECharacter::BeginPlay()
 		StimuliSource->RegisterForSense(TSubclassOf<UAISense_Sight>());
 	}
 
-	RewardSubsystem = GetWorld()->GetSubsystem<UDERewardSubsystem>();
+	// RewardSubsystem is obtained lazily from the MatchManager in ComputeStepReward().
 
 	// Initialize GAS abilities from data asset
 	InitializeGASAbilities();
 
-	const bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EDEAgentMode::Training;
+	const bool bIsTraining = ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training;
 	if (bIsTraining)
 	{
 		GetWorld()->GetTimerManager().SetTimer(
@@ -125,11 +129,6 @@ void ADECharacter::BeginPlay()
 			true
 		);
 	}
-
-	// Apply the per-agent default strategy configured in the Details panel.
-	// SetCommandedStrategy also syncs the ScholaAgent component.
-	SetCommandedStrategy(DefaultStrategy);
-	ApplyStrategyStatModifiers(CommandedStrategy);
 }
 
 void ADECharacter::PossessedBy(AController* NewController)
@@ -602,34 +601,18 @@ void ADECharacter::PerformTacticalAction()
 		return;
 	}
 
-	UBlackboardComponent* BB = AICtrl->GetBlackboardComponent();
-	bool bIsTraining = ScholaAgent && ScholaAgent->CurrentMode == EDEAgentMode::Training;
-
 	TacticalActionCallCount++;
 	if (TacticalActionCallCount <= 10 || TacticalActionCallCount % 60 == 0)
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DECharacter] %s PerformTacticalAction#%d: bIsTraining=%s BB=%s → Branch=%s"),
-			*GetName(), TacticalActionCallCount,
-			bIsTraining ? TEXT("true") : TEXT("false"),
-			BB ? TEXT("Valid") : TEXT("NULL"),
-			(BB && !bIsTraining) ? TEXT("INFERENCE") : TEXT("TRAINING"));
-	}
-
-	if (BB && !bIsTraining)
-	{
-		BB->SetValueAsFloat(TEXT("Weight_EnemyObj"), CurrentEQSWeights.EnemyObjectiveProximity);
-		BB->SetValueAsFloat(TEXT("Weight_AllyObj"), CurrentEQSWeights.AllyObjectiveProximity);
-		BB->SetValueAsFloat(TEXT("Weight_Cover"), CurrentEQSWeights.CoverDensity);
-		BB->SetValueAsFloat(TEXT("Weight_EnemyVis"), CurrentEQSWeights.EnemyVisibility);
-		BB->SetValueAsFloat(TEXT("Weight_AllyProx"), CurrentEQSWeights.AllyProximity);
-		BB->SetValueAsFloat(TEXT("Weight_Range"), CurrentEQSWeights.CombatRange);
-		return;
+		/*UE_LOG(LogTemp, Warning,
+			TEXT("[DECharacter] %s PerformTacticalAction#%d: EQS direct path"),
+			*GetName(), TacticalActionCallCount);*/
 	}
 
 	AICtrl->StopMovement();
 
-	TOptional<FVector> Result = EQSExecutor->ExecuteSynchronousQuery(CurrentEQSWeights);
+	EQSExecutor->SetWeights(FDynamicEQSWeightParameters(CurrentEQSWeights.ToArray()));
+	TOptional<FVector> Result = EQSExecutor->ExecuteQuerySynchronous();
 	if (!Result.IsSet())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[DECharacter] %s: EQS query returned no result - using fallback movement"), *GetName());
@@ -662,20 +645,20 @@ void ADECharacter::PerformTacticalAction()
 
 
 //========================================
-// v10.2 Command Interface
+// Command Interface
 //========================================
 
 void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 {
-	if (CommandedStrategy != NewStrategy)
+	if (!ScholaAgent)
 	{
-		CommandedStrategy = NewStrategy;
+		return;
+	}
 
-		if (ScholaAgent)
-		{
-			ScholaAgent->UpdateCommandedStrategy(NewStrategy);
-		}
-
+	if (ScholaAgent->GetCommandedStrategy() != NewStrategy)
+	{
+		ScholaAgent->UpdateCommandedStrategy(NewStrategy);
+		
 		if (AAIController* AICtrl = Cast<AAIController>(GetController()))
 		{
 			if (UBlackboardComponent* BB = AICtrl->GetBlackboardComponent())
@@ -684,16 +667,21 @@ void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 			}
 		}
 
-		ApplyStrategyStatModifiers(NewStrategy);
-
 		UE_LOG(LogTemp, Log, TEXT("[DECharacter] Agent %d received strategy command: %s"),
 			AgentID, *UEnum::GetValueAsString(NewStrategy));
 	}
 }
 
-void ADECharacter::ApplyStrategyStatModifiers(EDEStrategyType Strategy)
+EDEStrategyType ADECharacter::GetCommandedStrategy() const
 {
-	// Strategy-specific stat modifiers can be applied via GAS GameplayEffects in the future
+	if (!ScholaAgent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[DECharacter] Schola Agent has null"));
+
+		return EDEStrategyType::Assault;
+	}
+
+	return ScholaAgent->GetCommandedStrategy();
 }
 
 
@@ -703,13 +691,16 @@ void ADECharacter::ApplyStrategyStatModifiers(EDEStrategyType Strategy)
 
 float ADECharacter::ComputeStepReward(
 	EDEStrategyType Strategy,
-	const FDEObservation& Prev,
-	const FDEObservation& Current,
+	const FDEAgentSnapshot& Prev,
+	const FDEAgentSnapshot& Current,
 	const FDEEQSWeightParameters& Action)
 {
-	if (RewardSubsystem = GetWorld()->GetSubsystem<UDERewardSubsystem>())
+	if (ADEMatchManager* MM = GetMatchManager())
 	{
-		return RewardSubsystem->ComputeStepReward(this, RewardState, Strategy, Prev, Current, Action);
+		if ((RewardSubsystem = MM->GetRewardCalculator()))
+		{
+			return RewardSubsystem->ComputeStepReward(this, RewardState, Strategy, Prev, Current, Action);
+		}
 	}
 
 	return 0.0f;
@@ -726,7 +717,7 @@ void ADECharacter::ProcessTrainingAbilities()
 	AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
 
 	// Activate heal ability only for Support strategy
-	if (CommandedStrategy == EDEStrategyType::Support)
+	if (ScholaAgent->GetCommandedStrategy() == EDEStrategyType::Support)
 	{
 		FGameplayTagContainer HealTag;
 		HealTag.AddTag(DEGameplayTags::Ability_Heal);

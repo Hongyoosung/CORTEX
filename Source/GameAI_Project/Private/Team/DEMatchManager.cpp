@@ -3,8 +3,11 @@
 #include "Team/DEMatchManager.h"
 #include "Team/DESquadManager.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
+#include "Data/DERewardData.h"
 #include "Characters/DECharacter.h"
 #include "AbilitySystemComponent.h"
+#include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "GAS/DEGameplayTags.h"
 #include "Schola/Components/DEScholaAgent.h"
 #include "Actors/DESpawnArea.h"
@@ -12,6 +15,7 @@
 #include "Data/DETeamData.h"
 #include "Data/DERewardData.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -32,10 +36,11 @@ void ADEMatchManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Register reward data with the subsystem so all agents share one instance.
-	if (UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>())
+	// Create per-environment reward calculator and configure it with this environment's reward data.
+	RewardCalculator = NewObject<UDERewardSubsystem>(this);
+	if (RewardCalculator)
 	{
-		RS->SetRewardData(RewardData);
+		RewardCalculator->RewardData = RewardData;
 	}
 
 	// Initialise runtime state and create one UDESquadManager per configured team.
@@ -63,6 +68,38 @@ void ADEMatchManager::BeginPlay()
 		CapturePointInitialize();
 		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Standalone mode — capture points auto-initialized (%d points)"),
 			EnvCapturePoints.Num());
+
+		// Register pre-placed ADECharacter actors that were not spawned by SpawnTeams().
+		// We defer one tick so all characters have completed their own BeginPlay first.
+		FTimerHandle DummyHandle;
+		GetWorld()->GetTimerManager().SetTimerForNextTick([this]()
+		{
+			TArray<AActor*> FoundActors;
+			UGameplayStatics::GetAllActorsOfClass(GetWorld(), ADECharacter::StaticClass(), FoundActors);
+			for (AActor* A : FoundActors)
+			{
+				ADECharacter* Agent = Cast<ADECharacter>(A);
+				if (!Agent || AllAgents.Contains(Agent)) { continue; }
+
+				const int32 TID = Agent->GetTeamID_Implementation();
+				AllAgents.Add(Agent);
+				FDETeamState& State = TeamStates.FindOrAdd(TID);
+				State.TeamID = TID;
+				State.ActiveAgents.AddUnique(Agent);
+
+				UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Standalone: registered pre-placed agent %s (Team %d)"),
+					*Agent->GetName(), TID);
+			}
+
+			// Assign base targets to all registered agents.
+			for (const FDETeamConfiguration& Cfg : TeamConfigs)
+			{
+				AssignBasesToAgents(Cfg.TeamID);
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Standalone: base assignment complete for %d pre-placed agents"),
+				AllAgents.Num());
+		});
 	}
 }
 
@@ -114,6 +151,12 @@ void ADEMatchManager::SpawnTeams()
 
 	SpawnTeam(0, AgentsPerTeam);
 	SpawnTeam(1, AgentsPerTeam);
+
+	// Initial base assignments for all teams
+	for (const FDETeamConfiguration& Cfg : TeamConfigs)
+	{
+		AssignBasesToAgents(Cfg.TeamID);
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Spawned %d total agents (%d per team)"),
 		AllAgents.Num(), AgentsPerTeam);
@@ -335,16 +378,13 @@ void ADEMatchManager::QueueRespawn(ADECharacter* Agent, int32 TeamID)
 			TeamID, RespawnDelay, State.RespawnQueue.Num());
 
 		// Apply team wipe penalty to the last agent to die and all already-queued agents
-		if (UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>())
+		if (RewardCalculator && RewardCalculator->RewardData)
 		{
-			if (RS->GetRewardData())
+			RewardCalculator->CalculateTeamWipePenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+			for (ADECharacter* Queued : State.RespawnQueue)
 			{
-				RS->CalculateTeamWipePenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
-				for (ADECharacter* Queued : State.RespawnQueue)
-				{
-					if (Queued)
-						RS->CalculateTeamWipePenalty(Queued->RewardState, Queued->GetCommandedStrategy(), Queued->AgentID);
-				}
+				if (Queued)
+					RewardCalculator->CalculateTeamWipePenalty(Queued->RewardState, Queued->GetCommandedStrategy(), Queued->AgentID);
 			}
 		}
 	}
@@ -543,13 +583,12 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 		AddTeamScore(NewTeam, CaptureScorePoints);
 	}
 
-	UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>();
-	if (!RS || !RS->GetRewardData()) return;
+	if (!RewardCalculator || !RewardCalculator->RewardData) return;
 
 	for (ADECharacter* Agent : GetTeamAgents(NewTeam))
 	{
 		if (Agent && Agent->IsAlive())
-			RS->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+			RewardCalculator->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 	}
 
 	if (PreviousTeam != -1)
@@ -557,15 +596,22 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 		for (ADECharacter* Agent : GetTeamAgents(PreviousTeam))
 		{
 			if (Agent && Agent->IsAlive())
-				RS->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+				RewardCalculator->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
 		}
+	}
+
+	// Re-assign bases on capture flip (both teams may need to adjust)
+	AssignBasesToAgents(NewTeam);
+	if (PreviousTeam != -1 && PreviousTeam != NewTeam)
+	{
+		AssignBasesToAgents(PreviousTeam);
 	}
 }
 
 void ADEMatchManager::OnAgentDied(ADECharacter* DeadAgent, ADECharacter* Killer)
 {
-	UDERewardSubsystem* RS = GetWorld()->GetSubsystem<UDERewardSubsystem>();
-	if (!RS || !RS->GetRewardData()) return;
+	if (!RewardCalculator || !RewardCalculator->RewardData) return;
+	UDERewardSubsystem* RS = RewardCalculator;
 
 	if (DeadAgent)
 		RS->CalculateDeathPenalty(DeadAgent->RewardState, DeadAgent->GetCommandedStrategy(), DeadAgent->AgentID);
@@ -600,6 +646,129 @@ UDESquadManager* ADEMatchManager::GetSquadCommander(int32 TeamID) const
 		return const_cast<UDESquadManager*>(*Found);
 	}
 	return nullptr;
+}
+
+
+void ADEMatchManager::AssignBasesToAgents(int32 TeamID)
+{
+	if (EnvCapturePoints.Num() == 0) return;
+
+	TArray<ADECharacter*> Agents = GetTeamAgents(TeamID);
+	if (Agents.Num() == 0) return;
+
+	// Track which base indices are already claimed by a Defend agent (uniqueness constraint)
+	TSet<int32> DefendClaimed;
+
+	// Helper: find nearest uncontested (by this team) or un-owned base
+	auto FindBestBase = [&](ADECharacter* Agent, bool bDefendUniqueOnly) -> int32
+	{
+		float BestDist = FLT_MAX;
+		int32 BestIdx  = -1;
+		const FVector AgentPos = Agent->GetActorLocation();
+
+		for (int32 i = 0; i < EnvCapturePoints.Num(); ++i)
+		{
+			ADECapturePoint* CP = EnvCapturePoints[i];
+			if (!CP) continue;
+
+			// Defend agents must claim unique bases
+			if (bDefendUniqueOnly && DefendClaimed.Contains(i)) continue;
+
+			const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
+			if (Dist < BestDist)
+			{
+				BestDist = Dist;
+				BestIdx  = i;
+			}
+		}
+		return BestIdx;
+	};
+
+	// Pass 1 — assign Defend agents first (uniqueness enforced)
+	for (ADECharacter* Agent : Agents)
+	{
+		if (!Agent || Agent->GetCommandedStrategy() != EDEStrategyType::Defend) continue;
+
+		// Prefer nearest friendly base without another Defend agent
+		float BestDist = FLT_MAX;
+		int32 BestIdx  = -1;
+		const FVector AgentPos = Agent->GetActorLocation();
+
+		for (int32 i = 0; i < EnvCapturePoints.Num(); ++i)
+		{
+			ADECapturePoint* CP = EnvCapturePoints[i];
+			if (!CP || DefendClaimed.Contains(i)) continue;
+
+			const int32 OwnerID = CP->GetTeamID_Implementation();
+			// Prefer friendly bases; fall back to nearest if all taken
+			const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
+			const float Bias = (OwnerID == TeamID) ? 0.0f : 5000.0f; // prefer friendly
+			if ((Dist + Bias) < BestDist)
+			{
+				BestDist = Dist + Bias;
+				BestIdx  = i;
+			}
+		}
+
+		if (BestIdx >= 0)
+		{
+			DefendClaimed.Add(BestIdx);
+			Agent->AssignedBaseIndex = BestIdx;
+		}
+	}
+
+	// Pass 2 — assign remaining roles (Assault → nearest non-friendly; Support → nearest injured ally's base)
+	for (ADECharacter* Agent : Agents)
+	{
+		if (!Agent) continue;
+		const EDEStrategyType InRole = Agent->GetCommandedStrategy();
+		if (InRole == EDEStrategyType::Defend) continue; // already done
+
+		int32 BestIdx = -1;
+		const FVector AgentPos = Agent->GetActorLocation();
+		float BestDist = FLT_MAX;
+
+		for (int32 i = 0; i < EnvCapturePoints.Num(); ++i)
+		{
+			ADECapturePoint* CP = EnvCapturePoints[i];
+			if (!CP) continue;
+
+			const int32 InOwner = CP->GetTeamID_Implementation();
+			const float Dist  = FVector::Dist(AgentPos, CP->GetActorLocation());
+
+			if (InRole == EDEStrategyType::Assault)
+			{
+				// Prefer neutral/enemy bases
+				const float Bias = (InOwner != TeamID) ? 0.0f : 3000.0f;
+				if ((Dist + Bias) < BestDist) { BestDist = Dist + Bias; BestIdx = i; }
+			}
+			else // Support
+			{
+				// Prefer nearest base overall (follow the fight)
+				if (Dist < BestDist) { BestDist = Dist; BestIdx = i; }
+			}
+		}
+
+		Agent->AssignedBaseIndex = BestIdx >= 0 ? BestIdx : 0;
+	}
+
+	// Write to Blackboard for all agents (EQS context reads BB key "AssignedBaseIndex")
+	for (ADECharacter* Agent : Agents)
+	{
+		if (!Agent) continue;
+
+		AAIController* AIC = Cast<AAIController>(Agent->GetController());
+		if (AIC)
+		{
+			if (UBlackboardComponent* BB = AIC->GetBlackboardComponent())
+			{
+				BB->SetValueAsInt(TEXT("AssignedBaseIndex"), Agent->AssignedBaseIndex);
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] AssignBasesToAgents team=%d: %d agents assigned across %d bases"),
+		TeamID, Agents.Num(), EnvCapturePoints.Num());
 }
 
 

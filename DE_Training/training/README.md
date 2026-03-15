@@ -15,15 +15,15 @@ This directory contains the training infrastructure for MOC v10.2 Command-Driven
 ### Core Training Scripts
 
 - **`policy_training.py`** - Main training implementation
-  - `MultiHeadRLPolicy_v10_2` - Core policy network (3 strategy heads)
-  - `MultiHeadRLPolicy_v10_2_RLlib` - RLlib wrapper for training
+  - `MultiHeadRLPolicy_` - Core policy network (3 strategy heads)
+  - `MultiHeadRLPolicy__RLlib` - RLlib wrapper for training
   - `train_with_rllib()` - Complete training loop
 
 - **`de_env.py`** - Schola environment wrapper
-  - `MOCv10_2MultiAgentEnv` - Multi-agent synchronous environment
+  - `MOCMultiAgentEnv` - Multi-agent synchronous environment
   - Handles communication with UE5 via Schola gRPC
 
-- **`train_v10_2.py`** - Quick start training script
+- **`train_.py`** - Quick start training script
   - Simplified CLI for starting training
   - Easy configuration via command-line arguments
 
@@ -73,7 +73,7 @@ Then open: http://localhost:6006
 
 #### 5. Access Results
 
-Training results are saved to `MOC_Training/training_results_v10_2/` on your host machine.
+Training results are saved to `MOC_Training/training_results/` on your host machine.
 Model checkpoints are saved to `MOC_Training/models/`.
 
 ---
@@ -114,7 +114,7 @@ python policy_training.py --mode rllib --iterations 200 --host localhost --port 
 
 ## Training Configuration
 
-Default hyperparameters (in `MOCv10_2TrainingConfig`):
+Default hyperparameters (in `MOCTrainingConfig`):
 
 ```python
 # Environment
@@ -173,7 +173,7 @@ GRAD_CLIP = 0.5
 
 ## Output
 
-Training produces the following outputs in `training_results_v10_2/v10_2_YYYYMMDD_HHMMSS/`:
+Training produces the following outputs in `training_results/_YYYYMMDD_HHMMSS/`:
 
 - **`de_policy.onnx`** - Trained policy for UE5 inference
 - **`checkpoint_NNNNNN/`** - Periodic training checkpoints
@@ -205,7 +205,7 @@ Columns:
 
 Launch TensorBoard to view detailed metrics:
 ```bash
-tensorboard --logdir training_results_v10_2
+tensorboard --logdir training_results
 ```
 
 Key metrics:
@@ -273,7 +273,7 @@ TacticalParameterActuator->ApplyEQSWeights(EQSWeights);
 
 **Solution:**
 1. Check action space configuration in UE5
-2. Verify `TacticalParameterActuator_v10_2` expects 7 inputs
+2. Verify `TacticalParameterActuator_` expects 7 inputs
 3. Ensure action clamping is correct ([-1, 1] range)
 
 ### Training Instability
@@ -300,10 +300,10 @@ TacticalParameterActuator->ApplyEQSWeights(EQSWeights);
 
 ### Custom Hyperparameters
 
-Modify `MOCv10_2TrainingConfig` in `policy_training.py`:
+Modify `MOCTrainingConfig` in `policy_training.py`:
 
 ```python
-class MOCv10_2TrainingConfig:
+class MOCTrainingConfig:
     LEARNING_RATE = 1e-4  # Lower for stability
     ENTROPY_COEFF = 0.05  # Higher for exploration
     NUM_SGD_ITER = 15  # More updates per batch

@@ -65,29 +65,29 @@ else
 fi
 
 # Check training scripts
-if [ -f "training/policy_training.py" ]; then
-    check_pass "policy_training.py"
+if [ -f "training/policy.py" ]; then
+    check_pass "policy.py"
 else
-    check_fail "policy_training.py (missing)"
+    check_fail "policy.py (missing)"
 fi
 
-if [ -f "training/de_env.py" ]; then
-    check_pass "de_env.py"
+if [ -f "training/env_wrapper.py" ]; then
+    check_pass "env_wrapper.py"
 else
-    check_fail "de_env.py (missing)"
+    check_fail "env_wrapper.py (missing)"
 fi
 
 # Check documentation
-if [ -f "DOCKER_QUICK_START_v10_2.md" ]; then
-    check_pass "DOCKER_QUICK_START_v10_2.md"
+if [ -f "DOCKER_QUICK_START_.md" ]; then
+    check_pass "DOCKER_QUICK_START_.md"
 else
-    check_warn "DOCKER_QUICK_START_v10_2.md (missing)"
+    check_warn "DOCKER_QUICK_START_.md (missing)"
 fi
 
-if [ -f "training/README_v10_2.md" ]; then
-    check_pass "training/README_v10_2.md"
+if [ -f "training/README_.md" ]; then
+    check_pass "training/README_.md"
 else
-    check_warn "training/README_v10_2.md (missing)"
+    check_warn "training/README_.md (missing)"
 fi
 
 echo ""
@@ -129,10 +129,10 @@ else
 fi
 
 # Check output directories (will be created if missing)
-if [ -d "training_results_v10_2" ]; then
-    check_pass "training_results_v10_2 directory exists"
+if [ -d "training_results" ]; then
+    check_pass "training_results directory exists"
 else
-    check_warn "training_results_v10_2 directory missing (will be auto-created)"
+    check_warn "training_results directory missing (will be auto-created)"
 fi
 
 if [ -d "models" ]; then

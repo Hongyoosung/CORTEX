@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Environment/StaticEnvironment.h"
 #include "Core/DEGameMode.h"
+#include "Schola/DynamicEQSAgentComponent.h"
 #include "DEScholaEnvironment.generated.h"
 
 
@@ -85,7 +86,7 @@ public:
 
 	/** Get the environment ID assigned by Schola */
 	UFUNCTION(BlueprintCallable, Category = "Schola")
-	FORCEINLINE int32				GetEnvId() const		{ return ScholaEnvID; }
+	FORCEINLINE int32				GetEnvId() const		{ return EnvironmentId; }
 
 	/** Get owned DEMatchManager */
 	UFUNCTION(BlueprintPure, Category = "Schola")
@@ -124,9 +125,13 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Schola|Match")
 	float MaxMatchDuration = 600.0f;
 
-	/** Score required to win */
+	/** Score required to win. Recommended: 120 (4 captures = 120 pts, or ~24 kills). */
 	UPROPERTY(EditAnywhere, Category = "Schola|Match")
-	int32 WinningScore = 300;
+	int32 WinningScore = 120;
+
+	/** If true, a team that owns ALL capture points immediately wins regardless of score. */
+	UPROPERTY(EditAnywhere, Category = "Schola|Match")
+	bool bDominationWinEnabled = true;
 
 	/** Points awarded for killing an enemy */
 	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
@@ -177,7 +182,15 @@ public:
 
 	/** All registered Schola agent components */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
-	TArray<UDEScholaAgent*> RegisteredAgents;
+	TArray<TObjectPtr<UDynamicEQSAgentComponent>> RegisteredAgents;
+
+	/** Register an agent at runtime (mirrors ADynamicEQSEnvironmentActor interface) */
+	UFUNCTION(BlueprintCallable, Category = "Schola")
+	void RegisterAgent(UDynamicEQSAgentComponent* Agent);
+
+	/** Remove an agent from the environment */
+	UFUNCTION(BlueprintCallable, Category = "Schola")
+	void UnregisterAgent(UDynamicEQSAgentComponent* Agent);
 
 	/** Is gRPC server running? */
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|State")
@@ -193,7 +206,7 @@ public:
 	TArray<ADETrainer*> SpawnedTrainers;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
-	int32 ScholaEnvID;
+	int32 EnvironmentId = 0;
 
 
 

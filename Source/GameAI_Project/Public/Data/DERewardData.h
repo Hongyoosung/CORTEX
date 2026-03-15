@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DataAsset.h"
+#include "Reward/DynamicEQSRewardData.h"
 #include "DERewardData.generated.h"
 
 
@@ -17,9 +17,9 @@ struct FDEAssaultRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float SurvivalRewardScale = 1.5f;
 
-	/** Assault: +10 per kill (base KillReward=10 × 1.0) */
+	/** Assault: +3 per kill (base KillReward=10 × 0.3) — reduced to prevent kill-farming over capping */
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float KillRewardScale = 1.0f;
+	float KillRewardScale = 0.3f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthPenalty = 0.0f;
@@ -49,11 +49,11 @@ struct FDEAssaultRewardSettings
 	float ObjectiveProgressReward = 0.15f;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZonePresenceBonus = 3.0f;
+	float ZonePresenceBonus = 6.0f;
 
 	/** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ActiveCappingBonus = 3.5f;
+	float ActiveCappingBonus = 8.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float PostCaptureMomentumBonus = 3.0f;
@@ -108,15 +108,20 @@ struct FDEDefendRewardSettings
 
 	/** Flat bonus awarded each step the agent is physically inside a friendly capture zone */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZonePresenceBonus = 3.0f;
+	float ZonePresenceBonus = 5.0f;
 
 	/** Additional bonus per step when an enemy is actively contesting a friendly zone. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ThreatResponseBonus = 3.5f;
+	float ThreatResponseBonus = 6.0f;
 
 	/** Per-cm shaping reward for approaching the nearest friendly capture zone (when outside it). */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZoneApproachReward = 0.05f;
+	float ZoneApproachReward = 0.15f;
+
+	/** Penalty scale applied per unit normalized distance when outside any friendly zone.
+	 *  Replaces the hardcoded 0.3f constant — increase to discourage corner camping. */
+	UPROPERTY(EditAnywhere, Category = "Capture")
+	float OutOfZonePenaltyScale = 2.0f;
 
 
 	//========== Zone Defense Skills =============
@@ -225,26 +230,20 @@ struct FDESupportRewardSettings
  * Assigned once on ADEMatchManager; shared by all agents via UDERewardSubsystem.
  */
 UCLASS(BlueprintType)
-class GAMEAI_PROJECT_API UDERewardData : public UPrimaryDataAsset
+class GAMEAI_PROJECT_API UDERewardData : public UDynamicEQSRewardData
 {
 	GENERATED_BODY()
 
 public:
 	// ==================== Common Base Rewards ====================
-	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float TimePenalty = 0.001f;
-
-	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float MatchWinReward = 50.0f;
+	// Note: StepPenalty (per-step time penalty, negative), TerminalWinReward,
+	// TerminalLossReward, SurvivalBonus, RewardScale are inherited from UDynamicEQSRewardData.
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float KillReward = 10.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float DeathPenaltyReward = 100.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float MatchLossReward = -50.0f;
 
 	/** Fraction of team average reward mixed into individual reward. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
@@ -253,9 +252,6 @@ public:
 	/** Fraction of KillReward awarded for an assist (scaled by normalized damage contribution) */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float AssistRewardScale = 0.5f;
-
-	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float SurvivalReward = 0.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float TeamWipePenalty = 50.0f;
@@ -302,9 +298,7 @@ public:
 	float SupportHealthThreshold = 0.8f;
 
 	// ==================== Reward Normalization & Clamping ====================
-
-	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float GlobalRewardScale = 0.1f;
+	// Note: RewardScale (global reward scale) is inherited from UDynamicEQSRewardData.
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
 	float SparseRewardScale = 0.2f;
@@ -393,4 +387,31 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
 	FDESupportRewardSettings SupportReward;
+
+	// ==================== Cooperative Base Occupation (Phase 5) ====================
+
+	/** Per-step bonus when this agent is the ONLY ally within BaseOccupationRadius
+	 *  of an uncontrolled (neutral or enemy) capture point. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float BaseOccupationReward = 2.0f;
+
+	/** Per-step penalty when 2+ allies stack on the same base. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float CoOccupationPenalty = 0.5f;
+
+	/** Sparse reward for the agent that flipped a base's ownership. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float BaseCaptureCreditReward = 5.0f;
+
+	/** Per-step shared penalty for each friendly base with no ally guarding it. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float UndefendedBasePenalty = 1.0f;
+
+	/** Sparse reward (once per episode) for first reaching the assigned base. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float AssignedBaseReachReward = 1.0f;
+
+	/** Radius (cm) used to determine proximity for base cooperation rewards. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float BaseOccupationRadius = 2000.0f;
 };

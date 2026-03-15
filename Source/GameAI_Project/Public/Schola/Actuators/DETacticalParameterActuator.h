@@ -1,10 +1,10 @@
 // DETacticalParameterActuator.h - v10.2 Schola actuator for EQS weight outputs
-// Box actuator outputting 6-dimensional EQS weights for spatial reasoning
+// Box actuator outputting 7-dimensional EQS weights for spatial reasoning
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Actuators/AbstractActuators.h"
+#include "Schola/Base/DynamicEQSActuatorBase.h"
 #include "Types/DEStrategyTypes.h"
 #include "Types/DEEQSTypes.h"
 #include "DETacticalParameterActuator.generated.h"
@@ -17,13 +17,14 @@ class AAbstractTrainer;
 /** //============================================================
  * Schola actuator - Pure action-to-weight translator.
  *
- * Action Space: Box([-1, 1]^6)
+ * Action Space: Box([-1, 1]^7)
  * - [0]: EnemyObjectiveProximity  (-1=avoid, +1=approach)
  * - [1]: AllyObjectiveProximity   (-1=avoid, +1=defend)
  * - [2]: CoverDensity             (-1=ignore, +1=prioritize)
  * - [3]: EnemyVisibility          (-1=hide, +1=expose)
  * - [4]: AllyProximity            (-1=solo, +1=group)
  * - [5]: CombatRange              (normalized engagement distance)
+ * - [6]: AssignedBaseProximity    (pull toward assigned base)
  *
  * Responsibility:
  * - Receives Box action from Schola framework
@@ -31,8 +32,8 @@ class AAbstractTrainer;
  * - Writes weights to DECharacter via UpdateTacticalWeights()
  * - Triggers movement via PerformTacticalAction() (unified for training + inference)
  */ //============================================================
-UCLASS(BlueprintType, meta = (DisplayName = "v10.2 Tactical Parameter Actuator"))
-class GAMEAI_PROJECT_API UDETacticalParameterActuator : public UBoxActuator
+UCLASS(BlueprintType, meta = (DisplayName = "DE Tactical Parameter Actuator"))
+class GAMEAI_PROJECT_API UDETacticalParameterActuator : public UDynamicEQSActuatorBase
 {
 	GENERATED_BODY()
 
@@ -40,7 +41,7 @@ public:
 	UDETacticalParameterActuator();
 
 	//============================================================
-	// UBoxActuator interface
+	// UDynamicEQSActuatorBase interface
 	//============================================================
 	virtual FBoxSpace GetActionSpace() override;
 	virtual void TakeAction(const FBoxPoint& Action) override;
@@ -128,7 +129,7 @@ private:
 
 	/**
 	 * Convert Box action to EQS weight parameters.
-	 * Maps 6-dim Box([-1,1]) to FDEEQSWeightParameters struct.
+	 * Maps 7-dim Box([-1,1]) to FDEEQSWeightParameters struct.
 	 */
 	FDEEQSWeightParameters ActionToEQSWeights(const FBoxPoint& Action) const;
 

@@ -1,14 +1,14 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-SET "NUM_SCHOLA_ENVS=1"
+SET "NUM_SCHOLA_ENVS=4"
 SET "NUM_WORKERS=0"
 SET "NUM_ITERATIONS=150"
 SET "DETACH=false"
 SET "NO_BUILD=true"
 SET "RESUME_CHECKPOINT="
 SET "UE5_EXE=C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.exe"
-SET "UPROJECT=C:\Users\Foryoucom\Documents\GitHub\DE\GameAI_Project.uproject"
+SET "UPROJECT=C:\Users\PC\Documents\GitHub\CORTEX\GameAI_Project.uproject"
 SET "SCHOLA_BASE_PORT=50051"
 SET "LAUNCH_UE5=true"
 
@@ -60,23 +60,23 @@ echo ----------------------------------------
 echo  Available training runs:
 echo ----------------------------------------
 
-REM List run directories under training_results_v10_2\
-set "RESULTS_DIR=%~dp0training_results_v10_2"
+REM List run directories under training_results\
+set "RESULTS_DIR=%~dp0training_results"
 if not exist "%RESULTS_DIR%" (
-    echo No training runs found. training_results_v10_2\ does not exist.
+    echo No training runs found. training_results\ does not exist.
     echo Falling back to new training.
     goto :start_training
 )
 
 set "RUN_COUNT=0"
-for /d %%D in ("%RESULTS_DIR%\v10_2_*") do (
+for /d %%D in ("%RESULTS_DIR%\*") do (
     set /a "RUN_COUNT+=1"
     set "RUN_!RUN_COUNT!=%%~nD"
     echo    !RUN_COUNT!^) %%~nD
 )
 
 if "%RUN_COUNT%"=="0" (
-    echo No training runs found in training_results_v10_2\.
+    echo No training runs found in training_results\.
     echo Falling back to new training.
     goto :start_training
 )
@@ -148,8 +148,8 @@ if "%SELECTED_CKP%"=="" (
     goto :start_training
 )
 
-REM Build the container-side path (volume is mounted at /app/training_results_v10_2)
-set "RESUME_CHECKPOINT=/app/training_results_v10_2/%SELECTED_RUN%/%SELECTED_CKP%"
+REM Build the container-side path (volume is mounted at /app/training_results)
+set "RESUME_CHECKPOINT=/app/training_results/%SELECTED_RUN%/%SELECTED_CKP%"
 echo.
 echo Resuming from: %RESUME_CHECKPOINT%
 goto :start_training
@@ -184,7 +184,7 @@ if "%LAUNCH_UE5%"=="true" (
 
 if "%NO_BUILD%"=="false" (
     echo [1/2] Building training image...
-    docker compose --profile v10.2 build training-v10.2
+    docker compose --profile policy build training
     if ERRORLEVEL 1 (
         echo ERROR: Image build failed.
         pause
@@ -195,16 +195,16 @@ if "%NO_BUILD%"=="false" (
 
 if "%DETACH%"=="true" (
     echo [2/2] Starting container in background...
-    docker compose --profile v10.2 up -d training-v10.2
+    docker compose --profile policy up -d training
     if ERRORLEVEL 1 (
         echo ERROR: Failed to start container.
         pause
         exit /b 1
     )
-    docker compose logs -f training-v10.2
+    docker compose logs -f training
 ) else (
     echo [2/2] Starting container...
-    docker compose --profile v10.2 up training-v10.2
+    docker compose --profile policy up training
     if ERRORLEVEL 1 (
         echo ERROR: Training exited with error.
         pause
