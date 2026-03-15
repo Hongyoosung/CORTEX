@@ -1,6 +1,7 @@
 // File: Private/Logging/DynamicEQSTransitionLogger.cpp
 
 #include "Logging/DynamicEQSTransitionLogger.h"
+#include "DynamicEQS.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -31,7 +32,7 @@ void UDynamicEQSTransitionLogger::Initialize()
     const FString Dir = ResolveOutputDirectory();
     IFileManager::Get().MakeDirectory(*Dir, /*Tree=*/true);
     bInitialized = true;
-    UE_LOG(LogTemp, Log, TEXT("[DynamicEQSTransitionLogger] Initialized. Output: %s"), *Dir);
+    UE_LOG(LogDynamicEQS, Log, TEXT("[DynamicEQSTransitionLogger] Initialized. Output: %s"), *Dir);
 }
 
 void UDynamicEQSTransitionLogger::RecordTransition(
@@ -40,7 +41,7 @@ void UDynamicEQSTransitionLogger::RecordTransition(
 {
     if (!bInitialized)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DynamicEQSTransitionLogger] RecordTransition called before Initialize()."));
+        UE_LOG(LogDynamicEQS, Warning, TEXT("[DynamicEQSTransitionLogger] RecordTransition called before Initialize()."));
         return;
     }
 
@@ -83,7 +84,7 @@ void UDynamicEQSTransitionLogger::FlushToDisk()
         FFileHelper::SaveArrayToFile(Bytes, *FilePath);
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[DynamicEQSTransitionLogger] Flushed %d transitions → %s"),
+    UE_LOG(LogDynamicEQS, Log, TEXT("[DynamicEQSTransitionLogger] Flushed %d transitions → %s"),
            FlushedCount, *FilePath);
 
     TransitionBuffer.Empty();

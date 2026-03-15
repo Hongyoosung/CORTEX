@@ -99,6 +99,13 @@ void ADECharacter::BeginPlay()
 			UDEAttributeSet::GetHealthAttribute()).AddUObject(this, &ADECharacter::OnHealthChanged);
 	}
 
+	// Configure EQS executor with semantic weight parameter names so the query
+	// asset uses readable identifiers instead of generic Weight0..WeightN.
+	if (EQSExecutor)
+	{
+		EQSExecutor->WeightParamNames = FDEEQSWeightParameters::GetParamNames();
+	}
+
 	// Register perception stimuli
 	if (StimuliSource)
 	{

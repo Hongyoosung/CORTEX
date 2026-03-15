@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Schola/DynamicEQSEnvironmentActor.h"
+#include "DynamicEQS.h"
 
 ADynamicEQSEnvironmentActor::ADynamicEQSEnvironmentActor()
 {
@@ -11,7 +12,7 @@ void ADynamicEQSEnvironmentActor::BeginPlay()
 {
 	Super::BeginPlay();
 
-	UE_LOG(LogTemp, Log,
+	UE_LOG(LogDynamicEQS, Log,
 		TEXT("DynamicEQSEnvironmentActor: Environment %d started with %d registered agent(s)."),
 		EnvironmentId, RegisteredAgents.Num());
 }

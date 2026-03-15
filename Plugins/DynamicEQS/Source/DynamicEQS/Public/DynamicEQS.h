@@ -4,6 +4,9 @@
 
 #include "Modules/ModuleManager.h"
 
+/** Dedicated log category for all DynamicEQS plugin code. */
+DYNAMICEQS_API DECLARE_LOG_CATEGORY_EXTERN(LogDynamicEQS, Log, All);
+
 // Main module header - forward-declare key plugin types for convenience
 class UDynamicEQSExecutor;
 class UDynamicEQSAgentComponent;

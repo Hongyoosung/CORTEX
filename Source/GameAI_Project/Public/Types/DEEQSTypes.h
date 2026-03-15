@@ -45,6 +45,25 @@ struct FDEEQSWeightParameters
 
 	FDEEQSWeightParameters() = default;
 
+	/** Number of EQS weight dimensions — single source of truth. */
+	static constexpr int32 NumWeights = 7;
+
+	/** Canonical EQS float-parameter names, aligned with ToArray() order.
+	 *  Used to configure UDynamicEQSExecutor::WeightParamNames so the EQS
+	 *  asset uses readable names instead of generic Weight0..WeightN. */
+	static TArray<FName> GetParamNames()
+	{
+		return {
+			TEXT("EnemyObjectiveProximity"),
+			TEXT("AllyObjectiveProximity"),
+			TEXT("CoverDensity"),
+			TEXT("EnemyVisibility"),
+			TEXT("AllyProximity"),
+			TEXT("CombatRange"),
+			TEXT("AssignedBaseProximity"),
+		};
+	}
+
 	/** Convert to flat array for logging/debugging */
 	TArray<float> ToArray() const
 	{
@@ -62,7 +81,12 @@ struct FDEEQSWeightParameters
 	/** Create from flat array (from ONNX output) */
 	static FDEEQSWeightParameters FromArray(const TArray<float>& Weights)
 	{
-		check(Weights.Num() == 7);
+		if (!ensureMsgf(Weights.Num() == NumWeights,
+			TEXT("FDEEQSWeightParameters::FromArray — expected %d weights, got %d"),
+			NumWeights, Weights.Num()))
+		{
+			return FDEEQSWeightParameters{};
+		}
 
 		FDEEQSWeightParameters Params;
 		Params.EnemyObjectiveProximity = Weights[0];

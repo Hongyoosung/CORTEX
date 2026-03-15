@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EQS/DynamicEQSExecutor.h"
+#include "DynamicEQS.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
@@ -13,7 +14,7 @@ UDynamicEQSExecutor::UDynamicEQSExecutor()
 void UDynamicEQSExecutor::BeginPlay()
 {
 	Super::BeginPlay();
-	UE_LOG(LogTemp, Log, TEXT("DynamicEQSExecutor: Ready on '%s'."), *GetOwner()->GetName());
+	UE_LOG(LogDynamicEQS, Log, TEXT("DynamicEQSExecutor: Ready on '%s'."), *GetOwner()->GetName());
 }
 
 void UDynamicEQSExecutor::ApplyWeightsToRequest(FEnvQueryRequest& Request)
@@ -43,7 +44,7 @@ void UDynamicEQSExecutor::ExecuteQuery(FOnDynamicEQSQueryComplete OnComplete)
 {
 	if (!QueryTemplate)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("DynamicEQSExecutor: No QueryTemplate set on '%s'."), *GetOwner()->GetName());
+		UE_LOG(LogDynamicEQS, Warning, TEXT("DynamicEQSExecutor: No QueryTemplate set on '%s'."), *GetOwner()->GetName());
 		OnComplete.ExecuteIfBound(TOptional<FVector>());
 		return;
 	}
@@ -51,7 +52,7 @@ void UDynamicEQSExecutor::ExecuteQuery(FOnDynamicEQSQueryComplete OnComplete)
 	UEnvQueryManager* QueryManager = UEnvQueryManager::GetCurrent(GetWorld());
 	if (!QueryManager)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("DynamicEQSExecutor: Could not get UEnvQueryManager."));
+		UE_LOG(LogDynamicEQS, Warning, TEXT("DynamicEQSExecutor: Could not get UEnvQueryManager."));
 		OnComplete.ExecuteIfBound(TOptional<FVector>());
 		return;
 	}
@@ -70,7 +71,7 @@ TOptional<FVector> UDynamicEQSExecutor::ExecuteQuerySynchronous()
 {
 	if (!QueryTemplate)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("DynamicEQSExecutor: No QueryTemplate set (sync query)."));
+		UE_LOG(LogDynamicEQS, Warning, TEXT("DynamicEQSExecutor: No QueryTemplate set (sync query)."));
 		return TOptional<FVector>();
 	}
 
@@ -108,7 +109,7 @@ void UDynamicEQSExecutor::OnQueryFinished(TSharedPtr<FEnvQueryResult> Result)
 	}
 	else
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("DynamicEQSExecutor: Query returned no results."));
+		UE_LOG(LogDynamicEQS, Verbose, TEXT("DynamicEQSExecutor: Query returned no results."));
 	}
 
 	PendingCallback.ExecuteIfBound(OutLoc);

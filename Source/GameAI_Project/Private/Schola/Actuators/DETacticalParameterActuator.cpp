@@ -28,9 +28,9 @@ FBoxSpace UDETacticalParameterActuator::GetActionSpace()
 	// [6]: AssignedBaseProximity
 
 	FBoxSpace Space;
-	for (int32 i = 0; i < 7; ++i)  // 7 EQS weight dimensions
+	for (int32 i = 0; i < FDEEQSWeightParameters::NumWeights; ++i)
 	{
-		Space.Add(-1.0f, 1.0f);  // All weights in range [-1, 1]
+		Space.Add(-1.0f, 1.0f);
 	}
 
 	return Space;
@@ -41,14 +41,14 @@ void UDETacticalParameterActuator::TakeAction(const FBoxPoint& Action)
 	// === DIAGNOSTIC: Log every TakeAction call for first 10 actions ===
 	if (ActionCount < 10)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] TakeAction() CALLED (action #%d) — Values.Num()=%d (expected 7)"),
-			ActionCount + 1, Action.Values.Num());
+		UE_LOG(LogTemp, Warning, TEXT("[TacticalActuator] TakeAction() CALLED (action #%d) — Values.Num()=%d (expected %d)"),
+			ActionCount + 1, Action.Values.Num(), FDEEQSWeightParameters::NumWeights);
 	}
 
-	if (Action.Values.Num() != 7)
+	if (!ensureMsgf(Action.Values.Num() == FDEEQSWeightParameters::NumWeights,
+		TEXT("[TacticalActuator] ACTION REJECTED — expected %d values, got %d. Check action space mismatch."),
+		FDEEQSWeightParameters::NumWeights, Action.Values.Num()))
 	{
-		UE_LOG(LogTemp, Error, TEXT("[TacticalActuator] ACTION REJECTED — expected 7 values, got %d! Check action space mismatch."),
-			Action.Values.Num());
 		return;
 	}
 
@@ -237,8 +237,6 @@ FDEEQSWeightParameters UDETacticalParameterActuator::ActionToEQSWeights(const FB
 {
 	// Direct mapping from 7-dim Box action to FDEEQSWeightParameters
 	// Box action space is [-1, 1]^7, matching the weight range
-
-	check(Action.Values.Num() == 7);
 
 	FDEEQSWeightParameters Weights;
 	Weights.EnemyObjectiveProximity = Action.Values[0];
