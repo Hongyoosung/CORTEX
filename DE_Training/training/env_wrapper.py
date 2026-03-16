@@ -87,7 +87,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
             self._simulator = UnrealEditor()
             self._protocol.start()
             self._simulator.start(self._protocol.properties)
-            self._protocol.send_startup_msg(auto_reset_type=AutoresetMode.SAME_STEP)
+            self._protocol.send_startup_msg(auto_reset_type=AutoresetMode.DISABLED)
 
             self._ids, _, obs_defns, self._action_defns = self._protocol.get_definition()
 
@@ -158,6 +158,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._reward_components = REWARD_COMPONENTS
         self._component_ep_sums: Dict[str, list] = {c: [] for c in REWARD_COMPONENTS}
 
+        self._completed_envs: set       = set()   # sub-envs whose match has ended
         self._max_episode_steps        = 100
         self._max_episode_steps_synced = False
         self._force_timeout            = True
@@ -290,6 +291,21 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 # Box or unknown — pass array directly
                 fmt[ei][ai] = a
 
+        # Pad completed sub-envs with dummy actions so the protocol
+        # message always contains entries for every environment.
+        for ei in range(self.num_envs):
+            if ei not in fmt:
+                fmt[ei] = {}
+                for aid in self._agents_for_env(ei):
+                    _, agent_id_str = self.agent_map[aid]
+                    zeros = np.zeros(ACTION_DIM, dtype=np.float32)
+                    space = self._single_action_spaces.get(agent_id_str)
+                    if space is not None and hasattr(space, 'spaces'):
+                        keys = list(space.spaces.keys())
+                        fmt[ei][agent_id_str] = {k: zeros for k in keys} if keys else zeros
+                    else:
+                        fmt[ei][agent_id_str] = zeros
+
         # Sort by env_id so protobuf repeated field positions match UE5 env indices.
         return {k: fmt[k] for k in sorted(fmt.keys())}
 
@@ -304,44 +320,38 @@ class DEEntityCentricEnv(MultiAgentEnv):
         if self._training_start_time is None:
             self._training_start_time = now
 
-        if not self._first_reset_done:
-            for ei in range(self.num_envs):
-                self._env_episode_steps[ei] = 0
-                self._env_episode_start[ei]  = now
-                self._env_done_flags[ei]     = False
-            for fid in self._agent_ids:
-                self._agent_ep_rewards[fid] = 0.0
+        # Reset all tracking state
+        for ei in range(self.num_envs):
+            self._env_episode_steps[ei] = 0
+            self._env_episode_start[ei]  = now
+            self._env_done_flags[ei]     = False
+        self._completed_envs.clear()
+        for fid in self._agent_ids:
+            self._agent_ep_rewards[fid] = 0.0
+        self._prev_cumulative.clear()
 
-            # Schola 2.0.1: send_reset_msg() returns (obs_list, infos_list)
-            obs_list, infos_list = self._protocol.send_reset_msg()
+        # Always send a full reset to C++ (DISABLED mode requires explicit resets)
+        obs_list, infos_list = self._protocol.send_reset_msg()
+
+        if not self._first_reset_done:
             self._first_reset_done = True
             self._update_agent_map()
             for fid in self._agent_ids:
                 self._agent_ep_rewards[fid] = 0.0
 
-            obs_d, info_d = self._process_obs(obs_list, infos_list)
-            print(f"[RESET] Complete ({time.time()-t0:.2f}s, agents={len(obs_d)})")
-            return obs_d, info_d
+        obs_d, info_d = self._process_obs(obs_list, infos_list)
 
-        else:
-            # Soft reset: send dummy actions to advance Schola state
-            dummy = {}
-            for fid in self._agent_ids:
-                ei, ai = self.agent_map[fid]
-                if ei not in dummy:
-                    dummy[ei] = {}
-                space = self._single_action_spaces.get(ai)
-                zeros = np.zeros(ACTION_DIM, dtype=np.float32)
-                if space is not None and hasattr(space, 'spaces'):
-                    keys = list(space.spaces.keys())
-                    dummy[ei][ai] = {k: zeros for k in keys} if keys else zeros
-                else:
-                    dummy[ei][ai] = zeros
+        # Sync cumulative baseline to avoid phantom delta on first step
+        for fid in self._agent_ids:
+            clf = info_d.get(fid, {}).get('CumulativeLifetimeReward')
+            if clf is not None:
+                try:
+                    self._prev_cumulative[fid] = float(clf)
+                except (ValueError, TypeError):
+                    pass
 
-            result = self._protocol.send_action_msg(dummy, self._single_action_spaces)
-            obs_d, info_d = self._parse_obs_and_info(result)
-            print(f"[RESET] Soft complete ({time.time()-t0:.2f}s)")
-            return obs_d, info_d
+        print(f"[RESET] Complete ({time.time()-t0:.2f}s, agents={len(obs_d)})")
+        return obs_d, info_d
 
     def step(self, actiondict: dict):
         self._step_call_count += 1
@@ -374,13 +384,22 @@ class DEEntityCentricEnv(MultiAgentEnv):
             if not self._max_episode_steps_synced:
                 self._sync_max_steps(info_d)
 
+            # Filter out agents from already-completed sub-envs — RLlib
+            # already received their terminal transition; don't send stale data.
+            for ei in list(self._completed_envs):
+                for aid in self._agents_for_env(ei):
+                    obs_d.pop(aid, None)
+                    rew_d.pop(aid, None)
+                    info_d.pop(aid, None)
+                    # term/trunc already False from suppression; leave as-is
+
             for ei in range(self.num_envs):
+                if ei in self._completed_envs:
+                    continue  # already done — skip
+
                 agents = self._agents_for_env(ei)
                 if not agents:
                     continue
-
-                if self._env_done_flags.get(ei, False):
-                    self._env_done_flags[ei] = False
 
                 self._env_episode_steps[ei] += 1
                 for aid in agents:
@@ -404,15 +423,10 @@ class DEEntityCentricEnv(MultiAgentEnv):
                         else:
                             trunc_d[aid] = True
                     self._log_episode(ei, agents, term_d, trunc_d)
-                    self._env_done_flags[ei]   = True
+                    self._completed_envs.add(ei)
                     self._env_episodes_done[ei] += 1
-                    self._env_episode_steps[ei] = 0
-                    self._env_episode_start[ei] = time.time()
-                    for aid in agents:
-                        self._agent_ep_rewards[aid] = 0.0
 
-            all_done = all(self._env_done_flags.get(i, False)
-                           for i in range(self.num_envs))
+            all_done = len(self._completed_envs) == self.num_envs
             if all_done:
                 term_d['__all__']  = True
                 trunc_d['__all__'] = True
@@ -420,7 +434,8 @@ class DEEntityCentricEnv(MultiAgentEnv):
             # Periodic progress log
             if any(self._env_episode_steps[i] % 100 == 0 and
                    self._env_episode_steps[i] > 0
-                   for i in range(self.num_envs)):
+                   for i in range(self.num_envs)
+                   if i not in self._completed_envs):
                 self._log_progress()
 
             # NaN/Inf guard
@@ -437,8 +452,9 @@ class DEEntityCentricEnv(MultiAgentEnv):
             # Inject custom_metrics so RLlib aggregates them in env_runners
             cm = self._pop_custom_metrics()
             if cm:
-                for fid in self._agent_ids:
-                    info_d.setdefault(fid, {})["custom_metrics"] = cm
+                for fid in list(info_d.keys()):
+                    if fid != '__all__':
+                        info_d.setdefault(fid, {})["custom_metrics"] = cm
 
             self.step_durations.append(time.time() - step_start)
             self._last_step_return_time = time.time()
@@ -499,16 +515,14 @@ class DEEntityCentricEnv(MultiAgentEnv):
             term_d[fid] = bool(env_term.get(ai, False))
             trunc_d[fid]= bool(env_trunc.get(ai, False))
 
-        # Suppress individual agent terminations (allow only force-timeout or UE5 match-end)
-        ue5_match_end = any(
-            info_d.get(fid, {}).get('MatchEnded', 'false') == 'true'
-            for fid in info_d if fid != '__all__'
-        )
+        # Suppress individual agent terminations — let step() handle them
+        # per-env via ue5_end / timed_out logic and set __all__ only when
+        # ALL sub-environments have finished.
         for fid in list(term_d.keys()):
             if fid != '__all__':
                 term_d[fid]  = False
                 trunc_d[fid] = False
-        term_d['__all__']  = ue5_match_end
+        term_d['__all__']  = False
         trunc_d['__all__'] = False
 
         # Prefer CumulativeLifetimeReward delta over Schola step reward
@@ -628,7 +642,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
             agents  = self._agents_for_env(ei)
             ep_dur  = time.time() - (self._env_episode_start.get(ei) or time.time())
             ep_r    = sum(self._agent_ep_rewards.get(a, 0.0) for a in agents)
-            flag    = "DONE" if self._env_done_flags.get(ei) else "ACTIVE"
+            flag    = "DONE" if ei in self._completed_envs else "ACTIVE"
             print(f"  env={ei}  {flag}  "
                   f"ep={self._env_episodes_done[ei]}  "
                   f"steps={self._env_episode_steps[ei]}  "

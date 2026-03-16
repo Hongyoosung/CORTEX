@@ -172,8 +172,8 @@ if RLLIB_AVAILABLE:
         config = config.env_runners(
             num_env_runners=DETrainingConfig.NUM_WORKERS,
             num_envs_per_env_runner=1,
-            rollout_fragment_length=100,
-            batch_mode="truncate_episodes",
+            rollout_fragment_length="auto",
+            batch_mode="complete_episodes",
         )
         # Single shared policy — all agents mapped here
         config = config.multi_agent(

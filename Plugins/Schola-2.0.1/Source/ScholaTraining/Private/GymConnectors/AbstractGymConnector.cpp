@@ -146,7 +146,7 @@ void UAbstractGymConnector::HandleStep(const FTrainingStep& InStep, FTrainingSta
 				if (StateRef.IsEnvironmentActive())
 				{
 					Environments[i]->Step(EnvStep.Actions, StateRef.AgentStates);
-					
+
 					if (AllAgentsCompleted(StateRef))
 					{
 						StateRef.MarkCompleted();
@@ -158,13 +158,47 @@ void UAbstractGymConnector::HandleStep(const FTrainingStep& InStep, FTrainingSta
 		}
 		case EAutoResetType::SameStep: // Auto Reset Same Step
 		{
-			
+
 			for (int i = 0; i < InStep.EnvSteps.Num(); i++)
 			{
 				const FEnvStep&	   EnvStep = InStep.EnvSteps[i];
 				FEnvironmentState& StateRef = OutTrainingState.EnvironmentStates[i];
-				
-				Environments[i]->Step(EnvStep.Actions, StateRef.AgentStates);
+
+				// Preserve terminal state for already-dead agents. When some agents are
+				// terminated/truncated but the environment hasn't fully completed, Python
+				// pads dead agents with no-op actions. We must NOT step those agents (which
+				// could clear their terminal flags). Instead, re-emit their terminal state.
+				TMap<FString, FAgentState> PreviousDeadAgents;
+				for (auto& Pair : StateRef.AgentStates)
+				{
+					if (Pair.Value.bTerminated || Pair.Value.bTruncated)
+					{
+						PreviousDeadAgents.Add(Pair.Key, Pair.Value);
+					}
+				}
+
+				// Build a filtered action map containing only actions for live agents
+				TMap<FString, TInstancedStruct<FPoint>> LiveActions;
+				for (const auto& ActionPair : EnvStep.Actions)
+				{
+					if (!PreviousDeadAgents.Contains(ActionPair.Key))
+					{
+						LiveActions.Add(ActionPair.Key, ActionPair.Value);
+					}
+				}
+
+				Environments[i]->Step(LiveActions, StateRef.AgentStates);
+
+				// Restore terminal flags for previously-dead agents. Step() may have
+				// overwritten their state — force them back so AllAgentsCompleted() counts
+				// them correctly and the SAME_STEP reset fires at the right time.
+				for (auto& DeadPair : PreviousDeadAgents)
+				{
+					FAgentState& AgentState = StateRef.AgentStates.FindOrAdd(DeadPair.Key);
+					AgentState.bTerminated = DeadPair.Value.bTerminated;
+					AgentState.bTruncated  = DeadPair.Value.bTruncated;
+					AgentState.Reward      = 0.0f;
+				}
 
 				if (AllAgentsCompleted(StateRef))
 				{
@@ -205,7 +239,44 @@ void UAbstractGymConnector::HandleStep(const FTrainingStep& InStep, FTrainingSta
 					// Environment is not completed so we just step it normally
 					const FEnvStep&	   EnvStep = InStep.EnvSteps[i];
 					FEnvironmentState& StateRef = OutTrainingState.EnvironmentStates[i];
-					Environments[i]->Step(EnvStep.Actions, StateRef.AgentStates);
+
+					// Preserve terminal state for already-dead agents. When some agents
+					// are terminated/truncated but the environment hasn't fully completed,
+					// Python pads dead agents with no-op actions. We must NOT step those
+					// agents (which could respawn/corrupt them). Instead, re-emit their
+					// terminal state so the protocol stays consistent.
+					TMap<FString, FAgentState> PreviousDeadAgents;
+					for (auto& Pair : StateRef.AgentStates)
+					{
+						if (Pair.Value.bTerminated || Pair.Value.bTruncated)
+						{
+							PreviousDeadAgents.Add(Pair.Key, Pair.Value);
+						}
+					}
+
+					// Build a filtered action map containing only actions for live agents
+					TMap<FString, TInstancedStruct<FPoint>> LiveActions;
+					for (const auto& ActionPair : EnvStep.Actions)
+					{
+						if (!PreviousDeadAgents.Contains(ActionPair.Key))
+						{
+							LiveActions.Add(ActionPair.Key, ActionPair.Value);
+						}
+					}
+
+					Environments[i]->Step(LiveActions, StateRef.AgentStates);
+
+					// Restore terminal flags for previously-dead agents. The Step() call
+					// may have cleared or overwritten their state — force them back to
+					// their terminal condition so AllAgentsCompleted() counts them correctly.
+					for (auto& DeadPair : PreviousDeadAgents)
+					{
+						FAgentState& AgentState = StateRef.AgentStates.FindOrAdd(DeadPair.Key);
+						AgentState.bTerminated = DeadPair.Value.bTerminated;
+						AgentState.bTruncated = DeadPair.Value.bTruncated;
+						AgentState.Reward = 0.0f; // No reward for dead agents
+					}
+
 					// Mark the Environment as completed if all agents finished on this step.
 					// By tracking it after the step we handle the initial step properly.
 					if (AllAgentsCompleted(StateRef))

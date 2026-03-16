@@ -24,7 +24,7 @@ public:
     /** Step interval in seconds. Default: 0.5s = 2 Hz. */
     UPROPERTY(EditAnywhere, Category = "Schola|Throttling",
         meta = (ClampMin = "0.01", ClampMax = "10.0"))
-    float StepInterval = 0.5f;
+    float StepInterval = 0.3f;
 
 private:
     virtual void BeginPlay() override;
