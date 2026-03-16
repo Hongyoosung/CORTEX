@@ -6,8 +6,8 @@
 #include "Characters/DECharacter.h"
 #include "Team/DEMatchManager.h"
 #include "Actors/DECapturePoint.h"
-#include "Common/Spaces/BoxSpace.h"
-#include "Common/Points/BoxPoint.h"
+#include "Spaces/BoxSpace.h"
+#include "Points/BoxPoint.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
 
@@ -38,60 +38,40 @@ void UDETacticalObserver::InitializeObserver()
 {
 	Super::InitializeObserver();
 
-	// Path 1: Training mode — outer is ADETrainer (AIController that possesses pawn)
-	CachedTrainer = GetTypedOuter<ADETrainer>();
-	if (CachedTrainer)
-	{
-		// Cache environment origin for position normalization
-		ADECharacter* Char = Cast<ADECharacter>(CachedTrainer->GetPawn());
-		if (Char && Char->GetMatchManager())
-		{
-			TArray<AActor*> EnvActors;
-			UGameplayStatics::GetAllActorsOfClass(CachedTrainer->GetWorld(), ADEScholaEnvironment::StaticClass(), EnvActors);
-			for (AActor* Actor : EnvActors)
-			{
-				if (ADEScholaEnvironment* Env = Cast<ADEScholaEnvironment>(Actor))
-				{
-					if (Env->GetMatchManager() == Char->GetMatchManager())
-					{
-						CachedEnvironmentOrigin = Env->GetActorLocation();
-						break;
-					}
-				}
-			}
-		}
-		UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Initialized (Training mode) for trainer: %s (EnvOrigin: %s)"),
-			*CachedTrainer->GetName(), *CachedEnvironmentOrigin.ToString());
-		return;
-	}
-
-	// Path 2: Inference mode — outer is UDEScholaAgent component on ADECharacter (pawn)
+	// The observer is a UObject subobject of UDEScholaAgent (on ADECharacter).
+	// Outer chain: UDETacticalObserver -> UDEScholaAgent -> ADECharacter.
+	// Trainer reference is obtained from the character controller when in training mode.
 	CachedCharacter = GetTypedOuter<ADECharacter>();
-	if (CachedCharacter)
+	if (!CachedCharacter)
 	{
-		// Cache environment origin for position normalization
-		if (CachedCharacter->GetMatchManager())
-		{
-			TArray<AActor*> EnvActors;
-			UGameplayStatics::GetAllActorsOfClass(CachedCharacter->GetWorld(), ADEScholaEnvironment::StaticClass(), EnvActors);
-			for (AActor* Actor : EnvActors)
-			{
-				if (ADEScholaEnvironment* Env = Cast<ADEScholaEnvironment>(Actor))
-				{
-					if (Env->GetMatchManager() == CachedCharacter->GetMatchManager())
-					{
-						CachedEnvironmentOrigin = Env->GetActorLocation();
-						break;
-					}
-				}
-			}
-		}
-		UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Initialized (Inference mode) for character: %s (EnvOrigin: %s)"),
-			*CachedCharacter->GetName(), *CachedEnvironmentOrigin.ToString());
+		UE_LOG(LogTemp, Error, TEXT("[DETacticalObserver] Could not find ADECharacter in outer chain!"));
 		return;
 	}
 
-	UE_LOG(LogTemp, Error, TEXT("[DETacticalObserver] Could not find ADETrainer or ADECharacter in outer chain! Observer will not function."));
+	// Training: controller is ADETrainer. Inference: may be nullptr or a different controller.
+	CachedTrainer = Cast<ADETrainer>(CachedCharacter->GetController());
+
+	// Cache environment origin for position normalization.
+	if (CachedCharacter->GetMatchManager())
+	{
+		TArray<AActor*> EnvActors;
+		UGameplayStatics::GetAllActorsOfClass(CachedCharacter->GetWorld(), ADEScholaEnvironment::StaticClass(), EnvActors);
+		for (AActor* Actor : EnvActors)
+		{
+			if (ADEScholaEnvironment* Env = Cast<ADEScholaEnvironment>(Actor))
+			{
+				if (Env->GetMatchManager() == CachedCharacter->GetMatchManager())
+				{
+					CachedEnvironmentOrigin = Env->GetActorLocation();
+					break;
+				}
+			}
+		}
+	}
+
+	const FString ModeStr = CachedTrainer ? TEXT("Training") : TEXT("Inference");
+	UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Initialized (%s mode) for character: %s (EnvOrigin: %s)"),
+		*ModeStr, *CachedCharacter->GetName(), *CachedEnvironmentOrigin.ToString());
 }
 
 void UDETacticalObserver::ResetObserver()
@@ -352,14 +332,3 @@ bool UDETacticalObserver::ValidateObservation(const TArray<float>& Observation) 
 	return true;
 }
 
-#if WITH_EDITOR
-void UDETacticalObserver::SetDebugObservations(TPoint& Temp)
-{
-	// Schola editor utility - extract FBoxPoint for inspection
-	if (Temp.IsType<FBoxPoint>())
-	{
-		FBoxPoint BoxPoint = Temp.Get<FBoxPoint>();
-		DebugLastObservation = BoxPoint.Values;
-	}
-}
-#endif

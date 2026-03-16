@@ -17,7 +17,10 @@
 
 UDEGA_Attack::UDEGA_Attack()
 {
-	AbilityTags.AddTag(DEGameplayTags::Ability_Attack);
+	FGameplayTagContainer AssetTags;
+	AssetTags.AddTag(DEGameplayTags::Ability_Attack);
+	SetAssetTags(AssetTags);
+
 	ActivationBlockedTags.AddTag(DEGameplayTags::State_Dead);
 	// CooldownGameplayEffectClass must be assigned via Blueprint (GE_Cooldown_Attack)
 

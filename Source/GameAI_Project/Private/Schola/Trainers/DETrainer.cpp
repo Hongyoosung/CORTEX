@@ -11,7 +11,6 @@
 #include "DrawDebugHelpers.h"
 #include "Types/DERewardTypes.h"
 #include "AIController.h"
-#include "Training/StateStructs/TrainerState.h"
 #include "Team/DEMatchManager.h"
 #include "Core/DEGameMode.h"
 #include "Actors/DECapturePoint.h"

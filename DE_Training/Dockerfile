@@ -27,16 +27,17 @@ COPY DE_Training/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-COPY Plugins/Schola-1.3.0/README.md /README.md
 
-# Copy Schola Python package from plugin directory
-COPY Plugins/Schola-1.3.0/Resources/python /tmp/schola
+# Assume that the Plugins folder is retrieved from the context root.
+COPY Plugins/Schola-2.0.1 /tmp/Schola-2.0.1
 
-# Install Schola with rllib extras from local source
-RUN pip install --no-cache-dir /tmp/schola[rllib] && \
-    rm -rf /tmp/schola
+RUN touch /tmp/Schola-2.0.1/README.md
 
-# Copy training scripts (both legacy and v10.2)
+# Run the folder containing setup.py with pip install (install including dependencies)
+RUN pip install --no-cache-dir /tmp/Schola-2.0.1/Resources/python[rllib] && \
+    rm -rf /tmp/Schola-2.0.1
+
+# Copy the rest of the learning script
 COPY DE_Training/ .
 
 
@@ -60,4 +61,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import grpc; channel = grpc.insecure_channel('${HOST}:${PORT}'); grpc.channel_ready_future(channel).result(timeout=5)" || exit 1
 
 # Default command: run training
-CMD ["python", "train_rllib.py"]
+CMD ["python", "training/train.py", "--mode", "rllib"]

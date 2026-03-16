@@ -12,7 +12,10 @@
 
 UDEGA_Heal::UDEGA_Heal()
 {
-	AbilityTags.AddTag(DEGameplayTags::Ability_Heal);
+	FGameplayTagContainer AssetTags;
+	AssetTags.AddTag(DEGameplayTags::Ability_Heal);
+	SetAssetTags(AssetTags);
+
 	ActivationBlockedTags.AddTag(DEGameplayTags::State_Dead);
 	// CooldownGameplayEffectClass left unset — heal has no cooldown by default
 }

@@ -1,0 +1,44 @@
+// Copyright (c) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+
+#include "Points/Blueprint/PointBlueprintLibrary.h"
+
+#include "Points/MultiBinaryPoint.h"
+#include "Points/DiscretePoint.h"
+#include "Points/BoxPoint.h"
+#include "Points/DictPoint.h"
+#include "Points/MultiDiscretePoint.h"
+
+EPointType UPointBlueprintLibrary::Point_Type(const FInstancedStruct& InPoint)
+{
+	if (InPoint.GetScriptStruct() && InPoint.GetScriptStruct()->IsChildOf(FMultiBinaryPoint::StaticStruct()))
+	{
+		return EPointType::MultiBinary;
+	}
+
+    if (InPoint.GetScriptStruct() && InPoint.GetScriptStruct()->IsChildOf(FMultiDiscretePoint::StaticStruct()))
+	{
+		return EPointType::MultiDiscrete;
+	}
+
+	if (InPoint.GetScriptStruct() && InPoint.GetScriptStruct()->IsChildOf(FDiscretePoint::StaticStruct()))
+	{
+		return EPointType::Discrete;
+	}
+
+    if (InPoint.GetScriptStruct() && InPoint.GetScriptStruct()->IsChildOf(FBoxPoint::StaticStruct()))
+	{
+		return EPointType::Box;
+	}
+
+	if (InPoint.GetScriptStruct() && InPoint.GetScriptStruct()->IsChildOf(FDictPoint::StaticStruct()))
+	{
+		return EPointType::Dict;
+	}
+
+    return EPointType::MultiBinary;
+}
+
+bool UPointBlueprintLibrary::Point_IsOfType(const FInstancedStruct& InPoint, EPointType InType)
+{
+	return Point_Type(InPoint) == InType;
+}

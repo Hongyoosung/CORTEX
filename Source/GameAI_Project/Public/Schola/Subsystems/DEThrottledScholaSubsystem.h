@@ -1,75 +1,71 @@
-// DEThrottledScholaSubsystem.h - Custom Schola subsystem with time-based decision throttling
+// DEThrottledScholaSubsystem.h - Custom world subsystem with time-based decision throttling
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Subsystem/ScholaManagerSubsystem.h"
+#include "Subsystems/WorldSubsystem.h"
+#include "Tickable.h"
+#include "GymConnectors/AbstractGymConnector.h"
 #include "DEThrottledScholaSubsystem.generated.h"
 
 /**
- * Custom Schola Manager Subsystem with Time-Based Throttling
+ * Time-Throttled Schola World Subsystem
  *
- * Replaces UScholaManagerSubsystem to add FPS-independent decision rate limiting.
- * Overrides Tick() to throttle CollectEnvironmentStates() calls to a fixed interval.
+ * Drives a UAbstractGymConnector at a fixed decision rate, independent of FPS.
+ * Replaces the old UScholaManagerSubsystem (removed in Schola 2.0.1).
  *
  * Architecture Integration:
  * - Aligns observation collection (2 Hz) with Squad Commander planning (2 Hz)
  * - Prevents wasted observations between centralized planning cycles
- * - Ensures each state → action → reward transition is meaningful
- *
- * Why This Works:
- * - UE5's subsystem architecture allows overriding base subsystems
- * - Tick() is virtual in UScholaManagerSubsystem
- * - This intercepts at the highest level (before any Think() calls)
  *
  * Usage:
- * 1. This class is automatically used instead of UScholaManagerSubsystem (subsystem override)
- * 2. Configure DecisionInterval in Project Settings > Plugins > Schola (default: 0.5s = 2 Hz)
- * 3. Training will now run at consistent rate regardless of FPS
+ * 1. Place an AGymConnectorManager actor in the level to configure the connector,
+ *    OR set GymConnector directly via SetGymConnector().
+ * 2. Configure DecisionInterval (default: 0.5s = 2 Hz).
  */
-UCLASS(config = Schola)
-class GAMEAI_PROJECT_API UDEThrottledScholaSubsystem : public UScholaManagerSubsystem
+UCLASS(config = Game)
+class GAMEAI_PROJECT_API UDEThrottledScholaSubsystem : public UTickableWorldSubsystem
 {
 	GENERATED_BODY()
 
 public:
-	/**
-	 * Override Tick() to add time-based throttling
-	 * Only calls CollectEnvironmentStates() / SubmitEnvironmentStates() once per DecisionInterval
-	 */
-	virtual void Tick(float DeltaTime) override;
+	// UWorldSubsystem interface
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
 
-	/** Decision interval in seconds (v10.2: 0.5s = 2 Hz, aligned with Squad Commander) */
-	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling", meta = (ClampMin = "0.01", ClampMax = "10.0"))
+	// FTickableGameObject interface
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override;
+
+	/** Assign the gym connector to drive. Call before the first tick. */
+	UFUNCTION(BlueprintCallable, Category = "Schola|Throttling")
+	void SetGymConnector(UAbstractGymConnector* InConnector);
+
+	/** Decision interval in seconds (v10.2: 0.5s = 2 Hz, aligned with Squad Commander). */
+	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling",
+		meta = (ClampMin = "0.01", ClampMax = "10.0"))
 	float DecisionInterval = 0.5f;
 
-	/** Enable timing diagnostics (logs overhead every 100 decisions) */
+	/** Enable timing diagnostics (logs overhead every 100 decisions). */
 	UPROPERTY(Config, EditAnywhere, Category = "Schola|Throttling")
 	bool bEnableTimingDiagnostics = true;
 
-
+	/** The gym connector driven by this subsystem. */
+	UPROPERTY(BlueprintReadOnly, Category = "Schola")
+	TObjectPtr<UAbstractGymConnector> GymConnector;
 
 private:
-	/** Last decision time (FPlatformTime::Seconds()) */
+	/** Last decision time (FPlatformTime::Seconds()). */
 	double LastDecisionTime = 0.0;
 
-	/** Initialization flag */
+	/** Initialization flag. */
 	bool bThrottleInitialized = false;
 
-	/** First step flag (for auto-reset logic) */
-	bool bFirstStep = true;
-
-
 	//========================================
-	// TIMING DIAGNOSTICS 
+	// TIMING DIAGNOSTICS
 	//========================================
 
-	/** Total observation collection overhead (ms) */
 	double TotalCollectionOverhead = 0.0;
-
-	/** Number of decisions made */
 	int32 DecisionCount = 0;
-
-	/** Max single collection overhead (ms) */
 	double MaxCollectionOverhead = 0.0;
 };

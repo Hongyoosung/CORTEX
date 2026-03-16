@@ -1,11 +1,10 @@
 // DETacticalParameterActuator.cpp - Implementation
 
 #include "Schola/Actuators/DETacticalParameterActuator.h"
-#include "Agent/AgentComponents/ActuatorComponent.h"
-#include "Common/Spaces/BoxSpace.h"
-#include "Common/Points/BoxPoint.h"
+#include "DynamicEQS/Public/Schola/Base/DynamicEQSTrainerBase.h"
+#include "Spaces/BoxSpace.h"
+#include "Points/BoxPoint.h"
 #include "Characters/DECharacter.h"
-#include "Training/AbstractTrainer.h"
 
 
 UDETacticalParameterActuator::UDETacticalParameterActuator()
@@ -13,7 +12,7 @@ UDETacticalParameterActuator::UDETacticalParameterActuator()
 	// Default constructor
 }
 
-FBoxSpace UDETacticalParameterActuator::GetActionSpace()
+FBoxSpace UDETacticalParameterActuator::GetActionSpace() const
 {
 	// Action Space: Box([-1, 1]^7)
 	// 7 continuous values representing EQS weights
@@ -203,17 +202,8 @@ ADECharacter* UDETacticalParameterActuator::FindDECharacter() const
 		return Direct;
 	}
 
-	// Path 2: Outer is ActuatorComponent on DECharacter
-	if (UActuatorComponent* OwnerComp = Cast<UActuatorComponent>(GetOuter()))
-	{
-		if (ADECharacter* FromComp = Cast<ADECharacter>(OwnerComp->GetOwner()))
-		{
-			return FromComp;
-		}
-	}
-
-	// Path 3: Outer is Trainer (standard Schola path) → get possessed pawn
-	if (AAbstractTrainer* Trainer = GetTypedOuter<AAbstractTrainer>())
+	// Path 2: Outer is Trainer (AIController) → get possessed pawn
+	if (ADynamicEQSTrainerBase* Trainer = GetTypedOuter<ADynamicEQSTrainerBase>())
 	{
 		if (ADECharacter* FromPawn = Cast<ADECharacter>(Trainer->GetPawn()))
 		{

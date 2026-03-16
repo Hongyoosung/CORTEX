@@ -92,12 +92,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DE|Observer|Debug")
 	bool ValidateObservation(const TArray<float>& Observation) const;
 
-#if WITH_EDITOR
-	/**
-	 * Set debug observations (Schola editor utility)
-	 */
-	virtual void SetDebugObservations(TPoint& Temp) override;
-#endif
 
 
 protected:

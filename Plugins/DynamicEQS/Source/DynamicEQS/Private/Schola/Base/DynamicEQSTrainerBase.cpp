@@ -4,10 +4,7 @@
 
 EAgentTrainingStatus ADynamicEQSTrainerBase::ComputeStatus()
 {
-	const EDynamicEQSTerminationReason Reason = ComputeTermination();
-	return (Reason == EDynamicEQSTerminationReason::None)
-		? EAgentTrainingStatus::Running
-		: EAgentTrainingStatus::Completed;
+	return ComputeTermination();
 }
 
 void ADynamicEQSTrainerBase::GetInfo(TMap<FString, FString>& Info)

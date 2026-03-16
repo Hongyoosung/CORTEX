@@ -5,7 +5,7 @@ SET "NUM_SCHOLA_ENVS=4"
 SET "NUM_WORKERS=0"
 SET "NUM_ITERATIONS=150"
 SET "DETACH=false"
-SET "NO_BUILD=true"
+SET "NO_BUILD=false"
 SET "RESUME_CHECKPOINT="
 SET "UE5_EXE=C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.exe"
 SET "UPROJECT=C:\Users\PC\Documents\GitHub\CORTEX\GameAI_Project.uproject"
@@ -23,7 +23,7 @@ if "%~1"=="--no-ue5" set "LAUNCH_UE5=false" & shift & goto :parse_args
 shift & goto :parse_args
 :end_parse
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 echo.
 echo ========================================
