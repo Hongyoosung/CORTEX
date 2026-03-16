@@ -23,12 +23,12 @@ DE_Training/**/*.pyc
 DE_Training/**/*.pyo
 
 # ── Plugins: include only Schola-2.0.1 Python package ────────────────────────
-Plugins/*
+Plugins/
 !Plugins/Schola-2.0.1/
-Plugins/Schola-2.0.1/*
-!Plugins/Schola-2.0.1/Resources/
-Plugins/Schola-2.0.1/Resources/*
-!Plugins/Schola-2.0.1/Resources/python/
+Plugins/Schola-2.0.1/Binaries/
+Plugins/Schola-2.0.1/Intermediate/
+Plugins/Schola-2.0.1/Content/
+Plugins/Schola-2.0.1/Config/
 
 # ── Git and IDE ───────────────────────────────────────────────────────────────
 .git/

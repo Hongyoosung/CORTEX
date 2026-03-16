@@ -28,8 +28,10 @@ COPY DE_Training/requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Assume that the Plugins folder is retrieved from the context root.
+
+# Schola 복사 전 확인
 COPY Plugins/Schola-2.0.1 /tmp/Schola-2.0.1
+RUN ls -la /tmp/Schola-2.0.1/ || (echo "Schola 복사 실패" && exit 1)
 
 RUN touch /tmp/Schola-2.0.1/README.md
 

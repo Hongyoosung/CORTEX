@@ -17,7 +17,6 @@
 
 ADEScholaEnvironment::ADEScholaEnvironment()
 	: bAutoDiscoverAgents(true)
-	, bLogTacticalPlays(false)
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.0f;
@@ -247,11 +246,6 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 		}
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Discovered %d agents for EnvID %d"),
 			RegisteredAgents.Num(), EnvironmentId);
-	}
-
-	if (OwnedMatchManager)
-	{
-		OwnedMatchManager->bRLTrainingMode = bPhase1RLTraining;
 	}
 
 	// ── Step 2: Spawn / assign trainers and build AgentTrainerMap ──

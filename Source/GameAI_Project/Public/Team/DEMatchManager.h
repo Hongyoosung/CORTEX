@@ -286,26 +286,6 @@ public:
 	bool bShowDebugInfo = false;
 
 
-	//========================================
-	// Squad Commander Configuration
-	// Propagated to FDESquadConfig by ADEScholaEnvironment.
-	//========================================
-
-	/** Seconds between MCTS replanning cycles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Squad")
-	float PlanningInterval = 0.5f;
-
-	/** MCTS time budget per cycle (seconds) */
-	UPROPERTY(EditAnywhere, Category = "DEMatchManager|Squad")
-	float MCTSTimeBudget = 0.015f;
-
-	/** MCTS leaf expansion batch size */
-	UPROPERTY(EditAnywhere, Category = "DEMatchManager|Squad")
-	int32 MCTSBatchSize = 8;
-
-	/** Path to the ONNX world model shared by both planners (empty = skip MCTS) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Squad")
-	FString TeamWorldModelPath;
 
 	/**
 	 * Standalone / Inference mode — no ADEScholaEnvironment in the level.
@@ -315,15 +295,6 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Standalone")
 	bool bStandaloneMode = false;
-
-	/** Use epsilon-greedy instead of MCTS (faster data collection) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Squad")
-	bool bDataCollectionMode = false;
-
-	/** Epsilon for epsilon-greedy exploration (0 = exploit, 1 = explore) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Squad",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ExplorationRate = 0.7f;
 
 	/** Draw role labels above agents */
 	UPROPERTY(EditAnywhere, Category = "DEMatchManager|Squad|Debug")

@@ -15,7 +15,7 @@
  * To handle more complex training scenarios, you can implement your own AActor to manage the gym connector lifecycle.
  */
 UCLASS()
-class AGymConnectorManager : public AActor
+class SCHOLATRAINING_API AGymConnectorManager : public AActor
 {
 	GENERATED_BODY()
 	

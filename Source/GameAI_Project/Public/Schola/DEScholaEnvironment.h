@@ -142,12 +142,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config")
 	bool bAutoSpawnTrainers = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
-	bool bPhase1RLTraining = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Config|v10.2")
-	bool bLogTacticalPlays;
-
 
 	//=========================================
 	// STATE

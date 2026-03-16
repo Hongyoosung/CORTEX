@@ -130,10 +130,6 @@ void ADEMatchManager::Tick(float DeltaTime)
 FDESquadConfig ADEMatchManager::MakeSquadConfig() const
 {
 	FDESquadConfig Out;
-	Out.MCTSTimeBudget    = MCTSTimeBudget;
-	Out.PlanningInterval  = PlanningInterval;
-	Out.bDataCollectionMode = bDataCollectionMode;
-	Out.ExplorationRate   = ExplorationRate;
 	Out.bRLTrainingMode   = bRLTrainingMode;
 	Out.bShowDebugInfo    = bShowDebugInfo;
 	Out.RandomStream      = EnvRandomStream;

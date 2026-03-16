@@ -10,6 +10,7 @@
 #include "EQS/DynamicEQSExecutor.h"
 #include "Data/DEAbilityData.h"
 
+#include "Kismet/GameplayStatics.h"
 #include "AbilitySystemComponent.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "EngineUtils.h"
@@ -658,17 +659,6 @@ void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 	if (ScholaAgent->GetCommandedStrategy() != NewStrategy)
 	{
 		ScholaAgent->UpdateCommandedStrategy(NewStrategy);
-		
-		if (AAIController* AICtrl = Cast<AAIController>(GetController()))
-		{
-			if (UBlackboardComponent* BB = AICtrl->GetBlackboardComponent())
-			{
-				BB->SetValueAsEnum("CurrentStrategy", static_cast<uint8>(NewStrategy));
-			}
-		}
-
-		UE_LOG(LogTemp, Log, TEXT("[DECharacter] Agent %d received strategy command: %s"),
-			AgentID, *UEnum::GetValueAsString(NewStrategy));
 	}
 }
 

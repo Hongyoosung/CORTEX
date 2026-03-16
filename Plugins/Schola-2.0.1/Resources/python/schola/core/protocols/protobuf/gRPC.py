@@ -62,8 +62,8 @@ class gRPCProtocol(BaseRLProtocol, SocketProtocolMixin):
             ('grpc.max_receive_message_length', 100 * 1024 * 1024),
         ]
         
-        self.channel = grpc.secure_channel(
-            self.address, grpc.local_channel_credentials(), options=options
+        self.channel = grpc.insecure_channel(
+            self.address, options=options
         ).__enter__()
         self.gym_stub = gym_grpc.GymServiceStub(self.channel)
 
