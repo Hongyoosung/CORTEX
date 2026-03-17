@@ -327,7 +327,7 @@ def train_with_rllib(args):
 
         # 에피소드 길이 및 횟수
         tb.add_scalar("env/episode_len_mean", ep_len, cumul_steps)
-        tb.add_scalar("env/episodes_completed", eps, cumul_steps)
+        tb.add_scalar("env/episodes_completed", cumul_episodes, cumul_steps)
         
         # 시스템 퍼포먼스 (초당 스텝 처리량)
         # 누적 스텝(cumul_steps)이 아닌 이번 이터레이션 스텝(steps_this_iter)으로 계산해야 정확합니다.
