@@ -11,7 +11,7 @@
 *
 * Usage: reparent BP_GymConnectorManager to this class.
 */
-UCLASS()
+UCLASS(Blueprintable)
 class GAMEAI_PROJECT_API ADEGymConnectorManager : public AGymConnectorManager
 {
     GENERATED_BODY()

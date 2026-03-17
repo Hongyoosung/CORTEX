@@ -159,7 +159,8 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._component_ep_sums: Dict[str, list] = {c: [] for c in REWARD_COMPONENTS}
 
         self._completed_envs: set       = set()   # sub-envs whose match has ended
-        self._max_episode_steps        = 100
+        self._schola_env_done: Dict[int, str] = {}  # per-step: sub-envs Schola terminated
+        self._max_episode_steps        = 1000
         self._max_episode_steps_synced = False
         self._force_timeout            = True
 
@@ -407,16 +408,24 @@ class DEEntityCentricEnv(MultiAgentEnv):
                         self._agent_ep_rewards.get(aid, 0.0) + rew_d.get(aid, 0.0)
                     )
 
-                ue5_end = any(
-                    info_d.get(aid, {}).get('MatchEnded', 'false') == 'true'
+                # Check for match end: Schola env-level termination OR MatchEnded info
+                schola_ended = ei in self._schola_env_done
+                match_ended_info = any(
+                    str(info_d.get(aid, {}).get('MatchEnded', 'false')).lower() == 'true'
                     for aid in agents
                 )
+                ue5_end = schola_ended or match_ended_info
                 timed_out = (self._force_timeout and
                              self._env_episode_steps[ei] >= self._max_episode_steps)
 
                 if ue5_end or timed_out:
-                    reason = "UE5 match end" if ue5_end else f"timeout({self._max_episode_steps})"
-                    print(f"[STEP] Episode end: env={ei} — {reason}")
+                    if schola_ended:
+                        reason = f"Schola {self._schola_env_done[ei]} (all agents in sub-env)"
+                    elif match_ended_info:
+                        reason = "MatchEnded info from UE5"
+                    else:
+                        reason = f"timeout({self._max_episode_steps})"
+                    print(f"[STEP] Episode end: env={ei} step={self._env_episode_steps[ei]} — {reason}")
                     for aid in agents:
                         if ue5_end:
                             term_d[aid] = True
@@ -515,9 +524,35 @@ class DEEntityCentricEnv(MultiAgentEnv):
             term_d[fid] = bool(env_term.get(ai, False))
             trunc_d[fid]= bool(env_trunc.get(ai, False))
 
-        # Suppress individual agent terminations — let step() handle them
-        # per-env via ue5_end / timed_out logic and set __all__ only when
-        # ALL sub-environments have finished.
+        # Detect per-sub-env terminations from Schola.
+        # If ALL agents in a sub-env are terminated/truncated simultaneously,
+        # that signals a match-level end (not individual agent death).
+        # Individual agent deaths (subset terminated) are suppressed.
+        self._schola_env_done: Dict[int, str] = {}  # env_idx → "term"/"trunc"
+        for ei in range(self.num_envs):
+            agents = self._agents_for_env(ei)
+            if not agents:
+                continue
+            n_term  = sum(1 for a in agents if term_d.get(a, False))
+            n_trunc = sum(1 for a in agents if trunc_d.get(a, False))
+            n_total = len(agents)
+            if n_term == n_total:
+                self._schola_env_done[ei] = "term"
+            elif n_trunc == n_total:
+                self._schola_env_done[ei] = "trunc"
+            elif n_term + n_trunc > 0:
+                # Partial termination (individual agent deaths) — log but suppress
+                if self._total_step_count <= 10 or self._total_step_count % 200 == 0:
+                    print(f"[SCHOLA] Partial term/trunc in env={ei}: "
+                          f"term={n_term}/{n_total} trunc={n_trunc}/{n_total} "
+                          f"(suppressed — individual agent death)")
+
+        # Log when Schola signals full sub-env termination
+        if self._schola_env_done:
+            print(f"[SCHOLA] Sub-env terminations detected: {self._schola_env_done} "
+                  f"at step {self._total_step_count}")
+
+        # Now suppress all — step() will re-apply based on _schola_env_done / timeout
         for fid in list(term_d.keys()):
             if fid != '__all__':
                 term_d[fid]  = False

@@ -120,6 +120,98 @@ void ADEMatchManager::Tick(float DeltaTime)
 			                       GetTeamAgents(EnemyTeamID));
 		}
 	}
+
+	if (!bMatchActive) return;
+
+	MatchTimer += DeltaTime;
+
+	// ── Passive income ──
+	if (PassiveIncomeRate > 0.0f)
+	{
+		PassiveIncomeAccumulator += DeltaTime;
+		if (PassiveIncomeAccumulator >= 1.0f)
+		{
+			const float WholeSeconds = FMath::FloorToFloat(PassiveIncomeAccumulator);
+			PassiveIncomeAccumulator -= WholeSeconds;
+
+			for (const ADECapturePoint* CP : EnvCapturePoints)
+			{
+				if (!CP) continue;
+				const int32 OwnerTeam = CP->GetTeamID_Implementation();
+				if (OwnerTeam >= 0)
+				{
+					AddTeamScore(OwnerTeam, FMath::RoundToInt(PassiveIncomeRate * WholeSeconds));
+				}
+			}
+		}
+	}
+
+	// ── Win condition ──
+	for (int32 TeamID = 0; TeamID < TeamConfigs.Num(); ++TeamID)
+	{
+		if (TeamScores[TeamID] >= WinningScore)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DEMatchManager] Env %d: Team %d reached winning score %d — firing OnMatchConditionMet"),
+				EnvID, TeamID, WinningScore);
+			StopMatchTimer();
+			OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
+			return;
+		}
+	}
+
+	// ── Domination ──
+	if (bDominationWinEnabled && EnvCapturePoints.Num() > 0)
+	{
+		for (int32 TeamID = 0; TeamID < TeamConfigs.Num(); ++TeamID)
+		{
+			bool bOwnsAll = true;
+			for (const ADECapturePoint* CP : EnvCapturePoints)
+			{
+				if (!CP || CP->GetTeamID_Implementation() != TeamID)
+				{
+					bOwnsAll = false;
+					break;
+				}
+			}
+			if (bOwnsAll)
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DEMatchManager] Env %d: Team %d domination — firing OnMatchConditionMet"),
+					EnvID, TeamID);
+				StopMatchTimer();
+				OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
+				return;
+			}
+		}
+	}
+
+	// ── Timeout ──
+	if (MatchTimer >= MaxMatchDuration)
+	{
+		const int32 LeadTeam = GetWinnerTeamID();
+		const EDEMatchState TimeoutState = (LeadTeam >= 0)
+			? EDEMatchState::TeamWon
+			: EDEMatchState::TimeExpired;
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DEMatchManager] Env %d: Timeout — Scores [%d, %d], winner=%d"),
+			EnvID, TeamScores[0], TeamScores[1], LeadTeam);
+		StopMatchTimer();
+		OnMatchConditionMet.Broadcast(TimeoutState, LeadTeam);
+		return;
+	}
+
+	// ── Debug score display ──
+	for (const FDETeamConfiguration& Config : TeamConfigs)
+	{
+		if (!Config.DESpawnArea) continue;
+		const FVector Loc  = Config.DESpawnArea->GetActorLocation() + FVector(0.0f, 0.0f, 300.0f);
+		const FColor  Col  = Config.GetTeamColor().ToFColor(true);
+		const FString Text = FString::Printf(TEXT("Team %d Score: %d / %d"),
+			Config.TeamID, TeamScores[Config.TeamID], WinningScore);
+		DrawDebugString(GetWorld(), Loc, Text, nullptr, Col, 0.0f, true, 1.5f);
+	}
 }
 
 
@@ -253,6 +345,24 @@ ADECharacter* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Match Timer
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ADEMatchManager::StartMatchTimer()
+{
+	MatchTimer = 0.0f;
+	PassiveIncomeAccumulator = 0.0f;
+	bMatchActive = true;
+	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Match timer started"), EnvID);
+}
+
+void ADEMatchManager::StopMatchTimer()
+{
+	bMatchActive = false;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Episode Reset
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -289,6 +399,7 @@ void ADEMatchManager::ResetTeams()
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Resetting teams for new episode"));
 
 	ResetScores();
+	StartMatchTimer();
 
 	// 1. Clear runtime state and respawn timers
 	for (const FDETeamConfiguration& Conf : TeamConfigs)

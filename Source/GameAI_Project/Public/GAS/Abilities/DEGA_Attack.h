@@ -76,6 +76,7 @@ private:
 	int32 CurrentAmmo = 0;
 	bool bIsReloading = false;
 	float LastFireTime = -9999.0f;
+	float ReloadStartTime = -9999.0f;
 
 	void StartReload();
 	void CompleteReload();

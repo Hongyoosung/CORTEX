@@ -7,6 +7,7 @@
 #include "TrainingDataTypes/AgentState.h"
 #include "Common/InteractionDefinition.h"
 #include "Core/DEGameMode.h"
+#include "Types/DEGameStateTypes.h"
 #include "DEScholaEnvironment.generated.h"
 
 
@@ -17,6 +18,8 @@ class ADEMatchManager;
 class ADESpawnArea;
 class ADEPickupBase;
 class ADECharacter;
+
+
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnScholaEnvironmentInitialized);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnvMatchStateChanged, EDEMatchState, NewState);
@@ -62,16 +65,20 @@ public:
 	void StartMatch();
 
 	UFUNCTION(BlueprintCallable, Category = "Schola|Match")
-	void EndMatch(EDEMatchState WinnerState);
+	void EndMatch(EDEMatchState WinnerState, int32 WinningTeamID = -1);
+
+	/** Delegate callback from ADEMatchManager::OnMatchConditionMet */
+	UFUNCTION()
+	void OnMatchConditionReceived(EDEMatchState WinnerState, int32 WinningTeamID);
 
 	UFUNCTION(BlueprintPure, Category = "Schola|Match")
 	EDEMatchState GetMatchState() const { return CurrentMatchState; }
 
 	UFUNCTION(BlueprintPure, Category = "Schola|Match")
-	float GetMatchTimer() const { return MatchTimer; }
+	float GetMatchTimer() const;
 
 	UFUNCTION(BlueprintPure, Category = "Schola|Match")
-	float GetTimeRemaining() const { return FMath::Max(0.0f, MaxMatchDuration - MatchTimer); }
+	float GetTimeRemaining() const;
 
 
 	//=========================================
@@ -106,21 +113,6 @@ public:
 	//=========================================
 	// MATCH CONFIGURATION
 	//=========================================
-
-	UPROPERTY(EditAnywhere, Category = "Schola|Match")
-	float MaxMatchDuration = 600.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Schola|Match")
-	int32 WinningScore = 120;
-
-	UPROPERTY(EditAnywhere, Category = "Schola|Match")
-	bool bDominationWinEnabled = true;
-
-	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
-	int32 KillPoints = 5;
-
-	UPROPERTY(EditAnywhere, Category = "Schola|Scoring")
-	float PassiveIncomeRate = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Schola|Match")
 	bool bAutoStartMatch = true;
@@ -172,10 +164,6 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|Match|State")
 	EDEMatchState CurrentMatchState = EDEMatchState::WaitingToStart;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Schola|Match|State")
-	float MatchTimer = 0.0f;
-
-	float PassiveIncomeAccumulator = 0.0f;
 	bool bMatchEnded = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Random")

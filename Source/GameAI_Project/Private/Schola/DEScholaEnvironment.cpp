@@ -35,6 +35,7 @@ void ADEScholaEnvironment::BeginPlay()
 	{
 		OwnedMatchManager->SetEnvID(EnvironmentId);
 		OwnedMatchManager->CapturePointInitialize();
+		OwnedMatchManager->OnMatchConditionMet.AddDynamic(this, &ADEScholaEnvironment::OnMatchConditionReceived);
 	}
 
 	if (bAutoStartMatch)
@@ -60,136 +61,53 @@ void ADEScholaEnvironment::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void ADEScholaEnvironment::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	if (CurrentMatchState != EDEMatchState::InProgress)
-	{
-		return;
-	}
-
-	MatchTimer += DeltaTime;
-
-	if (!OwnedMatchManager) return;
-
-	// ── Passive income ──
-	if (PassiveIncomeRate > 0.0f)
-	{
-		PassiveIncomeAccumulator += DeltaTime;
-		if (PassiveIncomeAccumulator >= 1.0f)
-		{
-			const float WholeSeconds = FMath::FloorToFloat(PassiveIncomeAccumulator);
-			PassiveIncomeAccumulator -= WholeSeconds;
-
-			for (const ADECapturePoint* CP : OwnedMatchManager->GetCapturePoints())
-			{
-				if (!CP) continue;
-				const int32 OwnerTeam = CP->GetTeamID_Implementation();
-				if (OwnerTeam >= 0)
-				{
-					OwnedMatchManager->AddTeamScore(OwnerTeam,
-						FMath::RoundToInt(PassiveIncomeRate * WholeSeconds));
-				}
-			}
-		}
-	}
-
-	// ── Win condition ──
-	for (int32 TeamID = 0; TeamID <= 1; ++TeamID)
-	{
-		if (OwnedMatchManager->GetTeamScore(TeamID) >= WinningScore)
-		{
-			const EDEMatchState WinState = (TeamID == 0)
-				? EDEMatchState::RedTeamWon
-				: EDEMatchState::BlueTeamWon;
-			UE_LOG(LogTemp, Warning,
-				TEXT("[ScholaEnv] Env %d: Team %d reached winning score %d — ending match"),
-				EnvironmentId, TeamID, WinningScore);
-			EndMatch(WinState);
-			return;
-		}
-	}
-
-	// ── Domination ──
-	if (bDominationWinEnabled)
-	{
-		const TArray<ADECapturePoint*>& CPs = OwnedMatchManager->GetCapturePoints();
-		if (CPs.Num() > 0)
-		{
-			for (int32 TeamID = 0; TeamID <= 1; ++TeamID)
-			{
-				bool bOwnsAll = true;
-				for (const ADECapturePoint* CP : CPs)
-				{
-					if (!CP || CP->GetTeamID_Implementation() != TeamID)
-					{
-						bOwnsAll = false;
-						break;
-					}
-				}
-				if (bOwnsAll)
-				{
-					const EDEMatchState WinState = (TeamID == 0)
-						? EDEMatchState::RedTeamWon
-						: EDEMatchState::BlueTeamWon;
-					UE_LOG(LogTemp, Warning,
-						TEXT("[ScholaEnv] Env %d: Team %d domination — ending match"),
-						EnvironmentId, TeamID);
-					EndMatch(WinState);
-					return;
-				}
-			}
-		}
-	}
-
-	// ── Timeout ──
-	if (MatchTimer >= MaxMatchDuration)
-	{
-		const int32 LeadTeam = OwnedMatchManager->GetWinnerTeamID();
-		EDEMatchState TimeoutState;
-		if (LeadTeam == 0)       TimeoutState = EDEMatchState::RedTeamWon;
-		else if (LeadTeam == 1)  TimeoutState = EDEMatchState::BlueTeamWon;
-		else                     TimeoutState = EDEMatchState::TimeExpired;
-
-		UE_LOG(LogTemp, Warning,
-			TEXT("[ScholaEnv] Env %d: Timeout — Scores [%d, %d]"),
-			EnvironmentId,
-			OwnedMatchManager->GetTeamScore(0),
-			OwnedMatchManager->GetTeamScore(1));
-		EndMatch(TimeoutState);
-	}
+	// Win-condition checking, passive income, and match-clock management have
+	// moved to ADEMatchManager::Tick. DEScholaEnvironment reacts via the
+	// OnMatchConditionMet delegate bound in BeginPlay.
 }
 
 //------------------------------------------------------------------------------
 // MATCH MANAGEMENT
 //------------------------------------------------------------------------------
 
+void ADEScholaEnvironment::OnMatchConditionReceived(EDEMatchState WinnerState, int32 WinningTeamID)
+{
+	EndMatch(WinnerState, WinningTeamID);
+}
+
+float ADEScholaEnvironment::GetMatchTimer() const
+{
+	return OwnedMatchManager ? OwnedMatchManager->GetMatchTimer() : 0.0f;
+}
+
+float ADEScholaEnvironment::GetTimeRemaining() const
+{
+	return OwnedMatchManager ? OwnedMatchManager->GetTimeRemaining() : 0.0f;
+}
+
 void ADEScholaEnvironment::StartMatch()
 {
 	if (CurrentMatchState != EDEMatchState::WaitingToStart) return;
 
-	MatchTimer = 0.0f;
-	PassiveIncomeAccumulator = 0.0f;
 	CurrentMatchState = EDEMatchState::InProgress;
 	OnEnvMatchStateChanged.Broadcast(CurrentMatchState);
 
 	if (OwnedMatchManager)
 	{
 		OwnedMatchManager->SpawnTeams();
+		OwnedMatchManager->StartMatchTimer();
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] %s: Match started (EnvID: %d)"), *GetName(), EnvironmentId);
 }
 
-void ADEScholaEnvironment::EndMatch(EDEMatchState WinnerState)
+void ADEScholaEnvironment::EndMatch(EDEMatchState WinnerState, int32 WinningTeamID)
 {
 	if (bMatchEnded) return;
 
 	bMatchEnded = true;
 	CurrentMatchState = WinnerState;
 	OnEnvMatchStateChanged.Broadcast(CurrentMatchState);
-
-	int32 WinningTeamID = -1;
-	if (WinnerState == EDEMatchState::RedTeamWon)       WinningTeamID = 0;
-	else if (WinnerState == EDEMatchState::BlueTeamWon) WinningTeamID = 1;
 
 	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Env %d: Match ended — State=%d | Winner=%d | Scores=[%d, %d]"),
 		EnvironmentId,
@@ -331,8 +249,6 @@ void ADEScholaEnvironment::Reset_Implementation(TMap<FString, FInitialAgentState
 		EpisodeManager->StartNewEpisode(EnvironmentId);
 	}
 
-	MatchTimer = 0.0f;
-	PassiveIncomeAccumulator = 0.0f;
 	bMatchEnded = false;
 	CurrentMatchState = EDEMatchState::InProgress;
 

@@ -6,7 +6,9 @@
 #include "GameFramework/Actor.h"
 #include "Types/DEEventTypes.h"
 #include "Team/DESquadManager.h"
+#include "Types/DEGameStateTypes.h"
 #include "DEMatchManager.generated.h"
+
 
 class ADECharacter;
 class UDEScholaAgent;
@@ -16,6 +18,7 @@ class UDETeamData;
 class ADESpawnArea;
 class UDERewardData;
 class UDERewardSubsystem;
+
 
 /**
  * Team configuration — data-driven via UDETeamData asset.
@@ -66,8 +69,9 @@ struct FDETeamState
 /**
  * Delegates for match-level events
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAgentSpawned,   int32, TeamID, ADECharacter*, Agent);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTeamScoreChanged, int32, TeamID, int32, NewScore);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAgentSpawned,     int32, TeamID, ADECharacter*, Agent);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTeamScoreChanged,  int32, TeamID, int32, NewScore);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMatchConditionMet, EDEMatchState, WinnerState, int32, WinningTeamID);
 
 
 /**
@@ -244,6 +248,27 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "DEMatchManager|Events")
 	FOnTeamScoreChanged OnTeamScoreChanged;
 
+	/** Fired when a win/domination/timeout condition is met; DEScholaEnvironment listens and calls EndMatch. */
+	UPROPERTY(BlueprintAssignable, Category = "DEMatchManager|Events")
+	FOnMatchConditionMet OnMatchConditionMet;
+
+
+	//========================================
+	// Match Timer (moved from DEScholaEnvironment)
+	//========================================
+
+	/** Activate win-condition checking and the match clock. Call from DEScholaEnvironment::StartMatch. */
+	void StartMatchTimer();
+
+	/** Deactivate win-condition checking (called internally when a condition fires). */
+	void StopMatchTimer();
+
+	UFUNCTION(BlueprintPure, Category = "DEMatchManager|Match")
+	float GetMatchTimer() const { return MatchTimer; }
+
+	UFUNCTION(BlueprintPure, Category = "DEMatchManager|Match")
+	float GetTimeRemaining() const { return FMath::Max(0.0f, MaxMatchDuration - MatchTimer); }
+
 
 
 public:
@@ -262,6 +287,22 @@ public:
 	/** Score points awarded to the capturing team per capture */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Score")
 	int32 CaptureScorePoints = 30;
+
+	/** Score a team must reach to win the match */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
+	int32 WinningScore = 120;
+
+	/** Maximum match duration in seconds before timeout */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
+	float MaxMatchDuration = 600.0f;
+
+	/** If true, owning all capture points triggers an immediate win */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
+	bool bDominationWinEnabled = true;
+
+	/** Score points earned per second per owned capture point */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
+	float PassiveIncomeRate = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Teams")
 	TArray<FDETeamConfiguration> TeamConfigs;
@@ -360,6 +401,15 @@ protected:
 
 	/** Group respawn countdown per team (-1 = inactive) */
 	float TeamRespawnTimers[2] = { -1.0f, -1.0f };
+
+	/** Elapsed match time in seconds (only ticks when bMatchActive) */
+	float MatchTimer = 0.0f;
+
+	/** Fractional-second accumulator for passive income */
+	float PassiveIncomeAccumulator = 0.0f;
+
+	/** True while the match clock and win-condition checks are running */
+	bool bMatchActive = false;
 
 	/** All spawned agents (for cleanup) */
 	UPROPERTY()

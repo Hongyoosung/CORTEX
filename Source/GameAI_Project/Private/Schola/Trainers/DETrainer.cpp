@@ -706,7 +706,13 @@ void ADETrainer::DrawTrainingDebug(float DeltaTime)
 
 EAgentTrainingStatus ADETrainer::ComputeStatus()
 {
-    // v10.2 FIX: Added detailed logging to track episode completion causes
+    // Once we've already signalled completion for this episode, return Running
+    // so Schola doesn't keep sending repeated trunc signals to Python.
+    // The reset path (ResetTrainer) clears bEpisodeCompleted.
+    if (bEpisodeCompleted)
+    {
+        return EAgentTrainingStatus::Running;
+    }
 
     // Check termination conditions
     const int32 MaxStepsCS = MaxEpisodeSteps;
@@ -714,6 +720,7 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
     {
         UE_LOG(LogTemp, Warning, TEXT("[DETrainer] Episode TRUNCATED - MaxSteps reached (Step %d/%d) - Agent: %s"),
             CurrentEpisodeSteps, MaxStepsCS, *GetName());
+        bEpisodeCompleted = true;
         return EAgentTrainingStatus::Truncated; // Episode truncated due to max steps
     }
 
@@ -762,6 +769,7 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
             UE_LOG(LogTemp, Warning,
                 TEXT("[DETrainer] Episode TRUNCATED — Match ended (State=%d) after %d steps — Agent: %s"),
                 static_cast<int32>(MatchState), CurrentEpisodeSteps, *GetName());
+            bEpisodeCompleted = true;
             return EAgentTrainingStatus::Truncated;
         }
     }
@@ -824,6 +832,7 @@ void ADETrainer::ResetTrainer()
     EpisodeReward = 0.0f;
     CachedStepReward = 0.0f;
     bHasNewReward = false;
+    bEpisodeCompleted = false;
 
     // v10.2 FIX: Re-validate agent and character references after reset
     // References may become stale if characters were destroyed/recreated during reset
