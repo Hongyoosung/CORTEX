@@ -70,6 +70,16 @@ void UDEGA_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 			FGameplayEffectSpecHandle SpecHandle = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo, Config.HealEffectClass);
 			if (SpecHandle.IsValid())
 			{
+				// Build context with target location so GameplayCue VFX spawns on the healed character
+				FGameplayEffectContextHandle ContextHandle = SpecHandle.Data->GetContext();
+				ContextHandle.AddInstigator(OwnerChar, OwnerChar);
+				ContextHandle.AddOrigin(Target->GetActorLocation());
+				FHitResult HealHit;
+				HealHit.Location = Target->GetActorLocation() + FVector(0, 0, 90);
+				HealHit.ImpactPoint = HealHit.Location;
+				HealHit.ImpactNormal = FVector::UpVector;
+				ContextHandle.AddHitResult(HealHit);
+				SpecHandle.Data->SetContext(ContextHandle);
 				SpecHandle.Data->SetSetByCallerMagnitude(DEGameplayTags::Data_Healing, HealAmount);
 				TargetASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data);
 			}

@@ -274,6 +274,15 @@ float ADECharacter::HealCharacter(float HealAmount)
 	float OldHealth = AttributeSet->GetHealth();
 
 	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
+	Context.AddInstigator(this, this);
+	Context.AddOrigin(GetActorLocation());
+	{
+		FHitResult HealHit;
+		HealHit.Location = GetActorLocation() + FVector(0, 0, 90);
+		HealHit.ImpactPoint = HealHit.Location;
+		HealHit.ImpactNormal = FVector::UpVector;
+		Context.AddHitResult(HealHit);
+	}
 	FGameplayEffectSpecHandle SpecHandle = AbilitySystemComponent->MakeOutgoingSpec(HealEffectClass, 1.0f, Context);
 	if (SpecHandle.IsValid())
 	{

@@ -23,10 +23,14 @@ void ADEGymConnectorManager::Tick(float DeltaTime)
     // Phase 2: Once running, throttle to StepInterval.
     if (Connector->IsRunning())
     {
-        StepAccumulator += DeltaTime;
+        // Clamp DeltaTime to prevent burst-stepping after editor is hidden/minimized.
+        // When UE5 is backgrounded it throttles ticks but DeltaTime reflects real
+        // wall-clock elapsed time, causing the accumulator to spike on resume.
+        const float ClampedDelta = FMath::Min(DeltaTime, StepInterval);
+        StepAccumulator += ClampedDelta;
         if (StepAccumulator >= StepInterval)
         {
-            StepAccumulator -= StepInterval;
+            StepAccumulator = 0.0f;
             Connector->Step(); // blocks ~10ms waiting for Python action
         }
     }
