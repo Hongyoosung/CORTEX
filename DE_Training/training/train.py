@@ -53,8 +53,8 @@ REWARD_CONFIG = {
     "AssignedBaseReachReward": 1.0,   # +1.0 sparse: first time reaching assigned base
 
     # Python-side scaling applied to the received step reward before PPO update
-    "reward_scale":  1.0,
-    "reward_clip":   10.0,
+    "reward_scale":  0.01,
+    "reward_clip":   5.0,
 }
 
 
@@ -89,14 +89,12 @@ class DETrainingConfig:
     ENTROPY_COEFF    = 0.01
     VF_LOSS_COEFF    = 0.5
     GRAD_CLIP        = 0.5
-    VF_CLIP_PARAM    = 10.0
+    VF_CLIP_PARAM = float('inf')
 
     LR_SCHEDULE = [
-        [0,          3e-4],
-        [500_000,    2e-4],
-        [1_000_000,  1e-4],
-        [2_000_000,  5e-5],
-        [3_000_000,  2e-5],
+        [0, 3e-4],
+        [2_000_000, 1e-4],
+        [4_000_000, 5e-5],
     ]
     ENTROPY_SCHEDULE = [
         [0,          0.01],
