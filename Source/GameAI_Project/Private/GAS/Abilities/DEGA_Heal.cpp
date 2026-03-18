@@ -247,7 +247,7 @@ void UDEGA_Heal::UpdateHealBeam(const AActor* Target)
 			FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset, false);
 	}
 
-	if (HealBeamComponent)
+	if (HealBeamComponent && OwnerChar)
 	{
 		HealBeamComponent->Activate();
 		HealBeamComponent->SetVariableVec3(TEXT("BeamStart"), OwnerChar->GetActorLocation() + FVector(0, 0, 90));

@@ -6,10 +6,14 @@ Architecture:
     Ally encoder     : Linear(5, 64) + MultiheadAttention(64, heads=4)
     Enemy encoder    : Linear(5, 64) + MultiheadAttention(64, heads=4)
     Base encoder     : Linear(7, 64) + MultiheadAttention(64, heads=4)
-    Strategy encoder : Embedding(3, 64)  — indexes [167:170] argmax
-    Policy head      : Linear(64*5, 256) → ReLU → Linear(256, 128) → ReLU → Linear(128, 7) → Tanh
-    Value head       : Linear(64*5, 256) → ReLU → Linear(256, 1)
+    Policy head      : Linear(64*4, 256) → ReLU → Linear(256, 128) → ReLU → Linear(128, 7) → Tanh
+    Value head       : Linear(64*4, 256) → ReLU → Linear(256, 1)
     Learnable log_std: (7,)
+
+NOTE: Strategy encoder removed. Three separate model instances are trained
+per role (Assault / Defend / Support). Each model only receives observations
+for its assigned role, so the strategy one-hot at [167:170] is always constant
+and encoding it adds no information.
 
 Input: 170-dim flat array (from C++ FDEObservationV2::ToFlatArray)
 Layout:
@@ -112,15 +116,12 @@ class EntityCentricPolicy(nn.Module):
         self.enemy_enc    = nn.Linear(ENEMY_DIM, hidden)
         self.base_enc     = nn.Linear(BASE_DIM,  hidden)
 
-        # Strategy encoder: embeds the 3-way one-hot → hidden (via argmax index)
-        self.strategy_enc = nn.Embedding(STRATEGY_DIM, hidden)
-
         # Per-entity-type cross-attention (self token queries each entity set)
         self.ally_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
         self.enemy_attn = nn.MultiheadAttention(hidden, heads, batch_first=True)
         self.base_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
 
-        combined_dim = hidden * 5  # self + ally_ctx + enemy_ctx + base_ctx + strategy
+        combined_dim = hidden * 4  # self + ally_ctx + enemy_ctx + base_ctx
 
         # Action head: combined → 7-dim EQS weights in [-1, 1]
         self.action_head = nn.Sequential(
@@ -198,7 +199,7 @@ class EntityCentricPolicy(nn.Module):
 
         Returns: (B, hidden*5)
         """
-        self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask, strategy_idx = self._unpack(flat)
+        self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask, _ = self._unpack(flat)
 
         s = self.self_enc(self_obs)               # (B, hidden)
         q = s.unsqueeze(1)                        # (B, 1, hidden) — query for attention
@@ -215,13 +216,10 @@ class EntityCentricPolicy(nn.Module):
         b_ctx, _ = self.base_attn(q, b_enc, b_enc,
                                   key_padding_mask=base_mask)    # (B, 1, hidden)
 
-        strat = self.strategy_enc(strategy_idx)   # (B, hidden)
-
         return torch.cat([s,
                           a_ctx.squeeze(1),
                           e_ctx.squeeze(1),
-                          b_ctx.squeeze(1),
-                          strat], dim=-1)                        # (B, hidden*5)
+                          b_ctx.squeeze(1)], dim=-1)             # (B, hidden*4)
 
     # ── Public interface ─────────────────────────────────────────────────────
 

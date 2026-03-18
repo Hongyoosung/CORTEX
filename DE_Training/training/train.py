@@ -109,6 +109,8 @@ class DETrainingConfig:
 
 # ── RLlib helpers ─────────────────────────────────────────────────────────────
 
+STRATEGY_POLICY_NAMES = {0: "assault_policy", 1: "defend_policy", 2: "support_policy"}
+
 if RLLIB_AVAILABLE:
     from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
     from ray.rllib.utils.annotations import override
@@ -117,7 +119,8 @@ if RLLIB_AVAILABLE:
         """
         RLlib TorchModelV2 wrapper for EntityCentricPolicy.
 
-        All agents share a single policy (no per-strategy routing).
+        Three separate instances are registered — one per role (assault / defend / support).
+        Each only receives observations for its assigned role.
         forward() returns (B, 14) = [means(7), log_stds(7)].
         """
 
@@ -148,9 +151,22 @@ if RLLIB_AVAILABLE:
 
 
     def create_ppo_config():
-        """Build RLlib PPO config — single shared EntityCentricPolicy."""
+        """Build RLlib PPO config — three separate per-role EntityCentricPolicy instances."""
         from ray.rllib.algorithms.ppo import PPOConfig
         from ray.rllib.policy.policy import PolicySpec
+
+        try:
+            from env_wrapper import AGENT_STRATEGY_REGISTRY
+        except ImportError:
+            from training.env_wrapper import AGENT_STRATEGY_REGISTRY
+
+        def _policy_mapping_fn(agent_id, episode, worker, **kwargs):
+            strategy_idx = AGENT_STRATEGY_REGISTRY.get(agent_id, 0)
+            return STRATEGY_POLICY_NAMES[strategy_idx]
+
+        model_cfg = {"custom_model": "entity_centric_model",
+                     "custom_model_config": {"hidden": 64, "heads": 4},
+                     "max_seq_len": 20}
 
         config = PPOConfig()
         config = config.environment(
@@ -173,10 +189,13 @@ if RLLIB_AVAILABLE:
             rollout_fragment_length="auto",
             batch_mode="complete_episodes",
         )
-        # Single shared policy — all agents mapped here
+        # Three separate policies — one per role
         config = config.multi_agent(
-            policies={"entity_centric_policy": PolicySpec()},
-            policy_mapping_fn=lambda agent_id, episode, worker, **kw: "entity_centric_policy",
+            policies={
+                name: PolicySpec(config={"model": model_cfg})
+                for name in STRATEGY_POLICY_NAMES.values()
+            },
+            policy_mapping_fn=_policy_mapping_fn,
             count_steps_by="agent_steps",
         )
         config = config.debugging(log_level="WARN")
@@ -204,11 +223,6 @@ if RLLIB_AVAILABLE:
             kl_coeff=0.2,
             kl_target=0.01,
         )
-        config.model = {
-            "custom_model": "entity_centric_model",
-            "custom_model_config": {"hidden": 64, "heads": 4},
-            "max_seq_len": 20,
-        }
         return config
 
 
@@ -253,6 +267,7 @@ def train_with_rllib(args):
     )
 
     register_env("de_entity_centric", lambda cfg: DEEntityCentricEnv(**cfg))
+    # Single model class registered; all three per-role policies reference it.
     ModelCatalog.register_custom_model("entity_centric_model", EntityCentricRLlibModel)
 
     timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -352,11 +367,7 @@ def train_with_rllib(args):
             if ckey in custom:
                 tb.add_scalar(f"reward/component_{comp}", float(custom[ckey]), cumul_steps)
 
-        # [수정됨] Learner Metrics 추출 - numpy.float32 등의 타입 호환성 문제 해결
-        policy_stats = result.get("info", {}).get("learner", {}).get("entity_centric_policy", {})
-        stats = policy_stats.get("learner_stats", policy_stats)
-
-        # RLlib 버전에 대비해 키 후보군(candidates)을 보강했습니다.
+        # Learner metrics — logged separately per role policy
         TRAIN_METRICS = {
             "losses/policy_loss":  ["policy_loss", "mean_policy_loss"],
             "losses/vf_loss":      ["vf_loss", "mean_vf_loss"],
@@ -367,19 +378,21 @@ def train_with_rllib(args):
             "lr/value":            ["cur_lr", "lr"],
             "vf/explained_var":    ["vf_explained_var", "explained_variance"],
         }
-        
-        for tag, candidates in TRAIN_METRICS.items():
-            for k in candidates:
-                if k in stats:
-                    v = stats[k]
-                    try:
-                        # numpy 데이터 타입이 섞여 있어도 강제로 float으로 변환하여 기록합니다.
-                        val = float(v)
-                        if not np.isnan(val):
-                            tb.add_scalar(tag, val, cumul_steps)
-                            break # 값을 찾았으면 다음 태그로 넘어감
-                    except (ValueError, TypeError):
-                        pass
+        learner_info = result.get("info", {}).get("learner", {})
+        for policy_name in STRATEGY_POLICY_NAMES.values():
+            role = policy_name.replace("_policy", "")
+            raw = learner_info.get(policy_name, {})
+            stats = raw.get("learner_stats", raw)
+            for tag, candidates in TRAIN_METRICS.items():
+                for k in candidates:
+                    if k in stats:
+                        try:
+                            val = float(stats[k])
+                            if not np.isnan(val):
+                                tb.add_scalar(f"{role}/{tag}", val, cumul_steps)
+                                break
+                        except (ValueError, TypeError):
+                            pass
 
         tb.flush()
 
@@ -409,15 +422,17 @@ def train_with_rllib(args):
 
     algo.save(output_dir)
 
-    # Export ONNX from best checkpoint
+    # Export one ONNX per role from best checkpoint
     best_dir = os.path.join(output_dir, "best")
     if os.path.exists(best_dir):
         algo.restore(os.path.abspath(best_dir))
-    rllib_policy = algo.get_policy("entity_centric_policy")
-    if rllib_policy:
-        model = rllib_policy.model.policy
-        onnx_path = os.path.join(output_dir, "de_policy_entity_centric.onnx")
-        model.export_onnx(onnx_path)
+    for strategy_idx, policy_name in STRATEGY_POLICY_NAMES.items():
+        role_name = policy_name.replace("_policy", "")  # "assault" / "defend" / "support"
+        rllib_policy = algo.get_policy(policy_name)
+        if rllib_policy:
+            model = rllib_policy.model.policy
+            onnx_path = os.path.join(output_dir, f"de_policy_{role_name}.onnx")
+            model.export_onnx(onnx_path)
 
     tb.close()
     algo.stop()
@@ -596,24 +611,27 @@ def evaluate_checkpoint(checkpoint_path: str):
         ray.init(ignore_reinit_error=True, include_dashboard=False, logging_level="ERROR")
         register_env("de_entity_centric", lambda cfg: DEEntityCentricEnv(**cfg))
         ModelCatalog.register_custom_model("entity_centric_model", EntityCentricRLlibModel)
-        config = create_ppo_config()
-        algo   = config.build()
+        algo = create_ppo_config().build()
         algo.restore(checkpoint_path)
 
-        rllib_policy = algo.get_policy("entity_centric_policy")
-        model  = rllib_policy.model.policy
-        model.eval()
-        with torch.no_grad():
-            out = model(obs)
-        means = out.mean(dim=0).numpy()
-        stds  = out.std(dim=0).numpy()
-        learned_std = model.get_std().detach().numpy()
+        for policy_name in STRATEGY_POLICY_NAMES.values():
+            role = policy_name.replace("_policy", "")
+            rllib_policy = algo.get_policy(policy_name)
+            if not rllib_policy:
+                continue
+            model  = rllib_policy.model.policy
+            model.eval()
+            with torch.no_grad():
+                out = model(obs)
+            means = out.mean(dim=0).numpy()
+            stds  = out.std(dim=0).numpy()
+            learned_std = model.get_std().detach().numpy()
 
-        print("EQS Weight Profile:")
-        for i, label in enumerate(EQS_LABELS):
-            bar = "#" * int((means[i] + 1) / 2 * 20) + "." * int((1 - means[i]) / 2 * 20)
-            print(f"  {label:<28} {means[i]:>6.3f} ± {stds[i]:.3f}  [{bar}]")
-        print(f"\nLearned σ: {np.round(learned_std, 3)}")
+            print(f"\nEQS Weight Profile — {role.upper()}:")
+            for i, label in enumerate(EQS_LABELS):
+                bar = "#" * int((means[i] + 1) / 2 * 20) + "." * int((1 - means[i]) / 2 * 20)
+                print(f"  {label:<28} {means[i]:>6.3f} ± {stds[i]:.3f}  [{bar}]")
+            print(f"  Learned σ: {np.round(learned_std, 3)}")
 
         algo.stop()
         ray.shutdown()

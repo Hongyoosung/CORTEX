@@ -10,6 +10,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Data/DEStrategyData.h"
+#include "Types/DEStrategyTypes.h"
 #include "Data/DETeamData.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -40,6 +41,12 @@ bool UDEGA_Attack::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	FGameplayTagContainer* OptionalRelevantTags) const
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+	{
+		return false;
+	}
+
+	const ADECharacter* OwnerChar = Cast<ADECharacter>(ActorInfo->AvatarActor.Get());
+	if (OwnerChar && OwnerChar->GetCommandedStrategy() == EDEStrategyType::Support)
 	{
 		return false;
 	}

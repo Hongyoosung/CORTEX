@@ -53,6 +53,14 @@ except ImportError:
 OBS_DIM    = 170
 ACTION_DIM = 7
 
+# ── Strategy registry ─────────────────────────────────────────────────────────
+# Maps agent_id_str → strategy index (0=Assault, 1=Defend, 2=Support).
+# Populated by DEEntityCentricEnv on reset() and step() so that train.py's
+# policy_mapping_fn can route each agent to the correct per-role policy.
+# Works correctly when num_workers=0 (all code in one process).
+AGENT_STRATEGY_REGISTRY: Dict[str, int] = {}
+STRATEGY_ONEHOT_START = 167  # obs[167:170] = strategy one-hot
+
 
 class DEEntityCentricEnv(MultiAgentEnv):
     """
@@ -342,6 +350,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
         obs_d, info_d = self._process_obs(obs_list, infos_list)
 
+        # Populate strategy registry from reset obs so policy_mapping_fn
+        # can route agents to the correct per-role policy immediately.
+        for fid, obs in obs_d.items():
+            strategy_idx = int(np.argmax(obs[STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START + 3]))
+            AGENT_STRATEGY_REGISTRY[fid] = strategy_idx
+            self._agent_strategy[fid] = strategy_idx
+
         # Sync cumulative baseline to avoid phantom delta on first step
         for fid in self._agent_ids:
             clf = info_d.get(fid, {}).get('CumulativeLifetimeReward')
@@ -590,6 +605,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 try:
                     strat = int(raw_strat)
                     self._agent_strategy[fid] = strat
+                    AGENT_STRATEGY_REGISTRY[fid] = strat
                 except (ValueError, TypeError):
                     pass
             strat = self._agent_strategy.get(fid)
