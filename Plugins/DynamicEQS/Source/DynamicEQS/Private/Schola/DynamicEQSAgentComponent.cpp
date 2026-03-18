@@ -9,7 +9,8 @@
 
 UDynamicEQSAgentComponent::UDynamicEQSAgentComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;  // enabled in BeginPlay for Inference mode
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;  // enabled via SetComponentTickEnabled in BeginPlay for Inference mode
 }
 
 void UDynamicEQSAgentComponent::BeginPlay()
@@ -64,8 +65,7 @@ void UDynamicEQSAgentComponent::BeginPlay()
 		Stepper->Init(Agents, PolicyScriptInterface);
 
 		// Enable tick so Stepper->Step() fires every frame.
-		PrimaryComponentTick.bCanEverTick = true;
-		RegisterComponentTickFunctions(true);
+		SetComponentTickEnabled(true);
 	}
 }
 
@@ -75,7 +75,12 @@ void UDynamicEQSAgentComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 	if (AgentMode == EDynamicEQSAgentMode::Inference && Stepper && Status == EAgentStatus::Running)
 	{
-		Stepper->Step();
+		TimeSinceLastStep += DeltaTime;
+		if (TimeSinceLastStep >= InferenceStepInterval)
+		{
+			TimeSinceLastStep = 0.0f;
+			Stepper->Step();
+		}
 	}
 }
 

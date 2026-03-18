@@ -56,6 +56,24 @@ def find_latest_checkpoint(results_dir: str) -> str:
     return chosen
 
 
+def _make_dummy_class(module: str, name: str):
+    """Return a stub class that silently absorbs any constructor args.
+
+    Used when the pickle references a Ray/RLlib class that no longer exists
+    in the installed version.  We only care about extracting the weights dict,
+    so these objects are irrelevant.
+    """
+    class _Dummy:
+        _origin = f"{module}.{name}"
+        def __init__(self, *a, **kw): pass
+        def __repr__(self): return f"<Dummy {self._origin}>"
+        # Support pickle's __reduce__ / __setstate__ protocol
+        def __setstate__(self, state): pass
+    _Dummy.__name__ = name
+    _Dummy.__qualname__ = name
+    return _Dummy
+
+
 class _CrossVersionUnpickler(pickle.Unpickler):
     """
     Handles Python 3.10 cloudpickle pickles loaded on Python 3.12.
@@ -69,10 +87,23 @@ class _CrossVersionUnpickler(pickle.Unpickler):
     call to the 18-arg form expected by Python 3.12.
     """
 
+    # Ray/RLlib module renames across versions
+    _MODULE_ALIASES = {
+        "ray.rllib.callbacks": "ray.rllib.callbacks.callbacks",
+        "ray.rllib.policy.policy": "ray.rllib.policy.policy",
+    }
+
     def find_class(self, module: str, name: str):
         if module == "ray.cloudpickle.cloudpickle" and name == "_builtin_type":
             return _CrossVersionUnpickler._safe_builtin_type
-        return super().find_class(module, name)
+        # Redirect moved/renamed Ray modules
+        module = self._MODULE_ALIASES.get(module, module)
+        try:
+            return super().find_class(module, name)
+        except (ModuleNotFoundError, AttributeError):
+            # Return a dummy class so the pickle can continue loading
+            # (we only need the weights dict, not the callbacks/config objects)
+            return _make_dummy_class(module, name)
 
     @staticmethod
     def _safe_builtin_type(type_name: str):
@@ -83,13 +114,25 @@ class _CrossVersionUnpickler(pickle.Unpickler):
 
     @staticmethod
     def _safe_code(*args):
-        """CodeType constructor compat shim: 16-arg (Py3.10) / 17-arg (Py3.11) -> 18-arg (Py3.12)."""
-        if len(args) == 16:
+        """CodeType constructor compat shim: handles mismatches between Py3.10 (16-arg) and Py3.11/3.12 (18-arg)."""
+        import sys
+        py_ver = sys.version_info
+        target_args = 18 if (py_ver >= (3, 11)) else 16
+
+        if len(args) == target_args:
+            pass  # already correct arity
+        elif len(args) == 16 and target_args == 18:
+            # Py3.10 pickle loaded on Py3.11/3.12: inject qualname + exceptiontable
             ac, pac, kwc, nl, ss, fl, cs, co, na, va, fn, nm, fl2, lt, fv, cv = args
             args = (ac, pac, kwc, nl, ss, fl, cs, co, na, va, fn, nm, nm, fl2, lt, b"", fv, cv)
-        elif len(args) == 17:
+        elif len(args) == 17 and target_args == 18:
+            # Py3.11-alpha pickle on Py3.12: inject qualname
             ac, pac, kwc, nl, ss, fl, cs, co, na, va, fn, nm, fl2, lt, et, fv, cv = args
             args = (ac, pac, kwc, nl, ss, fl, cs, co, na, va, fn, nm, nm, fl2, lt, et, fv, cv)
+        elif len(args) == 18 and target_args == 16:
+            # Py3.11/3.12 pickle loaded on Py3.10: drop qualname (idx 12) + exceptiontable (idx 15)
+            ac, pac, kwc, nl, ss, fl, cs, co, na, va, fn, nm, _qualname, fl2, lt, _et, fv, cv = args
+            args = (ac, pac, kwc, nl, ss, fl, cs, co, na, va, fn, nm, fl2, lt, fv, cv)
         return types.CodeType(*args)
 
 

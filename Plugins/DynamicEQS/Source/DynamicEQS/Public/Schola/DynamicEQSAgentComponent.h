@@ -57,8 +57,17 @@ public:
 	 * Policy used in Inference mode.
 	 * Assign a UNNEPolicy asset (or any IPolicy implementor) in the details panel.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DynamicEQS|Agent|Inference")
+	UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "DynamicEQS|Agent|Inference")
 	TObjectPtr<UObject> InferencePolicyObject;
+
+	/**
+	 * Minimum interval (seconds) between inference steps in Inference mode.
+	 * Prevents the policy from being queried every frame, which would cause
+	 * StopMovement()+MoveTo() thrashing. Should match the training step rate.
+	 * Default 0.2s = 5 Hz (typical gRPC training step rate).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DynamicEQS|Agent|Inference", meta = (ClampMin = "0.05", ClampMax = "2.0"))
+	float InferenceStepInterval = 0.2f;
 
 	/**
 	 * Observer subobject that collects observations for the Schola pipeline.
@@ -130,4 +139,7 @@ private:
 
 	/** Opaque external parameters forwarded to sub-objects as needed. */
 	FInstancedStruct ExternalParams;
+
+	/** Accumulated time since last inference step (inference throttle). */
+	float TimeSinceLastStep = 0.0f;
 };

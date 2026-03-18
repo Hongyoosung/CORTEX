@@ -18,7 +18,7 @@
  * reinforcement learning framework, enabling trained neural network models to control agents.
  * Supports both CPU and GPU inference runtimes.
  */
-UCLASS(Blueprintable)
+UCLASS(Blueprintable, EditInlineNew)
 class SCHOLANNE_API UNNEPolicy : public UObject, public IPolicy
 {
 	GENERATED_BODY()
