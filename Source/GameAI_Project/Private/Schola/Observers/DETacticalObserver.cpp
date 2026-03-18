@@ -52,20 +52,45 @@ void UDETacticalObserver::InitializeObserver()
 	CachedTrainer = Cast<ADETrainer>(CachedCharacter->GetController());
 
 	// Cache environment origin for position normalization.
-	if (CachedCharacter->GetMatchManager())
+	// Step 1: Try to find the matching DEScholaEnvironment (training mode).
+	bool bFoundOrigin = false;
 	{
 		TArray<AActor*> EnvActors;
 		UGameplayStatics::GetAllActorsOfClass(CachedCharacter->GetWorld(), ADEScholaEnvironment::StaticClass(), EnvActors);
+		ADEMatchManager* CharMatchMgr = CachedCharacter->GetMatchManager();
 		for (AActor* Actor : EnvActors)
 		{
 			if (ADEScholaEnvironment* Env = Cast<ADEScholaEnvironment>(Actor))
 			{
-				if (Env->GetMatchManager() == CachedCharacter->GetMatchManager())
+				if (CharMatchMgr && Env->GetMatchManager() == CharMatchMgr)
 				{
 					CachedEnvironmentOrigin = Env->GetActorLocation();
+					bFoundOrigin = true;
 					break;
 				}
 			}
+		}
+	}
+
+	// Step 2: Fallback — no DEScholaEnvironment matched (inference mode or unpopulated MatchManager).
+	if (!bFoundOrigin)
+	{
+		// Auto-detect: compute centroid of all DECapturePoints as arena center
+		TArray<AActor*> CPActors;
+		UGameplayStatics::GetAllActorsOfClass(CachedCharacter->GetWorld(), ADECapturePoint::StaticClass(), CPActors);
+		if (CPActors.Num() > 0)
+		{
+			FVector Center = FVector::ZeroVector;
+			for (AActor* A : CPActors)
+				Center += A->GetActorLocation();
+			CachedEnvironmentOrigin = Center / static_cast<float>(CPActors.Num());
+			UE_LOG(LogTemp, Log, TEXT("[DETacticalObserver] Auto-detected arena center from %d capture points: %s"),
+				CPActors.Num(), *CachedEnvironmentOrigin.ToString());
+		}
+		else
+		{
+			CachedEnvironmentOrigin = FVector::ZeroVector;
+			UE_LOG(LogTemp, Warning, TEXT("[DETacticalObserver] No capture points found, using world origin."));
 		}
 	}
 
@@ -125,7 +150,99 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 
 	OutObservations.Values = MoveTemp(FlatObs);
 
-	if (bEnableDebugLogging && ObservationCallCount % DebugLogFrequency == 0)
+	// Detailed inference diagnostic: log first 3 observations + every DebugLogFrequency thereafter
+	const bool bIsInference = (CachedTrainer == nullptr);
+	const bool bShouldDiag = bIsInference && (ObservationCallCount <= 3 || (bEnableDebugLogging && ObservationCallCount % DebugLogFrequency == 0));
+
+	if (bShouldDiag)
+	{
+		ADECharacter* DiagChar = GetControlledCharacter();
+		const FVector DiagPos = DiagChar ? DiagChar->GetActorLocation() : FVector::ZeroVector;
+		const FVector DiagRelSelf = DiagPos - CachedEnvironmentOrigin;
+
+		UE_LOG(LogTemp, Warning, TEXT("===== [DETacticalObserver] INFERENCE DIAG #%d for %s ====="),
+			ObservationCallCount, DiagChar ? *DiagChar->GetName() : TEXT("NULL"));
+
+		// Self token
+		UE_LOG(LogTemp, Warning, TEXT("  EnvOrigin: %s | WorldPos: %s | RelSelf: (%.3f, %.3f, %.3f)"),
+			*CachedEnvironmentOrigin.ToString(), *DiagPos.ToString(),
+			DiagRelSelf.X / 7500.0, DiagRelSelf.Y / 7500.0, DiagRelSelf.Z / 1000.0);
+
+		// Self token raw values
+		if (ObsV2.SelfToken.Features.Num() >= 7)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  SelfToken: pos(%.3f,%.3f,%.3f) hp=%.3f vel(%.3f,%.3f,%.3f)"),
+				ObsV2.SelfToken.Features[0], ObsV2.SelfToken.Features[1], ObsV2.SelfToken.Features[2],
+				ObsV2.SelfToken.Features[3],
+				ObsV2.SelfToken.Features[4], ObsV2.SelfToken.Features[5], ObsV2.SelfToken.Features[6]);
+		}
+
+		// Token counts
+		UE_LOG(LogTemp, Warning, TEXT("  Tokens: allies=%d enemies=%d bases=%d | MatchMgr=%s"),
+			ObsV2.AllyTokens.Num(), ObsV2.EnemyTokens.Num(), ObsV2.BaseTokens.Num(),
+			(DiagChar && DiagChar->GetMatchManager()) ? TEXT("YES") : TEXT("NO(fallback)"));
+
+		// Strategy
+		UE_LOG(LogTemp, Warning, TEXT("  CommandedStrategy: %d"), static_cast<int32>(ObsV2.CommandedStrategy));
+
+		// Ally details
+		for (int32 i = 0; i < ObsV2.AllyTokens.Num(); ++i)
+		{
+			const auto& T = ObsV2.AllyTokens[i];
+			if (T.Features.Num() >= 5)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  Ally[%d]: relPos(%.3f,%.3f,%.3f) hp=%.2f alive=%.0f"),
+					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4]);
+			}
+		}
+
+		// Enemy details
+		for (int32 i = 0; i < ObsV2.EnemyTokens.Num(); ++i)
+		{
+			const auto& T = ObsV2.EnemyTokens[i];
+			if (T.Features.Num() >= 5)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  Enemy[%d]: relPos(%.3f,%.3f,%.3f) vis=%.0f conf=%.0f"),
+					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4]);
+			}
+		}
+
+		// Base details
+		UE_LOG(LogTemp, Warning, TEXT("  AssignedBaseIndex=%d | AssignedCapturePoints=%d"),
+			DiagChar->AssignedBaseIndex, DiagChar->AssignedCapturePoints.Num());
+		for (int32 i = 0; i < ObsV2.BaseTokens.Num(); ++i)
+		{
+			const auto& T = ObsV2.BaseTokens[i];
+			if (T.Features.Num() >= 7)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("  Base[%d]: relPos(%.3f,%.3f,%.3f) own=%.1f prog=%.1f assigned=%.0f val=%.1f"),
+					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4], T.Features[5], T.Features[6]);
+			}
+		}
+
+		// Scan flat array for out-of-range values
+		int32 OutOfRangeCount = 0;
+		float MaxAbs = 0.0f;
+		int32 MaxAbsIdx = -1;
+		for (int32 i = 0; i < OutObservations.Values.Num(); ++i)
+		{
+			const float AbsVal = FMath::Abs(OutObservations.Values[i]);
+			if (AbsVal > 1.0f)
+			{
+				OutOfRangeCount++;
+				if (AbsVal > MaxAbs)
+				{
+					MaxAbs = AbsVal;
+					MaxAbsIdx = i;
+				}
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("  FlatArray: %d/%d values outside [-1,1] | worst: idx=%d val=%.3f"),
+			OutOfRangeCount, OutObservations.Values.Num(), MaxAbsIdx, MaxAbsIdx >= 0 ? OutObservations.Values[MaxAbsIdx] : 0.0f);
+
+		UE_LOG(LogTemp, Warning, TEXT("===== END DIAG ====="));
+	}
+	else if (bEnableDebugLogging && ObservationCallCount % DebugLogFrequency == 0)
 	{
 		if (ValidateObservation(OutObservations.Values))
 		{
@@ -174,13 +291,13 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 
 	// ---- Self token (7-dim) ----
 	Obs.SelfToken.Features = {
-		static_cast<float>(RelSelfPos.X / 7500.0),
-		static_cast<float>(RelSelfPos.Y / 7500.0),
-		static_cast<float>(RelSelfPos.Z / 1000.0),
-		Character->GetHealthPercentage(), 
-		static_cast<float>(Vel.X / 600.0),
-		static_cast<float>(Vel.Y / 600.0),
-		static_cast<float>(Vel.Z / 600.0)
+		FMath::Clamp(static_cast<float>(RelSelfPos.X / 7500.0), -1.0f, 1.0f),
+		FMath::Clamp(static_cast<float>(RelSelfPos.Y / 7500.0), -1.0f, 1.0f),
+		FMath::Clamp(static_cast<float>(RelSelfPos.Z / 1000.0), -1.0f, 1.0f),
+		Character->GetHealthPercentage(),
+		FMath::Clamp(static_cast<float>(Vel.X / 600.0), -1.0f, 1.0f),
+		FMath::Clamp(static_cast<float>(Vel.Y / 600.0), -1.0f, 1.0f),
+		FMath::Clamp(static_cast<float>(Vel.Z / 600.0), -1.0f, 1.0f)
 	};
 
 	const int32 MyTeamID = Character->GetTeamID_Implementation();
@@ -189,88 +306,159 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 	Obs.CommandedStrategy = Character->GetCommandedStrategy();
 
 	ADEMatchManager* MatchMgr = Character->GetMatchManager();
+
+	// Gather ally, enemy, and base lists.
+	// Use MatchManager if it has populated data, otherwise query world directly.
+	TArray<ADECharacter*> Allies;
+	TArray<ADECharacter*> Enemies;
+	TArray<ADECapturePoint*> CapturePoints;
+
+	bool bUsedMatchMgr = false;
 	if (MatchMgr)
 	{
-		// ---- Ally tokens (5-dim each): [rel_pos/8000(3), health, alive] ----
-		TArray<ADECharacter*> Allies = MatchMgr->GetTeamAgents(MyTeamID);
-		for (ADECharacter* Ally : Allies)
-		{
-			if (!Ally || Ally == Character) continue;
-			if (Obs.AllyTokens.Num() >= DE_MAX_ALLIES) break;
-
-			const FVector RelPos = (Ally->GetActorLocation() - MyPos) / 8000.0f;
-			FDEEntityToken Tok;
-			Tok.Features = {
-				static_cast<float>(RelPos.X),
-				static_cast<float>(RelPos.Y),
-				static_cast<float>(RelPos.Z),
-				Ally->GetHealthPercentage(),
-				Ally->IsAlive() ? 1.0f : 0.0f
-			};
-			Obs.AllyTokens.Add(MoveTemp(Tok));
-		}
-
-		// ---- Enemy tokens (5-dim each): [rel_pos/8000(3), visible, confidence=1] ----
-		TArray<ADECharacter*> Enemies = MatchMgr->GetEnemyAgents(MyTeamID);
-		for (ADECharacter* Enemy : Enemies)
-		{
-			if (!Enemy) continue;
-			if (Obs.EnemyTokens.Num() >= DE_MAX_ENEMIES) break;
-
-			const float Dist = FVector::Dist(Enemy->GetActorLocation(), MyPos);
-			bool bVisible = false;
-			if (Dist < 8000.0f)
-			{
-				FHitResult Hit;
-				FCollisionQueryParams QP;
-				QP.AddIgnoredActor(Character);
-				bVisible = !Character->GetWorld()->LineTraceSingleByChannel(
-					Hit,
-					MyPos + FVector(0, 0, 90),
-					Enemy->GetActorLocation() + FVector(0, 0, 90),
-					ECC_Visibility, QP);
-			}
-
-			const FVector RelPos = bVisible ? (Enemy->GetActorLocation() - MyPos) / 8000.0f : FVector::ZeroVector;
-			FDEEntityToken Tok;
-			Tok.Features = {
-				static_cast<float>(RelPos.X),
-				static_cast<float>(RelPos.Y),
-				static_cast<float>(RelPos.Z),
-				bVisible ? 1.0f : 0.0f,
-				bVisible ? 1.0f : 0.0f
-			};
-			Obs.EnemyTokens.Add(MoveTemp(Tok));
-		}
-
-		// ---- Base tokens (7-dim each) ----
-		// [rel_pos/15000(3), ownership, capture_progress, is_assigned_target, strategic_value]
+		Allies = MatchMgr->GetTeamAgents(MyTeamID);
+		Enemies = MatchMgr->GetEnemyAgents(MyTeamID);
 		const TArray<ADECapturePoint*>& CPs = MatchMgr->GetCapturePoints();
-		for (int32 i = 0; i < CPs.Num() && Obs.BaseTokens.Num() < DE_MAX_BASES; ++i)
+		CapturePoints = CPs;
+
+		// Check if MatchManager actually has data (it may exist but be unpopulated in inference)
+		bUsedMatchMgr = (Allies.Num() > 0 || Enemies.Num() > 0 || CapturePoints.Num() > 0);
+	}
+
+	if (!bUsedMatchMgr)
+	{
+		// Fallback: query actors directly from the world
+		Allies.Empty();
+		Enemies.Empty();
+		CapturePoints.Empty();
+
+		TArray<AActor*> AllCharacters;
+		UGameplayStatics::GetAllActorsOfClass(Character->GetWorld(), ADECharacter::StaticClass(), AllCharacters);
+		for (AActor* Actor : AllCharacters)
 		{
-			ADECapturePoint* CP = CPs[i];
-			if (!CP) continue;
-
-			const FVector RelPos = (CP->GetActorLocation() - MyPos) / 15000.0f;
-			const int32 OwnerTeam = CP->GetTeamID_Implementation();
-			float Ownership = 0.0f;
-			if (OwnerTeam == MyTeamID) Ownership = 1.0f;
-			else if (OwnerTeam >= 0)   Ownership = -1.0f;
-
-			const float IsAssigned = (Character->AssignedBaseIndex == i) ? 1.0f : 0.0f;
-
-			FDEEntityToken Tok;
-			Tok.Features = {
-				static_cast<float>(RelPos.X),
-				static_cast<float>(RelPos.Y),
-				static_cast<float>(RelPos.Z),
-				Ownership,
-				0.0f,
-				IsAssigned,
-				0.5f
-			};
-			Obs.BaseTokens.Add(MoveTemp(Tok));
+			ADECharacter* OtherChar = Cast<ADECharacter>(Actor);
+			if (!OtherChar || OtherChar == Character) continue;
+			if (OtherChar->GetTeamID_Implementation() == MyTeamID)
+				Allies.Add(OtherChar);
+			else
+				Enemies.Add(OtherChar);
 		}
+
+		TArray<AActor*> AllCPs;
+		UGameplayStatics::GetAllActorsOfClass(Character->GetWorld(), ADECapturePoint::StaticClass(), AllCPs);
+		for (AActor* Actor : AllCPs)
+		{
+			if (ADECapturePoint* CP = Cast<ADECapturePoint>(Actor))
+				CapturePoints.Add(CP);
+		}
+	}
+
+	// ---- Ally tokens (5-dim each): [rel_pos/8000(3), health, alive] ----
+	for (ADECharacter* Ally : Allies)
+	{
+		if (!Ally || Ally == Character) continue;
+		if (Obs.AllyTokens.Num() >= DE_MAX_ALLIES) break;
+
+		const FVector RelPos = (Ally->GetActorLocation() - MyPos) / 8000.0f;
+		FDEEntityToken Tok;
+		Tok.Features = {
+			static_cast<float>(RelPos.X),
+			static_cast<float>(RelPos.Y),
+			static_cast<float>(RelPos.Z),
+			Ally->GetHealthPercentage(),
+			Ally->IsAlive() ? 1.0f : 0.0f
+		};
+		Obs.AllyTokens.Add(MoveTemp(Tok));
+	}
+
+	// ---- Enemy tokens (5-dim each): [rel_pos/8000(3), visible, confidence=1] ----
+	for (ADECharacter* Enemy : Enemies)
+	{
+		if (!Enemy) continue;
+		if (Obs.EnemyTokens.Num() >= DE_MAX_ENEMIES) break;
+
+		const float Dist = FVector::Dist(Enemy->GetActorLocation(), MyPos);
+		bool bVisible = false;
+		if (Dist < 8000.0f)
+		{
+			FHitResult Hit;
+			FCollisionQueryParams QP;
+			QP.AddIgnoredActor(Character);
+			bVisible = !Character->GetWorld()->LineTraceSingleByChannel(
+				Hit,
+				MyPos + FVector(0, 0, 90),
+				Enemy->GetActorLocation() + FVector(0, 0, 90),
+				ECC_Visibility, QP);
+		}
+
+		const FVector RelPos = bVisible ? (Enemy->GetActorLocation() - MyPos) / 8000.0f : FVector::ZeroVector;
+		FDEEntityToken Tok;
+		Tok.Features = {
+			static_cast<float>(RelPos.X),
+			static_cast<float>(RelPos.Y),
+			static_cast<float>(RelPos.Z),
+			bVisible ? 1.0f : 0.0f,
+			bVisible ? 1.0f : 0.0f
+		};
+		Obs.EnemyTokens.Add(MoveTemp(Tok));
+	}
+
+	// ---- Base tokens (7-dim each) ----
+	// [rel_pos/15000(3), ownership, capture_progress, is_assigned_target, strategic_value]
+	// IsAssigned: Training path uses AssignedBaseIndex (set by MatchManager).
+	// Inference path: pick nearest CP from AssignedCapturePoints (matches training's initial assignment).
+
+	// Determine effective assigned CP for inference when AssignedBaseIndex is unset
+	ADECapturePoint* InferenceAssignedCP = nullptr;
+	if (Character->AssignedBaseIndex < 0 && Character->AssignedCapturePoints.Num() > 0)
+	{
+		float BestDistSq = TNumericLimits<float>::Max();
+		for (ADECapturePoint* ACP : Character->AssignedCapturePoints)
+		{
+			if (!ACP) continue;
+			const float DistSq = FVector::DistSquared(ACP->GetActorLocation(), MyPos);
+			if (DistSq < BestDistSq)
+			{
+				BestDistSq = DistSq;
+				InferenceAssignedCP = ACP;
+			}
+		}
+	}
+
+	for (int32 i = 0; i < CapturePoints.Num() && Obs.BaseTokens.Num() < DE_MAX_BASES; ++i)
+	{
+		ADECapturePoint* CP = CapturePoints[i];
+		if (!CP) continue;
+
+		const FVector RelPos = (CP->GetActorLocation() - MyPos) / 15000.0f;
+		const int32 OwnerTeam = CP->GetTeamID_Implementation();
+		float Ownership = 0.0f;
+		if (OwnerTeam == MyTeamID) Ownership = 1.0f;
+		else if (OwnerTeam >= 0)   Ownership = -1.0f;
+
+		float IsAssigned = 0.0f;
+		if (Character->AssignedBaseIndex >= 0)
+		{
+			// Training path: MatchManager set the index directly
+			IsAssigned = (Character->AssignedBaseIndex == i) ? 1.0f : 0.0f;
+		}
+		else
+		{
+			// Inference path: nearest CP from AssignedCapturePoints
+			IsAssigned = (CP == InferenceAssignedCP) ? 1.0f : 0.0f;
+		}
+
+		FDEEntityToken Tok;
+		Tok.Features = {
+			static_cast<float>(RelPos.X),
+			static_cast<float>(RelPos.Y),
+			static_cast<float>(RelPos.Z),
+			Ownership,
+			0.0f,
+			IsAssigned,
+			0.5f
+		};
+		Obs.BaseTokens.Add(MoveTemp(Tok));
 	}
 
 	return Obs;

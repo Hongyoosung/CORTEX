@@ -90,8 +90,8 @@ private:
 	bool bIsCycling       = false;
 
 	// ---- Fixed Camera ----
-	/** World-space position where the camera is anchored when observing an agent */
-	FVector FixedCameraLocation = FVector::ZeroVector;
+	/** World-space rotation locked at the moment the agent is selected (faces enemy base) */
+	FRotator FixedCameraRotation = FRotator::ZeroRotator;
 
 	// ---- Blend Between Agents ----
 	FVector BlendFromLocation  = FVector::ZeroVector;

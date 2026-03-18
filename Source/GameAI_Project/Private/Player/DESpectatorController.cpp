@@ -194,13 +194,14 @@ void ADESpectatorController::GetPlayerViewPoint(FVector& OutLocation, FRotator& 
 {
 	if (bCameraActive && IsValid(CurrentTarget))
 	{
-		// Target: fixed camera position, looking at the agent
-		const FVector TargetLocation = FixedCameraLocation;
-		const FRotator TargetRotation = (CurrentTarget->GetActorLocation() - FixedCameraLocation).Rotation();
+		// Camera follows the agent with a fixed offset and fixed rotation (locked at switch time)
+		// Negate X so positive CameraOffset.X means "behind the agent"
+		const FVector BehindOffset(-CameraOffset.X, CameraOffset.Y, CameraOffset.Z);
+		const FVector TargetLocation = CurrentTarget->GetActorLocation() + FixedCameraRotation.RotateVector(BehindOffset);
+		const FRotator TargetRotation = FixedCameraRotation;
 
 		if (bIsBlending && ViewBlendTime > 0.f)
 		{
-			// Smooth cubic interpolation from previous camera to new fixed camera
 			const float Alpha = FMath::Clamp(BlendElapsed / ViewBlendTime, 0.f, 1.f);
 			const float SmoothAlpha = FMath::SmoothStep(0.f, 1.f, Alpha);
 
@@ -224,8 +225,9 @@ void ADESpectatorController::SwitchToAgent(ADECharacter* Agent)
 	// Save current camera state for blending
 	if (bCameraActive && IsValid(CurrentTarget))
 	{
-		BlendFromLocation = FixedCameraLocation;
-		BlendFromRotation = (CurrentTarget->GetActorLocation() - FixedCameraLocation).Rotation();
+		const FVector BehindOffsetBlend(-CameraOffset.X, CameraOffset.Y, CameraOffset.Z);
+		BlendFromLocation = CurrentTarget->GetActorLocation() + FixedCameraRotation.RotateVector(BehindOffsetBlend);
+		BlendFromRotation = FixedCameraRotation;
 	}
 	else
 	{
@@ -243,10 +245,9 @@ void ADESpectatorController::SwitchToAgent(ADECharacter* Agent)
 	bCameraActive = true;
 	Agent->bIsBeingObserved = true;
 
-	// Compute fixed camera position: offset in front of the agent (using agent's current facing)
-	const FVector AgentLocation = Agent->GetActorLocation();
-	const FRotator AgentRotation = Agent->GetActorRotation();
-	FixedCameraLocation = AgentLocation + AgentRotation.RotateVector(CameraOffset);
+	// Lock camera rotation to the agent's current facing direction with a slight downward pitch
+	FixedCameraRotation = Agent->GetActorRotation();
+	FixedCameraRotation.Pitch = -15.f;
 
 	// Start blend interpolation
 	BlendElapsed = 0.f;

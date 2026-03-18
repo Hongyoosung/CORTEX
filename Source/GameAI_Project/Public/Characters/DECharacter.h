@@ -344,7 +344,7 @@ public:
 	//========================================
 	// CapturePoints
 	//========================================
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Transient, Category = "AI|Environment")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "AI|Environment")
 	TArray<ADECapturePoint*> AssignedCapturePoints;
 
 	/**
