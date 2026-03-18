@@ -1,29 +1,31 @@
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "Types/DEStrategyTypes.h"
+#include "Data/DEStrategyData.h"
+#include "GameFramework/Character.h"
 #include "DETeamData.generated.h"
 
+
 /**
- * UDETeamData - Data Asset for Agent Appearance Configuration
+ * UDETeamData - Team-Level Configuration Data Asset
  *
  * Purpose:
- * Centralizes all visual and animation configuration for agents in a reusable data asset.
- * Separates appearance data from logic, making it easy to create variants (e.g., different
- * faction styles, seasonal skins, etc.) without code changes.
+ * Centralizes team identity, fallback visuals, and per-strategy role data.
+ * Per-strategy configuration (mesh/anim/stats) lives in UDEStrategyData assets
+ * referenced here, making each strategy independently browsable and reusable.
  *
  * Usage:
- * 1. Create Data Asset: Right-click → Miscellaneous → Data Asset → TeamData
- * 2. Configure appearance: Set skeletal mesh, animation blueprint, materials, etc.
- * 3. Assign to DEMatchManager: Set in RedTeamAppearance or BlueTeamAppearance
+ * 1. Create Asset: Right-click → Miscellaneous → Data Asset → DETeamData
+ * 2. Set team identity (name, color, default character class, fallback mesh/anim).
+ * 3. Assign a UDEStrategyData asset to each strategy slot.
+ * 4. Assign to DEMatchManager::TeamConfigs.
  *
- * Example Assets:
- * - DA_RedTeamAppearance: Red team configuration (red materials, aggressive animations)
- * - DA_BlueTeamAppearance: Blue team configuration (blue materials, tactical animations)
- * - DA_EliteAppearance: Special appearance for elite agents
- *
- * Team appearance configuration is now data-driven
+ * Fallback Chain (per field):
+ *   UDEStrategyData field (non-zero/non-null)
+ *     → UDETeamData team-level field
+ *       → Blueprint / AbilityData default
  */
 UCLASS(BlueprintType)
 class GAMEAI_PROJECT_API UDETeamData : public UPrimaryDataAsset
@@ -34,7 +36,11 @@ public:
 	//========================================
 	// Team Identity
 	//========================================
-	/** Character class to spawn (ADECharacter) */
+
+	/**
+	 * Default character class to spawn when the assigned strategy's
+	 * UDEStrategyData::CharacterClass is null.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Agent")
 	TSubclassOf<ACharacter> CharacterClass;
 
@@ -48,16 +54,60 @@ public:
 
 
 	//========================================
-	// Visual Appearance
+	// Visual Appearance (Team-Level Fallbacks)
 	//========================================
 
-	/** Agent skeletal mesh (body geometry) */
+	/** Fallback skeletal mesh when a strategy's UDEStrategyData::SkeletalMesh is null */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual Appearance")
 	TObjectPtr<USkeletalMesh> SkeletalMesh = nullptr;
 
-	/** Animation Blueprint class (controls agent animations) */
+	/** Fallback animation Blueprint when a strategy's UDEStrategyData::AnimationBlueprint is null */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual Appearance")
 	TSubclassOf<UAnimInstance> AnimationBlueprint = nullptr;
+
+
+	//========================================
+	// Per-Strategy Data Assets
+	//========================================
+
+	/** Configuration applied when an agent is assigned the Assault strategy. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy Data")
+	TObjectPtr<UDEStrategyData> AssaultData;
+
+	/** Configuration applied when an agent is assigned the Defend strategy. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy Data")
+	TObjectPtr<UDEStrategyData> DefendData;
+
+	/** Configuration applied when an agent is assigned the Support strategy. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy Data")
+	TObjectPtr<UDEStrategyData> SupportData;
+
+	/**
+	 * Returns the UDEStrategyData for the given strategy type, or null if unset.
+	 * Callers should apply team-level fallbacks for any null field on the returned asset.
+	 */
+	UDEStrategyData* GetStrategyData(EDEStrategyType Strategy) const
+	{
+		switch (Strategy)
+		{
+		case EDEStrategyType::Defend:  return DefendData.Get();
+		case EDEStrategyType::Support: return SupportData.Get();
+		default:                       return AssaultData.Get();
+		}
+	}
+
+	/**
+	 * Resolve the character class to spawn for the given strategy.
+	 * Returns the strategy-specific class if set; falls back to the team-level default.
+	 */
+	TSubclassOf<ACharacter> ResolveCharacterClass(EDEStrategyType Strategy) const
+	{
+		if (UDEStrategyData* SD = GetStrategyData(Strategy))
+		{
+			if (SD->CharacterClass) { return SD->CharacterClass; }
+		}
+		return CharacterClass;
+	}
 
 
 	//========================================
@@ -76,12 +126,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Effects")
 	TObjectPtr<USoundBase> SpawnSound = nullptr;
 
+
 	//========================================
 	// Helper Functions
 	//========================================
 
 	/** Get human-readable description for debugging */
-	UFUNCTION(BlueprintPure, Category = "Agent Appearance")
+	UFUNCTION(BlueprintPure, Category = "Team Data")
 	FString GetDescription() const
 	{
 		return FString::Printf(TEXT("%s (Mesh: %s, AnimBP: %s)"),
@@ -90,13 +141,12 @@ public:
 			AnimationBlueprint ? *AnimationBlueprint->GetName() : TEXT("None"));
 	}
 
-	/** Check if appearance data is valid */
-	UFUNCTION(BlueprintPure, Category = "Agent Appearance")
+	/** Check if team data is valid (requires a fallback mesh and character class) */
+	UFUNCTION(BlueprintPure, Category = "Team Data")
 	bool IsValid() const
 	{
-		return SkeletalMesh != nullptr;
+		return SkeletalMesh != nullptr && CharacterClass != nullptr;
 	}
-
 
 
 #if WITH_EDITOR
@@ -104,7 +154,6 @@ public:
 	{
 		Super::PostEditChangeProperty(PropertyChangedEvent);
 
-		// Validate data in editor
 		if (SkeletalMesh == nullptr)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("TeamData '%s': SkeletalMesh is not set!"), *GetName());

@@ -7,6 +7,11 @@
 #include "Team/DEMatchManager.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Data/DEStrategyData.h"
+#include "Types/DEStrategyTypes.h"
+#include "Data/DETeamData.h"
 #include "AIController.h"
 #include "Perception/AIPerceptionComponent.h"
 
@@ -26,7 +31,18 @@ bool UDEGA_Heal::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayTagContainer* TargetTags,
 	FGameplayTagContainer* OptionalRelevantTags) const
 {
-	return Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags);
+	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+	{
+		return false;
+	}
+
+	const ADECharacter* OwnerChar = Cast<ADECharacter>(ActorInfo->AvatarActor.Get());
+	if (!OwnerChar || OwnerChar->GetCommandedStrategy() != EDEStrategyType::Support)
+	{
+		return false;
+	}
+
+	return true;
 }
 
 void UDEGA_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -88,6 +104,21 @@ void UDEGA_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 			CumulativeHealAmount += HealAmount;
 
 			UpdateHealBeam(Target);
+
+			// Heal animation — montage is per-strategy
+			if (const UDEStrategyData* SD = OwnerChar->GetCurrentStrategyData())
+			{
+				if (SD->HealMontage)
+				{
+					if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
+					{
+						if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+						{
+							AnimInstance->Montage_Play(SD->HealMontage);
+						}
+					}
+				}
+			}
 		}
 		else if (!Config.HealEffectClass)
 		{
@@ -219,6 +250,7 @@ void UDEGA_Heal::UpdateHealBeam(const AActor* Target)
 	if (HealBeamComponent)
 	{
 		HealBeamComponent->Activate();
+		HealBeamComponent->SetVariableVec3(TEXT("BeamStart"), OwnerChar->GetActorLocation() + FVector(0, 0, 90));
 		HealBeamComponent->SetVariableVec3(TEXT("BeamEnd"), Target->GetActorLocation() + FVector(0, 0, 90));
 	}
 }

@@ -11,7 +11,6 @@ class UDEGA_Attack;
 class UDEGA_Heal;
 class ADEProjectileBase;
 class UNiagaraSystem;
-class UAnimMontage;
 
 /**
  * Configuration for the Attack Ability
@@ -59,9 +58,6 @@ struct FDEAttackAbilityConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	float ReloadTime = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
-	UAnimMontage* FireMontage = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	FName MuzzleSocketName = TEXT("MuzzleFlash");

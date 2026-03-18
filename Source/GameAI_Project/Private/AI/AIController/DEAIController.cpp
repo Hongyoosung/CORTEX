@@ -152,7 +152,10 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
         }
     }
 
-    if (BestEnemy)
+    // Support agents have no offensive capability — never set an attack target.
+    const bool bIsSupport = Self && (Self->GetCommandedStrategy() == EDEStrategyType::Support);
+
+    if (BestEnemy && !bIsSupport)
     {
         BB->SetValueAsObject(TEXT("TargetEnemy"), BestEnemy);
         BB->SetValueAsBool(TEXT("HasTarget"), true);

@@ -13,8 +13,9 @@
 
 UDETacticalObserver::UDETacticalObserver()
 {
-	// Build observation space (V2 entity-centric: 170-dim padded flat)
-	// Layout: Self(7) + Allies(8×5=40) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) + Strategy(3) = 170
+	// Build observation space (V2 entity-centric: 194-dim padded flat)
+	// Layout: Self(7) + Allies(8×8=64) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) + Strategy(3) = 194
+	// Ally token: [rel_pos(3), health, alive, is_assault, is_defend, is_support]
 	TArray<FBoxSpaceDimension> Dimensions;
 	Dimensions.Reserve(DE_OBS_V2_DIM);
 
@@ -185,14 +186,16 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 		// Strategy
 		UE_LOG(LogTemp, Warning, TEXT("  CommandedStrategy: %d"), static_cast<int32>(ObsV2.CommandedStrategy));
 
-		// Ally details
+		// Ally details (8-dim: pos, hp, alive, strategy one-hot)
 		for (int32 i = 0; i < ObsV2.AllyTokens.Num(); ++i)
 		{
 			const auto& T = ObsV2.AllyTokens[i];
-			if (T.Features.Num() >= 5)
+			if (T.Features.Num() >= 8)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("  Ally[%d]: relPos(%.3f,%.3f,%.3f) hp=%.2f alive=%.0f"),
-					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4]);
+				const FString StratStr = T.Features[5] > 0.5f ? TEXT("Assault")
+					: (T.Features[6] > 0.5f ? TEXT("Defend") : TEXT("Support"));
+				UE_LOG(LogTemp, Warning, TEXT("  Ally[%d]: relPos(%.3f,%.3f,%.3f) hp=%.2f alive=%.0f strategy=%s"),
+					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4], *StratStr);
 			}
 		}
 
@@ -353,20 +356,24 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		}
 	}
 
-	// ---- Ally tokens (5-dim each): [rel_pos/8000(3), health, alive] ----
+	// ---- Ally tokens (8-dim each): [rel_pos/8000(3), health, alive, is_assault, is_defend, is_support] ----
 	for (ADECharacter* Ally : Allies)
 	{
 		if (!Ally || Ally == Character) continue;
 		if (Obs.AllyTokens.Num() >= DE_MAX_ALLIES) break;
 
 		const FVector RelPos = (Ally->GetActorLocation() - MyPos) / 8000.0f;
+		const EDEStrategyType AllyStrategy = Ally->GetCommandedStrategy();
 		FDEEntityToken Tok;
 		Tok.Features = {
 			static_cast<float>(RelPos.X),
 			static_cast<float>(RelPos.Y),
 			static_cast<float>(RelPos.Z),
 			Ally->GetHealthPercentage(),
-			Ally->IsAlive() ? 1.0f : 0.0f
+			Ally->IsAlive() ? 1.0f : 0.0f,
+			(AllyStrategy == EDEStrategyType::Assault) ? 1.0f : 0.0f,
+			(AllyStrategy == EDEStrategyType::Defend)  ? 1.0f : 0.0f,
+			(AllyStrategy == EDEStrategyType::Support) ? 1.0f : 0.0f
 		};
 		Obs.AllyTokens.Add(MoveTemp(Tok));
 	}

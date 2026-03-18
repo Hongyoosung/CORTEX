@@ -80,6 +80,9 @@ struct FDERewardState
     /** Set to true the first time the agent reaches its AssignedBase (prevents repeat reward). */
     bool bHasReachedAssignedBase = false;
 
+    /** Per-ally accumulated recent damage tracker for Support targeting (decayed each step). */
+    TArray<float> AllyAccumulatedDamage;
+
     void Reset()
     {
         CumulativeReward = 0.0f;
@@ -96,6 +99,7 @@ struct FDERewardState
         LastIndividualStepReward = 0.0f;
         IsolatedConsecutiveSteps = 0;
         bHasReachedAssignedBase = false;
+        AllyAccumulatedDamage.Init(0.0f, 4);
     }
 };
 

@@ -3,7 +3,7 @@
 #include "Team/DEMatchManager.h"
 #include "Team/DESquadManager.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
-#include "Data/DERewardData.h"
+#include "Data/Reward/DERewardData.h"
 #include "Characters/DECharacter.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
@@ -13,7 +13,6 @@
 #include "Actors/DESpawnArea.h"
 #include "Actors/DECapturePoint.h"
 #include "Data/DETeamData.h"
-#include "Data/DERewardData.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
@@ -314,7 +313,12 @@ ADECharacter* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	Agent->SetEnvID_Implementation(EnvID);
 	Agent->AssignedCapturePoints = EnvCapturePoints;
 
-	// Appearance
+	// Store TeamData on the agent so ApplyStrategyAppearance() can reference it later.
+	Agent->TeamData = TeamData;
+	Agent->TeamColor = TeamData->TeamColor;
+
+	// Apply team-level appearance defaults at spawn time.
+	// These will be overridden per-strategy when SetCommandedStrategy() is called.
 	if (USkeletalMeshComponent* Mesh = Agent->GetMesh())
 	{
 		if (TeamData->SkeletalMesh)
@@ -322,7 +326,6 @@ ADECharacter* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 		if (TeamData->AnimationBlueprint)
 			Mesh->SetAnimInstanceClass(TeamData->AnimationBlueprint);
 	}
-	Agent->TeamColor = TeamData->TeamColor;
 
 	// Death → respawn pipeline
 	Agent->OnAgentDeathEvent_Delegate.AddDynamic(this, &ADEMatchManager::RegisterKill);

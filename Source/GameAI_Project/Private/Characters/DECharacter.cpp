@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Characters/DECharacter.h"
+#include "Data/DETeamData.h"
+#include "Data/DEStrategyData.h"
 #include "GAS/DEAttributeSet.h"
 #include "GAS/DEGameplayTags.h"
 #include "GAS/Abilities/DEGA_Attack.h"
@@ -660,14 +662,86 @@ void ADECharacter::PerformTacticalAction()
 
 void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 {
-	if (!ScholaAgent)
-	{
-		return;
-	}
-
-	if (ScholaAgent->GetCommandedStrategy() != NewStrategy)
+	if (ScholaAgent && ScholaAgent->GetCommandedStrategy() != NewStrategy)
 	{
 		ScholaAgent->UpdateCommandedStrategy(NewStrategy);
+	}
+
+	ApplyStrategyAppearance(NewStrategy);
+}
+
+void ADECharacter::ApplyStrategyAppearance(EDEStrategyType Strategy)
+{
+	if (!TeamData) { return; }
+
+	const UDEStrategyData* SD = TeamData->GetStrategyData(Strategy);
+
+	// ── Mesh & Animation Blueprint ──────────────────────────────────────────
+	if (USkeletalMeshComponent* InMesh = GetMesh())
+	{
+		// Strategy asset takes priority; fall back to team-level default.
+		USkeletalMesh* NewMesh = (SD && SD->SkeletalMesh)
+			? SD->SkeletalMesh.Get()
+			: TeamData->SkeletalMesh.Get();
+
+		if (NewMesh)
+		{
+			InMesh->SetSkeletalMesh(NewMesh);
+		}
+
+		TSubclassOf<UAnimInstance> NewAnimBP = (SD && SD->AnimationBlueprint)
+			? SD->AnimationBlueprint
+			: TeamData->AnimationBlueprint;
+
+		if (NewAnimBP)
+		{
+			InMesh->SetAnimInstanceClass(NewAnimBP);
+		}
+	}
+
+	if (!SD) { return; }
+
+	// ── Movement Speed ───────────────────────────────────────────────────────
+	if (SD->MaxWalkSpeed > 0.0f)
+	{
+		if (UCharacterMovementComponent* CMC = GetCharacterMovement())
+		{
+			CMC->MaxWalkSpeed = SD->MaxWalkSpeed;
+		}
+	}
+
+	// ── Max Health ───────────────────────────────────────────────────────────
+	if (SD->MaxHealth > 0.0f)
+	{
+		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
+		{
+			ASC->SetNumericAttributeBase(UDEAttributeSet::GetMaxHealthAttribute(), SD->MaxHealth);
+			// Bring current health up to the new cap (never down — let damage do that).
+			const float CurrentHealth = GetCurrentHealth();
+			if (CurrentHealth > SD->MaxHealth)
+			{
+				ASC->SetNumericAttributeBase(UDEAttributeSet::GetHealthAttribute(), SD->MaxHealth);
+			}
+		}
+	}
+
+	// ── Attack Config (Assault / Defend) ─────────────────────────────────────
+	if (AttackAbility && AbilityData)
+	{
+		FDEAttackAbilityConfig NewAttackConfig = AbilityData->AttackConfig;
+		if (SD->MinAttackRange > 0.0f) { NewAttackConfig.MinRange = SD->MinAttackRange; }
+		if (SD->MaxAttackRange > 0.0f) { NewAttackConfig.Range    = SD->MaxAttackRange; }
+		if (SD->Damage         > 0.0f) { NewAttackConfig.Damage   = SD->Damage;         }
+		if (SD->AttackSpeed    > 0.0f) { NewAttackConfig.Speed    = SD->AttackSpeed;    }
+		AttackAbility->SetConfig(NewAttackConfig);
+	}
+
+	// ── Heal Config (Support) ─────────────────────────────────────────────────
+	if (HealAbility && AbilityData && SD->MaxHealRange > 0.0f)
+	{
+		FDEHealAbilityConfig NewHealConfig = AbilityData->HealConfig;
+		NewHealConfig.Range = SD->MaxHealRange;
+		HealAbility->SetConfig(NewHealConfig);
 	}
 }
 
@@ -681,6 +755,12 @@ EDEStrategyType ADECharacter::GetCommandedStrategy() const
 	}
 
 	return ScholaAgent->GetCommandedStrategy();
+}
+
+UDEStrategyData* ADECharacter::GetCurrentStrategyData() const
+{
+	if (!TeamData) return nullptr;
+	return TeamData->GetStrategyData(GetCommandedStrategy());
 }
 
 

@@ -35,6 +35,8 @@ class ADECharacter;
 class UDERewardSubsystem;
 class UDEScholaAgent;
 class UDynamicEQSExecutor;
+class UDETeamData;
+class UDEStrategyData;
 struct FDEDeathEventData;
 struct FDETeamInfo;
 
@@ -198,6 +200,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Commands")
 	EDEStrategyType GetCommandedStrategy() const;
 
+	/** Returns the UDEStrategyData for the current commanded strategy, or null if unset. */
+	UFUNCTION(BlueprintPure, Category = "Character|Data")
+	UDEStrategyData* GetCurrentStrategyData() const;
+
+	/**
+	 * Apply the mesh, animation blueprint, and stat overrides from TeamData
+	 * that correspond to the given strategy.  Falls back to team-level defaults
+	 * for any field left unset in the override struct.
+	 * Called automatically by SetCommandedStrategy; can also be called directly
+	 * (e.g. after manually setting TeamData at spawn time).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Character|Appearance")
+	void ApplyStrategyAppearance(EDEStrategyType Strategy);
+
 
 	//========================================
 	// Reward Interface (forwarding to RewardCalculator)
@@ -317,6 +333,13 @@ public:
 	/** Data asset containing attack/heal configs (assigned in Blueprint) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Abilities|Config")
 	TObjectPtr<UDEAbilityData> AbilityData;
+
+	/**
+	 * Team appearance data asset assigned by DEMatchManager at spawn time.
+	 * Used by ApplyStrategyAppearance() to look up per-strategy mesh/anim/stat overrides.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "AI|Identity")
+	TObjectPtr<UDETeamData> TeamData;
 
 
 

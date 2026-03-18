@@ -13,16 +13,16 @@ static constexpr int32 DE_MAX_ALLIES  = 8;
 static constexpr int32 DE_MAX_ENEMIES = 8;
 static constexpr int32 DE_MAX_BASES   = 8;
 
-// Token dims: Self=7, Ally=5, Enemy=5, Base=7
+// Token dims: Self=7, Ally=8 (pos+hp+alive+strategy_onehot), Enemy=5, Base=7
 static constexpr int32 DE_SELF_DIM    = 7;
-static constexpr int32 DE_ALLY_DIM    = 5;
+static constexpr int32 DE_ALLY_DIM    = 8;   // [rel_pos(3), health, alive, is_assault, is_defend, is_support]
 static constexpr int32 DE_ENEMY_DIM   = 5;
 static constexpr int32 DE_BASE_DIM    = 7;
 
 // Strategy one-hot dim: Assault=0, Defend=1, Support=2
 static constexpr int32 DE_STRATEGY_DIM = 3;
 
-// Total padded flat size: 7 + 8*5 + 8*5 + 8*7 + 8+8+8 + 3 = 170
+// Total padded flat size: 7 + 8*8 + 8*5 + 8*7 + 8+8+8 + 3 = 194
 static constexpr int32 DE_OBS_V2_DIM  = DE_SELF_DIM
                                        + DE_MAX_ALLIES  * DE_ALLY_DIM
                                        + DE_MAX_ENEMIES * DE_ENEMY_DIM
@@ -138,15 +138,15 @@ struct GAMEAI_PROJECT_API FDEObservationV2
 	/**
 	 * Serialise to padded flat array (170-dim) for NNE/ONNX inference.
 	 *
-	 * Layout (total = 170):
+	 * Layout (total = 194):
 	 *  [0..6]     Self (7)
-	 *  [7..46]    Allies  padded to 8 × 5  (40)
-	 *  [47..86]   Enemies padded to 8 × 5  (40)
-	 *  [87..142]  Bases   padded to 8 × 7  (56)
-	 *  [143..150] Ally mask  (8) — 0=present, 1=padding
-	 *  [151..158] Enemy mask (8)
-	 *  [159..166] Base mask  (8)
-	 *  [167..169] Strategy one-hot [assault, defend, support] (3)
+	 *  [7..70]    Allies  padded to 8 × 8  (64) — includes ally strategy one-hot
+	 *  [71..110]  Enemies padded to 8 × 5  (40)
+	 *  [111..166] Bases   padded to 8 × 7  (56)
+	 *  [167..174] Ally mask  (8) — 0=present, 1=padding
+	 *  [175..182] Enemy mask (8)
+	 *  [183..190] Base mask  (8)
+	 *  [191..193] Strategy one-hot [assault, defend, support] (3)
 	 */
 	TArray<float> ToFlatArray() const
 	{
