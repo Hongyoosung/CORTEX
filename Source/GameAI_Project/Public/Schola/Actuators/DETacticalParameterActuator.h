@@ -11,7 +11,6 @@
 
 
 class ADECharacter;
-class AAbstractTrainer;
 
 
 /** //============================================================
@@ -43,7 +42,7 @@ public:
 	//============================================================
 	// UDynamicEQSActuatorBase interface
 	//============================================================
-	virtual FBoxSpace GetActionSpace() override;
+	virtual FBoxSpace GetActionSpace() const override;
 	virtual void TakeAction(const FBoxPoint& Action) override;
 	virtual void InitializeActuator() override;
 	virtual void ResetActuator() override;

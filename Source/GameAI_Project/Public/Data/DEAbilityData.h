@@ -58,7 +58,7 @@ struct FDEAttackAbilityConfig
 	int32 MaxAmmo = 150;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
-	float ReloadTime = 2.0f;
+	float ReloadTime = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	UAnimMontage* FireMontage = nullptr;

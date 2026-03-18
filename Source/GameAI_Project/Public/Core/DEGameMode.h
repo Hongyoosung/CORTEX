@@ -6,22 +6,7 @@
 #include "GameFramework/GameModeBase.h"
 #include "DEGameMode.generated.h"
 
-// Forward declarations
-class ADEMatchManager;
-class ADECharacter;
 
-/**
- * Match state enumeration
- */
-UENUM(BlueprintType)
-enum class EDEMatchState : uint8
-{
-	WaitingToStart		UMETA(DisplayName = "Waiting to Start"),
-	InProgress			UMETA(DisplayName = "In Progress"),
-	RedTeamWon			UMETA(DisplayName = "Red Team Won"),
-	BlueTeamWon			UMETA(DisplayName = "Blue Team Won"),
-	TimeExpired			UMETA(DisplayName = "Time Expired")
-};
 
 /**
  * Delegate for match events

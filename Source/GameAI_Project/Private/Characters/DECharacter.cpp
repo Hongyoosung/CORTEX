@@ -10,6 +10,7 @@
 #include "EQS/DynamicEQSExecutor.h"
 #include "Data/DEAbilityData.h"
 
+#include "Kismet/GameplayStatics.h"
 #include "AbilitySystemComponent.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "EngineUtils.h"
@@ -273,6 +274,15 @@ float ADECharacter::HealCharacter(float HealAmount)
 	float OldHealth = AttributeSet->GetHealth();
 
 	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
+	Context.AddInstigator(this, this);
+	Context.AddOrigin(GetActorLocation());
+	{
+		FHitResult HealHit;
+		HealHit.Location = GetActorLocation() + FVector(0, 0, 90);
+		HealHit.ImpactPoint = HealHit.Location;
+		HealHit.ImpactNormal = FVector::UpVector;
+		Context.AddHitResult(HealHit);
+	}
 	FGameplayEffectSpecHandle SpecHandle = AbilitySystemComponent->MakeOutgoingSpec(HealEffectClass, 1.0f, Context);
 	if (SpecHandle.IsValid())
 	{
@@ -658,17 +668,6 @@ void ADECharacter::SetCommandedStrategy(EDEStrategyType NewStrategy)
 	if (ScholaAgent->GetCommandedStrategy() != NewStrategy)
 	{
 		ScholaAgent->UpdateCommandedStrategy(NewStrategy);
-		
-		if (AAIController* AICtrl = Cast<AAIController>(GetController()))
-		{
-			if (UBlackboardComponent* BB = AICtrl->GetBlackboardComponent())
-			{
-				BB->SetValueAsEnum("CurrentStrategy", static_cast<uint8>(NewStrategy));
-			}
-		}
-
-		UE_LOG(LogTemp, Log, TEXT("[DECharacter] Agent %d received strategy command: %s"),
-			AgentID, *UEnum::GetValueAsString(NewStrategy));
 	}
 }
 

@@ -10,6 +10,7 @@
 ADESpectatorController::ADESpectatorController()
 {
 	bAutoManageActiveCameraTarget = false;
+	PrimaryActorTick.bCanEverTick = true;
 }
 
 void ADESpectatorController::BeginPlay()
@@ -18,6 +19,20 @@ void ADESpectatorController::BeginPlay()
 
 	// Show cursor for spectator convenience (optional)
 	bShowMouseCursor = false;
+}
+
+void ADESpectatorController::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (bIsBlending)
+	{
+		BlendElapsed += DeltaTime;
+		if (BlendElapsed >= ViewBlendTime)
+		{
+			bIsBlending = false;
+		}
+	}
 }
 
 void ADESpectatorController::SetupInputComponent()
@@ -179,16 +194,24 @@ void ADESpectatorController::GetPlayerViewPoint(FVector& OutLocation, FRotator& 
 {
 	if (bCameraActive && IsValid(CurrentTarget))
 	{
-		// Use the agent's third-person camera component if available
-		if (UCameraComponent* Cam = CurrentTarget->AgentCamera.Get())
+		// Camera follows the agent with a fixed offset and fixed rotation (locked at switch time)
+		// Negate X so positive CameraOffset.X means "behind the agent"
+		const FVector BehindOffset(-CameraOffset.X, CameraOffset.Y, CameraOffset.Z);
+		const FVector TargetLocation = CurrentTarget->GetActorLocation() + FixedCameraRotation.RotateVector(BehindOffset);
+		const FRotator TargetRotation = FixedCameraRotation;
+
+		if (bIsBlending && ViewBlendTime > 0.f)
 		{
-			OutLocation = Cam->GetComponentLocation();
-			OutRotation = Cam->GetComponentRotation();
+			const float Alpha = FMath::Clamp(BlendElapsed / ViewBlendTime, 0.f, 1.f);
+			const float SmoothAlpha = FMath::SmoothStep(0.f, 1.f, Alpha);
+
+			OutLocation = FMath::Lerp(BlendFromLocation, TargetLocation, SmoothAlpha);
+			OutRotation = FMath::Lerp(BlendFromRotation, TargetRotation, SmoothAlpha);
 		}
 		else
 		{
-			OutLocation = CurrentTarget->GetPawnViewLocation();
-			OutRotation = CurrentTarget->GetActorRotation();
+			OutLocation = TargetLocation;
+			OutRotation = TargetRotation;
 		}
 		return;
 	}
@@ -198,6 +221,19 @@ void ADESpectatorController::GetPlayerViewPoint(FVector& OutLocation, FRotator& 
 void ADESpectatorController::SwitchToAgent(ADECharacter* Agent)
 {
 	if (!IsValid(Agent)) return;
+
+	// Save current camera state for blending
+	if (bCameraActive && IsValid(CurrentTarget))
+	{
+		const FVector BehindOffsetBlend(-CameraOffset.X, CameraOffset.Y, CameraOffset.Z);
+		BlendFromLocation = CurrentTarget->GetActorLocation() + FixedCameraRotation.RotateVector(BehindOffsetBlend);
+		BlendFromRotation = FixedCameraRotation;
+	}
+	else
+	{
+		// First activation — blend from current spectator view
+		GetPlayerViewPoint(BlendFromLocation, BlendFromRotation);
+	}
 
 	// Clear previous observation flag
 	if (IsValid(CurrentTarget) && CurrentTarget != Agent)
@@ -209,9 +245,16 @@ void ADESpectatorController::SwitchToAgent(ADECharacter* Agent)
 	bCameraActive = true;
 	Agent->bIsBeingObserved = true;
 
-	// View through this controller so GetPlayerViewPoint drives position + rotation.
-	// The AI controller of the agent is unaffected (no possession).
-	SetViewTargetWithBlend(this, ViewBlendTime, VTBlend_Cubic);
+	// Lock camera rotation to the agent's current facing direction with a slight downward pitch
+	FixedCameraRotation = Agent->GetActorRotation();
+	FixedCameraRotation.Pitch = -15.f;
+
+	// Start blend interpolation
+	BlendElapsed = 0.f;
+	bIsBlending = true;
+
+	// View through this controller so GetPlayerViewPoint drives the camera.
+	SetViewTarget(this);
 }
 
 void ADESpectatorController::DisableCamera()

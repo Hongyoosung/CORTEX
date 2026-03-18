@@ -5,6 +5,20 @@
 #include "CoreMinimal.h"
 #include "DEGameStateTypes.generated.h"
 
+
+/**
+ * Match state enumeration
+ */
+UENUM(BlueprintType)
+enum class EDEMatchState : uint8
+{
+	WaitingToStart		UMETA(DisplayName = "Waiting to Start"),
+	InProgress			UMETA(DisplayName = "In Progress"),
+	TeamWon				UMETA(DisplayName = "Team Won"),
+	TimeExpired			UMETA(DisplayName = "Time Expired")
+};
+
+
 /**
  * Team ownership
  */

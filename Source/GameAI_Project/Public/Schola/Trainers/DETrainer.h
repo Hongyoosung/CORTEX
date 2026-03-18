@@ -195,6 +195,10 @@ protected:
     /** Flag indicating a new reward is ready for consumption */
     bool bHasNewReward = false;
 
+    /** True once ComputeStatus() has returned a terminal status for this episode.
+     *  Prevents repeated Truncated signals that confuse the Python env wrapper. */
+    bool bEpisodeCompleted = false;
+
     /** Diagnostics for post-respawn state */
     bool bWasDeadLastTick = false;
 

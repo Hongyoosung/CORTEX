@@ -8,7 +8,7 @@
 
 ADEGameMode::ADEGameMode()
 {
-	// v10.2: All game logic is owned by ADEScholaEnvironment (one per arena).
+	// All game logic is owned by ADEScholaEnvironment (one per arena).
 	// DEGameMode is now a minimal shell — no spawning, no scoring, no event subscriptions.
 	PrimaryActorTick.bCanEverTick = false;
 

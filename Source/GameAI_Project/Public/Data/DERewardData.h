@@ -136,7 +136,28 @@ struct FDEDefendRewardSettings
 
 	/** Multiplier on CaptureRadius used to define "near the zone" for ZoneGuardKillBonus. */
 	UPROPERTY(EditAnywhere, Category = "ZoneDefense")
-	float ZoneGuardRadius = 2.0f;
+	float ZoneGuardRadius = 3.0f;
+
+	//========== Threat Elimination (no-Assault fallback) =============
+
+	/** Per-cm shaping reward for approaching the nearest enemy that threatens a friendly zone.
+	 *  Only active when no Assault allies are alive — gives Defend a combat gradient. */
+	UPROPERTY(EditAnywhere, Category = "ThreatElimination")
+	float ThreatApproachReward = 0.08f;
+
+	/** Multiplier on CaptureRadius defining the "threat zone" around friendly bases.
+	 *  Enemies within this radius are considered threats worth intercepting. */
+	UPROPERTY(EditAnywhere, Category = "ThreatElimination")
+	float ThreatZoneRadius = 4.0f;
+
+	/** Bonus per step for being within engagement range of a base-threatening enemy. */
+	UPROPERTY(EditAnywhere, Category = "ThreatElimination")
+	float ThreatEngagementBonus = 3.0f;
+
+	/** Kill bonus specifically for eliminating an enemy that was threatening a friendly base
+	 *  (within ThreatZoneRadius). Stacks with ZoneGuardKillBonus. */
+	UPROPERTY(EditAnywhere, Category = "ThreatElimination")
+	float ThreatEliminationKillBonus = 5.0f;
 
 
 	//========== Movement Properties =============
@@ -192,9 +213,9 @@ struct FDESupportRewardSettings
 
 	//========== Capture Properties =============
 
-	/** Support: +10 per capture (base CaptureReward=100 × 0.10) */
+	/** Support: +2 per capture (base CaptureReward=100 × 0.02) — low to discourage solo capping */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float CaptureRewardScale = 0.10f;
+	float CaptureRewardScale = 0.02f;
 
 	/** Support: -15 per loss (base LossCaptureReward=-100 × 0.15) */
 	UPROPERTY(EditAnywhere, Category = "Capture")
@@ -205,17 +226,26 @@ struct FDESupportRewardSettings
 
 	/** Per-tick reward when actively healing an ally */
 	UPROPERTY(EditAnywhere, Category = "Heal")
-	float HealTickReward = 0.5f;
+	float HealTickReward = 3.0f;
 
 	//========== Positioning Properties =============
 
 	/** Per-step bonus for being farther from the nearest visible enemy than the nearest ally. */
 	UPROPERTY(EditAnywhere, Category = "Positioning")
-	float RearGuardBonus = 0.3f;
+	float RearGuardBonus = 1.5f;
 
 	/** Maximum distance to nearest visible enemy (cm) for RearGuardBonus to fire. */
 	UPROPERTY(EditAnywhere, Category = "Positioning")
 	float RearGuardMaxEnemyDist = 3000.0f;
+
+	/** Per-step penalty when Support is closer to the nearest visible enemy than the nearest alive ally.
+	 *  Discourages frontline positioning — Support should stay behind teammates. */
+	UPROPERTY(EditAnywhere, Category = "Positioning")
+	float FrontlinePenalty = 2.0f;
+
+	/** Per-step bonus when at least one alive ally is between Support and the nearest visible enemy. */
+	UPROPERTY(EditAnywhere, Category = "Positioning")
+	float AllyShieldBonus = 1.0f;
 
 
 	//========== Movement Properties =============

@@ -36,6 +36,7 @@ public:
 	ADESpectatorController();
 
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 	virtual void SetupInputComponent() override;
 	virtual void GetPlayerViewPoint(FVector& OutLocation, FRotator& OutRotation) const override;
 
@@ -53,6 +54,10 @@ public:
 	/** Blend time when switching view targets (seconds) */
 	UPROPERTY(EditAnywhere, Category = "Camera|Settings")
 	float ViewBlendTime = 0.3f;
+
+	/** Offset from agent position to place the fixed camera (relative to agent's forward at switch time) */
+	UPROPERTY(EditAnywhere, Category = "Camera|Settings")
+	FVector CameraOffset = FVector(400.f, 0.f, 200.f);
 
 private:
 	// ---- Input Callbacks ----
@@ -83,6 +88,16 @@ private:
 	bool bCameraActive    = false;
 	bool bIsKeyHeld       = false;
 	bool bIsCycling       = false;
+
+	// ---- Fixed Camera ----
+	/** World-space rotation locked at the moment the agent is selected (faces enemy base) */
+	FRotator FixedCameraRotation = FRotator::ZeroRotator;
+
+	// ---- Blend Between Agents ----
+	FVector BlendFromLocation  = FVector::ZeroVector;
+	FRotator BlendFromRotation = FRotator::ZeroRotator;
+	float BlendElapsed = 0.f;
+	bool bIsBlending   = false;
 
 	/** Tap-cycle order: Assault → Defend → Support */
 	static constexpr EDEStrategyType StrategyOrder[] = {

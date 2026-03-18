@@ -17,7 +17,10 @@
 
 UDEGA_Attack::UDEGA_Attack()
 {
-	AbilityTags.AddTag(DEGameplayTags::Ability_Attack);
+	FGameplayTagContainer AssetTags;
+	AssetTags.AddTag(DEGameplayTags::Ability_Attack);
+	SetAssetTags(AssetTags);
+
 	ActivationBlockedTags.AddTag(DEGameplayTags::State_Dead);
 	// CooldownGameplayEffectClass must be assigned via Blueprint (GE_Cooldown_Attack)
 
@@ -96,8 +99,33 @@ void UDEGA_Attack::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
 bool UDEGA_Attack::CanFire() const
 {
+	if (Config.bUseAmmo && CurrentAmmo <= 0)
+	{
+		if (!bIsReloading)
+		{
+			// Ammo empty but reload not started — start it now (handles cases where
+			// StartReload couldn't schedule a timer, e.g. during training).
+			const_cast<UDEGA_Attack*>(this)->StartReload();
+		}
+		else if (Config.ReloadTime > 0.0f)
+		{
+			// Time-based fallback: complete reload if enough time has elapsed,
+			// in case the timer callback never fires (common during training).
+			const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+			if (AvatarActor && AvatarActor->GetWorld())
+			{
+				float GameTime = AvatarActor->GetWorld()->GetTimeSeconds();
+				if (GameTime >= ReloadStartTime + Config.ReloadTime)
+				{
+					const_cast<UDEGA_Attack*>(this)->CompleteReload();
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	if (bIsReloading) return false;
-	if (Config.bUseAmmo && CurrentAmmo <= 0) return false;
 
 	// Manual cooldown check (complements GAS tag-based cooldown)
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
@@ -369,20 +397,28 @@ void UDEGA_Attack::ResetState()
 {
 	RefillAmmo();
 	LastFireTime = -9999.0f;
+	ReloadStartTime = -9999.0f;
 }
 
 void UDEGA_Attack::StartReload()
 {
-	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	if (!AvatarActor)
-	{
-		// Can't start timer without a valid actor; skip reload to avoid permanently blocking fire.
-		return;
-	}
+	if (bIsReloading) return;
 
 	bIsReloading = true;
-	const_cast<AActor*>(AvatarActor)->GetWorldTimerManager().SetTimer(
-		ReloadTimerHandle, this, &UDEGA_Attack::CompleteReload, Config.ReloadTime, false);
+
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	if (AvatarActor && AvatarActor->GetWorld())
+	{
+		ReloadStartTime = AvatarActor->GetWorld()->GetTimeSeconds();
+		const_cast<AActor*>(AvatarActor)->GetWorldTimerManager().SetTimer(
+			ReloadTimerHandle, this, &UDEGA_Attack::CompleteReload, Config.ReloadTime, false);
+	}
+	else
+	{
+		// No valid actor — time-based fallback in CanFire() will complete the reload.
+		// Use a sentinel so the reload completes after Config.ReloadTime from first CanFire check.
+		ReloadStartTime = -9999.0f;
+	}
 }
 
 void UDEGA_Attack::CompleteReload()

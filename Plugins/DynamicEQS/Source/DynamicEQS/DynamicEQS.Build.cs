@@ -29,6 +29,9 @@ public class DynamicEQS : ModuleRules
 				"AIModule",
 				"NavigationSystem",
 				"Schola",
+				"ScholaInteractors",
+				"ScholaTraining",
+				"ScholaInferenceUtils",
 				"StructUtils",
 			}
 		);

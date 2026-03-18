@@ -6,7 +6,8 @@ UDEScholaAgent::UDEScholaAgent()
     : Super()
 {
     // Default configuration
-    PrimaryComponentTick.bCanEverTick = false; // Schola handles Think/Act ticking
+    // Tick is required for Inference mode (Stepper->Step each frame).
+    // bStartWithTickEnabled is false; BeginPlay enables it only in Inference mode.
     bWantsInitializeComponent = true;
 }
 

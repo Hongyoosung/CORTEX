@@ -6,8 +6,6 @@
 #include "Engine/GameInstance.h"
 #include "DEScholaGameInstance.generated.h"
 
-class UCommunicationManager;
-
 /**
  * Custom GameInstance that manages global Schola training infrastructure
  * Provides centralized access to CommunicationManager for gRPC server
@@ -25,12 +23,6 @@ public:
 	virtual void Shutdown() override;
 	//~ End UGameInstance Interface
 
-	/**
-	 * Get the CommunicationManager instance (creates if needed)
-	 * @return Pointer to CommunicationManager, nullptr if Schola plugin not available
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Schola")
-	UCommunicationManager* GetCommunicationManager();
 
 	/**
 	 * Initialize the communication manager and start gRPC server
@@ -53,9 +45,6 @@ public:
 	bool IsCommunicationServerRunning() const { return bServerRunning; }
 
 protected:
-	/** CommunicationManager instance (Schola gRPC server) */
-	UPROPERTY()
-	TObjectPtr<UCommunicationManager> CommunicationManager;
 
 	/** Server running state */
 	bool bServerRunning = false;

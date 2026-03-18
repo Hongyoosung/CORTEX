@@ -53,8 +53,8 @@ REWARD_CONFIG = {
     "AssignedBaseReachReward": 1.0,   # +1.0 sparse: first time reaching assigned base
 
     # Python-side scaling applied to the received step reward before PPO update
-    "reward_scale":  1.0,
-    "reward_clip":   10.0,
+    "reward_scale":  0.01,
+    "reward_clip":   5.0,
 }
 
 
@@ -89,14 +89,12 @@ class DETrainingConfig:
     ENTROPY_COEFF    = 0.01
     VF_LOSS_COEFF    = 0.5
     GRAD_CLIP        = 0.5
-    VF_CLIP_PARAM    = 10.0
+    VF_CLIP_PARAM = float('inf')
 
     LR_SCHEDULE = [
-        [0,          3e-4],
-        [500_000,    2e-4],
-        [1_000_000,  1e-4],
-        [2_000_000,  5e-5],
-        [3_000_000,  2e-5],
+        [0, 3e-4],
+        [2_000_000, 1e-4],
+        [4_000_000, 5e-5],
     ]
     ENTROPY_SCHEDULE = [
         [0,          0.01],
@@ -172,8 +170,8 @@ if RLLIB_AVAILABLE:
         config = config.env_runners(
             num_env_runners=DETrainingConfig.NUM_WORKERS,
             num_envs_per_env_runner=1,
-            rollout_fragment_length=100,
-            batch_mode="truncate_episodes",
+            rollout_fragment_length="auto",
+            batch_mode="complete_episodes",
         )
         # Single shared policy — all agents mapped here
         config = config.multi_agent(
@@ -327,7 +325,7 @@ def train_with_rllib(args):
 
         # 에피소드 길이 및 횟수
         tb.add_scalar("env/episode_len_mean", ep_len, cumul_steps)
-        tb.add_scalar("env/episodes_completed", eps, cumul_steps)
+        tb.add_scalar("env/episodes_completed", cumul_episodes, cumul_steps)
         
         # 시스템 퍼포먼스 (초당 스텝 처리량)
         # 누적 스텝(cumul_steps)이 아닌 이번 이터레이션 스텝(steps_this_iter)으로 계산해야 정확합니다.

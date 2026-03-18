@@ -418,6 +418,88 @@ float UDERewardSubsystem::ComputeStepReward(
 				{
 					Reward += Settings->DefendReward.ZoneGuardKillBonus;
 				}
+
+				// Threat elimination kill bonus (enemy was within ThreatZoneRadius of any friendly base)
+				bool bEnemyWasThreateningBase = false;
+				for (int32 i = 0; i < Prev.EnemyPositions.Num() && !bEnemyWasThreateningBase; ++i)
+				{
+					if (i < Prev.EnemyVisible.Num() && Prev.EnemyVisible[i])
+					{
+						for (ADECapturePoint* CP : EnvCapturePoints)
+						{
+							if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
+							if (FVector::Dist(Prev.EnemyPositions[i], CP->GetActorLocation()) <= CP->CaptureRadius * Settings->DefendReward.ThreatZoneRadius)
+							{
+								bEnemyWasThreateningBase = true;
+								break;
+							}
+						}
+					}
+				}
+				if (bEnemyWasThreateningBase)
+				{
+					Reward += Settings->DefendReward.ThreatEliminationKillBonus;
+				}
+			}
+
+			// --- Threat Elimination: approach enemies threatening friendly bases (no-Assault fallback) ---
+			if (!bIsRespawnStep && MyTeamID >= 0)
+			{
+				// Check if any Assault allies are alive
+				bool bAnyAssaultAlive = false;
+				if (ADEMatchManager* MatchMgr = Agent->GetMatchManager())
+				{
+					for (ADECharacter* Ally : MatchMgr->GetTeamAgents(MyTeamID))
+					{
+						if (Ally && Ally != Agent && Ally->IsAlive() &&
+							Ally->GetCommandedStrategy() == EDEStrategyType::Assault)
+						{ bAnyAssaultAlive = true; break; }
+					}
+				}
+
+				if (!bAnyAssaultAlive)
+				{
+					// Find the nearest enemy that's within ThreatZoneRadius of any friendly base
+					float BestEnemyDist = FLT_MAX;
+					float PrevBestEnemyDist = FLT_MAX;
+					for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
+					{
+						if (i >= Current.EnemyVisible.Num() || !Current.EnemyVisible[i]) continue;
+
+						// Check if this enemy threatens a friendly base
+						bool bThreatsBase = false;
+						for (ADECapturePoint* CP : EnvCapturePoints)
+						{
+							if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
+							if (FVector::Dist(Current.EnemyPositions[i], CP->GetActorLocation()) <= CP->CaptureRadius * Settings->DefendReward.ThreatZoneRadius)
+							{ bThreatsBase = true; break; }
+						}
+						if (!bThreatsBase) continue;
+
+						const float CurrDist = FVector::Dist(Current.Position, Current.EnemyPositions[i]);
+						if (CurrDist < BestEnemyDist)
+						{
+							BestEnemyDist = CurrDist;
+							if (i < Prev.EnemyPositions.Num())
+								PrevBestEnemyDist = FVector::Dist(Prev.Position, Prev.EnemyPositions[i]);
+						}
+					}
+
+					if (BestEnemyDist < FLT_MAX)
+					{
+						// Approach shaping
+						if (PrevBestEnemyDist < FLT_MAX)
+						{
+							const float ApproachDelta = PrevBestEnemyDist - BestEnemyDist;
+							Reward += Settings->DefendReward.ThreatApproachReward * FMath::Max(ApproachDelta, 0.0f);
+						}
+						// Engagement bonus when within weapon range of the threatening enemy
+						if (BestEnemyDist <= 2000.0f)
+						{
+							Reward += Settings->DefendReward.ThreatEngagementBonus;
+						}
+					}
+				}
 			}
 		}
 		break;
@@ -550,13 +632,46 @@ float UDERewardSubsystem::ComputeStepReward(
 
 				if (NearestEnemyDist < FLT_MAX && NearestEnemyDist <= Settings->SupportReward.RearGuardMaxEnemyDist)
 				{
+					// Find nearest alive ally distance to enemy
 					float NearestAllyToEnemyDist = FLT_MAX;
-					for (const FVector& AllyPos : Current.AllyPositions)
+					float NearestAllyToSelfDist = FLT_MAX;
+					for (int32 a = 0; a < Current.AllyPositions.Num(); ++a)
 					{
-						if (AllyPos.IsZero()) continue;
-						NearestAllyToEnemyDist = FMath::Min(NearestAllyToEnemyDist, FVector::Dist(AllyPos, NearestEnemyPos));
+						if (Current.AllyPositions[a].IsZero()) continue;
+						if (a < Current.AllyHealths.Num() && Current.AllyHealths[a] <= 0.0f) continue;
+						NearestAllyToEnemyDist = FMath::Min(NearestAllyToEnemyDist, FVector::Dist(Current.AllyPositions[a], NearestEnemyPos));
+						NearestAllyToSelfDist = FMath::Min(NearestAllyToSelfDist, FVector::Dist(Current.AllyPositions[a], Current.Position));
 					}
-					if (NearestEnemyDist > NearestAllyToEnemyDist) Reward += Settings->SupportReward.RearGuardBonus;
+
+					// Rear guard bonus: Support is farther from enemy than nearest ally
+					if (NearestEnemyDist > NearestAllyToEnemyDist)
+					{
+						Reward += Settings->SupportReward.RearGuardBonus;
+					}
+					else
+					{
+						// Frontline penalty: Support is closer to enemy than nearest ally
+						Reward -= Settings->SupportReward.FrontlinePenalty;
+					}
+
+					// Ally shield bonus: at least one ally is between Support and the nearest enemy
+					if (NearestAllyToEnemyDist < FLT_MAX)
+					{
+						// Check if any ally is roughly between us and the enemy
+						for (int32 a = 0; a < Current.AllyPositions.Num(); ++a)
+						{
+							if (Current.AllyPositions[a].IsZero()) continue;
+							if (a < Current.AllyHealths.Num() && Current.AllyHealths[a] <= 0.0f) continue;
+							const float AllyToEnemy = FVector::Dist(Current.AllyPositions[a], NearestEnemyPos);
+							const float AllyToSelf = FVector::Dist(Current.AllyPositions[a], Current.Position);
+							// Ally is "between" if closer to enemy than we are AND closer to us than the enemy is
+							if (AllyToEnemy < NearestEnemyDist && AllyToSelf < NearestEnemyDist)
+							{
+								Reward += Settings->SupportReward.AllyShieldBonus;
+								break;
+							}
+						}
+					}
 				}
 			}
 		}
