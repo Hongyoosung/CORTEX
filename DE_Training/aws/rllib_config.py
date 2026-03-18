@@ -183,7 +183,7 @@ def build_config(
     lambda_: float             = 0.95,
     clip_param: float          = 0.2,
     entropy_coeff: float       = 0.01,
-    vf_loss_coeff: float       = 0.5,
+    vf_loss_coeff: float       = 1.0,
 ) -> PPOConfig:
 
     reporter = S3MetricsReporter(s3_bucket) if s3_bucket else None
