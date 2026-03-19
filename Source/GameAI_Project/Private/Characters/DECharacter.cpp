@@ -149,6 +149,16 @@ void ADECharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// Mana regeneration — rate is slower than heal cost, so continuous healing depletes mana
+	if (AttributeSet && AbilityData && AbilityData->ManaRegenRate > 0.0f)
+	{
+		const float CurrentMana = AttributeSet->GetMana();
+		const float Cap = AttributeSet->GetMaxMana();
+		if (CurrentMana < Cap)
+		{
+			AttributeSet->SetMana(FMath::Min(CurrentMana + AbilityData->ManaRegenRate * DeltaTime, Cap));
+		}
+	}
 }
 
 
@@ -169,6 +179,13 @@ UAbilitySystemComponent* ADECharacter::GetAbilitySystemComponent() const
 void ADECharacter::InitializeGASAbilities()
 {
 	if (!AbilitySystemComponent || !AbilityData) return;
+
+	// Initialize Mana attribute from data asset
+	if (AttributeSet)
+	{
+		AttributeSet->InitMaxMana(AbilityData->MaxMana);
+		AttributeSet->InitMana(AbilityData->MaxMana);
+	}
 
 	// 1. Grant Attack ability
 	// Pass the class to GiveAbility — GAS creates and owns the instance internally.
@@ -260,6 +277,15 @@ float ADECharacter::GetCurrentHealth() const
 float ADECharacter::GetMaxHealth() const
 {
 	return AttributeSet ? AttributeSet->GetMaxHealth() : 100.0f;
+}
+
+float ADECharacter::GetManaPercentage() const
+{
+	if (AttributeSet && AttributeSet->GetMaxMana() > 0.0f)
+	{
+		return AttributeSet->GetMana() / AttributeSet->GetMaxMana();
+	}
+	return 1.0f;
 }
 
 float ADECharacter::HealCharacter(float HealAmount)
@@ -716,32 +742,27 @@ void ADECharacter::ApplyStrategyAppearance(EDEStrategyType Strategy)
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
 		{
 			ASC->SetNumericAttributeBase(UDEAttributeSet::GetMaxHealthAttribute(), SD->MaxHealth);
-			// Bring current health up to the new cap (never down — let damage do that).
-			const float CurrentHealth = GetCurrentHealth();
-			if (CurrentHealth > SD->MaxHealth)
-			{
-				ASC->SetNumericAttributeBase(UDEAttributeSet::GetHealthAttribute(), SD->MaxHealth);
-			}
+			// Set current health to the new max (strategy appearance is applied at spawn/assignment time).
+			ASC->SetNumericAttributeBase(UDEAttributeSet::GetHealthAttribute(), SD->MaxHealth);
 		}
 	}
 
-	// ── Attack Config (Assault / Defend) ─────────────────────────────────────
-	if (AttackAbility && AbilityData)
-	{
-		FDEAttackAbilityConfig NewAttackConfig = AbilityData->AttackConfig;
-		if (SD->MinAttackRange > 0.0f) { NewAttackConfig.MinRange = SD->MinAttackRange; }
-		if (SD->MaxAttackRange > 0.0f) { NewAttackConfig.Range    = SD->MaxAttackRange; }
-		if (SD->Damage         > 0.0f) { NewAttackConfig.Damage   = SD->Damage;         }
-		if (SD->AttackSpeed    > 0.0f) { NewAttackConfig.Speed    = SD->AttackSpeed;    }
-		AttackAbility->SetConfig(NewAttackConfig);
-	}
+	// ── Ability Config Override ──────────────────────────────────────────────
+	// If the strategy has its own AbilityData, use it in place of the character's base data.
+	const UDEAbilityData* EffectiveAbilityData = SD->AbilityDataOverride
+		? SD->AbilityDataOverride.Get()
+		: AbilityData.Get();
 
-	// ── Heal Config (Support) ─────────────────────────────────────────────────
-	if (HealAbility && AbilityData && SD->MaxHealRange > 0.0f)
+	if (EffectiveAbilityData)
 	{
-		FDEHealAbilityConfig NewHealConfig = AbilityData->HealConfig;
-		NewHealConfig.Range = SD->MaxHealRange;
-		HealAbility->SetConfig(NewHealConfig);
+		if (AttackAbility)
+		{
+			AttackAbility->SetConfig(EffectiveAbilityData->AttackConfig);
+		}
+		if (HealAbility)
+		{
+			HealAbility->SetConfig(EffectiveAbilityData->HealConfig);
+		}
 	}
 }
 

@@ -50,7 +50,11 @@ except ImportError:
 
 
 # ── Layout constants (must match DEObservationTypes.h) ───────────────────────
-OBS_DIM    = 170
+# DE_OBS_V2_DIM = 7 + 8*8 + 8*5 + 8*7 + 8+8+8 + 3 = 194
+# Layout: Self(7) + Allies(8×8=64) + Enemies(8×5=40) + Bases(8×7=56) +
+#         AllyMask(8) + EnemyMask(8) + BaseMask(8) + Strategy(3)
+# Strategy one-hot starts at: 7+64+40+56+24 = 191
+OBS_DIM    = 194
 ACTION_DIM = 7
 
 # ── Strategy registry ─────────────────────────────────────────────────────────
@@ -59,7 +63,7 @@ ACTION_DIM = 7
 # policy_mapping_fn can route each agent to the correct per-role policy.
 # Works correctly when num_workers=0 (all code in one process).
 AGENT_STRATEGY_REGISTRY: Dict[str, int] = {}
-STRATEGY_ONEHOT_START = 167  # obs[167:170] = strategy one-hot
+STRATEGY_ONEHOT_START = 191  # obs[191:194] = strategy one-hot [assault, defend, support]
 
 
 class DEEntityCentricEnv(MultiAgentEnv):
@@ -352,10 +356,21 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
         # Populate strategy registry from reset obs so policy_mapping_fn
         # can route agents to the correct per-role policy immediately.
+        strat_counts = {0: 0, 1: 0, 2: 0}
         for fid, obs in obs_d.items():
-            strategy_idx = int(np.argmax(obs[STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START + 3]))
+            one_hot = obs[STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START + 3]
+            strategy_idx = int(np.argmax(one_hot))
             AGENT_STRATEGY_REGISTRY[fid] = strategy_idx
             self._agent_strategy[fid] = strategy_idx
+            strat_counts[strategy_idx] = strat_counts.get(strategy_idx, 0) + 1
+        STRAT_NAMES = {0: "assault", 1: "defend", 2: "support"}
+        print(f"[RESET] Strategy distribution from obs one-hot: "
+              f"{{{', '.join(f'{STRAT_NAMES[k]}={v}' for k,v in strat_counts.items())}}}")
+        # Sample one obs to show actual one-hot values for diagnosis
+        if obs_d:
+            sample_id = next(iter(obs_d))
+            print(f"[RESET] Sample obs[167:170] for {sample_id}: "
+                  f"{obs_d[sample_id][STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START+3]}")
 
         # Sync cumulative baseline to avoid phantom delta on first step
         for fid in self._agent_ids:
@@ -596,18 +611,41 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 pass
 
         # Per-strategy reward accumulation
+        # Also update AGENT_STRATEGY_REGISTRY from obs one-hot every step so that
+        # the NEXT episode's policy_mapping_fn uses the correct per-role routing.
+        # (policy_mapping_fn is called once per agent per episode at episode start,
+        #  so the registry populated during episode N drives routing in episode N+1.)
         for fid in list(rew_d.keys()):
             if fid == '__all__':
                 continue
             info = info_d.get(fid, {})
+
+            # 1. Prefer explicit StrategyType from info channel
             raw_strat = info.get('StrategyType')
             if raw_strat is not None:
                 try:
-                    strat = int(raw_strat)
-                    self._agent_strategy[fid] = strat
-                    AGENT_STRATEGY_REGISTRY[fid] = strat
+                    strat_from_info = int(raw_strat)
+                    self._agent_strategy[fid] = strat_from_info
+                    AGENT_STRATEGY_REGISTRY[fid] = strat_from_info
                 except (ValueError, TypeError):
                     pass
+
+            # 2. Fallback: decode from obs one-hot (obs[167:170])
+            #    Only update if the one-hot is non-zero (Squad Commander has run)
+            obs = obs_d.get(fid)
+            if obs is not None:
+                one_hot = obs[STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START + 3]
+                if one_hot.sum() > 0.5:
+                    strat_from_obs = int(np.argmax(one_hot))
+                    prev = self._agent_strategy.get(fid, -1)
+                    if strat_from_obs != prev:
+                        self._agent_strategy[fid] = strat_from_obs
+                        AGENT_STRATEGY_REGISTRY[fid] = strat_from_obs
+                        if self._total_step_count <= 20:
+                            print(f"[STRATEGY UPDATE step={self._total_step_count}] "
+                                  f"{fid}: {self._strategy_names.get(prev,'?')} → "
+                                  f"{self._strategy_names.get(strat_from_obs,'?')}")
+
             strat = self._agent_strategy.get(fid)
             if strat is not None and strat in self._step_rewards_by_strategy:
                 self._step_rewards_by_strategy[strat].append(rew_d[fid])
@@ -643,19 +681,34 @@ class DEEntityCentricEnv(MultiAgentEnv):
         and return a flat dict suitable for RLlib custom_metrics.
         Buffers are cleared after each call.
         """
+        # NOTE: RLlib appends its own "_mean"/"_min"/"_max" suffixes during
+        # aggregation.  Do NOT include "_mean" in the key here — the aggregated
+        # result key will be  reward_strategy_assault_mean  (RLlib-added suffix).
         metrics = {}
         for strat_id, name in self._strategy_names.items():
             buf = self._step_rewards_by_strategy[strat_id]
             if buf:
-                metrics[f"reward_strategy_{name}_mean"] = float(np.mean(buf))
-                metrics[f"reward_strategy_{name}_sum"]  = float(np.sum(buf))
-                metrics[f"reward_strategy_{name}_count"]= float(len(buf))
+                metrics[f"reward_strategy_{name}"]       = float(np.mean(buf))
+                metrics[f"reward_strategy_{name}_sum"]   = float(np.sum(buf))
+                metrics[f"reward_strategy_{name}_count"] = float(len(buf))
                 self._step_rewards_by_strategy[strat_id] = []
         for comp in self._reward_components:
             buf = self._component_ep_sums[comp]
             if buf:
-                metrics[f"reward_component_{comp}_mean"] = float(np.mean(buf))
+                metrics[f"reward_component_{comp}"] = float(np.mean(buf))
                 self._component_ep_sums[comp] = []
+
+        # Debug: log strategy buffer state periodically to diagnose routing issues
+        if self._total_step_count <= 5 or self._total_step_count % 200 == 0:
+            dist = {self._strategy_names[k]: len(v)
+                    for k, v in self._step_rewards_by_strategy.items()}
+            known = {name: self._strategy_names.get(idx, '?')
+                     for name, idx in list(self._agent_strategy.items())[:5]}
+            print(f"[CUSTOM_METRICS step={self._total_step_count}] "
+                  f"strategy_buf_sizes(after_drain)={dist}  "
+                  f"returned_keys={list(metrics.keys())}  "
+                  f"agent_strategy_sample={known}")
+
         return metrics
 
     # ── Episode management helpers ────────────────────────────────────────

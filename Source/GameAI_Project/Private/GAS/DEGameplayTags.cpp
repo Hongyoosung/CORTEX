@@ -14,6 +14,7 @@ namespace DEGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Cooldown_Attack, "Cooldown.Attack");
 	UE_DEFINE_GAMEPLAY_TAG(Cooldown_Heal,	"Cooldown.Heal");
 
-	UE_DEFINE_GAMEPLAY_TAG(Data_Damage,  "Data.Damage");
-	UE_DEFINE_GAMEPLAY_TAG(Data_Healing, "Data.Healing");
+	UE_DEFINE_GAMEPLAY_TAG(Data_Damage,    "Data.Damage");
+	UE_DEFINE_GAMEPLAY_TAG(Data_Healing,   "Data.Healing");
+	UE_DEFINE_GAMEPLAY_TAG(Data_ManaCost,  "Data.ManaCost");
 }

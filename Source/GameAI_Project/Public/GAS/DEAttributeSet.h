@@ -59,6 +59,14 @@ public:
 	FGameplayAttributeData Armor;
 	ATTRIBUTE_ACCESSORS(UDEAttributeSet, Armor)
 
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes", ReplicatedUsing = OnRep_Mana)
+	FGameplayAttributeData Mana;
+	ATTRIBUTE_ACCESSORS(UDEAttributeSet, Mana)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes", ReplicatedUsing = OnRep_MaxMana)
+	FGameplayAttributeData MaxMana;
+	ATTRIBUTE_ACCESSORS(UDEAttributeSet, MaxMana)
+
 
 	// --- Meta Attributes (consumed on apply, never persisted) ---
 
@@ -82,4 +90,10 @@ protected:
 
 	UFUNCTION()
 	virtual void OnRep_Armor(const FGameplayAttributeData& OldArmor);
+
+	UFUNCTION()
+	virtual void OnRep_Mana(const FGameplayAttributeData& OldMana);
+
+	UFUNCTION()
+	virtual void OnRep_MaxMana(const FGameplayAttributeData& OldMaxMana);
 };

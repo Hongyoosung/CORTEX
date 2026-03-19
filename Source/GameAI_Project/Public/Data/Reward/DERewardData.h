@@ -71,7 +71,7 @@ public:
 	float SupportMaxMoveThreshold = 500.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float SupportAllyProximityThreshold = 1500.0f;
+	float SupportAllyProximityThreshold = 1200.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float DefendHealthThreshold = 0.7f;

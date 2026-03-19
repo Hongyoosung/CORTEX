@@ -25,6 +25,7 @@ void ADESpectatorHUD::DrawHUD()
 	const FDEEQSWeightParameters Weights = Agent->GetEQSWeights();
 
 	float HealthPct   = Agent->GetHealthPercentage();
+	float ManaPct     = Agent->GetManaPercentage();
 	int32 CurrentAmmo = 0;
 	int32 MaxAmmo     = 0;
 
@@ -61,7 +62,7 @@ void ADESpectatorHUD::DrawHUD()
 
 	float StatusTopY = 0.0f;
 	DrawStrategyLabel(StrategyName, StrategyColor, StatusTopY);
-	DrawStatusBars(HealthPct, CurrentAmmo, MaxAmmo, StatusTopY);
+	DrawStatusBars(HealthPct, CurrentAmmo, MaxAmmo, ManaPct, StatusTopY);
 	DrawEQSWeights(Weights);
 }
 
@@ -95,11 +96,11 @@ void ADESpectatorHUD::DrawStrategyLabel(const FString& StrategyName, const FLine
 // Health & Ammo Bars
 // ---------------------------------------------------------------------------
 
-void ADESpectatorHUD::DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 MaxAmmo, float TopY)
+void ADESpectatorHUD::DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 MaxAmmo, float ManaPct, float TopY)
 {
-	const float MarginX = 24.0f;
-	const float BarWidth  = 220.0f;
-	const float BarHeight = 18.0f;
+	const float MarginX    = 24.0f;
+	const float BarWidth   = 220.0f;
+	const float BarHeight  = 18.0f;
 	const float RowSpacing = 28.0f;
 
 	const FString HealthLabel = FString::Printf(TEXT("HP  %d%%"), FMath::RoundToInt(HealthPct * 100.0f));
@@ -108,6 +109,9 @@ void ADESpectatorHUD::DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 M
 	const float AmmoPct = (MaxAmmo > 0) ? FMath::Clamp(static_cast<float>(CurrentAmmo) / static_cast<float>(MaxAmmo), 0.0f, 1.0f) : 0.0f;
 	const FString AmmoLabel = FString::Printf(TEXT("AMM %d / %d"), CurrentAmmo, MaxAmmo);
 	DrawBar(AmmoLabel, AmmoPct, FLinearColor(0.9f, 0.75f, 0.1f, 0.9f), MarginX, TopY + RowSpacing, BarWidth, BarHeight);
+
+	const FString ManaLabel = FString::Printf(TEXT("MP  %d%%"), FMath::RoundToInt(ManaPct * 100.0f));
+	DrawBar(ManaLabel, ManaPct, FLinearColor(0.2f, 0.5f, 1.0f, 0.9f), MarginX, TopY + RowSpacing * 2.0f, BarWidth, BarHeight);
 }
 
 void ADESpectatorHUD::DrawBar(const FString& Label, float Fraction, const FLinearColor& BarColor, float X, float Y, float Width, float Height)

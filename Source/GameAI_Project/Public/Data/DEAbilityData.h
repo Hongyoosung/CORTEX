@@ -11,6 +11,7 @@ class UDEGA_Attack;
 class UDEGA_Heal;
 class ADEProjectileBase;
 class UNiagaraSystem;
+class UAnimMontage;
 
 /**
  * Configuration for the Attack Ability
@@ -70,7 +71,14 @@ struct FDEAttackAbilityConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	bool bRequireLineOfSight = true;
 
-	
+	/**
+	 * Montage played when this unit fires.
+	 * Configurable here so the animation can be set in both Test Mode (via UDEAbilityData)
+	 * and Training Mode (set via UDEStrategyData::AbilityDataOverride).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
+
 };
 
 /**
@@ -100,6 +108,30 @@ struct FDEHealAbilityConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	TObjectPtr<UNiagaraSystem> HealBeamSystem;
 
+	/** Mana consumed per heal tick. Heal is blocked when Mana < ManaCost. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Mana", meta = (ClampMin = "0.0"))
+	float ManaCost = 10.0f;
+
+	/**
+	 * Minimum seconds between heal activations.
+	 * Each activation heals Rate * HealTickInterval HP and plays the montage once.
+	 * Set to 1.0s so the animation has time to complete naturally.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
+	float HealTickInterval = 1.0f;
+
+	/**
+	 * Montage played when this unit heals.
+	 * Configurable here so the animation can be set in both Test Mode (via UDEAbilityData)
+	 * and Training Mode (via UDEStrategyData::AbilityDataOverride).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	TObjectPtr<UAnimMontage> HealMontage = nullptr;
+
+	/** Socket on the skeletal mesh where the heal beam originates (e.g. a hand socket). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	FName HealBeamSocketName = TEXT("Muzzle_01");
+
 };
 
 /**
@@ -116,4 +148,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Heal")
 	FDEHealAbilityConfig HealConfig;
+
+	/** Starting and maximum mana for this agent. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mana", meta = (ClampMin = "0.0"))
+	float MaxMana = 100.0f;
+
+	/** Mana regenerated per second. Should be lower than ManaCost / heal interval to allow depletion. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mana", meta = (ClampMin = "0.0"))
+	float ManaRegenRate = 5.0f;
 };

@@ -17,37 +17,7 @@ enum class EDEStrategyType : uint8
 };
 
 /**
- * Tactical Play - Predefined team compositions for action space pruning
- * Reduces combinatorial explosion (3^5 = 243 combinations → ~10 valid plays)
- */
-UENUM(BlueprintType)
-enum class ETacticalPlay : uint8
-{
-	// Aggressive Plays
-	AllOutRush UMETA(DisplayName = "All-Out Rush"),          // 5 Assault
-	AggressivePush UMETA(DisplayName = "Aggressive Push"),   // 4 Assault, 1 Support
-
-	// Balanced Plays
-	Phalanx UMETA(DisplayName = "Phalanx Formation"),        // 2 Defend, 3 Support
-	StandardComp UMETA(DisplayName = "Standard Comp"),       // 2 Assault, 2 Defend, 1 Support
-
-	// Defensive Plays
-	FortressDefense UMETA(DisplayName = "Fortress Defense"), // 1 Assault, 4 Defend
-	TurtleFormation UMETA(DisplayName = "Turtle Formation"), // 5 Defend
-
-	// Tactical Plays
-	BaitStrategy UMETA(DisplayName = "Bait Strategy"),       // 1 Assault (bait), 4 Defend (ambush)
-	PincerManeuver UMETA(DisplayName = "Pincer Maneuver"),   // 3 Assault (split), 2 Support
-
-	// Support-Focused
-	HealerComp UMETA(DisplayName = "Healer Comp"),           // 2 Assault, 1 Defend, 2 Support
-	ResourceDeny UMETA(DisplayName = "Resource Deny"),       // 3 Support, 2 Assault
-
-	COUNT UMETA(Hidden)
-};
-
-/**
- * Tactical option output from MCTS
+ * Tactical option — records the commanded strategy assigned to an agent.
  */
 USTRUCT(BlueprintType)
 struct FDETacticalOption

@@ -4,7 +4,7 @@
 #include "Engine/DataAsset.h"
 #include "DEStrategyData.generated.h"
 
-class UAnimMontage;
+class UDEAbilityData;
 
 /**
  * UDEStrategyData - Per-Strategy Configuration Data Asset
@@ -69,44 +69,16 @@ public:
 
 
 	//========================================
-	// Attack Overrides (Assault / Defend)
+	// Ability Data Override
 	//========================================
 
-	/** Minimum attack range override in cm (0 = AbilityData default) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0"))
-	float MinAttackRange = 0.0f;
-
-	/** Maximum attack range override in cm (0 = AbilityData default) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0"))
-	float MaxAttackRange = 0.0f;
-
-	/** Damage per hit override (0 = AbilityData default) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0"))
-	float Damage = 0.0f;
-
-	/** Attack speed override in shots/sec (0 = AbilityData default) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0"))
-	float AttackSpeed = 0.0f;
+	/**
+	 * Per-strategy ability configuration (attack stats, heal stats, mana).
+	 * When set, fully replaces the character's base UDEAbilityData for this strategy.
+	 * null = use the character's default AbilityData (set on BP_Agent).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	TObjectPtr<UDEAbilityData> AbilityDataOverride = nullptr;
 
 
-	//========================================
-	// Heal Overrides (Support)
-	//========================================
-
-	/** Maximum heal range override in cm (0 = AbilityData default) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0"))
-	float MaxHealRange = 0.0f;
-
-
-	//========================================
-	// Animation Montages
-	//========================================
-
-	/** Montage played when this unit fires (null = no montage) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
-	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
-
-	/** Montage played when this unit heals (null = no montage) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
-	TObjectPtr<UAnimMontage> HealMontage = nullptr;
 };

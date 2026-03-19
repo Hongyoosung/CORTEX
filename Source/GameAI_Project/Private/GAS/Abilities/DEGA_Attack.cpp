@@ -9,7 +9,6 @@
 #include "Team/DEMatchManager.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
-#include "Data/DEStrategyData.h"
 #include "Types/DEStrategyTypes.h"
 #include "Data/DETeamData.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -235,17 +234,15 @@ bool UDEGA_Attack::FireAtTarget(AActor* Target, const FGameplayAbilityActorInfo*
 
 	LastFireTime = OwnerChar->GetWorld()->GetTimeSeconds();
 
-	// Fire animation — montage is per-strategy, not per-ability
-	if (const UDEStrategyData* SD = OwnerChar->GetCurrentStrategyData())
+	// Fire animation — montage is stored in the ability config so it works in
+	// both Test Mode (set on UDEAbilityData) and Training Mode (set via AbilityDataOverride).
+	if (Config.AttackMontage)
 	{
-		if (SD->AttackMontage)
+		if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
 		{
-			if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
+			if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
 			{
-				if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
-				{
-					AnimInstance->Montage_Play(SD->AttackMontage);
-				}
+				AnimInstance->Montage_Play(Config.AttackMontage);
 			}
 		}
 	}

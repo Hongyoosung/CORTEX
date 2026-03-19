@@ -2,18 +2,31 @@
 
 #include "GAS/Abilities/DEGA_Heal.h"
 #include "GAS/DEGameplayTags.h"
+#include "GAS/DEAttributeSet.h"
 #include "AbilitySystemComponent.h"
 #include "Characters/DECharacter.h"
 #include "Team/DEMatchManager.h"
+#include "Kismet/GameplayStatics.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
-#include "Data/DEStrategyData.h"
 #include "Types/DEStrategyTypes.h"
 #include "Data/DETeamData.h"
-#include "AIController.h"
-#include "Perception/AIPerceptionComponent.h"
+
+
+void UDEGA_Heal::SetConfig(const FDEHealAbilityConfig& InConfig)
+{
+	// Preserve the existing HealBeamSystem if the incoming config leaves it unset.
+	// This prevents AbilityDataOverrides that omit the beam from clearing a previously
+	// configured beam (e.g. when set on the base UDEAbilityData in Test Mode).
+	UNiagaraSystem* ExistingBeam = Config.HealBeamSystem.Get();
+	Config = InConfig;
+	if (!Config.HealBeamSystem && ExistingBeam)
+	{
+		Config.HealBeamSystem = ExistingBeam;
+	}
+}
 
 UDEGA_Heal::UDEGA_Heal()
 {
@@ -23,6 +36,9 @@ UDEGA_Heal::UDEGA_Heal()
 
 	ActivationBlockedTags.AddTag(DEGameplayTags::State_Dead);
 	// CooldownGameplayEffectClass left unset — heal has no cooldown by default
+
+	// One persistent instance per actor so the channel can be held across frames.
+	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 }
 
 bool UDEGA_Heal::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -38,6 +54,34 @@ bool UDEGA_Heal::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
 	const ADECharacter* OwnerChar = Cast<ADECharacter>(ActorInfo->AvatarActor.Get());
 	if (!OwnerChar || OwnerChar->GetCommandedStrategy() != EDEStrategyType::Support)
+	{
+		return false;
+	}
+
+	// Enforce minimum interval between heal ticks
+	if (Config.HealTickInterval > 0.0f)
+	{
+		const UWorld* World = ActorInfo->AvatarActor.IsValid()
+			? ActorInfo->AvatarActor->GetWorld() : nullptr;
+		if (World && LastHealTime >= 0.0f &&
+			(World->GetTimeSeconds() - LastHealTime) < Config.HealTickInterval)
+		{
+			return false;
+		}
+	}
+
+	// Block if mana is fully depleted (continuous drain — just need > 0 to begin the channel)
+	if (Config.ManaCost > 0.0f)
+	{
+		const UDEAttributeSet* AS = ActorInfo->AbilitySystemComponent->GetSet<UDEAttributeSet>();
+		if (AS && AS->GetMana() <= 0.0f)
+		{
+			return false;
+		}
+	}
+
+	// Block if no injured ally is in range — prevents wasting mana/montage on full-health allies
+	if (!HasInjuredAllyInRange())
 	{
 		return false;
 	}
@@ -63,75 +107,191 @@ void UDEGA_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		return;
 	}
 
-	ADECharacter* Target = nullptr;
+	UWorld* World = OwnerChar->GetWorld();
+	if (!World)
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
 
-	// If triggered via event with explicit target
+	// Resolve initial target
 	if (TriggerEventData && TriggerEventData->Target)
 	{
-		Target = Cast<ADECharacter>(const_cast<AActor*>(TriggerEventData->Target.Get()));
+		CurrentTarget = Cast<ADECharacter>(const_cast<AActor*>(TriggerEventData->Target.Get()));
 	}
 	else
 	{
-		Target = FindNearestInjuredAlly();
+		CurrentTarget = FindNearestInjuredAlly();
 	}
 
-	if (Target && Target->IsAlive())
+	if (!CurrentTarget)
 	{
-		UAbilitySystemComponent* TargetASC = Target->GetAbilitySystemComponent();
-		if (TargetASC && Config.HealEffectClass)
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+
+	// Spawn the beam immediately so it appears on the first frame.
+	// Heal and mana drain begin on the first OnBeamUpdateTick (≤ 16 ms away).
+	UpdateHealBeam(CurrentTarget);
+
+	if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
 		{
-			// DeltaTime for this tick is approximated at 0.2s (training timer interval)
-			const float HealAmount = Config.Rate * 0.2f;
-
-			FGameplayEffectSpecHandle SpecHandle = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo, Config.HealEffectClass);
-			if (SpecHandle.IsValid())
+			if (Config.HealMontage)
 			{
-				// Build context with target location so GameplayCue VFX spawns on the healed character
-				FGameplayEffectContextHandle ContextHandle = SpecHandle.Data->GetContext();
-				ContextHandle.AddInstigator(OwnerChar, OwnerChar);
-				ContextHandle.AddOrigin(Target->GetActorLocation());
-				FHitResult HealHit;
-				HealHit.Location = Target->GetActorLocation() + FVector(0, 0, 90);
-				HealHit.ImpactPoint = HealHit.Location;
-				HealHit.ImpactNormal = FVector::UpVector;
-				ContextHandle.AddHitResult(HealHit);
-				SpecHandle.Data->SetContext(ContextHandle);
-				SpecHandle.Data->SetSetByCallerMagnitude(DEGameplayTags::Data_Healing, HealAmount);
-				TargetASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data);
-			}
-
-			LastTickHealAmount = HealAmount;
-			CumulativeHealAmount += HealAmount;
-
-			UpdateHealBeam(Target);
-
-			// Heal animation — montage is per-strategy
-			if (const UDEStrategyData* SD = OwnerChar->GetCurrentStrategyData())
-			{
-				if (SD->HealMontage)
-				{
-					if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
-					{
-						if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
-						{
-							AnimInstance->Montage_Play(SD->HealMontage);
-						}
-					}
-				}
+				AnimInstance->Montage_Play(Config.HealMontage);
 			}
 		}
-		else if (!Config.HealEffectClass)
+	}
+
+	// Heal tick — re-validates target and applies heal at the configured interval.
+	const float TickInterval = FMath::Max(Config.HealTickInterval, 0.1f);
+	World->GetTimerManager().SetTimer(
+		HealTickTimerHandle,
+		this, &UDEGA_Heal::OnHealTick,
+		TickInterval,
+		/*bLoop=*/true);
+
+	// Beam position update — fires every frame (~0.016 s) so the line tracks movement smoothly.
+	World->GetTimerManager().SetTimer(
+		BeamUpdateTimerHandle,
+		this, &UDEGA_Heal::OnBeamUpdateTick,
+		0.016f,
+		/*bLoop=*/true);
+
+	LastHealTime = World->GetTimeSeconds();
+}
+
+void UDEGA_Heal::OnHealTick()
+{
+	// Re-find the nearest injured ally every tick so the healer naturally switches
+	// to a more injured teammate who moves into range.
+	ADECharacter* NewTarget = FindNearestInjuredAlly();
+	if (!NewTarget)
+	{
+		// No valid target — end the channel.
+		const FGameplayAbilityActorInfo* ActorInfo = GetCurrentActorInfo();
+		EndAbility(GetCurrentAbilitySpecHandle(), ActorInfo,
+			GetCurrentActivationInfo(), /*bReplicate=*/true, /*bWasCancelled=*/false);
+		return;
+	}
+
+	CurrentTarget = NewTarget;
+}
+
+// Timer interval used for both beam position updates and per-frame heal / mana drain.
+static constexpr float BEAM_DT = 0.016f;
+
+void UDEGA_Heal::OnBeamUpdateTick()
+{
+	if (!CurrentTarget || !CurrentTarget->IsAlive())
+	{
+		UpdateHealBeam(nullptr);
+		return;
+	}
+
+	// --- Continuous mana drain ---
+	if (Config.ManaCost > 0.0f)
+	{
+		const FGameplayAbilityActorInfo* ActorInfo = GetCurrentActorInfo();
+		if (ActorInfo)
+		{
+			if (UDEAttributeSet* AS = const_cast<UDEAttributeSet*>(
+				ActorInfo->AbilitySystemComponent->GetSet<UDEAttributeSet>()))
+			{
+				const float NewMana = AS->GetMana() - Config.ManaCost * BEAM_DT;
+				if (NewMana <= 0.0f)
+				{
+					AS->SetMana(0.0f);
+					EndAbility(GetCurrentAbilitySpecHandle(), ActorInfo,
+						GetCurrentActivationInfo(), /*bReplicate=*/true, /*bWasCancelled=*/false);
+					return;
+				}
+				AS->SetMana(NewMana);
+			}
+		}
+	}
+
+	// --- Continuous heal ---
+	ApplyHealToTarget(CurrentTarget, Config.Rate * BEAM_DT);
+
+	// --- Beam position ---
+	UpdateHealBeam(CurrentTarget);
+}
+
+void UDEGA_Heal::ApplyHealToTarget(ADECharacter* Target, float HealAmount)
+{
+	if (!Target || !Target->IsAlive() || HealAmount <= 0.0f) return;
+
+	const FGameplayAbilityActorInfo* ActorInfo = GetCurrentActorInfo();
+	ADECharacter* OwnerChar = ActorInfo ? Cast<ADECharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
+	UAbilitySystemComponent* TargetASC = Target->GetAbilitySystemComponent();
+
+	if (!TargetASC || !Config.HealEffectClass)
+	{
+		if (!Config.HealEffectClass)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("DEGA_Heal: HealEffectClass not set — assign GE_HealTick in DA_AbilityConfig."));
 		}
+		return;
 	}
-	else
+	FGameplayEffectSpecHandle SpecHandle = MakeOutgoingGameplayEffectSpec(
+		GetCurrentAbilitySpecHandle(), ActorInfo, GetCurrentActivationInfo(), Config.HealEffectClass);
+
+	if (SpecHandle.IsValid())
 	{
-		LastTickHealAmount = 0.0f;
-		UpdateHealBeam(nullptr);
+		FGameplayEffectContextHandle ContextHandle = SpecHandle.Data->GetContext();
+		if (OwnerChar)
+		{
+			ContextHandle.AddInstigator(OwnerChar, OwnerChar);
+		}
+		ContextHandle.AddOrigin(Target->GetActorLocation());
+		FHitResult HealHit;
+		HealHit.Location     = Target->GetActorLocation() + FVector(0, 0, 90);
+		HealHit.ImpactPoint  = HealHit.Location;
+		HealHit.ImpactNormal = FVector::UpVector;
+		ContextHandle.AddHitResult(HealHit);
+		SpecHandle.Data->SetContext(ContextHandle);
+		SpecHandle.Data->SetSetByCallerMagnitude(DEGameplayTags::Data_Healing, HealAmount);
+		TargetASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data);
 	}
 
-	EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+	LastTickHealAmount    = HealAmount;
+	CumulativeHealAmount += HealAmount;
+
+	if (UWorld* World = Target->GetWorld())
+	{
+		LastHealTime = World->GetTimeSeconds();
+	}
+}
+
+void UDEGA_Heal::EndAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo,
+	bool bReplicateEndAbility,
+	bool bWasCancelled)
+{
+	// Stop both channeling timers before tearing down the beam.
+	if (const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : GetAvatarActorFromActorInfo())
+	{
+		if (UWorld* World = Avatar->GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(HealTickTimerHandle);
+			World->GetTimerManager().ClearTimer(BeamUpdateTimerHandle);
+		}
+	}
+
+	CurrentTarget = nullptr;
+
+	if (HealBeamComponent)
+	{
+		HealBeamComponent->Deactivate();
+		HealBeamComponent->DestroyComponent();
+		HealBeamComponent = nullptr;
+	}
+
+	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
 bool UDEGA_Heal::ConsumeHealBurst(float Threshold)
@@ -148,50 +308,48 @@ void UDEGA_Heal::ResetHealState()
 {
 	CumulativeHealAmount = 0.0f;
 	LastTickHealAmount = 0.0f;
+	LastHealTime = -1.0f;
 	UpdateHealBeam(nullptr);
 }
 
-ADECharacter* UDEGA_Heal::FindNearestInjuredAlly() const
+bool UDEGA_Heal::HasInjuredAllyInRange(float HealthThreshold) const
+{
+	return FindNearestInjuredAlly(HealthThreshold) != nullptr;
+}
+
+ADECharacter* UDEGA_Heal::FindNearestInjuredAlly(float HealthThreshold) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
 	const ADECharacter* OwnerChar = Cast<ADECharacter>(AvatarActor);
 	if (!OwnerChar) return nullptr;
 
-	// --- Inference mode: use AIPerception to find allies by TeamID ---
-	// Falls back to MatchManager if no AIController / perception available.
-	AAIController* AIC = Cast<AAIController>(OwnerChar->GetController());
-	const UAIPerceptionComponent* Perception = AIC ? AIC->GetPerceptionComponent() : nullptr;
+TArray<ADECharacter*> Candidates;
 
-	TArray<ADECharacter*> Candidates;
-
-	if (Perception)
+	// Use MatchManager to enumerate allies directly — perception only tracks enemies (sight sense)
+	// and would miss same-team members in both training and inference mode.
+	if (!CachedMatchManager)
 	{
-		TArray<AActor*> PerceivedActors;
-		Perception->GetCurrentlyPerceivedActors(nullptr, PerceivedActors);
-
-		for (AActor* Actor : PerceivedActors)
+		CachedMatchManager = const_cast<UDEGA_Heal*>(this)->GetMatchManager();
+	}
+	if (CachedMatchManager)
+	{
+		TArray<ADECharacter*> TeamAgents = CachedMatchManager->GetTeamAgents(OwnerChar->GetTeamID_Implementation());
+		for (ADECharacter* A : TeamAgents)
 		{
-			ADECharacter* Other = Cast<ADECharacter>(Actor);
-			if (!Other || Other == OwnerChar || !Other->IsAlive()) continue;
-			// Same team, same environment
-			if (Other->GetTeamID_Implementation() != OwnerChar->GetTeamID_Implementation()) continue;
-			if (Other->GetEnvID_Implementation()  != OwnerChar->GetEnvID_Implementation())  continue;
-			Candidates.Add(Other);
+			if (A && A != OwnerChar && A->IsAlive()) Candidates.Add(A);
 		}
 	}
 	else
 	{
-		// Fallback: MatchManager (training mode)
-		if (!CachedMatchManager)
+		// Fallback for test mode (no MatchManager): scan all DECharacters with matching TeamID
+		TArray<AActor*> AllChars;
+		UGameplayStatics::GetAllActorsOfClass(OwnerChar->GetWorld(), ADECharacter::StaticClass(), AllChars);
+		for (AActor* Actor : AllChars)
 		{
-			CachedMatchManager = const_cast<UDEGA_Heal*>(this)->GetMatchManager();
-		}
-		if (CachedMatchManager)
-		{
-			TArray<ADECharacter*> TeamAgents = CachedMatchManager->GetTeamAgents(OwnerChar->GetTeamID_Implementation());
-			for (ADECharacter* A : TeamAgents)
+			ADECharacter* A = Cast<ADECharacter>(Actor);
+			if (A && A != OwnerChar && A->IsAlive() && A->GetTeamID_Implementation() == OwnerChar->GetTeamID_Implementation())
 			{
-				if (A && A != OwnerChar && A->IsAlive()) Candidates.Add(A);
+				Candidates.Add(A);
 			}
 		}
 	}
@@ -202,7 +360,9 @@ ADECharacter* UDEGA_Heal::FindNearestInjuredAlly() const
 
 	for (ADECharacter* Ally : Candidates)
 	{
-		if (Ally->GetHealthPercentage() >= 1.0f) continue;
+		// Use KINDA_SMALL_NUMBER epsilon to avoid treating an ally as injured when GAS
+		// health is at e.g. 0.9999 due to float precision after healing to near-maximum.
+		if (Ally->GetHealthPercentage() >= (HealthThreshold - KINDA_SMALL_NUMBER)) continue;
 
 		float DistSq = FVector::DistSquared(Ally->GetActorLocation(), MyLoc);
 		if (DistSq < MinDistSq)
@@ -236,22 +396,59 @@ void UDEGA_Heal::UpdateHealBeam(const AActor* Target)
 
 	if (!Target)
 	{
-		if (HealBeamComponent) HealBeamComponent->Deactivate();
+		if (HealBeamComponent)
+		{
+			HealBeamComponent->Deactivate();
+		}
 		return;
 	}
 
+	// Spawn the beam component unattached so BeamStart/BeamEnd are unambiguously world-space.
+	// Attaching to the character root caused the Niagara simulation to apply the character's
+	// transform on top of the already-world-space position parameters, making all beams converge.
+	if (!HealBeamComponent && !Config.HealBeamSystem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DEGA_Heal: HealBeamSystem is null on %s — assign a Niagara beam system in DA_AbilityConfig HealConfig."),
+			OwnerChar ? *OwnerChar->GetName() : TEXT("Unknown"));
+	}
 	if (!HealBeamComponent && Config.HealBeamSystem && OwnerChar)
 	{
-		HealBeamComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			Config.HealBeamSystem, OwnerChar->GetRootComponent(), NAME_None,
-			FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset, false);
+		HealBeamComponent = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			OwnerChar->GetWorld(),
+			Config.HealBeamSystem,
+			OwnerChar->GetActorLocation(),
+			FRotator::ZeroRotator,
+			FVector::OneVector,
+			/*bAutoDestroy=*/false,
+			/*bAutoActivate=*/false,
+			ENCPoolMethod::None);
+
 	}
 
 	if (HealBeamComponent && OwnerChar)
 	{
+		// Use mesh socket for beam origin if available, otherwise fall back to actor location offset
+		FVector BeamStart = OwnerChar->GetActorLocation() + FVector(0.f, 0.f, 90.f);
+		if (!Config.HealBeamSocketName.IsNone())
+		{
+			if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
+			{
+				if (Mesh->DoesSocketExist(Config.HealBeamSocketName))
+				{
+					BeamStart = Mesh->GetSocketLocation(Config.HealBeamSocketName);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("DEGA_Heal: Socket '%s' not found on mesh — using fallback offset."),
+						*Config.HealBeamSocketName.ToString());
+				}
+			}
+		}
+
+		const FVector BeamEnd = Target->GetActorLocation() + FVector(0.f, 0.f, 60.f);
+		HealBeamComponent->SetVariableVec3(TEXT("User.BeamStart"), BeamStart);
+		HealBeamComponent->SetVariableVec3(TEXT("User.BeamEnd"),   BeamEnd);
 		HealBeamComponent->Activate();
-		HealBeamComponent->SetVariableVec3(TEXT("BeamStart"), OwnerChar->GetActorLocation() + FVector(0, 0, 90));
-		HealBeamComponent->SetVariableVec3(TEXT("BeamEnd"), Target->GetActorLocation() + FVector(0, 0, 90));
 	}
 }
 

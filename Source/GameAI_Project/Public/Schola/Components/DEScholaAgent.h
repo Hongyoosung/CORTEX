@@ -94,6 +94,32 @@ public:
 public:
 
     //========================================
+    // Per-Strategy ONNX Policies (Inference Mode)
+    //========================================
+
+    /**
+     * Policy for Assault strategy.
+     * Assign the Assault ONNX model asset here.
+     * When CommandedStrategy == Assault, this policy drives the EQS weights.
+     */
+    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Strategy|Policies")
+    TObjectPtr<UObject> AssaultPolicyObject;
+
+    /**
+     * Policy for Defend strategy.
+     * Assign the Defend ONNX model asset here.
+     */
+    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Strategy|Policies")
+    TObjectPtr<UObject> DefendPolicyObject;
+
+    /**
+     * Policy for Support strategy.
+     * Assign the Support ONNX model asset here.
+     */
+    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Strategy|Policies")
+    TObjectPtr<UObject> SupportPolicyObject;
+
+    //========================================
     // Runtime State
     //========================================
 
@@ -104,4 +130,8 @@ public:
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy")
     EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
+
+private:
+    /** Returns the policy object corresponding to the given strategy. */
+    UObject* GetPolicyForStrategy(EDEStrategyType Strategy) const;
 };

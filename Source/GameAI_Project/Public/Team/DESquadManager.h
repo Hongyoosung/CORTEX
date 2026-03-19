@@ -24,23 +24,6 @@ struct FDESquadConfig
 {
 	GENERATED_BODY()
 
-	/** Time budget for MCTS per planning cycle (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|MCTS")
-	float MCTSTimeBudget = 0.015f;
-
-	/** Planning interval (seconds) between replanning cycles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|MCTS")
-	float PlanningInterval = 0.5f;
-
-	/** Enable epsilon-greedy data collection instead of MCTS */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Training")
-	bool bDataCollectionMode = false;
-
-	/** Exploration rate for epsilon-greedy (0=exploit, 1=explore) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Training",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ExplorationRate = 0.7f;
-
 	/** Phase 1 RL: fix strategy per episode (sampled at reset) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Training")
 	bool bRLTrainingMode = false;
@@ -55,24 +38,14 @@ struct FDESquadConfig
 
 
 /**
- * UDESquadManager — Centralized Tactical Planner
+ * UDESquadManager — Centralized Role Assigner
  *
  * UObject owned by ADEMatchManager.  Two instances are created
  * programmatically in ADEMatchManager::BeginPlay() — one per team.
  *
- * Design (— no circular reference):
- *  - ADEMatchManager owns UDESquadManager (parent → child, one-way).
- *  - Configuration is pushed via Configure(FDESquadConfig).
- *  - Agent lists are passed as parameters at call sites; UDESquadManager
- *    never holds a raw pointer back to ADEMatchManager.
- *  - DEScholaEnvironment is the single orchestrator that propagates config
- *    from ADEMatchManager to each UDESquadManager after BeginPlay.
- *
  * Responsibilities:
- *  - Collect FDETeamWorldState from caller-supplied agent arrays
- *  - Run MCTS / epsilon-greedy to select a tactical play
- *  - Distribute role assignments to individual agents
- *  - Trigger replanning on critical events
+ *  - Assign roles to agents via round-robin per episode (Phase 1 RL)
+ *  - Distribute role assignments to individual agents via SetCommandedStrategy()
  */
 UCLASS()
 class GAMEAI_PROJECT_API UDESquadManager : public UObject
@@ -88,14 +61,13 @@ public:
 
 	/**
 	 * Basic setup — assign team ID.
-	 * Must be called before Configure() or TickPlanner().
+	 * Must be called before Configure() or Reset().
 	 * @param InTeamID  Team index (0 = Red, 1 = Blue)
 	 */
 	void Initialize(int32 InTeamID);
 
 	/**
 	 * Push planning configuration from ADEMatchManager / ADEScholaEnvironment.
-	 * Safe to call at any time; takes effect on the next planning cycle.
 	 */
 	void Configure(const FDESquadConfig& InConfig);
 
@@ -110,27 +82,18 @@ public:
 	//========================================
 
 	/**
-	 * Advance the planner timer and trigger replanning when the interval elapses.
+	 * Periodic validation — verifies role count invariants.
 	 * @param DeltaTime    Frame delta (seconds)
-	 * @param TeamAgents   Current live agents for this team (owned by DEMatchManager)
-	 * @param EnemyAgents  Current live enemy agents (owned by DEMatchManager)
+	 * @param TeamAgents   Current live agents for this team
+	 * @param EnemyAgents  Current live enemy agents (unused, kept for call-site compat)
 	 */
 	void TickPlanner(float DeltaTime,
 	                 const TArray<ADECharacter*>& TeamAgents,
 	                 const TArray<ADECharacter*>& EnemyAgents);
 
 	//========================================
-	// Centralized Planning
+	// Role Query
 	//========================================
-
-	/**
-	 * Main planning entry point — select tactical play and distribute roles.
-	 * @param TeamAgents   Live agents on this team
-	 * @param EnemyAgents  Live enemy agents
-	 */
-	void PerformTacticalPlanning(const TArray<ADECharacter*>& TeamAgents,
-	                             const TArray<ADECharacter*>& EnemyAgents);
-
 
 	/**
 	 * Get the assigned strategy for a specific agent slot.
@@ -138,34 +101,13 @@ public:
 	 */
 	EDEStrategyType GetAgentStrategy(int32 AgentIndex) const;
 
-	/** Current active tactical play */
-	ETacticalPlay GetActiveTacticalPlay() const { return ActiveTacticalPlay; }
-
-	//========================================
-	// Event-Driven Triggers
-	//========================================
-
-	/**
-	 * Trigger immediate replanning on a critical game event.
-	 * @param EventType       Category of event
-	 * @param InstigatorActor Actor that triggered the event (may be null)
-	 * @param TeamAgents      Current team agents (for feasibility check)
-	 * @param EnemyAgents     Current enemy agents
-	 */
-	void ReplanOnCriticalEvent(EDECriticalEventType EventType,
-	                           AActor* InstigatorActor,
-	                           const TArray<ADECharacter*>& TeamAgents,
-	                           const TArray<ADECharacter*>& EnemyAgents);
-
-	/** True if a replanning interval has elapsed */
-	bool ShouldReplan() const;
-
 	//========================================
 	// Episode Management
 	//========================================
 
 	/**
-	 * Reset planner state for a new episode.
+	 * Reset planner state for a new episode and immediately assign strategies.
+	 * Must be called before the first Schola observation of the new episode.
 	 * @param TeamAgents  Initial agent list for the new episode
 	 */
 	void Reset(const TArray<ADECharacter*>& TeamAgents);
@@ -175,27 +117,8 @@ public:
 	// Debug Accessors
 	//========================================
 
-	FORCEINLINE int32 GetTeamID()                const	{ return TeamID; }
-	FORCEINLINE int32 GetPlanningCycleCount()     const { return PlanningCycleCount; }
-	FORCEINLINE int32 GetEventDrivenReplanCount() const { return EventDrivenReplanCount; }
-	FORCEINLINE float GetPlanConfidence()         const { return PlanConfidence; }
+	FORCEINLINE int32 GetTeamID()   const { return TeamID; }
 	FORCEINLINE const TArray<EDEStrategyType>& GetCurrentRoleAssignments() const { return CurrentRoleAssignments; }
-
-
-
-private:
-
-	ETacticalPlay SelectEpsilonGreedyAction(
-		const TArray<ETacticalPlay>& FeasiblePlays) const;
-
-	//========================================
-	// Critical Event Handlers (bound to DECapturePoint delegates)
-	//========================================
-
-	UFUNCTION()
-	void OnPointCapturedHandler(ECapturePointID PointID,
-		int32 PreviousTeamID,
-		int32 NewTeamID);
 
 
 
@@ -204,22 +127,12 @@ protected:
 	// Internal Implementation
 	//========================================
 
-	/** Sample a round-robin tactical play for Phase 1 RL training */
+	/** Sample a round-robin tactical play for Phase 1 RL training and push to agents */
 	void SampleRandomTacticalPlay(const TArray<ADECharacter*>& TeamAgents);
-
-
-	/** Convert ETacticalPlay to a 5-element role array */
-	TArray<EDEStrategyType> DecodeTacticalPlay(ETacticalPlay Play) const;
 
 	/** Assign roles to agents via SetCommandedStrategy() */
 	void DistributeRoles(const TArray<EDEStrategyType>& Roles,
 	                     const TArray<ADECharacter*>& TeamAgents) const;
-
-	/** Log the current planning decision */
-	void LogPlanningDecision(ETacticalPlay Play, float Confidence) const;
-
-	/** Draw 3-D debug labels above agents */
-	void DrawDebugVisualization(const TArray<ADECharacter*>& TeamAgents) const;
 
 
 	//========================================
@@ -232,22 +145,11 @@ protected:
 	FDESquadConfig Config;
 
 	TArray<EDEStrategyType> CurrentRoleAssignments;
-	float TimeSinceLastPlan       = 0.0f;
-	ETacticalPlay ActiveTacticalPlay = ETacticalPlay::StandardComp;
-	float PlanConfidence          = 0.5f;
-	int32 PlanningCycleCount      = 0;
-	int32 EventDrivenReplanCount  = 0;
-
-
-	ETacticalPlay PreviousTacticalPlay = ETacticalPlay::StandardComp;
-	bool bHasPreviousState        = false;
-
-	bool bHealthCriticalTriggered = false;
-	float LastPlanningDurationMs  = 0.0f;
-	float ValidationTickCounter   = 0.0f;
 
 	/** Incremented each episode; drives round-robin strategy rotation */
 	int32 EpisodeCount = 0;
+
+	float ValidationTickCounter = 0.0f;
 
 	/** Capture points scoped to this environment (set via BindCapturePoints) */
 	TArray<ADECapturePoint*> CachedCapturePoints;

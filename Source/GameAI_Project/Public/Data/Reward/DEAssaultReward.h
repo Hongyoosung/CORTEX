@@ -74,7 +74,7 @@ struct FDEAssaultRewardSettings
 
 	/** Minimum combat range for Assault. Penalty fires each step a visible enemy is closer than this. */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
-	float MinCombatRange = 400.0f;
+	float MinCombatRange = 800.0f;
 
 	/** Per-step penalty when any visible enemy is within MinCombatRange. */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")

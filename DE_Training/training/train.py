@@ -161,7 +161,12 @@ if RLLIB_AVAILABLE:
             from training.env_wrapper import AGENT_STRATEGY_REGISTRY
 
         def _policy_mapping_fn(agent_id, episode, worker, **kwargs):
-            strategy_idx = AGENT_STRATEGY_REGISTRY.get(agent_id, 0)
+            strategy_idx = AGENT_STRATEGY_REGISTRY.get(agent_id)
+            if strategy_idx is None:
+                # Agent not yet registered — happens before first reset.
+                # Log a warning so we can detect if UE5 is not sending strategy info.
+                print(f"[POLICY MAP] WARNING: {agent_id} not in registry, defaulting to assault")
+                strategy_idx = 0
             return STRATEGY_POLICY_NAMES[strategy_idx]
 
         model_cfg = {"custom_model": "entity_centric_model",
@@ -326,48 +331,53 @@ def train_with_rllib(args):
 
         cumul_episodes += eps
 
-        # ---------------------------------------------------------------------
-        # 텐서보드 기록
-        # ---------------------------------------------------------------------
-        
-        # 에피소드 보상 (평균, 최대, 최소)
-        tb.add_scalar("reward/episode_reward_mean", reward, cumul_steps)
-        
+        # ── Global metrics (all agents combined) ──────────────────────────────
+        tb.add_scalar("global/reward/episode_mean", reward, cumul_steps)
         if reward_max is not None and not np.isnan(float(reward_max)):
-            tb.add_scalar("reward/episode_reward_max", float(reward_max), cumul_steps)
+            tb.add_scalar("global/reward/episode_max", float(reward_max), cumul_steps)
         if reward_min is not None and not np.isnan(float(reward_min)):
-            tb.add_scalar("reward/episode_reward_min", float(reward_min), cumul_steps)
-
-        # 에피소드 길이 및 횟수
-        tb.add_scalar("env/episode_len_mean", ep_len, cumul_steps)
-        tb.add_scalar("env/episodes_completed", cumul_episodes, cumul_steps)
-        
-        # 시스템 퍼포먼스 (초당 스텝 처리량)
-        # 누적 스텝(cumul_steps)이 아닌 이번 이터레이션 스텝(steps_this_iter)으로 계산해야 정확합니다.
+            tb.add_scalar("global/reward/episode_min", float(reward_min), cumul_steps)
+        tb.add_scalar("global/env/episode_len_mean", ep_len, cumul_steps)
+        tb.add_scalar("global/env/episodes_completed", cumul_episodes, cumul_steps)
         steps_per_sec = steps_this_iter / max(dt, 1e-6)
-        tb.add_scalar("performance/steps_per_sec", steps_per_sec, cumul_steps)
+        tb.add_scalar("global/performance/steps_per_sec", steps_per_sec, cumul_steps)
 
-        # Custom env metrics
+        # ── Per-role reward & component metrics ───────────────────────────────
+        # RLlib aggregates custom_metrics by appending "_mean"/"_min"/"_max".
+        # env_wrapper emits key "reward_strategy_assault" →
+        # RLlib stores it as    "reward_strategy_assault_mean" in custom_metrics.
         custom = env_r.get("custom_metrics", {})
-        for strat in ("assault", "defend", "support"):
-            key_mean = f"reward_strategy_{strat}_mean"
-            key_sum  = f"reward_strategy_{strat}_sum"
-            if key_mean in custom:
-                tb.add_scalar(f"reward/strategy_{strat}_mean", float(custom[key_mean]), cumul_steps)
-            if key_sum in custom:
-                tb.add_scalar(f"reward/strategy_{strat}_sum",  float(custom[key_sum]),  cumul_steps)
+
+        # Debug: on first 3 iterations log all available custom_metric keys so we
+        # can verify the naming round-trip (RLlib suffix behaviour).
+        if i < 3:
+            print(f"[TB DEBUG iter={i}] custom_metrics={dict(list(custom.items())[:10])} "
+                  f"(total keys={len(custom)})")
 
         REWARD_COMPONENTS = [
             "BaseOccupationReward", "CoOccupationPenalty",
             "BaseCaptureCreditReward", "UndefendedBasePenalty",
             "AssignedBaseReachReward",
         ]
-        for comp in REWARD_COMPONENTS:
-            ckey = f"reward_component_{comp}_mean"
-            if ckey in custom:
-                tb.add_scalar(f"reward/component_{comp}", float(custom[ckey]), cumul_steps)
+        for strat in ("assault", "defend", "support"):
+            # env_wrapper key: "reward_strategy_{strat}"
+            # RLlib aggregated: "reward_strategy_{strat}_mean"
+            key_mean = f"reward_strategy_{strat}_mean"
+            key_sum  = f"reward_strategy_{strat}_sum_mean"   # RLlib wraps sum too
+            if key_mean in custom:
+                tb.add_scalar(f"{strat}/reward/step_mean", float(custom[key_mean]), cumul_steps)
+            if key_sum in custom:
+                tb.add_scalar(f"{strat}/reward/step_sum",  float(custom[key_sum]),  cumul_steps)
+            for comp in REWARD_COMPONENTS:
+                # env_wrapper key: "reward_component_{comp}"
+                # RLlib aggregated: "reward_component_{comp}_mean"
+                ckey = f"reward_component_{comp}_mean"
+                if ckey in custom:
+                    tb.add_scalar(f"global/reward_components/{comp}", float(custom[ckey]), cumul_steps)
 
-        # Learner metrics — logged separately per role policy
+        # ── Per-role PPO learner metrics ──────────────────────────────────────
+        # TB hierarchy: {role}/{metric_group}/{metric}
+        # e.g. assault/losses/policy_loss, defend/kl/value, support/entropy/value
         TRAIN_METRICS = {
             "losses/policy_loss":  ["policy_loss", "mean_policy_loss"],
             "losses/vf_loss":      ["vf_loss", "mean_vf_loss"],
@@ -380,9 +390,11 @@ def train_with_rllib(args):
         }
         learner_info = result.get("info", {}).get("learner", {})
         for policy_name in STRATEGY_POLICY_NAMES.values():
-            role = policy_name.replace("_policy", "")
-            raw = learner_info.get(policy_name, {})
+            role  = policy_name.replace("_policy", "")   # "assault" / "defend" / "support"
+            raw   = learner_info.get(policy_name, {})
             stats = raw.get("learner_stats", raw)
+            if not stats:
+                continue
             for tag, candidates in TRAIN_METRICS.items():
                 for k in candidates:
                     if k in stats:

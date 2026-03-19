@@ -132,6 +132,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Health")
 	float GetMaxHealth() const;
 
+	/** Current mana as a fraction [0, 1] */
+	UFUNCTION(BlueprintPure, Category = "Character|Mana")
+	float GetManaPercentage() const;
+
 	/** Weapon cooldown progress (0=just fired, 1=ready) */
 	UFUNCTION(BlueprintPure, Category = "Character|Combat")
 	float GetWeaponCooldown() const;

@@ -13,6 +13,13 @@ UDEScholaAgent::UDEScholaAgent()
 
 void UDEScholaAgent::BeginPlay()
 {
+    // In Inference mode, seed InferencePolicyObject with the Assault policy
+    // (default strategy) before the parent wires up the stepper.
+    if (AgentMode == EDynamicEQSAgentMode::Inference)
+    {
+        InferencePolicyObject = GetPolicyForStrategy(CommandedStrategy);
+    }
+
     Super::BeginPlay();
 
     // Verify owner is DECharacter
@@ -27,11 +34,6 @@ void UDEScholaAgent::BeginPlay()
     const FString ModeStr = (AgentMode == EDynamicEQSAgentMode::Training) ? TEXT("Training (Python RLlib)") : TEXT("Inference (Local ONNX)");
     UE_LOG(LogTemp, Log, TEXT("[DEScholaAgent] Initialized for Agent %d in %s mode"),
         OwnerCharacter->AgentID, *ModeStr);
-
-
-    // Schola's Initialize() is called by parent BeginPlay()
-    // This sets up Observers, Policy, Brain, Actuators
-    // No additional setup needed - proper separation of concerns
 }
 
 void UDEScholaAgent::UpdateCommandedStrategy(EDEStrategyType NewStrategy)
@@ -40,34 +42,50 @@ void UDEScholaAgent::UpdateCommandedStrategy(EDEStrategyType NewStrategy)
     {
         CommandedStrategy = NewStrategy;
 
-        // Log strategy change for debugging
+        // In Inference mode, hot-swap to the model trained for this strategy.
+        if (AgentMode == EDynamicEQSAgentMode::Inference)
+        {
+            UObject* NewPolicy = GetPolicyForStrategy(NewStrategy);
+            if (NewPolicy)
+            {
+                SwapInferencePolicy(NewPolicy);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DEScholaAgent] No policy assigned for strategy %s — inference unchanged."),
+                    *UEnum::GetValueAsString(NewStrategy));
+            }
+        }
+
         ADECharacter* OwnerCharacter = Cast<ADECharacter>(GetOwner());
         if (OwnerCharacter)
         {
-            UE_LOG(LogTemp, Verbose, TEXT("[DEScholaAgent] Agent %d received strategy: %s"),
+            UE_LOG(LogTemp, Verbose, TEXT("[DEScholaAgent] Agent %d strategy → %s"),
                 OwnerCharacter->AgentID,
                 *UEnum::GetValueAsString(NewStrategy));
         }
-
-        // Strategy is now available to Observers via GetCommandedStrategy()
-        // Observers will include it in the next observation
-        // Policy will use it to condition EQS weight output
     }
 }
 
 void UDEScholaAgent::ResetAgent()
 {
-    // Reset commanded strategy to default
-    CommandedStrategy = EDEStrategyType::Assault;
-
-    // Note: Schola's internal state (observation buffers, action history, etc.)
-    // is managed by the parent UInferenceComponent and DEScholaEnvironment.
-    // We only need to reset specific state here.
-
+    // Strategy will be reassigned by DESquadManager at episode start.
+    // Do not force Assault here — let UpdateCommandedStrategy handle the swap.
     ADECharacter* OwnerCharacter = Cast<ADECharacter>(GetOwner());
     if (OwnerCharacter)
     {
-        UE_LOG(LogTemp, Verbose, TEXT("[DEScholaAgent] Agent %d reset - strategy set to Assault"),
-            OwnerCharacter->AgentID);
+        UE_LOG(LogTemp, Verbose, TEXT("[DEScholaAgent] Agent %d reset"), OwnerCharacter->AgentID);
+    }
+}
+
+UObject* UDEScholaAgent::GetPolicyForStrategy(EDEStrategyType Strategy) const
+{
+    switch (Strategy)
+    {
+    case EDEStrategyType::Assault: return AssaultPolicyObject.Get();
+    case EDEStrategyType::Defend:  return DefendPolicyObject.Get();
+    case EDEStrategyType::Support: return SupportPolicyObject.Get();
+    default:                       return AssaultPolicyObject.Get();
     }
 }

@@ -36,8 +36,8 @@ private:
 	/** Draw the strategy name in large font at the top-left */
 	void DrawStrategyLabel(const FString& StrategyName, const FLinearColor& Color, float& OutBottomY);
 
-	/** Draw health and ammo bars below the strategy label */
-	void DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 MaxAmmo, float TopY);
+	/** Draw health, ammo, and mana bars below the strategy label */
+	void DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 MaxAmmo, float ManaPct, float TopY);
 
 	/** Draw EQS weight values in the bottom-left corner */
 	void DrawEQSWeights(const FDEEQSWeightParameters& Weights);

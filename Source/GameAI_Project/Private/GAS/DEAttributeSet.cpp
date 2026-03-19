@@ -13,6 +13,8 @@ UDEAttributeSet::UDEAttributeSet()
 	InitArmor(0.0f);
 	InitDamage(0.0f);
 	InitHealing(0.0f);
+	InitMana(100.0f);
+	InitMaxMana(100.0f);
 }
 
 void UDEAttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -22,6 +24,8 @@ void UDEAttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME_CONDITION_NOTIFY(UDEAttributeSet, Health,    COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UDEAttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UDEAttributeSet, Armor,     COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UDEAttributeSet, Mana,      COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UDEAttributeSet, MaxMana,   COND_None, REPNOTIFY_Always);
 }
 
 void UDEAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue)
@@ -31,6 +35,16 @@ void UDEAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, fl
 	if (Attribute == GetMaxHealthAttribute())
 	{
 		NewValue = FMath::Max(NewValue, 1.0f);
+	}
+
+	if (Attribute == GetManaAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 0.0f, GetMaxMana());
+	}
+
+	if (Attribute == GetMaxManaAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.0f);
 	}
 }
 
@@ -110,4 +124,14 @@ void UDEAttributeSet::OnRep_MaxHealth(const FGameplayAttributeData& OldMaxHealth
 void UDEAttributeSet::OnRep_Armor(const FGameplayAttributeData& OldArmor)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UDEAttributeSet, Armor, OldArmor);
+}
+
+void UDEAttributeSet::OnRep_Mana(const FGameplayAttributeData& OldMana)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UDEAttributeSet, Mana, OldMana);
+}
+
+void UDEAttributeSet::OnRep_MaxMana(const FGameplayAttributeData& OldMaxMana)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UDEAttributeSet, MaxMana, OldMaxMana);
 }
