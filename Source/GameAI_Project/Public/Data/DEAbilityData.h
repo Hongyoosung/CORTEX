@@ -132,6 +132,10 @@ struct FDEHealAbilityConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	FName HealBeamSocketName = TEXT("Muzzle_01");
 
+	/** Play rate applied to the montage while the Loop section is repeating. 1.0 = normal speed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation", meta = (ClampMin = "0.01"))
+	float LoopPlayRate = 1.0f;
+
 };
 
 /**

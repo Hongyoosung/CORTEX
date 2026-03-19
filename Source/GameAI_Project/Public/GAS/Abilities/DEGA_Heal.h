@@ -10,6 +10,7 @@
 class ADECharacter;
 class UNiagaraComponent;
 class ADEMatchManager;
+class UDESupportAnimInstance;
 
 /**
  * UDEGA_Heal - GAS-based healing ability.
@@ -99,5 +100,16 @@ private:
 	UPROPERTY(Transient)
 	mutable TObjectPtr<ADEMatchManager> CachedMatchManager;
 
+	/** Base AnimInstance cached per activation — used for section redirects regardless of subclass. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimInstance> CachedAnimInstance;
+
+	/** Cached only when the anim instance is UDESupportAnimInstance — optional extra features. */
+	UPROPERTY(Transient)
+	TObjectPtr<UDESupportAnimInstance> CachedSupportAnimInstance;
+
 	ADEMatchManager* GetMatchManager() const;
+
+	/** Resolves and caches the UDESupportAnimInstance from the owner's skeletal mesh. */
+	UDESupportAnimInstance* GetSupportAnimInstance() const;
 };

@@ -11,6 +11,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/DESupportAnimInstance.h"
 #include "Types/DEStrategyTypes.h"
 #include "Data/DETeamData.h"
 
@@ -136,11 +137,16 @@ void UDEGA_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
 	if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
 	{
-		if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+		UAnimInstance* AnimInstance = Mesh->GetAnimInstance();
+		if (AnimInstance && Config.HealMontage)
 		{
-			if (Config.HealMontage)
+			AnimInstance->Montage_Play(Config.HealMontage);
+			CachedAnimInstance = AnimInstance;
+
+			CachedSupportAnimInstance = Cast<UDESupportAnimInstance>(AnimInstance);
+			if (CachedSupportAnimInstance)
 			{
-				AnimInstance->Montage_Play(Config.HealMontage);
+				CachedSupportAnimInstance->BeginHealLoop(Config.HealMontage);
 			}
 		}
 	}
@@ -185,10 +191,37 @@ static constexpr float BEAM_DT = 0.016f;
 
 void UDEGA_Heal::OnBeamUpdateTick()
 {
+	// --- Section management ---
+	if (CachedAnimInstance && Config.HealMontage)
+	{
+		const FName CurSection = CachedAnimInstance->Montage_GetCurrentSection(Config.HealMontage);
+		if (CurSection == UDESupportAnimInstance::SectionLoop)
+		{
+			// Keep redirecting Loop→Loop while the channel is active.
+			// EndAbility switches this to Loop→End so the outro plays naturally.
+			CachedAnimInstance->Montage_SetNextSection(
+				UDESupportAnimInstance::SectionLoop,
+				UDESupportAnimInstance::SectionLoop,
+				Config.HealMontage);
+		}
+	}
+
 	if (!CurrentTarget || !CurrentTarget->IsAlive())
 	{
 		UpdateHealBeam(nullptr);
 		return;
+	}
+
+	// --- Character faces target ---
+	const FGameplayAbilityActorInfo* FaceActorInfo = GetCurrentActorInfo();
+	if (ADECharacter* OwnerChar = FaceActorInfo ? Cast<ADECharacter>(FaceActorInfo->AvatarActor.Get()) : nullptr)
+	{
+		const FVector ToTarget = (CurrentTarget->GetActorLocation() - OwnerChar->GetActorLocation()).GetSafeNormal2D();
+		if (!ToTarget.IsNearlyZero())
+		{
+			const FRotator CurRot = OwnerChar->GetActorRotation();
+			OwnerChar->SetActorRotation(FRotator(CurRot.Pitch, ToTarget.Rotation().Yaw, CurRot.Roll));
+		}
 	}
 
 	// --- Continuous mana drain ---
@@ -283,6 +316,33 @@ void UDEGA_Heal::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 
 	CurrentTarget = nullptr;
+
+	// Restore play rate then jump directly to the End section.
+	// Loop was frozen at play rate 0 — using SetNextSection would require Loop to play
+	// to completion before End begins, during which the ABP can cut the slot.
+	// Jumping directly means End starts on the very next frame regardless of ABP state.
+	if (CachedAnimInstance && Config.HealMontage)
+	{
+		// Switch Loop→End so the montage exits the loop and plays the outro at normal speed.
+		CachedAnimInstance->Montage_SetNextSection(
+			UDESupportAnimInstance::SectionLoop,
+			UDESupportAnimInstance::SectionEnd,
+			Config.HealMontage);
+
+		// Clear ABP channeling state only after the End section finishes.
+		if (CachedSupportAnimInstance)
+		{
+			UDESupportAnimInstance* SupportAnim = CachedSupportAnimInstance;
+			FOnMontageEnded EndDelegate;
+			EndDelegate.BindLambda([SupportAnim](UAnimMontage* /*Montage*/, bool /*bInterrupted*/)
+			{
+				SupportAnim->StopHealLoop();
+			});
+			CachedAnimInstance->Montage_SetEndDelegate(EndDelegate, Config.HealMontage);
+		}
+	}
+	CachedAnimInstance = nullptr;
+	CachedSupportAnimInstance = nullptr;
 
 	if (HealBeamComponent)
 	{
@@ -450,6 +510,19 @@ void UDEGA_Heal::UpdateHealBeam(const AActor* Target)
 		HealBeamComponent->SetVariableVec3(TEXT("User.BeamEnd"),   BeamEnd);
 		HealBeamComponent->Activate();
 	}
+}
+
+UDESupportAnimInstance* UDEGA_Heal::GetSupportAnimInstance() const
+{
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	const ADECharacter* OwnerChar = Cast<ADECharacter>(AvatarActor);
+	if (!OwnerChar) return nullptr;
+
+	if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
+	{
+		return Cast<UDESupportAnimInstance>(Mesh->GetAnimInstance());
+	}
+	return nullptr;
 }
 
 ADEMatchManager* UDEGA_Heal::GetMatchManager() const
