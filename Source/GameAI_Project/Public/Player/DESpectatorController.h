@@ -59,11 +59,41 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Camera|Settings")
 	FVector CameraOffset = FVector(400.f, 0.f, 200.f);
 
+	/** Mouse sensitivity multiplier for orbit look (degrees per pixel) */
+	UPROPERTY(EditAnywhere, Category = "Camera|Settings")
+	float MouseSensitivity = 1.0f;
+
+	/** Pitch clamp range for orbit look (degrees) */
+	UPROPERTY(EditAnywhere, Category = "Camera|Settings")
+	float PitchMin = -80.f;
+
+	UPROPERTY(EditAnywhere, Category = "Camera|Settings")
+	float PitchMax = 20.f;
+
+	/** Base movement speed for free spectator pawn (UU/s) */
+	UPROPERTY(EditAnywhere, Category = "Movement|Settings")
+	float BaseSpectatorSpeed = 2000.f;
+
+	/** Amount to add/subtract per mouse-wheel tick */
+	UPROPERTY(EditAnywhere, Category = "Movement|Settings")
+	float SpeedStep = 500.f;
+
+	/** Minimum and maximum spectator movement speed */
+	UPROPERTY(EditAnywhere, Category = "Movement|Settings")
+	float MinSpeed = 200.f;
+
+	UPROPERTY(EditAnywhere, Category = "Movement|Settings")
+	float MaxSpeed = 10000.f;
+
 private:
 	// ---- Input Callbacks ----
 	void OnCameraKeyPressed();
 	void OnCameraKeyReleased();
 	void OnDisableCameraPressed();
+	void OnSpeedUp();
+	void OnSpeedDown();
+
+	void ApplySpectatorSpeed(float NewSpeed);
 
 	// ---- Internal Helpers ----
 	void SwitchToAgent(ADECharacter* Agent);
@@ -108,4 +138,7 @@ private:
 
 	FTimerHandle HoldTimerHandle;
 	FTimerHandle CycleTimerHandle;
+
+	/** Current spectator movement speed (modified by mouse wheel) */
+	float CurrentSpectatorSpeed;
 };

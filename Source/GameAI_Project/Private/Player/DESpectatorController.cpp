@@ -6,19 +6,23 @@
 #include "EngineUtils.h"
 #include "TimerManager.h"
 #include "Math/RandomStream.h"
+#include "GameFramework/SpectatorPawn.h"
+#include "GameFramework/FloatingPawnMovement.h"
 
 ADESpectatorController::ADESpectatorController()
 {
 	bAutoManageActiveCameraTarget = false;
 	PrimaryActorTick.bCanEverTick = true;
+	CurrentSpectatorSpeed = BaseSpectatorSpeed;
 }
 
 void ADESpectatorController::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Show cursor for spectator convenience (optional)
 	bShowMouseCursor = false;
+	CurrentSpectatorSpeed = BaseSpectatorSpeed;
+	ApplySpectatorSpeed(CurrentSpectatorSpeed);
 }
 
 void ADESpectatorController::Tick(float DeltaTime)
@@ -33,6 +37,22 @@ void ADESpectatorController::Tick(float DeltaTime)
 			bIsBlending = false;
 		}
 	}
+
+	// Mouse orbit while watching an agent.
+	// GetInputMouseDelta reads raw viewport hardware deltas — reliable with both Legacy and Enhanced Input.
+	if (bCameraActive && IsValid(CurrentTarget))
+	{
+		float DeltaX = 0.f, DeltaY = 0.f;
+		GetInputMouseDelta(DeltaX, DeltaY);
+
+		if (!FMath::IsNearlyZero(DeltaX) || !FMath::IsNearlyZero(DeltaY))
+		{
+			FixedCameraRotation.Yaw  += DeltaX * MouseSensitivity;
+			FixedCameraRotation.Pitch = FMath::Clamp(
+				FixedCameraRotation.Pitch - DeltaY * MouseSensitivity,  // subtract: mouse up = camera up
+				PitchMin, PitchMax);
+		}
+	}
 }
 
 void ADESpectatorController::SetupInputComponent()
@@ -45,6 +65,9 @@ void ADESpectatorController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::One, IE_Released, this, &ADESpectatorController::OnCameraKeyReleased);
 	InputComponent->BindKey(EKeys::Two, IE_Pressed,  this, &ADESpectatorController::OnDisableCameraPressed);
 
+	// Mouse wheel — adjust spectator movement speed
+	InputComponent->BindKey(EKeys::MouseScrollUp,   IE_Pressed, this, &ADESpectatorController::OnSpeedUp);
+	InputComponent->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &ADESpectatorController::OnSpeedDown);
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +144,33 @@ void ADESpectatorController::OnCycleTimerFired()
 		return;
 	}
 	CycleToNextAgent();
+}
+
+// ---------------------------------------------------------------------------
+// Speed Control
+// ---------------------------------------------------------------------------
+
+void ADESpectatorController::ApplySpectatorSpeed(float NewSpeed)
+{
+	if (APawn* MyPawn = GetPawn())
+	{
+		if (UFloatingPawnMovement* Move = MyPawn->FindComponentByClass<UFloatingPawnMovement>())
+		{
+			Move->MaxSpeed = NewSpeed;
+		}
+	}
+}
+
+void ADESpectatorController::OnSpeedUp()
+{
+	CurrentSpectatorSpeed = FMath::Clamp(CurrentSpectatorSpeed + SpeedStep, MinSpeed, MaxSpeed);
+	ApplySpectatorSpeed(CurrentSpectatorSpeed);
+}
+
+void ADESpectatorController::OnSpeedDown()
+{
+	CurrentSpectatorSpeed = FMath::Clamp(CurrentSpectatorSpeed - SpeedStep, MinSpeed, MaxSpeed);
+	ApplySpectatorSpeed(CurrentSpectatorSpeed);
 }
 
 // ---------------------------------------------------------------------------
