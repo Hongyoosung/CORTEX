@@ -310,21 +310,29 @@ def train_with_rllib(args):
         dt     = time.time() - t0
 
         env_r  = result.get("env_runners", {})
-        
+
+        # Old RLlib API stack puts episode metrics at the top-level result dict;
+        # new API stack nests them under "env_runners". Fall back accordingly.
+        def _get(key, default=None):
+            v = env_r.get(key)
+            if v is None:
+                v = result.get(key)
+            return v if v is not None else default
+
         # 1. 기존 지표 추출
-        reward = env_r.get("episode_reward_mean") or 0.0
-        ep_len = env_r.get("episode_len_mean")    or 0.0
-        eps    = env_r.get("episodes_this_iter",  0)
-        
+        reward = _get("episode_reward_mean", 0.0)
+        ep_len = _get("episode_len_mean",    0.0)
+        eps    = _get("episodes_this_iter",  0)
+
         # [수정됨] RLlib은 이미 누적된 스텝 수를 반환하므로, 기존 누적 변수에 더하지 않고 덮어씁니다.
-        cumul_steps = result.get("num_agent_steps_sampled", 0) 
-        
+        cumul_steps = result.get("num_agent_steps_sampled", 0)
+
         # 이번 이터레이션에서 샘플링된 스텝 수 (초당 처리량 계산용)
         steps_this_iter = result.get("num_agent_steps_sampled_this_iter", 0)
-        
+
         # 2. 신규 지표 추가 추출 (최대/최소 보상)
-        reward_max = env_r.get("episode_reward_max")
-        reward_min = env_r.get("episode_reward_min")
+        reward_max = _get("episode_reward_max")
+        reward_min = _get("episode_reward_min")
 
         reward = 0.0 if reward is None or (isinstance(reward, float) and np.isnan(reward)) else reward
         ep_len = 0.0 if ep_len is None or (isinstance(ep_len, float) and np.isnan(ep_len)) else ep_len
