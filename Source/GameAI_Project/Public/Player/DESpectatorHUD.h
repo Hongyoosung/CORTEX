@@ -17,7 +17,7 @@ class ADECharacter;
  * Canvas-based HUD drawn while a spectator observes an agent via ADESpectatorController.
  *
  * Layout:
- *   Top-left    : Current strategy in large bold font (Assault=Red, Defend=Blue, Support=LightGreen)
+ *   Top-left    : Team name in team color, then strategy name in white (large bold font)
  *   Bottom-left : Real-time EQS weight readout (6 named values)
  *   Top-left    : Health bar + percentage (below strategy text)
  *   Top-left    : Ammo bar + count (below health bar)
@@ -33,8 +33,9 @@ public:
 	virtual void DrawHUD() override;
 
 private:
-	/** Draw the strategy name in large font at the top-left */
-	void DrawStrategyLabel(const FString& StrategyName, const FLinearColor& Color, float& OutBottomY);
+	/** Draw the team name (in team color) and strategy name (in white) at the top-left */
+	void DrawStrategyLabel(const FString& TeamName, const FLinearColor& TeamColor,
+	                       const FString& StrategyName, float& OutBottomY);
 
 	/** Draw health, ammo, and mana bars below the strategy label */
 	void DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 MaxAmmo, float ManaPct, float TopY);

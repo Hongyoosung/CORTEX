@@ -106,20 +106,49 @@ float DEComputeDefendStepReward(
 		}
 	}
 
-	// ---- Melee Range Bonus: reward for engaging at close range (tank role) ----
+	// ---- Melee Range Bonus + Enemy Approach Shaping ----
 	if (!bIsRespawnStep)
 	{
 		const float MeleeRangeSq = FMath::Square(Settings->DefendReward.MeleeRangeDistance);
+		const float ApproachMaxRangeSq = FMath::Square(Settings->DefendReward.EnemyApproachMaxRange);
+		float NearestVisibleEnemyDist = FLT_MAX;
+		float PrevNearestVisibleEnemyDist = FLT_MAX;
+		bool bInMeleeRange = false;
+
 		for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
 		{
 			if (i < Current.EnemyVisible.Num() && Current.EnemyVisible[i])
 			{
-				if (FVector::DistSquared(Current.Position, Current.EnemyPositions[i]) <= MeleeRangeSq)
+				const float CurrDistSq = FVector::DistSquared(Current.Position, Current.EnemyPositions[i]);
+				if (CurrDistSq <= MeleeRangeSq)
 				{
-					Reward += Settings->DefendReward.MeleeRangeBonus;
-					break;
+					bInMeleeRange = true;
+				}
+				const float CurrDist = FMath::Sqrt(CurrDistSq);
+				if (CurrDist < NearestVisibleEnemyDist)
+					NearestVisibleEnemyDist = CurrDist;
+				// Approximate previous distance using prev position
+				if (i < Prev.EnemyPositions.Num())
+				{
+					const float PrevDist = FVector::Dist(Prev.Position, Prev.EnemyPositions[i]);
+					if (PrevDist < PrevNearestVisibleEnemyDist)
+						PrevNearestVisibleEnemyDist = PrevDist;
 				}
 			}
+		}
+
+		if (bInMeleeRange)
+		{
+			Reward += Settings->DefendReward.MeleeRangeBonus;
+		}
+
+		// Enemy approach shaping: reward closing distance to nearest visible enemy
+		if (NearestVisibleEnemyDist < Settings->DefendReward.EnemyApproachMaxRange &&
+			PrevNearestVisibleEnemyDist < FLT_MAX)
+		{
+			const float ApproachDelta = PrevNearestVisibleEnemyDist - NearestVisibleEnemyDist;
+			if (ApproachDelta > 0.0f)
+				Reward += Settings->DefendReward.EnemyApproachReward * ApproachDelta;
 		}
 	}
 
@@ -128,7 +157,12 @@ float DEComputeDefendStepReward(
 	{
 		const float DamageTaken = Prev.Health - Current.Health;
 		if (DamageTaken > 0.0f)
+		{
 			Reward += Settings->DefendReward.ZoneDurabilityBonus * DamageTaken;
+			// Penalty for taking damage while idle (not approaching the threat)
+			if (PositionChange < Settings->AssaultIdleMovementThreshold)
+				Reward -= Settings->DefendReward.DamageTakenIdlePenalty;
+		}
 	}
 
 	// ---- Health Bonus: small incentive to stay healthy enough to keep fighting ----

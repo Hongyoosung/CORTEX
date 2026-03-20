@@ -133,8 +133,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
 	float ZoneControlDefendScale = 0.1f;
 
+	/** Support should NOT be incentivized to capture — keep very low. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
-	float ZoneControlSupportScale = 1.0f;
+	float ZoneControlSupportScale = 0.02f;
 
 	// ==================== Isolation Mode ====================
 

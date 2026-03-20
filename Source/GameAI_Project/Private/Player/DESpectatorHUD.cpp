@@ -60,8 +60,28 @@ void ADESpectatorHUD::DrawHUD()
 		break;
 	}
 
+	// Team name label (above strategy)
+	const int32 TeamID = Agent->Execute_GetTeamID(Agent);
+	FString TeamName;
+	FLinearColor TeamLabelColor;
+	switch (TeamID)
+	{
+	case 0:
+		TeamName       = TEXT("RED");
+		TeamLabelColor = FLinearColor(1.0f, 0.15f, 0.05f, 1.0f);
+		break;
+	case 1:
+		TeamName       = TEXT("BLUE");
+		TeamLabelColor = FLinearColor(0.1f, 0.4f, 1.0f, 1.0f);
+		break;
+	default:
+		TeamName       = FString::Printf(TEXT("TEAM %d"), TeamID);
+		TeamLabelColor = Agent->TeamColor.A > 0.0f ? Agent->TeamColor : FLinearColor::White;
+		break;
+	}
+
 	float StatusTopY = 0.0f;
-	DrawStrategyLabel(StrategyName, StrategyColor, StatusTopY);
+	DrawStrategyLabel(TeamName, TeamLabelColor, StrategyName, StatusTopY);
 	DrawStatusBars(HealthPct, CurrentAmmo, MaxAmmo, ManaPct, StatusTopY);
 	DrawEQSWeights(Weights);
 }
@@ -70,26 +90,44 @@ void ADESpectatorHUD::DrawHUD()
 // Strategy Label
 // ---------------------------------------------------------------------------
 
-void ADESpectatorHUD::DrawStrategyLabel(const FString& StrategyName, const FLinearColor& Color, float& OutBottomY)
+void ADESpectatorHUD::DrawStrategyLabel(const FString& TeamName, const FLinearColor& TeamColor,
+                                         const FString& StrategyName, float& OutBottomY)
 {
-	const float MarginX = 24.0f;
-	const float MarginY = 24.0f;
-	const float FontScale = 3.0f;
+	const float MarginX    = 24.0f;
+	const float MarginY    = 24.0f;
+	const float FontScale  = 3.0f;
 
-	FCanvasTextItem TextItem(
+	// --- Team name in team color ---
+	FCanvasTextItem TeamItem(
 		FVector2D(MarginX, MarginY),
+		FText::FromString(TeamName),
+		GEngine->GetLargeFont(),
+		TeamColor
+	);
+	TeamItem.Scale        = FVector2D(FontScale, FontScale);
+	TeamItem.bOutlined    = true;
+	TeamItem.OutlineColor = FLinearColor::Black;
+	Canvas->DrawItem(TeamItem);
+
+	float TeamW = 0.0f, TeamH = 0.0f;
+	GetTextSize(TeamName, TeamW, TeamH, GEngine->GetLargeFont(), FontScale);
+	const float StrategyY = MarginY + TeamH + 6.0f;
+
+	// --- Strategy name in white ---
+	FCanvasTextItem StratItem(
+		FVector2D(MarginX, StrategyY),
 		FText::FromString(StrategyName),
 		GEngine->GetLargeFont(),
-		Color
+		FLinearColor::White
 	);
-	TextItem.Scale    = FVector2D(FontScale, FontScale);
-	TextItem.bOutlined = true;
-	TextItem.OutlineColor = FLinearColor::Black;
-	Canvas->DrawItem(TextItem);
+	StratItem.Scale        = FVector2D(FontScale, FontScale);
+	StratItem.bOutlined    = true;
+	StratItem.OutlineColor = FLinearColor::Black;
+	Canvas->DrawItem(StratItem);
 
-	float TextW = 0.0f, TextH = 0.0f;
-	GetTextSize(StrategyName, TextW, TextH, GEngine->GetLargeFont(), FontScale);
-	OutBottomY = MarginY + TextH + 8.0f;
+	float StratW = 0.0f, StratH = 0.0f;
+	GetTextSize(StrategyName, StratW, StratH, GEngine->GetLargeFont(), FontScale);
+	OutBottomY = StrategyY + StratH + 8.0f;
 }
 
 // ---------------------------------------------------------------------------

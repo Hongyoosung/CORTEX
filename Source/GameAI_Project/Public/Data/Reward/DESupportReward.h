@@ -55,6 +55,19 @@ struct FDESupportRewardSettings
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
 	float AllyApproachReward = 0.05f;
 
+	/** Per-step bonus for being within SupportAllyProximityThreshold of ANY alive ally,
+	 *  regardless of their health. Ensures Support always stays with the team. */
+	UPROPERTY(EditAnywhere, Category = "AllyProximity")
+	float AllyFormationBonus = 1.5f;
+
+	/** Per-step penalty when Support is farther than this distance from the nearest alive ally. */
+	UPROPERTY(EditAnywhere, Category = "AllyProximity")
+	float AllyIsolationPenalty = 3.0f;
+
+	/** Distance (cm) beyond which AllyIsolationPenalty fires. */
+	UPROPERTY(EditAnywhere, Category = "AllyProximity")
+	float AllyIsolationDistance = 2000.0f;
+
 
 	//========== Capture Properties =============
 
@@ -78,7 +91,7 @@ struct FDESupportRewardSettings
 
 	/** Per-tick reward when actively healing an ally */
 	UPROPERTY(EditAnywhere, Category = "Heal")
-	float HealTickReward = 5.0f;
+	float HealTickReward = 8.0f;
 
 	//========== Positioning Properties =============
 

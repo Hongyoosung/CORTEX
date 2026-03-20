@@ -135,7 +135,7 @@ if RLLIB_AVAILABLE:
 
         @override(TorchModelV2)
         def forward(self, input_dict, state, seq_lens):
-            obs = input_dict["obs"].float()            # (B, 170)
+            obs = input_dict["obs"].float()            # (B, 194)
             self._last_features = obs
             means = self.policy(obs)                   # (B, 7)
             log_stds = torch.clamp(
@@ -351,37 +351,47 @@ def train_with_rllib(args):
         tb.add_scalar("global/performance/steps_per_sec", steps_per_sec, cumul_steps)
 
         # ── Per-role reward & component metrics ───────────────────────────────
-        # RLlib aggregates custom_metrics by appending "_mean"/"_min"/"_max".
-        # env_wrapper emits key "reward_strategy_assault" →
-        # RLlib stores it as    "reward_strategy_assault_mean" in custom_metrics.
         custom = env_r.get("custom_metrics", {})
+        
+        # 1. RLlib Native Policy Rewards (가장 확실한 전략별 보상 지표)
+        policy_reward_mean = _get("policy_reward_mean", {})
+        policy_reward_min  = _get("policy_reward_min", {})
+        policy_reward_max  = _get("policy_reward_max", {})
 
-        # Debug: on first 3 iterations log all available custom_metric keys so we
-        # can verify the naming round-trip (RLlib suffix behaviour).
+        # 디버깅: 처음 3번의 이터레이션 동안 실제 RLlib이 뱉어내는 키들을 출력하여 구조 확인
         if i < 3:
-            print(f"[TB DEBUG iter={i}] custom_metrics={dict(list(custom.items())[:10])} "
-                  f"(total keys={len(custom)})")
+            print(f"[DEBUG iter={i}] policy_reward_mean: {policy_reward_mean}")
+            print(f"[DEBUG iter={i}] custom_metrics keys: {list(custom.keys())[:15]}")
+            # 만약 result 최상위 키가 궁금하다면 아래 주석을 해제하세요.
+            # print(f"[DEBUG iter={i}] result keys: {list(result.keys())}")
 
+        # 2. RLlib 기본 제공 Policy별 보상 텐서보드 기록
+        for strat, policy_name in zip(("assault", "defend", "support"), STRATEGY_POLICY_NAMES.values()):
+            if policy_name in policy_reward_mean:
+                tb.add_scalar(f"{strat}/reward/episode_mean", float(policy_reward_mean[policy_name]), cumul_steps)
+            if policy_name in policy_reward_max:
+                tb.add_scalar(f"{strat}/reward/episode_max", float(policy_reward_max[policy_name]), cumul_steps)
+            if policy_name in policy_reward_min:
+                tb.add_scalar(f"{strat}/reward/episode_min", float(policy_reward_min[policy_name]), cumul_steps)
+
+            # 3. Custom Metrics (기존 로직 유지 - 환경 래퍼에서 따로 커스텀 기록을 하는 경우)
+            key_mean = f"reward_strategy_{strat}_mean"
+            key_sum  = f"reward_strategy_{strat}_sum_mean"
+            if key_mean in custom:
+                tb.add_scalar(f"{strat}/custom_reward/step_mean", float(custom[key_mean]), cumul_steps)
+            if key_sum in custom:
+                tb.add_scalar(f"{strat}/custom_reward/step_sum",  float(custom[key_sum]),  cumul_steps)
+
+        # 4. 세부 보상 컴포넌트 기록 (기존 유지)
         REWARD_COMPONENTS = [
             "BaseOccupationReward", "CoOccupationPenalty",
             "BaseCaptureCreditReward", "UndefendedBasePenalty",
             "AssignedBaseReachReward",
         ]
-        for strat in ("assault", "defend", "support"):
-            # env_wrapper key: "reward_strategy_{strat}"
-            # RLlib aggregated: "reward_strategy_{strat}_mean"
-            key_mean = f"reward_strategy_{strat}_mean"
-            key_sum  = f"reward_strategy_{strat}_sum_mean"   # RLlib wraps sum too
-            if key_mean in custom:
-                tb.add_scalar(f"{strat}/reward/step_mean", float(custom[key_mean]), cumul_steps)
-            if key_sum in custom:
-                tb.add_scalar(f"{strat}/reward/step_sum",  float(custom[key_sum]),  cumul_steps)
-            for comp in REWARD_COMPONENTS:
-                # env_wrapper key: "reward_component_{comp}"
-                # RLlib aggregated: "reward_component_{comp}_mean"
-                ckey = f"reward_component_{comp}_mean"
-                if ckey in custom:
-                    tb.add_scalar(f"global/reward_components/{comp}", float(custom[ckey]), cumul_steps)
+        for comp in REWARD_COMPONENTS:
+            ckey = f"reward_component_{comp}_mean"
+            if ckey in custom:
+                tb.add_scalar(f"global/reward_components/{comp}", float(custom[ckey]), cumul_steps)
 
         # ── Per-role PPO learner metrics ──────────────────────────────────────
         # TB hierarchy: {role}/{metric_group}/{metric}
@@ -526,11 +536,11 @@ def run_validation() -> bool:
         out_pad = policy(obs_all_pad)
     check("forward works with all-padding ally mask", out_pad.shape == (B, EQS_DIM))
 
-    # -- Test 6: obs dimension = 170 --
-    print("[Test 6] OBS_DIM == 170")
-    check("OBS_DIM == 170", OBS_DIM == 170, f"got {OBS_DIM}")
-    expected = 7 + 8 * 5 + 8 * 5 + 8 * 7 + 8 + 8 + 8 + 3
-    check("Layout arithmetic == 170", expected == 170, f"got {expected}")
+    # -- Test 6: obs dimension = 194 --
+    print("[Test 6] OBS_DIM == 194")
+    check("OBS_DIM == 194", OBS_DIM == 194, f"got {OBS_DIM}")
+    expected = 7 + 8 * 8 + 8 * 5 + 8 * 7 + 8 + 8 + 8 + 3
+    check("Layout arithmetic == 194", expected == 194, f"got {expected}")
 
     # -- Test 7: ONNX export + reload --
     print("[Test 7] ONNX export and ORT reload")
@@ -583,7 +593,7 @@ def run_validation() -> bool:
     print("[Test 10] collate_fn")
     obs_list = [np.random.randn(OBS_DIM).astype(np.float32) for _ in range(4)]
     batch    = collate_fn(obs_list)
-    check("collate_fn shape (4, 170)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
+    check("collate_fn shape (4, 194)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
 
     print("\n" + "=" * 70)
     print(f"Results: {passed} passed, {failed} failed / {passed+failed} total")

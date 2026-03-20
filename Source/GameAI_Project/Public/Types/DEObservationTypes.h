@@ -101,10 +101,10 @@ struct GAMEAI_PROJECT_API FDEEntityToken
  * Entity-Centric Observation V2.
  *
  * Variable-length sets of typed entity tokens. Serialised to a fixed-size
- * padded flat array (170-dim) for NNE / ONNX compatibility.
+ * padded flat array (194-dim) for NNE / ONNX compatibility.
  *
  * Self (7):      [pos_x/7500, pos_y/7500, pos_z/1000, health, vel_x/600, vel_y/600, vel_z/600]
- * Ally (5):      [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, alive]
+ * Ally (8):      [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, alive, is_assault, is_defend, is_support]
  * Enemy (5):     [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, visible, confidence]
  * Base (7):      [rel_pos_x/15000, rel_pos_y/15000, rel_pos_z/1000, ownership,
  *                 capture_progress, is_assigned_target, strategic_value]
@@ -136,7 +136,7 @@ struct GAMEAI_PROJECT_API FDEObservationV2
 	EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
 
 	/**
-	 * Serialise to padded flat array (170-dim) for NNE/ONNX inference.
+	 * Serialise to padded flat array (194-dim) for NNE/ONNX inference.
 	 *
 	 * Layout (total = 194):
 	 *  [0..6]     Self (7)

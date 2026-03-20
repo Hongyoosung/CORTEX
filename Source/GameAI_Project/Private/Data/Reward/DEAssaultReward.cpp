@@ -27,21 +27,37 @@ float DEComputeAssaultStepReward(
 	if (HealthLoss > Settings->AssaultHealthLossThreshold)
 		Reward -= Settings->AssaultReward.HealthPenalty * HealthLoss;
 
-	// Ranged combat penalty: penalise being too close to any visible enemy
+	// Ranged combat: penalise too close, reward optimal range
+	bool bEnemyTooClose = false;
 	{
 		const float MinRangeSq = FMath::Square(Settings->AssaultReward.MinCombatRange);
+		const float MaxRangeSq = FMath::Square(Settings->AssaultReward.MaxEngagementRange);
+		bool bTooClose = false;
+		bool bAtOptimalRange = false;
 		for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
 		{
 			if (i < Current.EnemyVisible.Num() && Current.EnemyVisible[i])
 			{
-				if (FVector::DistSquared(Current.Position, Current.EnemyPositions[i]) < MinRangeSq)
+				const float DistSq = FVector::DistSquared(Current.Position, Current.EnemyPositions[i]);
+				if (DistSq < MinRangeSq)
 				{
-					Reward -= Settings->AssaultReward.TooCloseEnemyPenalty;
-					// Track for kill penalty scaling
-					InOutState.bWasTooCloseAtKill = true;
-					break;
+					bTooClose = true;
+				}
+				else if (DistSq <= MaxRangeSq)
+				{
+					bAtOptimalRange = true;
 				}
 			}
+		}
+		if (bTooClose)
+		{
+			bEnemyTooClose = true;
+			Reward -= Settings->AssaultReward.TooCloseEnemyPenalty;
+			InOutState.bWasTooCloseAtKill = true;
+		}
+		else if (bAtOptimalRange)
+		{
+			Reward += Settings->AssaultReward.OptimalRangeBonus;
 		}
 	}
 
@@ -108,8 +124,10 @@ float DEComputeAssaultStepReward(
 		if (bInNonFriendlyZone)
 		{
 			InOutState.AssaultZoneStepsAfterCapture = 0;
-			Reward += Settings->AssaultReward.ZonePresenceBonus;
-			Reward += Settings->AssaultReward.ActiveCappingBonus * ActiveCappingProgress;
+			// Scale down zone bonus when too close to enemy — don't reward rushing in blindly
+			const float ZoneScale = bEnemyTooClose ? 0.3f : 1.0f;
+			Reward += Settings->AssaultReward.ZonePresenceBonus * ZoneScale;
+			Reward += Settings->AssaultReward.ActiveCappingBonus * ActiveCappingProgress * ZoneScale;
 		}
 		else if (bInFriendlyZoneAssault && Settings->AssaultCapturedZoneDecaySteps > 0.0f)
 		{

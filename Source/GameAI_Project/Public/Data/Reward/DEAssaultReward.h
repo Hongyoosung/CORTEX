@@ -78,7 +78,16 @@ struct FDEAssaultRewardSettings
 
 	/** Per-step penalty when any visible enemy is within MinCombatRange. */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
-	float TooCloseEnemyPenalty = 2.0f;
+	float TooCloseEnemyPenalty = 6.0f;
+
+	/** Per-step bonus when a visible enemy is between MinCombatRange and MaxEngagementRange.
+	 *  Encourages maintaining optimal attack distance. */
+	UPROPERTY(EditAnywhere, Category = "RangedCombat")
+	float OptimalRangeBonus = 3.0f;
+
+	/** Maximum distance (cm) for OptimalRangeBonus to fire. */
+	UPROPERTY(EditAnywhere, Category = "RangedCombat")
+	float MaxEngagementRange = 1500.0f;
 
 
 	//========== Movement Properties =============

@@ -471,7 +471,8 @@ void UDEGA_Heal::UpdateHealBeam(const AActor* Target)
 		UE_LOG(LogTemp, Warning, TEXT("DEGA_Heal: HealBeamSystem is null on %s — assign a Niagara beam system in DA_AbilityConfig HealConfig."),
 			OwnerChar ? *OwnerChar->GetName() : TEXT("Unknown"));
 	}
-	if (!HealBeamComponent && Config.HealBeamSystem && OwnerChar)
+	const bool bJustSpawned = !HealBeamComponent;
+	if (bJustSpawned && Config.HealBeamSystem && OwnerChar)
 	{
 		HealBeamComponent = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			OwnerChar->GetWorld(),
@@ -482,7 +483,6 @@ void UDEGA_Heal::UpdateHealBeam(const AActor* Target)
 			/*bAutoDestroy=*/false,
 			/*bAutoActivate=*/false,
 			ENCPoolMethod::None);
-
 	}
 
 	if (HealBeamComponent && OwnerChar)
@@ -508,7 +508,13 @@ void UDEGA_Heal::UpdateHealBeam(const AActor* Target)
 		const FVector BeamEnd = Target->GetActorLocation() + FVector(0.f, 0.f, 60.f);
 		HealBeamComponent->SetVariableVec3(TEXT("User.BeamStart"), BeamStart);
 		HealBeamComponent->SetVariableVec3(TEXT("User.BeamEnd"),   BeamEnd);
-		HealBeamComponent->Activate();
+
+		// Only activate on first spawn — re-calling Activate() each frame re-triggers
+		// emitters and causes visual overlap/stacking.
+		if (bJustSpawned)
+		{
+			HealBeamComponent->Activate();
+		}
 	}
 }
 

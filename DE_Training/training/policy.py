@@ -3,7 +3,7 @@ Entity-Centric Policy for DE v10.2+ (entity-centric refactor).
 
 Architecture:
     Self encoder     : Linear(7, 64)
-    Ally encoder     : Linear(5, 64) + MultiheadAttention(64, heads=4)
+    Ally encoder     : Linear(8, 64) + MultiheadAttention(64, heads=4)
     Enemy encoder    : Linear(5, 64) + MultiheadAttention(64, heads=4)
     Base encoder     : Linear(7, 64) + MultiheadAttention(64, heads=4)
     Policy head      : Linear(64*4, 256) → ReLU → Linear(256, 128) → ReLU → Linear(128, 7) → Tanh
@@ -12,19 +12,19 @@ Architecture:
 
 NOTE: Strategy encoder removed. Three separate model instances are trained
 per role (Assault / Defend / Support). Each model only receives observations
-for its assigned role, so the strategy one-hot at [167:170] is always constant
+for its assigned role, so the strategy one-hot at [191:194] is always constant
 and encoding it adds no information.
 
-Input: 170-dim flat array (from C++ FDEObservationV2::ToFlatArray)
+Input: 194-dim flat array (from C++ FDEObservationV2::ToFlatArray)
 Layout:
     [  0:  7]  Self token (7)
-    [  7: 47]  Ally tokens  8×5  (40)
-    [ 47: 87]  Enemy tokens 8×5  (40)
-    [ 87:143]  Base tokens  8×7  (56)
-    [143:151]  Ally mask    8    (0=present, 1=padding)
-    [151:159]  Enemy mask   8
-    [159:167]  Base mask    8
-    [167:170]  Strategy one-hot  [assault, defend, support]  (3)
+    [  7: 71]  Ally tokens  8×8  (64)  — [rel_pos(3), health, alive, is_assault, is_defend, is_support]
+    [ 71:111]  Enemy tokens 8×5  (40)
+    [111:167]  Base tokens  8×7  (56)
+    [167:175]  Ally mask    8    (0=present, 1=padding)
+    [175:183]  Enemy mask   8
+    [183:191]  Base mask    8
+    [191:194]  Strategy one-hot  [assault, defend, support]  (3)
 
 Output: 7-dim EQS weights in [-1, 1]
     [0] EnemyObjectiveProximity
@@ -35,7 +35,7 @@ Output: 7-dim EQS weights in [-1, 1]
     [5] CombatRange
     [6] AssignedBaseProximity
 
-ONNX export: fixed-shape (B, 170) → (B, 7) for UE5 NNE compatibility.
+ONNX export: fixed-shape (B, 194) → (B, 7) for UE5 NNE compatibility.
 """
 
 import os
@@ -48,9 +48,9 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 # ── Observation layout constants (must match DEObservationTypes.h) ──────────
-OBS_DIM          = 170
+OBS_DIM          = 194
 SELF_DIM         = 7
-ALLY_DIM         = 5
+ALLY_DIM         = 8    # [rel_pos(3), health, alive, is_assault, is_defend, is_support]
 ENEMY_DIM        = 5
 BASE_DIM         = 7
 STRATEGY_DIM     = 3
@@ -61,13 +61,13 @@ EQS_DIM          = 7
 HIDDEN           = 64
 
 SELF_START       = 0
-ALLY_START       = 7           # 7  + 8*5 = 47
-ENEMY_START      = 47          # 47 + 8*5 = 87
-BASE_START       = 87          # 87 + 8*7 = 143
-ALLY_MASK_START  = 143
-ENEMY_MASK_START = 151
-BASE_MASK_START  = 159
-STRATEGY_START   = 167         # 159 + 8  = 167; [167:170] strategy one-hot
+ALLY_START       = 7           # 7  + 8*8 = 71
+ENEMY_START      = 71          # 71 + 8*5 = 111
+BASE_START       = 111         # 111 + 8*7 = 167
+ALLY_MASK_START  = 167
+ENEMY_MASK_START = 175
+BASE_MASK_START  = 183
+STRATEGY_START   = 191         # 183 + 8  = 191; [191:194] strategy one-hot
 
 EQS_LABELS = [
     "EnemyObjectiveProximity",
@@ -289,7 +289,7 @@ class EntityCentricPolicy(nn.Module):
             },
             opset_version=14,
         )
-        print(f"[ONNX] Exported → {filepath}  (input: B×{OBS_DIM}, output: B×{EQS_DIM})")  # B×170 → B×7
+        print(f"[ONNX] Exported → {filepath}  (input: B×{OBS_DIM}, output: B×{EQS_DIM})")  # B×194 → B×7
 
 
 # ── Replay buffer ─────────────────────────────────────────────────────────────

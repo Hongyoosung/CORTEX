@@ -142,6 +142,27 @@ float DEComputeSupportStepReward(
 		Reward += Settings->SupportReward.PositionReward * 0.5f;
 	}
 
+	// ---- Ally formation / isolation rewards ----
+	if (!bIsRespawnStep && Current.AllyPositions.Num() > 0)
+	{
+		float NearestAllyDist = FLT_MAX;
+		for (int32 a = 0; a < Current.AllyPositions.Num(); ++a)
+		{
+			if (Current.AllyPositions[a].IsZero()) continue;
+			if (a < Current.AllyHealths.Num() && Current.AllyHealths[a] <= 0.0f) continue;
+			const float D = FVector::Dist(Current.Position, Current.AllyPositions[a]);
+			if (D < NearestAllyDist)
+				NearestAllyDist = D;
+		}
+		if (NearestAllyDist < FLT_MAX)
+		{
+			if (NearestAllyDist <= Settings->SupportAllyProximityThreshold)
+				Reward += Settings->SupportReward.AllyFormationBonus;
+			if (NearestAllyDist > Settings->SupportReward.AllyIsolationDistance)
+				Reward -= Settings->SupportReward.AllyIsolationPenalty;
+		}
+	}
+
 	// ---- Heal tick reward ----
 	if (Agent && Agent->GetLastTickHealAmount() > 0.0f)
 		Reward += Settings->SupportReward.HealTickReward;

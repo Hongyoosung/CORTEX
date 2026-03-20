@@ -1,0 +1,14 @@
+/.git
+/.github
+/.vs
+/.vscode
+/Content
+/DerivedDataCache
+/DE_Training
+/Intermediate
+/Saved
+/Plugins/DynamicEQS/Intermediate
+/Plugins/Schola-2.0.1/Docs
+/Plugins/Schola-2.0.1/Intermediate
+/Plugins/Schola-2.0.1/Proto
+/Plugins/Schola-2.0.1/Test

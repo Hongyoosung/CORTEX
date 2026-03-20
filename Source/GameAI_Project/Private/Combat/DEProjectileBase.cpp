@@ -26,7 +26,7 @@ ADEProjectileBase::ADEProjectileBase()
 	CollisionComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
 	CollisionComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 	CollisionComponent->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
-	CollisionComponent->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+	CollisionComponent->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Ignore);
 	CollisionComponent->SetNotifyRigidBodyCollision(true);
 	RootComponent = CollisionComponent;
 
@@ -235,7 +235,6 @@ void ADEProjectileBase::OnProjectileHit(UPrimitiveComponent* HitComponent, AActo
 	{
 		if (!ValidateHit(OtherActor))
 		{
-			DeactivateProjectile();
 			return;
 		}
 	}

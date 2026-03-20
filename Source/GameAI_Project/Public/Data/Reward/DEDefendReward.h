@@ -56,6 +56,19 @@ struct FDEDefendRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Melee")
 	float MeleeRangeDistance = 350.0f;
 
+	/** Per-cm shaping reward for approaching a visible enemy. Provides gradient toward melee range. */
+	UPROPERTY(EditAnywhere, Category = "Melee")
+	float EnemyApproachReward = 0.03f;
+
+	/** Maximum distance (cm) at which EnemyApproachReward activates. */
+	UPROPERTY(EditAnywhere, Category = "Melee")
+	float EnemyApproachMaxRange = 2500.0f;
+
+	/** Per-step penalty when taking damage but not moving toward the attacker.
+	 *  Prevents standing still under fire. */
+	UPROPERTY(EditAnywhere, Category = "Melee")
+	float DamageTakenIdlePenalty = 3.0f;
+
 	//========== Capture Properties (same tendency as Assault) =============
 
 	/** Defend: +15 per capture (base CaptureReward=100 × 0.15) */
