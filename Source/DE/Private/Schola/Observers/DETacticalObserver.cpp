@@ -362,15 +362,20 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		if (!Ally || Ally == Character) continue;
 		if (Obs.AllyTokens.Num() >= DE_MAX_ALLIES) break;
 
-		const FVector RelPos = (Ally->GetActorLocation() - MyPos) / 8000.0f;
+		// Dead allies: zero out position to prevent living agents from being
+		// pulled toward corpse/spawn locations (e.g. world origin).
+		const bool bAllyAlive = Ally->IsAlive();
+		const FVector RelPos = bAllyAlive
+			? (Ally->GetActorLocation() - MyPos) / 8000.0f
+			: FVector::ZeroVector;
 		const EDEStrategyType AllyStrategy = Ally->GetCommandedStrategy();
 		FDEEntityToken Tok;
 		Tok.Features = {
 			static_cast<float>(RelPos.X),
 			static_cast<float>(RelPos.Y),
 			static_cast<float>(RelPos.Z),
-			Ally->GetHealthPercentage(),
-			Ally->IsAlive() ? 1.0f : 0.0f,
+			bAllyAlive ? Ally->GetHealthPercentage() : 0.0f,
+			bAllyAlive ? 1.0f : 0.0f,
 			(AllyStrategy == EDEStrategyType::Assault) ? 1.0f : 0.0f,
 			(AllyStrategy == EDEStrategyType::Defend)  ? 1.0f : 0.0f,
 			(AllyStrategy == EDEStrategyType::Support) ? 1.0f : 0.0f
@@ -383,6 +388,15 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 	{
 		if (!Enemy) continue;
 		if (Obs.EnemyTokens.Num() >= DE_MAX_ENEMIES) break;
+
+		// Dead enemies: zero out — don't report stale corpse positions.
+		if (!Enemy->IsAlive())
+		{
+			FDEEntityToken Tok;
+			Tok.Features = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+			Obs.EnemyTokens.Add(MoveTemp(Tok));
+			continue;
+		}
 
 		const float Dist = FVector::Dist(Enemy->GetActorLocation(), MyPos);
 		bool bVisible = false;

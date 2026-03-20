@@ -42,6 +42,7 @@ public:
     float CalculateKillReward       (FDERewardState& InOutAgentState, EDEStrategyType ActiveStrategy, int32 AgentID);
     float CalculateAssistReward     (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DamageDealt, int32 AgentID);
     float CalculateTeamWipePenalty  (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
+    float CalculateTeamWipeBonus   (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
     float CalculateCaptureReward    (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
     float CalculateLosePointPenalty (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
     float CalculateSurvivalReward   (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float CurrentHP, float MaxHP, int32 AgentID);

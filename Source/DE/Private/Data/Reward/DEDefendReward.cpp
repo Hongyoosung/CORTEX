@@ -159,9 +159,6 @@ float DEComputeDefendStepReward(
 		if (DamageTaken > 0.0f)
 		{
 			Reward += Settings->DefendReward.ZoneDurabilityBonus * DamageTaken;
-			// Penalty for taking damage while idle (not approaching the threat)
-			if (PositionChange < Settings->AssaultIdleMovementThreshold)
-				Reward -= Settings->DefendReward.DamageTakenIdlePenalty;
 		}
 	}
 

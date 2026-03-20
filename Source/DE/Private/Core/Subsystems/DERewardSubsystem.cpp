@@ -97,6 +97,13 @@ float UDERewardSubsystem::CalculateTeamWipePenalty(FDERewardState& InOutState, E
 	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveStrategy, -Settings->TeamWipePenalty * Scale, AgentID);
 }
 
+float UDERewardSubsystem::CalculateTeamWipeBonus(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
+{
+	const UDERewardData* Settings = GetSettings();
+	if (!Settings) return 0.0f;
+	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveStrategy, Settings->TeamWipeBonus, AgentID);
+}
+
 float UDERewardSubsystem::CalculateCaptureReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
@@ -322,6 +329,7 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewar
 	const float RadiusSq = Radius * Radius;
 
 	TArray<ADEAgent*> Teammates = MatchMgr->GetTeamAgents(MyTeamID);
+	TArray<ADEAgent*> Enemies   = MatchMgr->GetEnemyAgents(MyTeamID);
 
 	// ---- Identify frontline bases (closest friendly bases to any hostile base) ----
 	TArray<ADECapturePoint*> FriendlyBases;
@@ -378,6 +386,15 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewar
 				++AlliesNear;
 		}
 
+		// Count enemies near this base (for contested-base detection)
+		int32 EnemiesNear = 0;
+		for (ADEAgent* Foe : Enemies)
+		{
+			if (!Foe || !Foe->IsAlive()) continue;
+			if (FVector::DistSquared(Foe->GetActorLocation(), CPPos) <= RadiusSq)
+				++EnemiesNear;
+		}
+
 		if (bNearMe)
 		{
 			// Assault and Defend both get BaseOccupationReward when alone in enemy/neutral zone
@@ -391,6 +408,10 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewar
 					Reward -= Settings->CoOccupationPenalty;
 				// Support is allowed to stack near injured allies; no penalty
 			}
+
+			// Contested-base defense: reward for being near a friendly base that enemies are threatening
+			if (Owner == MyTeamID && EnemiesNear > 0)
+				Reward += Settings->ContestedBaseDefenseReward;
 
 			// Assigned base first-arrival reward
 			if (!InOutState.bHasReachedAssignedBase && Agent->AssignedBaseIndex == i)

@@ -54,11 +54,11 @@ struct FDEDefendRewardSettings
 
 	/** Distance threshold (cm) for MeleeRangeBonus. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
-	float MeleeRangeDistance = 350.0f;
+	float MeleeRangeDistance = 1000.0f;
 
 	/** Per-cm shaping reward for approaching a visible enemy. Provides gradient toward melee range. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
-	float EnemyApproachReward = 0.03f;
+	float EnemyApproachReward = 0.06f;
 
 	/** Maximum distance (cm) at which EnemyApproachReward activates. */
 	UPROPERTY(EditAnywhere, Category = "Melee")

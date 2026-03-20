@@ -399,8 +399,9 @@ protected:
 	/** Environment instance ID (for parallel env isolation) */
 	int32 EnvID = 0;
 
-	/** Group respawn countdown per team (-1 = inactive) */
-	float TeamRespawnTimers[2] = { -1.0f, -1.0f };
+	/** Per-agent respawn countdown (seconds remaining; removed on respawn) */
+	UPROPERTY()
+	TMap<ADEAgent*, float> AgentRespawnTimers;
 
 	/** Elapsed match time in seconds (only ticks when bMatchActive) */
 	float MatchTimer = 0.0f;

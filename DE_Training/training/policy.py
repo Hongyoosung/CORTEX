@@ -1,11 +1,11 @@
 """
-Entity-Centric Policy for DE v10.2+ (entity-centric refactor).
+Relational Entity-Centric Policy for DE v10.2+ (entity-centric refactor).
 
 Architecture:
     Self encoder     : Linear(7, 64)
-    Ally encoder     : Linear(8, 64) + MultiheadAttention(64, heads=4)
-    Enemy encoder    : Linear(5, 64) + MultiheadAttention(64, heads=4)
-    Base encoder     : Linear(7, 64) + MultiheadAttention(64, heads=4)
+    Ally encoder     : Linear(8, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
+    Enemy encoder    : Linear(5, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
+    Base encoder     : Linear(7, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
     Policy head      : Linear(64*4, 256) → ReLU → Linear(256, 128) → ReLU → Linear(128, 7) → Tanh
     Value head       : Linear(64*4, 256) → ReLU → Linear(256, 1)
     Learnable log_std: (7,)
@@ -96,11 +96,16 @@ class Transition:
 
 class EntityCentricPolicy(nn.Module):
     """
-    Permutation-invariant policy using per-entity-type attention encoders.
+    Relational policy using per-entity-type self-attention + cross-attention.
 
-    Takes a flat 170-dim observation, unpacks entity sets, attends over each
-    set independently, concatenates with the self encoding and strategy embedding,
-    and passes through a shared policy/value head.
+    Architecture per entity group (allies / enemies / bases):
+        1. Linear encoder  : raw features → hidden
+        2. Self-attention   : entities attend to each other (relational reasoning)
+        3. LayerNorm        : stabilise self-attention output
+        4. Cross-attention  : self token queries the contextualised entity set
+
+    Takes a flat 194-dim observation, unpacks entity sets, and passes through
+    the relational encoder → shared policy/value head.
     """
 
     LOG_STD_MIN = -2.5   # σ_min ≈ 0.08
@@ -115,6 +120,16 @@ class EntityCentricPolicy(nn.Module):
         self.ally_enc     = nn.Linear(ALLY_DIM,  hidden)
         self.enemy_enc    = nn.Linear(ENEMY_DIM, hidden)
         self.base_enc     = nn.Linear(BASE_DIM,  hidden)
+
+        # Intra-set self-attention (entities attend to each other within a group)
+        self.ally_self_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
+        self.enemy_self_attn = nn.MultiheadAttention(hidden, heads, batch_first=True)
+        self.base_self_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
+
+        # LayerNorm after self-attention (stabilises training)
+        self.ally_ln  = nn.LayerNorm(hidden)
+        self.enemy_ln = nn.LayerNorm(hidden)
+        self.base_ln  = nn.LayerNorm(hidden)
 
         # Per-entity-type cross-attention (self token queries each entity set)
         self.ally_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
@@ -195,20 +210,38 @@ class EntityCentricPolicy(nn.Module):
         flat: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Encode flat obs into combined feature vector.
+        Encode flat obs into combined feature vector via relational attention.
 
-        Returns: (B, hidden*5)
+        Pipeline per entity group:
+            linear_enc → self_attn (relational) → layer_norm → cross_attn (aggregation)
+
+        Returns: (B, hidden*4)
         """
         self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask, _ = self._unpack(flat)
 
         s = self.self_enc(self_obs)               # (B, hidden)
-        q = s.unsqueeze(1)                        # (B, 1, hidden) — query for attention
+        q = s.unsqueeze(1)                        # (B, 1, hidden) — query for cross-attention
 
+        # Linear encode each entity group
         a_enc = self.ally_enc(allies)             # (B, 8, hidden)
         e_enc = self.enemy_enc(enemies)           # (B, 8, hidden)
         b_enc = self.base_enc(bases)              # (B, 8, hidden)
 
-        # key_padding_mask: True = ignore (padding slot)
+        # Intra-set self-attention: entities reason about each other
+        # Residual connection + LayerNorm for stable gradients
+        a_rel, _ = self.ally_self_attn(a_enc, a_enc, a_enc,
+                                       key_padding_mask=ally_mask)
+        a_enc = self.ally_ln(a_enc + a_rel)       # (B, 8, hidden)
+
+        e_rel, _ = self.enemy_self_attn(e_enc, e_enc, e_enc,
+                                        key_padding_mask=enemy_mask)
+        e_enc = self.enemy_ln(e_enc + e_rel)      # (B, 8, hidden)
+
+        b_rel, _ = self.base_self_attn(b_enc, b_enc, b_enc,
+                                       key_padding_mask=base_mask)
+        b_enc = self.base_ln(b_enc + b_rel)       # (B, 8, hidden)
+
+        # Cross-attention: self token queries each contextualised entity set
         a_ctx, _ = self.ally_attn(q, a_enc, a_enc,
                                   key_padding_mask=ally_mask)    # (B, 1, hidden)
         e_ctx, _ = self.enemy_attn(q, e_enc, e_enc,

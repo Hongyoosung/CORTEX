@@ -41,6 +41,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float TeamWipePenalty = 50.0f;
 
+	/** Bonus awarded to each surviving enemy agent when they achieve a team wipe */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
+	float TeamWipeBonus = 30.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float CaptureReward = 100.0f;
 
@@ -181,4 +185,9 @@ public:
 	/** Radius (cm) used to determine proximity for base cooperation rewards. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
 	float BaseOccupationRadius = 2000.0f;
+
+	/** Per-step bonus when agent is near a friendly base that also has enemies nearby.
+	 *  Incentivizes defending contested bases instead of ignoring approaching threats. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
+	float ContestedBaseDefenseReward = 3.0f;
 };

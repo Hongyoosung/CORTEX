@@ -405,12 +405,12 @@ void ADEMatchManager::ResetTeams()
 	StartMatchTimer();
 
 	// 1. Clear runtime state and respawn timers
+	AgentRespawnTimers.Empty();
 	for (const FDETeamConfiguration& Conf : TeamConfigs)
 	{
 		FDETeamState& State = TeamStates[Conf.TeamID];
 		State.RespawnQueue.Empty();
 		State.ActiveAgents.Empty();
-		TeamRespawnTimers[Conf.TeamID] = -1.0f;
 	}
 
 	// 2. Reactivate all agents and redistribute them into ActiveAgents
@@ -477,24 +477,33 @@ void ADEMatchManager::QueueRespawn(ADEAgent* Agent, int32 TeamID)
 	State.RespawnQueue.Add(Agent);
 	Agent->Deactivate();
 
-	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Agent %s deactivated (Team %d, Active: %d, Queued: %d)"),
-		*Agent->GetName(), TeamID, State.ActiveAgents.Num(), State.RespawnQueue.Num());
+	// Individual respawn timer
+	AgentRespawnTimers.Add(Agent, RespawnDelay);
 
-	// Start group respawn timer when the entire team is eliminated
+	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Agent %s queued for respawn in %.1fs (Team %d, Active: %d, Queued: %d)"),
+		*Agent->GetName(), RespawnDelay, TeamID, State.ActiveAgents.Num(), State.RespawnQueue.Num());
+
+	// Team wipe detection: all agents dead → penalty for wiped team, bonus for enemy team
 	if (State.ActiveAgents.Num() == 0)
 	{
-		TeamRespawnTimers[TeamID] = RespawnDelay;
-		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Team %d fully eliminated — group respawn in %.1fs (%d agents)"),
-			TeamID, RespawnDelay, State.RespawnQueue.Num());
+		const int32 EnemyTeamID = (TeamID == 0) ? 1 : 0;
 
-		// Apply team wipe penalty to the last agent to die and all already-queued agents
+		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Team %d fully wiped! Applying team wipe rewards."), TeamID);
+
 		if (RewardCalculator && RewardCalculator->RewardData)
 		{
-			RewardCalculator->CalculateTeamWipePenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+			// Penalty to all agents on the wiped team
 			for (ADEAgent* Queued : State.RespawnQueue)
 			{
 				if (Queued)
 					RewardCalculator->CalculateTeamWipePenalty(Queued->RewardState, Queued->GetCommandedStrategy(), Queued->AgentID);
+			}
+
+			// Bonus to all living agents on the enemy team
+			for (ADEAgent* Enemy : GetTeamAgents(EnemyTeamID))
+			{
+				if (Enemy && Enemy->IsAlive())
+					RewardCalculator->CalculateTeamWipeBonus(Enemy->RewardState, Enemy->GetCommandedStrategy(), Enemy->AgentID);
 			}
 		}
 	}
@@ -502,63 +511,58 @@ void ADEMatchManager::QueueRespawn(ADEAgent* Agent, int32 TeamID)
 
 void ADEMatchManager::ProcessRespawnQueue(float DeltaTime)
 {
-	for (const FDETeamConfiguration& Conf : TeamConfigs)
+	// Collect agents whose timers have expired this frame
+	TArray<ADEAgent*> ToRespawn;
+
+	for (auto It = AgentRespawnTimers.CreateIterator(); It; ++It)
 	{
-		const int32 TeamID = Conf.TeamID;
-		float& Timer = TeamRespawnTimers[TeamID];
-
-		if (Timer < 0.0f) { continue; }
-
-		if (!TeamStates.Contains(TeamID) || TeamStates[TeamID].RespawnQueue.Num() == 0)
+		It->Value -= DeltaTime;
+		if (It->Value <= 0.0f)
 		{
-			Timer = -1.0f;
-			continue;
+			ToRespawn.Add(It->Key);
+			It.RemoveCurrent();
 		}
+	}
 
-		Timer -= DeltaTime;
-		if (Timer > 0.0f) { continue; }
+	for (ADEAgent* Agent : ToRespawn)
+	{
+		if (!Agent) { continue; }
 
-		// Timer expired — respawn the whole group
-		TArray<ADEAgent*> ToRespawn = TeamStates[TeamID].RespawnQueue;
-		TeamStates[TeamID].RespawnQueue.Empty();
-		Timer = -1.0f;
+		const int32 TeamID = Agent->GetTeamID_Implementation();
 
-		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Group respawning %d agents for Team %d"),
-			ToRespawn.Num(), TeamID);
-
-		for (ADEAgent* Agent : ToRespawn)
+		if (TeamStates.Contains(TeamID))
 		{
-			if (!Agent) { continue; }
-
-			Agent->Activate();
+			TeamStates[TeamID].RespawnQueue.Remove(Agent);
 			TeamStates[TeamID].ActiveAgents.Add(Agent);
-
-			const FVector SpawnLoc = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
-			Agent->SetActorLocation(SpawnLoc);
-
-			if (RespawnInvincibilityDuration > 0.0f)
-			{
-				if (UAbilitySystemComponent* ASC = Agent->GetAbilitySystemComponent())
-				{
-					ASC->AddLooseGameplayTag(DEGameplayTags::State_Invulnerable);
-
-					// Capture a weak ref so the timer is safe if the agent is destroyed
-					TWeakObjectPtr<UAbilitySystemComponent> WeakASC(ASC);
-					FTimerHandle TimerHandle;
-					GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateLambda([WeakASC]()
-					{
-						if (UAbilitySystemComponent* StillValid = WeakASC.Get())
-						{
-							StillValid->RemoveLooseGameplayTag(DEGameplayTags::State_Invulnerable);
-						}
-					}), RespawnInvincibilityDuration, /*bLoop=*/false);
-				}
-			}
-
-			OnAgentSpawned.Broadcast(TeamID, Agent);
 		}
 
-		
+		Agent->Activate();
+
+		const FVector SpawnLoc = GetRandomSpawnPoint(GetTeamSpawnLocation(TeamID), SpawnRadius);
+		Agent->SetActorLocation(SpawnLoc);
+
+		if (RespawnInvincibilityDuration > 0.0f)
+		{
+			if (UAbilitySystemComponent* ASC = Agent->GetAbilitySystemComponent())
+			{
+				ASC->AddLooseGameplayTag(DEGameplayTags::State_Invulnerable);
+
+				TWeakObjectPtr<UAbilitySystemComponent> WeakASC(ASC);
+				FTimerHandle TimerHandle;
+				GetWorldTimerManager().SetTimer(TimerHandle, FTimerDelegate::CreateLambda([WeakASC]()
+				{
+					if (UAbilitySystemComponent* StillValid = WeakASC.Get())
+					{
+						StillValid->RemoveLooseGameplayTag(DEGameplayTags::State_Invulnerable);
+					}
+				}), RespawnInvincibilityDuration, /*bLoop=*/false);
+			}
+		}
+
+		OnAgentSpawned.Broadcast(TeamID, Agent);
+
+		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Respawned %s (Team %d) at %s"),
+			*Agent->GetName(), TeamID, *SpawnLoc.ToString());
 	}
 }
 
@@ -785,32 +789,12 @@ void ADEMatchManager::AssignBasesToAgents(int32 TeamID)
 		return BestIdx;
 	};
 
-	// Pass 1 — assign Defend agents first (uniqueness enforced)
+	// Pass 1 — assign Defend agents first (uniqueness enforced, nearest base — no ownership bias)
 	for (ADEAgent* Agent : Agents)
 	{
 		if (!Agent || Agent->GetCommandedStrategy() != EDEStrategyType::Defend) continue;
 
-		// Prefer nearest friendly base without another Defend agent
-		float BestDist = FLT_MAX;
-		int32 BestIdx  = -1;
-		const FVector AgentPos = Agent->GetActorLocation();
-
-		for (int32 i = 0; i < EnvCapturePoints.Num(); ++i)
-		{
-			ADECapturePoint* CP = EnvCapturePoints[i];
-			if (!CP || DefendClaimed.Contains(i)) continue;
-
-			const int32 OwnerID = CP->GetTeamID_Implementation();
-			// Prefer friendly bases; fall back to nearest if all taken
-			const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
-			const float Bias = (OwnerID == TeamID) ? 0.0f : 5000.0f; // prefer friendly
-			if ((Dist + Bias) < BestDist)
-			{
-				BestDist = Dist + Bias;
-				BestIdx  = i;
-			}
-		}
-
+		const int32 BestIdx = FindBestBase(Agent, /*bDefendUniqueOnly=*/true);
 		if (BestIdx >= 0)
 		{
 			DefendClaimed.Add(BestIdx);
