@@ -37,7 +37,7 @@
 					"DE",
 					"Win64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\DE.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -54,12 +54,12 @@
 					"DE",
 					"Win64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\DE.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Win64 Debug Clean"
+					"DE Win64 Debug Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -67,14 +67,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Debug Clean",
+				"label": "DE Win64 Debug Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -84,14 +84,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 DebugGame Build",
+				"label": "DE Win64 DebugGame Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -101,19 +101,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 DebugGame Rebuild",
+				"label": "DE Win64 DebugGame Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Win64 DebugGame Clean"
+					"DE Win64 DebugGame Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -121,14 +121,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 DebugGame Clean",
+				"label": "DE Win64 DebugGame Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -138,14 +138,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Development Build",
+				"label": "DE Win64 Development Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -155,19 +155,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Development Rebuild",
+				"label": "DE Win64 Development Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Win64 Development Clean"
+					"DE Win64 Development Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -175,14 +175,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Development Clean",
+				"label": "DE Win64 Development Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -192,14 +192,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Test Build",
+				"label": "DE Win64 Test Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -209,19 +209,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Test Rebuild",
+				"label": "DE Win64 Test Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Win64 Test Clean"
+					"DE Win64 Test Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -229,14 +229,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Test Clean",
+				"label": "DE Win64 Test Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -246,14 +246,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Shipping Build",
+				"label": "DE Win64 Shipping Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -263,19 +263,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Shipping Rebuild",
+				"label": "DE Win64 Shipping Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Win64 Shipping Clean"
+					"DE Win64 Shipping Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -283,14 +283,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Win64 Shipping Clean",
+				"label": "DE Win64 Shipping Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Win64",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -300,14 +300,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Debug Build",
+				"label": "DE Linux Debug Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -317,19 +317,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Debug Rebuild",
+				"label": "DE Linux Debug Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Linux Debug Clean"
+					"DE Linux Debug Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -337,14 +337,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Debug Clean",
+				"label": "DE Linux Debug Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -354,14 +354,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux DebugGame Build",
+				"label": "DE Linux DebugGame Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -371,19 +371,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux DebugGame Rebuild",
+				"label": "DE Linux DebugGame Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Linux DebugGame Clean"
+					"DE Linux DebugGame Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -391,14 +391,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux DebugGame Clean",
+				"label": "DE Linux DebugGame Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -408,14 +408,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Development Build",
+				"label": "DE Linux Development Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -425,19 +425,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Development Rebuild",
+				"label": "DE Linux Development Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Linux Development Clean"
+					"DE Linux Development Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -445,14 +445,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Development Clean",
+				"label": "DE Linux Development Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -462,14 +462,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Test Build",
+				"label": "DE Linux Test Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -479,19 +479,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Test Rebuild",
+				"label": "DE Linux Test Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Linux Test Clean"
+					"DE Linux Test Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -499,14 +499,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Test Clean",
+				"label": "DE Linux Test Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -516,14 +516,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Shipping Build",
+				"label": "DE Linux Shipping Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -533,19 +533,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Shipping Rebuild",
+				"label": "DE Linux Shipping Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project Linux Shipping Clean"
+					"DE Linux Shipping Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -553,14 +553,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project Linux Shipping Clean",
+				"label": "DE Linux Shipping Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"Linux",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -570,14 +570,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Debug Build",
+				"label": "DE LinuxArm64 Debug Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -587,19 +587,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Debug Rebuild",
+				"label": "DE LinuxArm64 Debug Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project LinuxArm64 Debug Clean"
+					"DE LinuxArm64 Debug Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -607,14 +607,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Debug Clean",
+				"label": "DE LinuxArm64 Debug Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -624,14 +624,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 DebugGame Build",
+				"label": "DE LinuxArm64 DebugGame Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -641,19 +641,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 DebugGame Rebuild",
+				"label": "DE LinuxArm64 DebugGame Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project LinuxArm64 DebugGame Clean"
+					"DE LinuxArm64 DebugGame Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -661,14 +661,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 DebugGame Clean",
+				"label": "DE LinuxArm64 DebugGame Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -678,14 +678,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Development Build",
+				"label": "DE LinuxArm64 Development Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -695,19 +695,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Development Rebuild",
+				"label": "DE LinuxArm64 Development Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project LinuxArm64 Development Clean"
+					"DE LinuxArm64 Development Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -715,14 +715,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Development Clean",
+				"label": "DE LinuxArm64 Development Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -732,14 +732,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Test Build",
+				"label": "DE LinuxArm64 Test Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -749,19 +749,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Test Rebuild",
+				"label": "DE LinuxArm64 Test Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project LinuxArm64 Test Clean"
+					"DE LinuxArm64 Test Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -769,14 +769,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Test Clean",
+				"label": "DE LinuxArm64 Test Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Test",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -786,14 +786,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Shipping Build",
+				"label": "DE LinuxArm64 Shipping Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -803,19 +803,19 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Shipping Rebuild",
+				"label": "DE LinuxArm64 Shipping Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_Project LinuxArm64 Shipping Clean"
+					"DE LinuxArm64 Shipping Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -823,14 +823,14 @@
 				}
 			},
 			{
-				"label": "GameAI_Project LinuxArm64 Shipping Clean",
+				"label": "DE LinuxArm64 Shipping Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_Project",
+					"DE",
 					"LinuxArm64",
 					"Shipping",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -840,14 +840,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 Debug Build",
+				"label": "DEEditor Win64 Debug Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -857,19 +857,19 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 Debug Rebuild",
+				"label": "DEEditor Win64 Debug Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_ProjectEditor Win64 Debug Clean"
+					"DEEditor Win64 Debug Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -877,14 +877,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 Debug Clean",
+				"label": "DEEditor Win64 Debug Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -894,14 +894,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 DebugGame Build",
+				"label": "DEEditor Win64 DebugGame Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -911,19 +911,19 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 DebugGame Rebuild",
+				"label": "DEEditor Win64 DebugGame Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_ProjectEditor Win64 DebugGame Clean"
+					"DEEditor Win64 DebugGame Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -931,14 +931,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 DebugGame Clean",
+				"label": "DEEditor Win64 DebugGame Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -948,14 +948,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 Development Build",
+				"label": "DEEditor Win64 Development Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -965,19 +965,19 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 Development Rebuild",
+				"label": "DEEditor Win64 Development Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_ProjectEditor Win64 Development Clean"
+					"DEEditor Win64 Development Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -985,14 +985,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Win64 Development Clean",
+				"label": "DEEditor Win64 Development Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Win64",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -1002,14 +1002,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux Debug Build",
+				"label": "DEEditor Linux Debug Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -1019,19 +1019,19 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux Debug Rebuild",
+				"label": "DEEditor Linux Debug Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_ProjectEditor Linux Debug Clean"
+					"DEEditor Linux Debug Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -1039,14 +1039,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux Debug Clean",
+				"label": "DEEditor Linux Debug Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"Debug",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -1056,14 +1056,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux DebugGame Build",
+				"label": "DEEditor Linux DebugGame Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -1073,19 +1073,19 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux DebugGame Rebuild",
+				"label": "DEEditor Linux DebugGame Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_ProjectEditor Linux DebugGame Clean"
+					"DEEditor Linux DebugGame Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -1093,14 +1093,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux DebugGame Clean",
+				"label": "DEEditor Linux DebugGame Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"DebugGame",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -1110,14 +1110,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux Development Build",
+				"label": "DEEditor Linux Development Build",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -1127,19 +1127,19 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux Development Rebuild",
+				"label": "DEEditor Linux Development Rebuild",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Build.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
 				"dependsOn": [
-					"GameAI_ProjectEditor Linux Development Clean"
+					"DEEditor Linux Development Clean"
 				],
 				"type": "shell",
 				"options": {
@@ -1147,14 +1147,14 @@
 				}
 			},
 			{
-				"label": "GameAI_ProjectEditor Linux Development Clean",
+				"label": "DEEditor Linux Development Clean",
 				"group": "build",
 				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
 				"args": [
-					"GameAI_ProjectEditor",
+					"DEEditor",
 					"Linux",
 					"Development",
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -1169,10 +1169,10 @@
 		"version": "0.2.0",
 		"configurations": [
 			{
-				"name": "Launch GameAI_Project (Debug)",
+				"name": "Launch DE (Debug)",
 				"request": "launch",
-				"program": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\Binaries\\Win64\\UnrealGame-Win64-Debug.exe",
-				"preLaunchTask": "GameAI_Project Win64 Debug Build",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-Debug.exe",
+				"preLaunchTask": "DE Win64 Debug Build",
 				"args": [
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
@@ -1182,15 +1182,15 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
 			{
-				"name": "Launch GameAI_Project (DebugGame)",
+				"name": "Launch DE (DebugGame)",
 				"request": "launch",
-				"program": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\Binaries\\Win64\\UnrealGame-Win64-DebugGame.exe",
-				"preLaunchTask": "GameAI_Project Win64 DebugGame Build",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-DebugGame.exe",
+				"preLaunchTask": "DE Win64 DebugGame Build",
 				"args": [
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
@@ -1200,15 +1200,15 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
 			{
-				"name": "Launch GameAI_Project (Development)",
+				"name": "Launch DE (Development)",
 				"request": "launch",
-				"program": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\Binaries\\Win64\\UnrealGame.exe",
-				"preLaunchTask": "GameAI_Project Win64 Development Build",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame.exe",
+				"preLaunchTask": "DE Win64 Development Build",
 				"args": [
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
@@ -1218,15 +1218,15 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
 			{
-				"name": "Launch GameAI_Project (Test)",
+				"name": "Launch DE (Test)",
 				"request": "launch",
-				"program": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\Binaries\\Win64\\UnrealGame-Win64-Test.exe",
-				"preLaunchTask": "GameAI_Project Win64 Test Build",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-Test.exe",
+				"preLaunchTask": "DE Win64 Test Build",
 				"args": [
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
@@ -1236,15 +1236,15 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
 			{
-				"name": "Launch GameAI_Project (Shipping)",
+				"name": "Launch DE (Shipping)",
 				"request": "launch",
-				"program": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\Binaries\\Win64\\UnrealGame-Win64-Shipping.exe",
-				"preLaunchTask": "GameAI_Project Win64 Shipping Build",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-Shipping.exe",
+				"preLaunchTask": "DE Win64 Shipping Build",
 				"args": [
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
@@ -1254,17 +1254,17 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
 			{
-				"name": "Launch GameAI_ProjectEditor (Debug)",
+				"name": "Launch DEEditor (Debug)",
 				"request": "launch",
 				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor-Win64-Debug.exe",
-				"preLaunchTask": "GameAI_ProjectEditor Win64 Debug Build",
+				"preLaunchTask": "DEEditor Win64 Debug Build",
 				"args": [
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject"
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject"
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
 				"stopAtEntry": false,
@@ -1273,17 +1273,17 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
 			{
-				"name": "Launch GameAI_ProjectEditor (DebugGame)",
+				"name": "Launch DEEditor (DebugGame)",
 				"request": "launch",
 				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor-Win64-DebugGame.exe",
-				"preLaunchTask": "GameAI_ProjectEditor Win64 DebugGame Build",
+				"preLaunchTask": "DEEditor Win64 DebugGame Build",
 				"args": [
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject"
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject"
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
 				"stopAtEntry": false,
@@ -1292,17 +1292,17 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
 			{
-				"name": "Launch GameAI_ProjectEditor (Development)",
+				"name": "Launch DEEditor (Development)",
 				"request": "launch",
 				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor.exe",
-				"preLaunchTask": "GameAI_ProjectEditor Win64 Development Build",
+				"preLaunchTask": "DEEditor Win64 Development Build",
 				"args": [
-					"C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject"
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject"
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
 				"stopAtEntry": false,
@@ -1311,7 +1311,7 @@
 				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
 				"sourceFileMap": {
 					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
-					"Z:\\UEVFS\\CORTEX": "C:\\Users\\PC\\Documents\\GitHub\\CORTEX",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
 					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
 				}
 			},
@@ -1324,7 +1324,7 @@
 				"args": [
 					"-projectfiles",
 					"-vscode",
-					"-project=C:\\Users\\PC\\Documents\\GitHub\\CORTEX\\GameAI_Project.uproject",
+					"-project=C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
 					"-game",
 					"-engine",
 					"-dotnet"

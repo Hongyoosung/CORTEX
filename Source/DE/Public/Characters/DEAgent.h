@@ -208,6 +208,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character|Data")
 	UDEStrategyData* GetCurrentStrategyData() const;
 
+	/** Returns the team display name from TeamData (e.g. "Red Team"). Empty string if TeamData is unset. */
+	UFUNCTION(BlueprintPure, Category = "Character|Team")
+	FString GetTeamName() const;
+
+	/** Returns the team primary color from TeamData. Falls back to TeamColor if TeamData is unset. */
+	UFUNCTION(BlueprintPure, Category = "Character|Team")
+	FLinearColor GetTeamColor() const;
+
 	/**
 	 * Apply the mesh, animation blueprint, and stat overrides from TeamData
 	 * that correspond to the given strategy.  Falls back to team-level defaults

@@ -784,6 +784,18 @@ UDEStrategyData* ADEAgent::GetCurrentStrategyData() const
 	return TeamData->GetStrategyData(GetCommandedStrategy());
 }
 
+FString ADEAgent::GetTeamName() const
+{
+	if (TeamData) return TeamData->TeamName;
+	return FString();
+}
+
+FLinearColor ADEAgent::GetTeamColor() const
+{
+	if (TeamData) return TeamData->TeamColor;
+	return TeamColor;
+}
+
 
 //========================================
 // Reward Interface
