@@ -27,6 +27,7 @@ Reward source:
 
 from gymnasium import spaces
 import numpy as np
+import os
 import time
 from typing import Dict, Tuple, Optional
 from collections import deque
@@ -89,6 +90,17 @@ class DEEntityCentricEnv(MultiAgentEnv):
         host           = kwargs.get("host", "localhost")
         port           = self._resolve_port(kwargs)
         self.num_envs  = kwargs.get("num_envs", 4)
+
+        # Individual-respawn guard: wait this many seconds after send_reset_msg()
+        # before sending the first step action.  Individual respawns mean agents
+        # arrive at different times; if the first send_action_msg arrives while
+        # some agents are still spawning, Schola's GymConnector times out and
+        # skips the step (returning nothing → Python hangs indefinitely).
+        # Override via POST_RESET_DELAY env-var or 'post_reset_delay' kwarg.
+        self._post_reset_delay: float = float(
+            kwargs.get("post_reset_delay",
+                       os.environ.get("POST_RESET_DELAY", "4.0"))
+        )
 
         print(f"[DEEntityCentricEnv] Connecting to {host}:{port}  "
               f"num_envs={self.num_envs}")
@@ -345,6 +357,14 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
         # Always send a full reset to C++ (DISABLED mode requires explicit resets)
         obs_list, infos_list = self._protocol.send_reset_msg()
+
+        # Individual-respawn guard: Schola returns as soon as the reset message
+        # is acknowledged, but UE5 spawns each agent separately.  Sending the
+        # first action before all agents have finished BeginPlay causes
+        # GymConnector to time out and return nothing, hanging send_action_msg.
+        if self._post_reset_delay > 0.0:
+            print(f"[RESET] Waiting {self._post_reset_delay:.1f}s for individual spawns…")
+            time.sleep(self._post_reset_delay)
 
         if not self._first_reset_done:
             self._first_reset_done = True

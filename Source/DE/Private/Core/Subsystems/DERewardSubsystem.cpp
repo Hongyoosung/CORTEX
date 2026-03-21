@@ -397,27 +397,27 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewar
 
 		if (bNearMe)
 		{
-			// Assault and Defend both get BaseOccupationReward when alone in enemy/neutral zone
-			if (Owner != MyTeamID && AlliesNear == 0)
-				Reward += Settings->BaseOccupationReward;
-
-			// Stacking penalty: all strategies should spread across bases
-			if (AlliesNear >= 1)
+			// Support should never be incentivized toward capture points — skip all base rewards
+			if (Strategy != EDEStrategyType::Support)
 			{
-				if (Strategy == EDEStrategyType::Defend || Strategy == EDEStrategyType::Assault)
+				// Assault and Defend get BaseOccupationReward when alone in enemy/neutral zone
+				if (Owner != MyTeamID && AlliesNear == 0)
+					Reward += Settings->BaseOccupationReward;
+
+				// Stacking penalty: Assault/Defend should spread across bases
+				if (AlliesNear >= 1)
 					Reward -= Settings->CoOccupationPenalty;
-				// Support is allowed to stack near injured allies; no penalty
-			}
 
-			// Contested-base defense: reward for being near a friendly base that enemies are threatening
-			if (Owner == MyTeamID && EnemiesNear > 0)
-				Reward += Settings->ContestedBaseDefenseReward;
+				// Contested-base defense: reward for being near a friendly base that enemies are threatening
+				if (Owner == MyTeamID && EnemiesNear > 0)
+					Reward += Settings->ContestedBaseDefenseReward;
 
-			// Assigned base first-arrival reward
-			if (!InOutState.bHasReachedAssignedBase && Agent->AssignedBaseIndex == i)
-			{
-				InOutState.bHasReachedAssignedBase = true;
-				Reward += Settings->AssignedBaseReachReward;
+				// Assigned base first-arrival reward
+				if (!InOutState.bHasReachedAssignedBase && Agent->AssignedBaseIndex == i)
+				{
+					InOutState.bHasReachedAssignedBase = true;
+					Reward += Settings->AssignedBaseReachReward;
+				}
 			}
 		}
 	}

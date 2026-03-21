@@ -23,6 +23,12 @@ services:
       - PORT=50051
       - IS_DOCKER=true                            # Enable Docker-specific gRPC settings
       - RESUME_CHECKPOINT=${RESUME_CHECKPOINT:-}  # Optional: path to checkpoint to resume from
+      - USE_SELF_ATTN=${USE_SELF_ATTN:-1}          # Ablation: 0=disable Self-Attention
+      # Individual-respawn guard: seconds to wait after send_reset_msg() before
+      # sending the first action.  Prevents GymConnector timeout when agents
+      # spawn at different times (individual respawn mode).  Increase if UE5
+      # still times out; set to 0 to disable (full-team-wipe spawning only).
+      - POST_RESET_DELAY=${POST_RESET_DELAY:-4.0}
       - PYTHONUNBUFFERED=1
     extra_hosts:
       - "host.docker.internal:host-gateway"

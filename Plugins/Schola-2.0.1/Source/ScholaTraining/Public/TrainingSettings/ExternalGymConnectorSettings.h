@@ -20,7 +20,7 @@ public:
 
 	/** The timeout duration in seconds for waiting on decision requests. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin=1, EditCondition="bUseTimeout"), Category = "External Gym Connector Settings")
-	int Timeout = 30;
+	int Timeout = 60;
 };
 
 

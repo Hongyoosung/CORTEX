@@ -92,6 +92,120 @@ class Transition:
     log_prob:   float = 0.0
 
 
+# ── Ablation: Cross-Attention Only (no Self-Attention) ───────────────────────
+
+class EntityCentricPolicy_NoSelfAttn(nn.Module):
+    """
+    Ablation variant: Cross-Attention only, no intra-set Self-Attention.
+    Used for A/B comparison to measure Self-Attention's contribution.
+    """
+
+    LOG_STD_MIN = -2.5
+    LOG_STD_MAX = -0.7
+
+    def __init__(self, hidden: int = HIDDEN, heads: int = 4):
+        super().__init__()
+        self.hidden = hidden
+
+        self.self_enc  = nn.Linear(SELF_DIM, hidden)
+        self.ally_enc  = nn.Linear(ALLY_DIM, hidden)
+        self.enemy_enc = nn.Linear(ENEMY_DIM, hidden)
+        self.base_enc  = nn.Linear(BASE_DIM, hidden)
+
+        # Cross-attention only (no self-attention, no LayerNorm)
+        self.ally_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
+        self.enemy_attn = nn.MultiheadAttention(hidden, heads, batch_first=True)
+        self.base_attn  = nn.MultiheadAttention(hidden, heads, batch_first=True)
+
+        combined_dim = hidden * 4
+        self.action_head = nn.Sequential(
+            nn.Linear(combined_dim, 256), nn.ReLU(),
+            nn.Linear(256, 128),          nn.ReLU(),
+            nn.Linear(128, EQS_DIM),      nn.Tanh(),
+        )
+        self.value_head = nn.Sequential(
+            nn.Linear(combined_dim, 256), nn.ReLU(),
+            nn.Linear(256, 1),
+        )
+        self.log_std = nn.Parameter(torch.zeros(EQS_DIM) - 1.5)
+
+        total = sum(p.numel() for p in self.parameters())
+        print(f"[NoSelfAttn] params={total:,}  hidden={hidden}  heads={heads}")
+
+    def _unpack(self, flat: torch.Tensor):
+        B = flat.shape[0]
+        self_obs = flat[:, SELF_START:ALLY_START]
+        allies   = flat[:, ALLY_START:ENEMY_START].view(B, MAX_ALLIES, ALLY_DIM)
+        enemies  = flat[:, ENEMY_START:BASE_START].view(B, MAX_ENEMIES, ENEMY_DIM)
+        bases    = flat[:, BASE_START:ALLY_MASK_START].view(B, MAX_BASES, BASE_DIM)
+
+        ally_mask  = flat[:, ALLY_MASK_START:ENEMY_MASK_START] > 0.5
+        enemy_mask = flat[:, ENEMY_MASK_START:BASE_MASK_START] > 0.5
+        base_mask  = flat[:, BASE_MASK_START:STRATEGY_START] > 0.5
+
+        def _safe_mask(m):
+            all_masked = m.all(dim=1, keepdim=True)
+            return m & ~all_masked
+
+        ally_mask  = _safe_mask(ally_mask)
+        enemy_mask = _safe_mask(enemy_mask)
+        base_mask  = _safe_mask(base_mask)
+
+        strategy_onehot = flat[:, STRATEGY_START:STRATEGY_START + STRATEGY_DIM]
+        strategy_idx    = strategy_onehot.argmax(dim=1)
+
+        return self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask, strategy_idx
+
+    def _encode(self, flat: torch.Tensor) -> torch.Tensor:
+        self_obs, allies, enemies, bases, ally_mask, enemy_mask, base_mask, _ = self._unpack(flat)
+
+        s = self.self_enc(self_obs)
+        q = s.unsqueeze(1)
+
+        a_enc = self.ally_enc(allies)
+        e_enc = self.enemy_enc(enemies)
+        b_enc = self.base_enc(bases)
+
+        # Skip self-attention — go directly to cross-attention
+        a_ctx, _ = self.ally_attn(q, a_enc, a_enc, key_padding_mask=ally_mask)
+        e_ctx, _ = self.enemy_attn(q, e_enc, e_enc, key_padding_mask=enemy_mask)
+        b_ctx, _ = self.base_attn(q, b_enc, b_enc, key_padding_mask=base_mask)
+
+        return torch.cat([s, a_ctx.squeeze(1), e_ctx.squeeze(1), b_ctx.squeeze(1)], dim=-1)
+
+    def forward(self, flat_obs: torch.Tensor) -> torch.Tensor:
+        return self.action_head(self._encode(flat_obs))
+
+    def get_value(self, flat_obs: torch.Tensor) -> torch.Tensor:
+        return self.value_head(self._encode(flat_obs)).squeeze(-1)
+
+    def get_std(self) -> torch.Tensor:
+        return torch.exp(torch.clamp(self.log_std, self.LOG_STD_MIN, self.LOG_STD_MAX))
+
+    def sample_action(self, flat_obs: torch.Tensor):
+        means = self.forward(flat_obs)
+        dist  = torch.distributions.Normal(means, self.get_std())
+        raw   = dist.rsample()
+        lp    = dist.log_prob(raw).sum(dim=-1)
+        return raw.clamp(-1.0, 1.0), lp
+
+    def compute_log_prob(self, flat_obs: torch.Tensor, actions: torch.Tensor):
+        means = self.forward(flat_obs)
+        dist  = torch.distributions.Normal(means, self.get_std())
+        return dist.log_prob(actions).sum(dim=-1)
+
+    def export_onnx(self, filepath: str, batch_size: int = 1):
+        self.eval()
+        dummy = torch.zeros(batch_size, OBS_DIM)
+        torch.onnx.export(
+            self, dummy, filepath,
+            input_names=['observation'], output_names=['eqs_weights'],
+            dynamic_axes={'observation': {0: 'batch_size'}, 'eqs_weights': {0: 'batch_size'}},
+            opset_version=14,
+        )
+        print(f"[ONNX] Exported → {filepath}")
+
+
 # ── Policy network ───────────────────────────────────────────────────────────
 
 class EntityCentricPolicy(nn.Module):

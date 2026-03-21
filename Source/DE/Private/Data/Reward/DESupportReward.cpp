@@ -120,22 +120,19 @@ float DEComputeSupportStepReward(
 	}
 	else if (bIsolated && !bIsRespawnStep)
 	{
-		// Isolated: approach nearest enemy objective as last resort
+		// Isolated: approach nearest friendly base to regroup (NOT enemy objectives)
 		if (Current.Health > Settings->SupportHealthThreshold)
 			Reward += Settings->SupportReward.HealthBonus * 0.5f;
 
-		float PrevNearestObjDist = FLT_MAX, CurrNearestObjDist = FLT_MAX;
+		float PrevNearestFriendlyDist = FLT_MAX, CurrNearestFriendlyDist = FLT_MAX;
 		for (ADECapturePoint* CP : EnvCapturePoints)
 		{
-			if (!CP || CP->GetTeamID_Implementation() == MyTeamID) continue;
-			PrevNearestObjDist = FMath::Min(PrevNearestObjDist, FVector::Dist(Prev.Position, CP->GetActorLocation()));
-			CurrNearestObjDist = FMath::Min(CurrNearestObjDist, FVector::Dist(Current.Position, CP->GetActorLocation()));
+			if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
+			PrevNearestFriendlyDist = FMath::Min(PrevNearestFriendlyDist, FVector::Dist(Prev.Position, CP->GetActorLocation()));
+			CurrNearestFriendlyDist = FMath::Min(CurrNearestFriendlyDist, FVector::Dist(Current.Position, CP->GetActorLocation()));
 		}
-		if (PrevNearestObjDist < FLT_MAX && CurrNearestObjDist < FLT_MAX)
-			Reward += Settings->AssaultReward.ObjectiveProgressReward * Settings->IsolationApproachMultiplier * (PrevNearestObjDist - CurrNearestObjDist);
-
-		if (PositionChange < Settings->AssaultIdleMovementThreshold)
-			Reward -= Settings->AssaultReward.IdlePenalty;
+		if (PrevNearestFriendlyDist < FLT_MAX && CurrNearestFriendlyDist < FLT_MAX)
+			Reward += Settings->SupportReward.AllyApproachReward * Settings->IsolationApproachMultiplier * (PrevNearestFriendlyDist - CurrNearestFriendlyDist);
 	}
 	else
 	{

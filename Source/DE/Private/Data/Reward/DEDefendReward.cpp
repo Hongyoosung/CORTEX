@@ -166,24 +166,5 @@ float DEComputeDefendStepReward(
 	if (!bIsRespawnStep && Current.Health > Settings->DefendHealthThreshold)
 		Reward += Settings->DefendReward.HealthBonus;
 
-	// ---- Zone Guard Kill Bonus: extra kill credit when enemy was threatening a friendly zone ----
-	if (InOutState.bSparseKillFiredThisStep)
-	{
-		for (int32 i = 0; i < Prev.EnemyPositions.Num(); ++i)
-		{
-			if (i >= Prev.EnemyVisible.Num() || !Prev.EnemyVisible[i]) continue;
-			for (ADECapturePoint* CP : EnvCapturePoints)
-			{
-				if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
-				if (FVector::Dist(Prev.EnemyPositions[i], CP->GetActorLocation()) <= CP->CaptureRadius * Settings->DefendReward.ZoneGuardRadius)
-				{
-					Reward += Settings->DefendReward.ZoneGuardKillBonus;
-					goto DefendZoneGuardDone;
-				}
-			}
-		}
-		DefendZoneGuardDone:;
-	}
-
 	return Reward;
 }

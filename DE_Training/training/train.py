@@ -27,9 +27,21 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from policy import (
-    EntityCentricPolicy, PPOTrainer, ReplayBuffer, Transition,
+    EntityCentricPolicy, EntityCentricPolicy_NoSelfAttn,
+    PPOTrainer, ReplayBuffer, Transition,
     collate_fn, OBS_DIM, EQS_DIM, EQS_LABELS,
 )
+
+# Ablation toggle: set USE_SELF_ATTN=0 to train without Self-Attention
+USE_SELF_ATTN = os.environ.get('USE_SELF_ATTN', '1') == '1'
+
+def _create_policy_network(hidden=64, heads=4):
+    """Create policy based on USE_SELF_ATTN toggle."""
+    if USE_SELF_ATTN:
+        return EntityCentricPolicy(hidden=hidden, heads=heads)
+    else:
+        print("[ABLATION] Self-Attention DISABLED — using CrossAttention-only variant")
+        return EntityCentricPolicy_NoSelfAttn(hidden=hidden, heads=heads)
 
 try:
     from ray.rllib.env.multi_agent_env import MultiAgentEnv
@@ -80,7 +92,7 @@ class DETrainingConfig:
 
     # PPO hyperparameters
     LEARNING_RATE    = 3e-4
-    TRAIN_BATCH_SIZE = 8000
+    TRAIN_BATCH_SIZE = 4000
     MINIBATCH_SIZE   = 512
     NUM_SGD_ITER     = 6
     GAMMA            = 0.99
@@ -130,7 +142,7 @@ if RLLIB_AVAILABLE:
             cfg = model_config.get("custom_model_config", {})
             hidden = cfg.get("hidden", 64)
             heads  = cfg.get("heads", 4)
-            self.policy = EntityCentricPolicy(hidden=hidden, heads=heads)
+            self.policy = _create_policy_network(hidden=hidden, heads=heads)
             self._last_features = None
 
         @override(TorchModelV2)

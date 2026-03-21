@@ -100,17 +100,6 @@ struct FDEDefendRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float PostCaptureMomentumMinMove = 100.0f;
 
-	//========== Zone Guard Kill =============
-
-	/** Extra kill reward when the killed enemy was near a friendly capture point.
-	 *  Keeps the tank protecting the team even while pushing forward. */
-	UPROPERTY(EditAnywhere, Category = "ZoneGuard")
-	float ZoneGuardKillBonus = 3.0f;
-
-	/** Multiplier on CaptureRadius used to define "near the zone" for ZoneGuardKillBonus. */
-	UPROPERTY(EditAnywhere, Category = "ZoneGuard")
-	float ZoneGuardRadius = 3.0f;
-
 	//========== Movement Properties =============
 
 	UPROPERTY(EditAnywhere, Category = "Movement")
