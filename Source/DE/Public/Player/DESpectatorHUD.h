@@ -17,9 +17,9 @@ class ADEAgent;
  * Canvas-based HUD drawn while a spectator observes an agent via ADESpectatorController.
  *
  * Layout:
- *   Top-left    : Team name in team color, then strategy name in white (large bold font)
+ *   Top-left    : Team name in team color, then class name in white (large bold font)
  *   Bottom-left : Real-time EQS weight readout (6 named values)
- *   Top-left    : Health bar + percentage (below strategy text)
+ *   Top-left    : Health bar + percentage (below class text)
  *   Top-left    : Ammo bar + count (below health bar)
  *
  * No editor assets (Widget Blueprints) are required — everything is drawn with Canvas primitives.
@@ -33,11 +33,11 @@ public:
 	virtual void DrawHUD() override;
 
 private:
-	/** Draw the team name (in team color) and strategy name (in white) at the top-left */
-	void DrawStrategyLabel(const FString& TeamName, const FLinearColor& TeamColor,
-	                       const FString& StrategyName, float& OutBottomY);
+	/** Draw the team name (in team color) and class name (in white) at the top-left */
+	void DrawClassLabel(const FString& TeamName, const FLinearColor& TeamColor,
+	                       const FString& ClassName, float& OutBottomY);
 
-	/** Draw health, ammo, and mana bars below the strategy label */
+	/** Draw health, ammo, and mana bars below the class label */
 	void DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 MaxAmmo, float ManaPct, float TopY);
 
 	/** Draw EQS weight values in the bottom-left corner */

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Schola/Base/DynamicEQSObserverBase.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "DETacticalObserver.generated.h"
 
@@ -24,7 +24,7 @@ class UDEScholaAgent;
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
  * Observation Space (170-dim, entity-centric V2):
- *   Self (7) + Allies 8×5 (40) + Enemies 8×5 (40) + Bases 8×7 (56) + Masks 8+8+8 (24) + Strategy (3) = 170
+ *   Self (7) + Allies 8×5 (40) + Enemies 8×5 (40) + Bases 8×7 (56) + Masks 8+8+8 (24) + Class (3) = 170
  *   Serialised as a fixed-size padded flat array via FDEObservationV2::ToFlatArray().
  *
  * Usage:
@@ -106,11 +106,11 @@ protected:
 	FDEObservationV2 GatherObservationV2() const;
 
 	/**
-	 * Convert commanded strategy to one-hot encoding
-	 * @param Strategy - EDEStrategyType to encode
+	 * Convert commanded class to one-hot encoding
+	 * @param Class - EDEClassType to encode
 	 * @return [3-dim] one-hot vector
 	 */
-	TArray<float> EncodeStrategyOneHot(EDEStrategyType Strategy) const;
+	TArray<float> EncodeClassOneHot(EDEClassType Class) const;
 
 
 

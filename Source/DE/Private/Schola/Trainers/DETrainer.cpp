@@ -35,8 +35,8 @@ ADETrainer::ADETrainer()
     TransitionLogger = nullptr;
     CachedMatchManager = nullptr;
 
-    // Default strategy
-    CachedCommandedStrategy = EDEStrategyType::Assault;
+    // Default class
+    CachedCommandedClass = EDEClassType::Strike;
 }
 
 void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
@@ -116,20 +116,20 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
     }
     UE_LOG(LogTemp, Log, TEXT("[DETrainer] Cached %d capture points for EnvID %d"), CachedCapturePoints.Num(), MyEnvID);
 
-    // 초기 commanded strategy 캐시
-    CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+    // 초기 commanded class 캐시
+    CachedCommandedClass = ControlledCharacter->GetCommandedClass();
 
-    UE_LOG(LogTemp, Log, TEXT("[DETrainer] v10.2 Executor initialized for agent: %s (Strategy: %s)"),
+    UE_LOG(LogTemp, Log, TEXT("[DETrainer] v10.2 Executor initialized for agent: %s (Class: %s)"),
         *ControlledCharacter->GetName(),
-        *UEnum::GetValueAsString(CachedCommandedStrategy));
+        *UEnum::GetValueAsString(CachedCommandedClass));
 }
 
 void ADETrainer::BeginPlay()
 {
     Super::BeginPlay();
 
-    // v10.2: Strategy는 Squad Commander가 할당
-    // Executor는 commanded strategy를 수행하는 데만 집중
+    // v10.2: Class는 Squad Commander가 할당
+    // Executor는 commanded class를 수행하는 데만 집중
 
     // Initialize observation state
     PreviousObservation = FDEAgentSnapshot();
@@ -193,14 +193,14 @@ void ADETrainer::Tick(float DeltaTime)
             *ControlledCharacter->GetActorLocation().ToString());
     }
 
-    // Update commanded strategy cache (may change from Squad Commander)
-    EDEStrategyType NewStrategy = ControlledCharacter->GetCommandedStrategy();
-    if (NewStrategy != CachedCommandedStrategy)
+    // Update commanded class cache (may change from Squad Commander)
+    EDEClassType NewClass = ControlledCharacter->GetCommandedClass();
+    if (NewClass != CachedCommandedClass)
     {
-        UE_LOG(LogTemp, Log, TEXT("[DETrainer] Strategy changed: %s -> %s"),
-            *UEnum::GetValueAsString(CachedCommandedStrategy),
-            *UEnum::GetValueAsString(NewStrategy));
-        CachedCommandedStrategy = NewStrategy;
+        UE_LOG(LogTemp, Log, TEXT("[DETrainer] Class changed: %s -> %s"),
+            *UEnum::GetValueAsString(CachedCommandedClass),
+            *UEnum::GetValueAsString(NewClass));
+        CachedCommandedClass = NewClass;
     }
 
     if (ControlledCharacter->ConsumeNewWeights())
@@ -303,8 +303,8 @@ float ADETrainer::ComputeReward()
         CurrentObservation = GatherStateSnapshot();
 
         // Compute reward from state transition (PreviousObs → CurrentObs)
-        CachedStepReward = ComputeCommandedStrategyReward(
-            CachedCommandedStrategy,
+        CachedStepReward = ComputeCommandedClassReward(
+            CachedCommandedClass,
             PreviousObservation,
             CurrentObservation,
             LastAction
@@ -319,7 +319,7 @@ float ADETrainer::ComputeReward()
         {
             LogTransition(
                 PreviousObservation,
-                CachedCommandedStrategy,
+                CachedCommandedClass,
                 LastAction,
                 CachedStepReward,
                 CurrentObservation,
@@ -362,7 +362,7 @@ void ADETrainer::ResetEpisode()
     // v10.2: Squad Commander가 새로운 전략을 할당
     if (ControlledCharacter)
     {
-        CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+        CachedCommandedClass = ControlledCharacter->GetCommandedClass();
     }
 
     // 상태 초기화
@@ -511,8 +511,8 @@ FDEAgentSnapshot ADETrainer::GatherStateSnapshot()
     return Obs;
 }
 
-float ADETrainer::ComputeCommandedStrategyReward(
-    EDEStrategyType CommandedStrategy,
+float ADETrainer::ComputeCommandedClassReward(
+    EDEClassType CommandedClass,
     const FDEAgentSnapshot& Prev,
     const FDEAgentSnapshot& Current,
     const FDEEQSWeightParameters& Action
@@ -521,12 +521,12 @@ float ADETrainer::ComputeCommandedStrategyReward(
     // Delegate to DEAgent → UDERewardCalculator.
     // All reward math and momentum state live in the calculator component.
     if (!ControlledCharacter) return 0.0f;
-    return ControlledCharacter->ComputeStepReward(CommandedStrategy, Prev, Current, Action);
+    return ControlledCharacter->ComputeStepReward(CommandedClass, Prev, Current, Action);
 }
 
 void ADETrainer::LogTransition(
     const FDEAgentSnapshot& InState,
-    EDEStrategyType CommandedStrategy,
+    EDEClassType CommandedClass,
     const FDEEQSWeightParameters& Action,
     float Reward,
     const FDEAgentSnapshot& NextState,
@@ -540,12 +540,12 @@ void ADETrainer::LogTransition(
     TArray<float> StateBefore;
     TArray<float> StateAfter;
 
-    // Create FDETacticalOption from commanded strategy
-    // v10.2: Individual agents don't choose options, they execute commanded strategies
-    // We log the commanded strategy as a tactical option for consistency
+    // Create FDETacticalOption from commanded class
+    // v10.2: Individual agents don't choose options, they execute commanded classes
+    // We log the commanded class as a tactical option for consistency
     FDETacticalOption Option;
-    Option.Strategy = CommandedStrategy;
-    Option.Confidence = 1.0f; // Full confidence in commanded strategy
+    Option.Class = CommandedClass;
+    Option.Confidence = 1.0f; // Full confidence in commanded class
 
     // Convert scalar reward to FDECompositeReward
     // v10.2: For simplicity, put the entire reward in ObjectiveScore
@@ -671,21 +671,21 @@ void ADETrainer::DrawTrainingDebug(float DeltaTime)
         }
     }
 
-    // === Strategy-specific indicators ===
-    FColor StrategyColor;
-    switch (CachedCommandedStrategy)
+    // === Class-specific indicators ===
+    FColor ClassColor;
+    switch (CachedCommandedClass)
     {
-    case EDEStrategyType::Assault:
-        StrategyColor = FColor::Orange;
+    case EDEClassType::Strike:
+        ClassColor = FColor::Orange;
         break;
-    case EDEStrategyType::Defend:
-        StrategyColor = FColor::Blue;
+    case EDEClassType::Vanguard:
+        ClassColor = FColor::Blue;
         break;
-    case EDEStrategyType::Support:
-        StrategyColor = FColor::Purple;
+    case EDEClassType::Support:
+        ClassColor = FColor::Purple;
         break;
     default:
-        StrategyColor = FColor::White;
+        ClassColor = FColor::White;
         break;
     }
 
@@ -694,7 +694,7 @@ void ADETrainer::DrawTrainingDebug(float DeltaTime)
         CharLocation,
         150.0f,
         8,
-        StrategyColor,
+        ClassColor,
         false,
         0.0f, 
         0,
@@ -802,7 +802,7 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
 
     if (ControlledCharacter)
     {
-        Info.Add(TEXT("Strategy"), UEnum::GetValueAsString(CachedCommandedStrategy));
+        Info.Add(TEXT("Class"), UEnum::GetValueAsString(CachedCommandedClass));
         Info.Add(TEXT("Health"), FString::Printf(TEXT("%.1f%%"),
             ControlledCharacter->GetHealthPercentage() * 100.0f));
         Info.Add(TEXT("IsAlive"), ControlledCharacter->IsAlive() ? TEXT("true") : TEXT("false"));
@@ -890,12 +890,12 @@ void ADETrainer::ResetTrainer()
     if (ControlledCharacter && IsValid(ControlledCharacter))
     {
         CurrentObservation = GatherStateSnapshot();
-        CachedCommandedStrategy = ControlledCharacter->GetCommandedStrategy();
+        CachedCommandedClass = ControlledCharacter->GetCommandedClass();
 
-        UE_LOG(LogTemp, Log, TEXT("[DETrainer] v10.2 Trainer reset for episode %d - Agent: %s, Strategy: %s"),
+        UE_LOG(LogTemp, Log, TEXT("[DETrainer] v10.2 Trainer reset for episode %d - Agent: %s, Class: %s"),
             TotalEpisodes + 1,
             *ControlledCharacter->GetName(),
-            *UEnum::GetValueAsString(CachedCommandedStrategy));
+            *UEnum::GetValueAsString(CachedCommandedClass));
     }
     else
     {

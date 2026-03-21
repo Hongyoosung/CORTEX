@@ -14,8 +14,8 @@
 UDETacticalObserver::UDETacticalObserver()
 {
 	// Build observation space (V2 entity-centric: 194-dim padded flat)
-	// Layout: Self(7) + Allies(8×8=64) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) + Strategy(3) = 194
-	// Ally token: [rel_pos(3), health, alive, is_assault, is_defend, is_support]
+	// Layout: Self(7) + Allies(8×8=64) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) + Class(3) = 194
+	// Ally token: [rel_pos(3), health, alive, is_strike, is_vanguard, is_support]
 	TArray<FBoxSpaceDimension> Dimensions;
 	Dimensions.Reserve(DE_OBS_V2_DIM);
 
@@ -183,18 +183,18 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			ObsV2.AllyTokens.Num(), ObsV2.EnemyTokens.Num(), ObsV2.BaseTokens.Num(),
 			(DiagChar && DiagChar->GetMatchManager()) ? TEXT("YES") : TEXT("NO(fallback)"));
 
-		// Strategy
-		UE_LOG(LogTemp, Warning, TEXT("  CommandedStrategy: %d"), static_cast<int32>(ObsV2.CommandedStrategy));
+		// Class
+		UE_LOG(LogTemp, Warning, TEXT("  CommandedClass: %d"), static_cast<int32>(ObsV2.CommandedClass));
 
-		// Ally details (8-dim: pos, hp, alive, strategy one-hot)
+		// Ally details (8-dim: pos, hp, alive, class one-hot)
 		for (int32 i = 0; i < ObsV2.AllyTokens.Num(); ++i)
 		{
 			const auto& T = ObsV2.AllyTokens[i];
 			if (T.Features.Num() >= 8)
 			{
-				const FString StratStr = T.Features[5] > 0.5f ? TEXT("Assault")
-					: (T.Features[6] > 0.5f ? TEXT("Defend") : TEXT("Support"));
-				UE_LOG(LogTemp, Warning, TEXT("  Ally[%d]: relPos(%.3f,%.3f,%.3f) hp=%.2f alive=%.0f strategy=%s"),
+				const FString StratStr = T.Features[5] > 0.5f ? TEXT("Strike")
+					: (T.Features[6] > 0.5f ? TEXT("Vanguard") : TEXT("Support"));
+				UE_LOG(LogTemp, Warning, TEXT("  Ally[%d]: relPos(%.3f,%.3f,%.3f) hp=%.2f alive=%.0f class=%s"),
 					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4], *StratStr);
 			}
 		}
@@ -305,8 +305,8 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 
 	const int32 MyTeamID = Character->GetTeamID_Implementation();
 
-	// Strategy one-hot (populated before MatchMgr block so it's always set)
-	Obs.CommandedStrategy = Character->GetCommandedStrategy();
+	// Class one-hot (populated before MatchMgr block so it's always set)
+	Obs.CommandedClass = Character->GetCommandedClass();
 
 	ADEMatchManager* MatchMgr = Character->GetMatchManager();
 
@@ -356,7 +356,7 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		}
 	}
 
-	// ---- Ally tokens (8-dim each): [rel_pos/8000(3), health, alive, is_assault, is_defend, is_support] ----
+	// ---- Ally tokens (8-dim each): [rel_pos/8000(3), health, alive, is_strike, is_vanguard, is_support] ----
 	for (ADEAgent* Ally : Allies)
 	{
 		if (!Ally || Ally == Character) continue;
@@ -368,7 +368,7 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		const FVector RelPos = bAllyAlive
 			? (Ally->GetActorLocation() - MyPos) / 8000.0f
 			: FVector::ZeroVector;
-		const EDEStrategyType AllyStrategy = Ally->GetCommandedStrategy();
+		const EDEClassType AllyClass = Ally->GetCommandedClass();
 		FDEEntityToken Tok;
 		Tok.Features = {
 			static_cast<float>(RelPos.X),
@@ -376,9 +376,9 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 			static_cast<float>(RelPos.Z),
 			bAllyAlive ? Ally->GetHealthPercentage() : 0.0f,
 			bAllyAlive ? 1.0f : 0.0f,
-			(AllyStrategy == EDEStrategyType::Assault) ? 1.0f : 0.0f,
-			(AllyStrategy == EDEStrategyType::Defend)  ? 1.0f : 0.0f,
-			(AllyStrategy == EDEStrategyType::Support) ? 1.0f : 0.0f
+			(AllyClass == EDEClassType::Strike) ? 1.0f : 0.0f,
+			(AllyClass == EDEClassType::Vanguard)  ? 1.0f : 0.0f,
+			(AllyClass == EDEClassType::Support) ? 1.0f : 0.0f
 		};
 		Obs.AllyTokens.Add(MoveTemp(Tok));
 	}
@@ -486,25 +486,25 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 }
 
 
-TArray<float> UDETacticalObserver::EncodeStrategyOneHot(EDEStrategyType Strategy) const
+TArray<float> UDETacticalObserver::EncodeClassOneHot(EDEClassType Class) const
 {
 	TArray<float> OneHot = {0.0f, 0.0f, 0.0f};
 
-	// Map strategy to index
-	switch (Strategy)
+	// Map class to index
+	switch (Class)
 	{
-	case EDEStrategyType::Assault:
+	case EDEClassType::Strike:
 		OneHot[0] = 1.0f;
 		break;
-	case EDEStrategyType::Defend:
+	case EDEClassType::Vanguard:
 		OneHot[1] = 1.0f;
 		break;
-	case EDEStrategyType::Support:
+	case EDEClassType::Support:
 		OneHot[2] = 1.0f;
 		break;
 	default:
-		UE_LOG(LogTemp, Warning, TEXT("[DETacticalObserver] Unknown strategy type: %d"), static_cast<int32>(Strategy));
-		OneHot[0] = 1.0f; // Default to Assault
+		UE_LOG(LogTemp, Warning, TEXT("[DETacticalObserver] Unknown class type: %d"), static_cast<int32>(Class));
+		OneHot[0] = 1.0f; // Default to Strike
 		break;
 	}
 

@@ -9,7 +9,7 @@
 #include "Team/DEMatchManager.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Data/DETeamData.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -45,7 +45,7 @@ bool UDEGA_Attack::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 
 	const ADEAgent* OwnerChar = Cast<ADEAgent>(ActorInfo->AvatarActor.Get());
-	if (OwnerChar && OwnerChar->GetCommandedStrategy() == EDEStrategyType::Support)
+	if (OwnerChar && OwnerChar->GetCommandedClass() == EDEClassType::Support)
 	{
 		return false;
 	}

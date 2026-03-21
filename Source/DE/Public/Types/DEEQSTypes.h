@@ -18,7 +18,7 @@ struct FDEEQSWeightParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EQS Weights")
 	float EnemyObjectiveProximity = 0.0f;
 
-	/** Distance to ally objective (defend friendly base) */
+	/** Distance to ally objective (vanguard friendly base) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EQS Weights")
 	float AllyObjectiveProximity = 0.0f;
 

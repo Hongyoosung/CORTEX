@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DEDefendReward.generated.h"
+#include "DEVanguardReward.generated.h"
 
 class ADEAgent;
 class ADECapturePoint;
@@ -13,12 +13,12 @@ struct FDEAgentSnapshot;
 
 
 /**
- * Defend = Frontline Melee Tank.
- * Captures enemy bases identically to Assault, but engages at melee range
+ * Vanguard = Frontline Melee Tank.
+ * Captures enemy bases identically to Strike, but engages at melee range
  * and is rewarded for absorbing damage on behalf of the team.
  */
 USTRUCT(BlueprintType)
-struct FDEDefendRewardSettings
+struct FDEVanguardRewardSettings
 {
 	GENERATED_BODY()
 
@@ -27,7 +27,7 @@ struct FDEDefendRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float SurvivalRewardScale = 1.5f;
 
-	/** Defend: +4 per kill (base KillReward=10 × 0.4) — melee tank kills aggressively */
+	/** Vanguard: +4 per kill (base KillReward=10 × 0.4) — melee tank kills aggressively */
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float KillRewardScale = 0.4f;
 
@@ -35,11 +35,11 @@ struct FDEDefendRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float ZoneDurabilityBonus = 3.0f;
 
-	/** Defend: -20 per death (base DeathPenaltyReward=100 × 0.20) */
+	/** Vanguard: -20 per death (base DeathPenaltyReward=100 × 0.20) */
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float DeathScale = 0.20f;
 
-	/** Small per-step bonus when health is above DefendHealthThreshold (stay healthy to keep fighting). */
+	/** Small per-step bonus when health is above VanguardHealthThreshold (stay healthy to keep fighting). */
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthBonus = 0.5f;
 
@@ -69,13 +69,13 @@ struct FDEDefendRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Melee")
 	float DamageTakenIdlePenalty = 3.0f;
 
-	//========== Capture Properties (same tendency as Assault) =============
+	//========== Capture Properties (same tendency as Strike) =============
 
-	/** Defend: +15 per capture (base CaptureReward=100 × 0.15) */
+	/** Vanguard: +15 per capture (base CaptureReward=100 × 0.15) */
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float CaptureRewardScale = 0.15f;
 
-	/** Defend: -25 per loss (base LossCaptureReward=-100 × 0.25) */
+	/** Vanguard: -25 per loss (base LossCaptureReward=-100 × 0.25) */
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float LossCaptureRewardScale = 0.25f;
 
@@ -108,11 +108,11 @@ struct FDEDefendRewardSettings
 
 
 /**
- * Defend Strategy: Frontline melee tank.
- * Captures enemy bases identically to Assault, engages at melee range,
+ * Vanguard Class: Frontline melee tank.
+ * Captures enemy bases identically to Strike, engages at melee range,
  * and is rewarded for absorbing damage on behalf of the team.
  */
-float DEComputeDefendStepReward(
+float DEComputeVanguardStepReward(
 	ADEAgent* Agent,
 	FDERewardState& InOutState,
 	const FDEAgentSnapshot& Prev,

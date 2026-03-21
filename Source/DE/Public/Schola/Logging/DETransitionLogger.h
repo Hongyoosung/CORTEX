@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "DETransitionLogger.generated.h"
 
@@ -24,9 +24,9 @@ struct FDETransition
 	UPROPERTY(BlueprintReadOnly)
 	TArray<float> State;
 
-	/** Active strategy option */
+	/** Active class option */
 	UPROPERTY(BlueprintReadOnly)
-	EDEStrategyType OptionType = EDEStrategyType::Assault;
+	EDEClassType OptionType = EDEClassType::Strike;
 
 	/** Target position assigned by MCTS */
 	UPROPERTY(BlueprintReadOnly)
@@ -105,7 +105,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "DE|Logging")
 	void LogTransition(
 		const TArray<float>& State,
-		EDEStrategyType OptionType,
+		EDEClassType OptionType,
 		const FVector& TargetPosition,
 		float OptionDuration,
 		const TArray<float>& EQSWeights,

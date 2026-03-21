@@ -4,7 +4,7 @@
 #include "Player/DESpectatorController.h"
 #include "Characters/DEAgent.h"
 #include "GAS/Abilities/DEGA_Attack.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Engine/Canvas.h"
 #include "Engine/Font.h"
 #include "Engine/Engine.h"
@@ -21,7 +21,7 @@ void ADESpectatorHUD::DrawHUD()
 	if (!Agent || !Canvas) return;
 
 	// ---- Gather data ----
-	const EDEStrategyType Strategy = Agent->GetCommandedStrategy();
+	const EDEClassType Class = Agent->GetCommandedClass();
 	const FDEEQSWeightParameters Weights = Agent->GetEQSWeights();
 
 	float HealthPct   = Agent->GetHealthPercentage();
@@ -36,31 +36,31 @@ void ADESpectatorHUD::DrawHUD()
 		MaxAmmo = (AmmoPct > 0.0f) ? FMath::RoundToInt(static_cast<float>(CurrentAmmo) / AmmoPct) : 0;
 	}
 
-	// ---- Strategy label (top-left, large) ----
-	FString StrategyName;
-	FLinearColor StrategyColor;
+	// ---- Class label (top-left, large) ----
+	FString ClassName;
+	FLinearColor ClassColor;
 
-	switch (Strategy)
+	switch (Class)
 	{
-	case EDEStrategyType::Assault:
-		StrategyName  = TEXT("ASSAULT");
-		StrategyColor = FLinearColor(1.0f, 0.15f, 0.05f, 1.0f);
+	case EDEClassType::Strike:
+		ClassName  = TEXT("ASSAULT");
+		ClassColor = FLinearColor(1.0f, 0.15f, 0.05f, 1.0f);
 		break;
-	case EDEStrategyType::Defend:
-		StrategyName  = TEXT("DEFEND");
-		StrategyColor = FLinearColor(0.1f, 0.4f, 1.0f, 1.0f);
+	case EDEClassType::Vanguard:
+		ClassName  = TEXT("DEFEND");
+		ClassColor = FLinearColor(0.1f, 0.4f, 1.0f, 1.0f);
 		break;
-	case EDEStrategyType::Support:
-		StrategyName  = TEXT("SUPPORT");
-		StrategyColor = FLinearColor(0.45f, 1.0f, 0.45f, 1.0f);
+	case EDEClassType::Support:
+		ClassName  = TEXT("SUPPORT");
+		ClassColor = FLinearColor(0.45f, 1.0f, 0.45f, 1.0f);
 		break;
 	default:
-		StrategyName  = TEXT("UNKNOWN");
-		StrategyColor = FLinearColor::White;
+		ClassName  = TEXT("UNKNOWN");
+		ClassColor = FLinearColor::White;
 		break;
 	}
 
-	// Team name label (above strategy)
+	// Team name label (above class)
 	const int32 TeamID = Agent->Execute_GetTeamID(Agent);
 	FString TeamName;
 	FLinearColor TeamLabelColor;
@@ -81,17 +81,17 @@ void ADESpectatorHUD::DrawHUD()
 	}
 
 	float StatusTopY = 0.0f;
-	DrawStrategyLabel(TeamName, TeamLabelColor, StrategyName, StatusTopY);
+	DrawClassLabel(TeamName, TeamLabelColor, ClassName, StatusTopY);
 	DrawStatusBars(HealthPct, CurrentAmmo, MaxAmmo, ManaPct, StatusTopY);
 	DrawEQSWeights(Weights);
 }
 
 // ---------------------------------------------------------------------------
-// Strategy Label
+// Class Label
 // ---------------------------------------------------------------------------
 
-void ADESpectatorHUD::DrawStrategyLabel(const FString& TeamName, const FLinearColor& TeamColor,
-                                         const FString& StrategyName, float& OutBottomY)
+void ADESpectatorHUD::DrawClassLabel(const FString& TeamName, const FLinearColor& TeamColor,
+                                         const FString& ClassName, float& OutBottomY)
 {
 	const float MarginX    = 24.0f;
 	const float MarginY    = 24.0f;
@@ -111,12 +111,12 @@ void ADESpectatorHUD::DrawStrategyLabel(const FString& TeamName, const FLinearCo
 
 	float TeamW = 0.0f, TeamH = 0.0f;
 	GetTextSize(TeamName, TeamW, TeamH, GEngine->GetLargeFont(), FontScale);
-	const float StrategyY = MarginY + TeamH + 6.0f;
+	const float ClassY = MarginY + TeamH + 6.0f;
 
-	// --- Strategy name in white ---
+	// --- Class name in white ---
 	FCanvasTextItem StratItem(
-		FVector2D(MarginX, StrategyY),
-		FText::FromString(StrategyName),
+		FVector2D(MarginX, ClassY),
+		FText::FromString(ClassName),
 		GEngine->GetLargeFont(),
 		FLinearColor::White
 	);
@@ -126,8 +126,8 @@ void ADESpectatorHUD::DrawStrategyLabel(const FString& TeamName, const FLinearCo
 	Canvas->DrawItem(StratItem);
 
 	float StratW = 0.0f, StratH = 0.0f;
-	GetTextSize(StrategyName, StratW, StratH, GEngine->GetLargeFont(), FontScale);
-	OutBottomY = StrategyY + StratH + 8.0f;
+	GetTextSize(ClassName, StratW, StratH, GEngine->GetLargeFont(), FontScale);
+	OutBottomY = ClassY + StratH + 8.0f;
 }
 
 // ---------------------------------------------------------------------------

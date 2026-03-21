@@ -5,7 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Schola/Base/DynamicEQSActuatorBase.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Types/DEEQSTypes.h"
 #include "DETacticalParameterActuator.generated.h"
 
@@ -18,7 +18,7 @@ class ADEAgent;
  *
  * Action Space: Box([-1, 1]^7)
  * - [0]: EnemyObjectiveProximity  (-1=avoid, +1=approach)
- * - [1]: AllyObjectiveProximity   (-1=avoid, +1=defend)
+ * - [1]: AllyObjectiveProximity   (-1=avoid, +1=vanguard)
  * - [2]: CoverDensity             (-1=ignore, +1=prioritize)
  * - [3]: EnemyVisibility          (-1=hide, +1=expose)
  * - [4]: AllyProximity            (-1=solo, +1=group)
@@ -53,20 +53,20 @@ public:
 	//============================================================
 
 	/**
-	 * Set the commanded strategy from Squad Commander.
+	 * Set the commanded class from Squad Commander.
 	 * This provides context to the RL policy about the assigned role.
 	 *
-	 * @param CommandedStrategy - Role assigned by ASquadManager (Assault/Defend/Support)
+	 * @param CommandedClass - Role assigned by ASquadManager (Strike/Vanguard/Support)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Actuator|v10.2")
-	void SetCommandedStrategy(EDEStrategyType CommandedStrategy);
+	void SetCommandedClass(EDEClassType CommandedClass);
 
 	/**
-	 * Get the last commanded strategy.
-	 * Used by observer to include strategy context in observations.
+	 * Get the last commanded class.
+	 * Used by observer to include class context in observations.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Actuator|v10.2")
-	EDEStrategyType GetCommandedStrategy() const { return CurrentCommandedStrategy; }
+	EDEClassType GetCommandedClass() const { return CurrentCommandedClass; }
 
 	/**
 	 * Get the last EQS weights output by the actuator.
@@ -103,9 +103,9 @@ protected:
 	UPROPERTY()
 	TObjectPtr<ADEAgent> DEAgent;
 
-	/** Current commanded strategy from Squad Commander */
+	/** Current commanded class from Squad Commander */
 	UPROPERTY(BlueprintReadOnly, Category = "Actuator|v10.2")
-	EDEStrategyType CurrentCommandedStrategy = EDEStrategyType::Assault;
+	EDEClassType CurrentCommandedClass = EDEClassType::Strike;
 
 	/** Last EQS weights sent to the character */
 	UPROPERTY(BlueprintReadOnly, Category = "Debug")

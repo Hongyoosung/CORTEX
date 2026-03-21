@@ -23,11 +23,11 @@ static TWeakObjectPtr<UDESquadManager> GDebugSquadManager;
 UDESquadManager::UDESquadManager()
 {
 	CurrentRoleAssignments = {
-		EDEStrategyType::Assault,
-		EDEStrategyType::Assault,
-		EDEStrategyType::Defend,
-		EDEStrategyType::Defend,
-		EDEStrategyType::Support
+		EDEClassType::Strike,
+		EDEClassType::Strike,
+		EDEClassType::Vanguard,
+		EDEClassType::Vanguard,
+		EDEClassType::Support
 	};
 
 	static FAutoConsoleCommand CmdSquadState(
@@ -91,11 +91,11 @@ void UDESquadManager::Reset(const TArray<ADEAgent*>& TeamAgents)
 	ValidationTickCounter = 0.0f;
 
 	CurrentRoleAssignments.Empty();
-	CurrentRoleAssignments.Init(EDEStrategyType::Assault, 5);
+	CurrentRoleAssignments.Init(EDEClassType::Strike, 5);
 
 	EpisodeCount++;
 
-	// Assign strategies immediately so the first Schola observation reflects them.
+	// Assign classes immediately so the first Schola observation reflects them.
 	SampleRandomTacticalPlay(TeamAgents);
 
 	UE_LOG(LogTemp, Log, TEXT("[DESquadManager] Team %d reset complete"), TeamID);
@@ -128,11 +128,11 @@ void UDESquadManager::TickPlanner(float DeltaTime,
 // Role Query
 // ─────────────────────────────────────────────────────────────────────────────
 
-EDEStrategyType UDESquadManager::GetAgentStrategy(int32 AgentIndex) const
+EDEClassType UDESquadManager::GetAgentClass(int32 AgentIndex) const
 {
 	return (AgentIndex >= 0 && AgentIndex < CurrentRoleAssignments.Num())
 		? CurrentRoleAssignments[AgentIndex]
-		: EDEStrategyType::Assault;
+		: EDEClassType::Strike;
 }
 
 
@@ -142,24 +142,24 @@ EDEStrategyType UDESquadManager::GetAgentStrategy(int32 AgentIndex) const
 
 void UDESquadManager::SampleRandomTacticalPlay(const TArray<ADEAgent*>& TeamAgents)
 {
-	// Round-robin strategy wheel: agent i → StrategyWheel[(i + EpisodeCount) % 3].
-	// Over every 3 episodes each agent rotates through all 3 strategies
+	// Round-robin class wheel: agent i → ClassWheel[(i + EpisodeCount) % 3].
+	// Over every 3 episodes each agent rotates through all 3 classes
 	// for balanced RL training signal.
-	static const EDEStrategyType StrategyWheel[3] = {
-		EDEStrategyType::Assault,
-		EDEStrategyType::Defend,
-		EDEStrategyType::Support
+	static const EDEClassType ClassWheel[3] = {
+		EDEClassType::Strike,
+		EDEClassType::Vanguard,
+		EDEClassType::Support
 	};
 
-	TArray<EDEStrategyType> Roles;
+	TArray<EDEClassType> Roles;
 	Roles.SetNum(5);
 	int32 nA = 0, nD = 0, nS = 0;
 	for (int32 i = 0; i < 5; i++)
 	{
-		const EDEStrategyType S = StrategyWheel[(i + EpisodeCount) % 3];
+		const EDEClassType S = ClassWheel[(i + EpisodeCount) % 3];
 		Roles[i] = S;
-		if      (S == EDEStrategyType::Assault) nA++;
-		else if (S == EDEStrategyType::Defend)  nD++;
+		if      (S == EDEClassType::Strike) nA++;
+		else if (S == EDEClassType::Vanguard)  nD++;
 		else                                   nS++;
 	}
 
@@ -172,7 +172,7 @@ void UDESquadManager::SampleRandomTacticalPlay(const TArray<ADEAgent*>& TeamAgen
 }
 
 
-void UDESquadManager::DistributeRoles(const TArray<EDEStrategyType>& Roles,
+void UDESquadManager::DistributeRoles(const TArray<EDEClassType>& Roles,
                                     const TArray<ADEAgent*>& TeamAgents) const
 {
 	for (int32 i = 0; i < FMath::Min(Roles.Num(), TeamAgents.Num()); ++i)
@@ -180,7 +180,7 @@ void UDESquadManager::DistributeRoles(const TArray<EDEStrategyType>& Roles,
 		ADEAgent* Agent = TeamAgents[i];
 		if (Agent && Agent->IsAlive())
 		{
-			Agent->SetCommandedStrategy(Roles[i]);
+			Agent->SetCommandedClass(Roles[i]);
 
 			if (Config.bShowDebugInfo)
 			{

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Types/DEEventTypes.h"
 #include "Types/DERewardTypes.h"
 #include "Actors/DECapturePoint.h"
@@ -24,7 +24,7 @@ struct FDESquadConfig
 {
 	GENERATED_BODY()
 
-	/** Phase 1 RL: fix strategy per episode (sampled at reset) */
+	/** Phase 1 RL: fix class per episode (sampled at reset) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Squad|Training")
 	bool bRLTrainingMode = false;
 
@@ -45,7 +45,7 @@ struct FDESquadConfig
  *
  * Responsibilities:
  *  - Assign roles to agents via round-robin per episode (Phase 1 RL)
- *  - Distribute role assignments to individual agents via SetCommandedStrategy()
+ *  - Distribute role assignments to individual agents via SetCommandedClass()
  */
 UCLASS()
 class DE_API UDESquadManager : public UObject
@@ -96,17 +96,17 @@ public:
 	//========================================
 
 	/**
-	 * Get the assigned strategy for a specific agent slot.
+	 * Get the assigned class for a specific agent slot.
 	 * @param AgentIndex  Slot index in the team (0-4)
 	 */
-	EDEStrategyType GetAgentStrategy(int32 AgentIndex) const;
+	EDEClassType GetAgentClass(int32 AgentIndex) const;
 
 	//========================================
 	// Episode Management
 	//========================================
 
 	/**
-	 * Reset planner state for a new episode and immediately assign strategies.
+	 * Reset planner state for a new episode and immediately assign classes.
 	 * Must be called before the first Schola observation of the new episode.
 	 * @param TeamAgents  Initial agent list for the new episode
 	 */
@@ -118,7 +118,7 @@ public:
 	//========================================
 
 	FORCEINLINE int32 GetTeamID()   const { return TeamID; }
-	FORCEINLINE const TArray<EDEStrategyType>& GetCurrentRoleAssignments() const { return CurrentRoleAssignments; }
+	FORCEINLINE const TArray<EDEClassType>& GetCurrentRoleAssignments() const { return CurrentRoleAssignments; }
 
 
 
@@ -130,8 +130,8 @@ protected:
 	/** Sample a round-robin tactical play for Phase 1 RL training and push to agents */
 	void SampleRandomTacticalPlay(const TArray<ADEAgent*>& TeamAgents);
 
-	/** Assign roles to agents via SetCommandedStrategy() */
-	void DistributeRoles(const TArray<EDEStrategyType>& Roles,
+	/** Assign roles to agents via SetCommandedClass() */
+	void DistributeRoles(const TArray<EDEClassType>& Roles,
 	                     const TArray<ADEAgent*>& TeamAgents) const;
 
 
@@ -144,9 +144,9 @@ protected:
 	/** Configuration pushed from ADEMatchManager / ADEScholaEnvironment */
 	FDESquadConfig Config;
 
-	TArray<EDEStrategyType> CurrentRoleAssignments;
+	TArray<EDEClassType> CurrentRoleAssignments;
 
-	/** Incremented each episode; drives round-robin strategy rotation */
+	/** Incremented each episode; drives round-robin class rotation */
 	int32 EpisodeCount = 0;
 
 	float ValidationTickCounter = 0.0f;

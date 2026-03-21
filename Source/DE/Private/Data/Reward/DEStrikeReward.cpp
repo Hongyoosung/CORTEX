@@ -1,13 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Data/Reward/DEAssaultReward.h"
+#include "Data/Reward/DEStrikeReward.h"
 #include "Data/Reward/DERewardData.h"
 #include "Types/DERewardTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "Characters/DEAgent.h"
 #include "Actors/DECapturePoint.h"
 
-float DEComputeAssaultStepReward(
+float DEComputeStrikeStepReward(
 	ADEAgent* Agent,
 	FDERewardState& InOutState,
 	const FDEAgentSnapshot& Prev,
@@ -20,18 +20,18 @@ float DEComputeAssaultStepReward(
 	bool bIsolated,
 	int32 MyTeamID)
 {
-	float Reward = Settings->AssaultBaselineReward;
+	float Reward = Settings->StrikeBaselineReward;
 
 	// Health-loss penalty
 	const float HealthLoss = Prev.Health - Current.Health;
-	if (HealthLoss > Settings->AssaultHealthLossThreshold)
-		Reward -= Settings->AssaultReward.HealthPenalty * HealthLoss;
+	if (HealthLoss > Settings->StrikeHealthLossThreshold)
+		Reward -= Settings->StrikeReward.HealthPenalty * HealthLoss;
 
 	// Ranged combat: penalise too close, reward optimal range
 	bool bEnemyTooClose = false;
 	{
-		const float MinRangeSq = FMath::Square(Settings->AssaultReward.MinCombatRange);
-		const float MaxRangeSq = FMath::Square(Settings->AssaultReward.MaxEngagementRange);
+		const float MinRangeSq = FMath::Square(Settings->StrikeReward.MinCombatRange);
+		const float MaxRangeSq = FMath::Square(Settings->StrikeReward.MaxEngagementRange);
 		bool bTooClose = false;
 		bool bAtOptimalRange = false;
 		for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
@@ -52,12 +52,12 @@ float DEComputeAssaultStepReward(
 		if (bTooClose)
 		{
 			bEnemyTooClose = true;
-			Reward -= Settings->AssaultReward.TooCloseEnemyPenalty;
+			Reward -= Settings->StrikeReward.TooCloseEnemyPenalty;
 			InOutState.bWasTooCloseAtKill = true;
 		}
 		else if (bAtOptimalRange)
 		{
-			Reward += Settings->AssaultReward.OptimalRangeBonus;
+			Reward += Settings->StrikeReward.OptimalRangeBonus;
 		}
 	}
 
@@ -71,7 +71,7 @@ float DEComputeAssaultStepReward(
 		}
 
 		float PrevNearestDistSq = FLT_MAX, CurrNearestDistSq = FLT_MAX;
-		bool bInNonFriendlyZone = false, bInFriendlyZoneAssault = false;
+		bool bInNonFriendlyZone = false, bInFriendlyZoneStrike = false;
 		float ActiveCappingProgress = 0.0f;
 
 		for (ADECapturePoint* CP : EnvCapturePoints)
@@ -92,14 +92,14 @@ float DEComputeAssaultStepReward(
 			}
 			else if (CurrDistSq <= CaptureRadiusSq)
 			{
-				bInFriendlyZoneAssault = true;
+				bInFriendlyZoneStrike = true;
 			}
 		}
 
 		const int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
 		if (NewCaptures > 0)
 		{
-			InOutState.PostCaptureMomentumStepsRemaining = Settings->AssaultReward.PostCaptureMomentumDuration;
+			InOutState.PostCaptureMomentumStepsRemaining = Settings->StrikeReward.PostCaptureMomentumDuration;
 			float NearestFriendlyDistSq = FLT_MAX;
 			for (ADECapturePoint* CP : EnvCapturePoints)
 			{
@@ -118,39 +118,39 @@ float DEComputeAssaultStepReward(
 			const float ApproachScale = bIsolated ? Settings->IsolationApproachMultiplier : 1.0f;
 			const float ApproachDelta = FMath::Sqrt(PrevNearestDistSq) - FMath::Sqrt(CurrNearestDistSq);
 			const float EffectiveDelta = ApproachDelta >= 0.0f ? ApproachDelta : ApproachDelta * 0.5f;
-			Reward += Settings->AssaultReward.ObjectiveProgressReward * ApproachScale * EffectiveDelta;
+			Reward += Settings->StrikeReward.ObjectiveProgressReward * ApproachScale * EffectiveDelta;
 		}
 
 		if (bInNonFriendlyZone)
 		{
-			InOutState.AssaultZoneStepsAfterCapture = 0;
+			InOutState.StrikeZoneStepsAfterCapture = 0;
 			// Scale down zone bonus when too close to enemy — don't reward rushing in blindly
 			const float ZoneScale = bEnemyTooClose ? 0.3f : 1.0f;
-			Reward += Settings->AssaultReward.ZonePresenceBonus * ZoneScale;
-			Reward += Settings->AssaultReward.ActiveCappingBonus * ActiveCappingProgress * ZoneScale;
+			Reward += Settings->StrikeReward.ZonePresenceBonus * ZoneScale;
+			Reward += Settings->StrikeReward.ActiveCappingBonus * ActiveCappingProgress * ZoneScale;
 		}
-		else if (bInFriendlyZoneAssault && Settings->AssaultCapturedZoneDecaySteps > 0.0f)
+		else if (bInFriendlyZoneStrike && Settings->StrikeCapturedZoneDecaySteps > 0.0f)
 		{
-			InOutState.AssaultZoneStepsAfterCapture++;
-			const float DecayFactor = FMath::Max(0.0f, 1.0f - (float)InOutState.AssaultZoneStepsAfterCapture / Settings->AssaultCapturedZoneDecaySteps);
-			Reward += Settings->AssaultReward.ZonePresenceBonus * DecayFactor;
+			InOutState.StrikeZoneStepsAfterCapture++;
+			const float DecayFactor = FMath::Max(0.0f, 1.0f - (float)InOutState.StrikeZoneStepsAfterCapture / Settings->StrikeCapturedZoneDecaySteps);
+			Reward += Settings->StrikeReward.ZonePresenceBonus * DecayFactor;
 		}
 
 		if (InOutState.PostCaptureMomentumStepsRemaining > 0)
 		{
 			InOutState.PostCaptureMomentumStepsRemaining--;
-			if (PositionChange >= Settings->AssaultReward.PostCaptureMomentumMinMove &&
+			if (PositionChange >= Settings->StrikeReward.PostCaptureMomentumMinMove &&
 				FVector::DistSquared(Current.Position, InOutState.LastCapturedPointLocation) > CaptureRadiusSq)
 			{
-				Reward += Settings->AssaultReward.PostCaptureMomentumBonus;
+				Reward += Settings->StrikeReward.PostCaptureMomentumBonus;
 			}
 		}
 
-		if (PositionChange < Settings->AssaultIdleMovementThreshold && !bInNonFriendlyZone)
+		if (PositionChange < Settings->StrikeIdleMovementThreshold && !bInNonFriendlyZone)
 		{
 			const float IdlePenalty = (CurrNearestDistSq == FLT_MAX || bIsolated)
-				? Settings->AssaultReward.IdlePenalty
-				: Settings->AssaultReward.IdlePenalty * 0.5f;
+				? Settings->StrikeReward.IdlePenalty
+				: Settings->StrikeReward.IdlePenalty * 0.5f;
 			Reward -= IdlePenalty;
 		}
 	}

@@ -19,7 +19,7 @@ DEFINE_STAT(STAT_RLBatchedInference);
 DEFINE_STAT(STAT_RLSingleInference);
 DEFINE_STAT(STAT_RLBuildInput);
 DEFINE_STAT(STAT_RLForwardPass);
-DEFINE_STAT(STAT_RLSampleStrategy);
+DEFINE_STAT(STAT_RLSampleClass);
 DEFINE_STAT(STAT_RLGetStateValue);
 
 // StateTree Stats
@@ -39,13 +39,13 @@ DEFINE_STAT(STAT_ObservationMissionContext);
 // Team Coordination Stats
 DEFINE_STAT(STAT_TeamLeaderCoordination);
 DEFINE_STAT(STAT_TeamLeaderBroadcast);
-DEFINE_STAT(STAT_FollowerUpdateStrategy);
-DEFINE_STAT(STAT_FollowerExecuteStrategy);
+DEFINE_STAT(STAT_FollowerUpdateClass);
+DEFINE_STAT(STAT_FollowerExecuteClass);
 
 // Reward Stats
 DEFINE_STAT(STAT_RewardCalculate);
 DEFINE_STAT(STAT_RewardMissionProgress);
-DEFINE_STAT(STAT_RewardStrategy);
+DEFINE_STAT(STAT_RewardClass);
 
 // Memory Stats
 DEFINE_STAT(STAT_MCTSTreeMemory);

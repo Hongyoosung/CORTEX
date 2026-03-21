@@ -2,7 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DEStrategyTypes.h"
+#include "DEClassTypes.h"
 #include "DERewardTypes.generated.h"
 
 
@@ -20,7 +20,7 @@ enum class EDERewardEventType : uint8
     Survival,
     DistanceShaping,
     TeamVictory,
-    StrategyDiversity,
+    ClassDiversity,
     HealAlly,
     ZoneDurability,
     ZoneGuardKill,
@@ -37,14 +37,14 @@ struct FDERewardEvent
     EDERewardEventType EventType;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-    EDEStrategyType Strategy;
+    EDEClassType Class;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     float RewardValue;
 
-    FDERewardEvent() : EventType(EDERewardEventType::Kill), Strategy(EDEStrategyType::Assault), RewardValue(0.0f) {}
-    FDERewardEvent(EDERewardEventType InEventType, EDEStrategyType InStrategy, float InRewardValue)
-        : EventType(InEventType), Strategy(InStrategy), RewardValue(InRewardValue) {}
+    FDERewardEvent() : EventType(EDERewardEventType::Kill), Class(EDEClassType::Strike), RewardValue(0.0f) {}
+    FDERewardEvent(EDERewardEventType InEventType, EDEClassType InClass, float InRewardValue)
+        : EventType(InEventType), Class(InClass), RewardValue(InRewardValue) {}
 };
 
 
@@ -64,7 +64,7 @@ struct FDERewardState
 
     int32 PostCaptureMomentumStepsRemaining = 0;
     FVector LastCapturedPointLocation = FVector::ZeroVector;
-    int32 AssaultZoneStepsAfterCapture = 0;
+    int32 StrikeZoneStepsAfterCapture = 0;
     int32 CachedInjuredAllyIdx = -1;
     int32 InjuredAllyStalenessCounter = 0;
 
@@ -89,7 +89,7 @@ struct FDERewardState
         EventLog.Empty();
         PostCaptureMomentumStepsRemaining = 0;
         LastCapturedPointLocation = FVector::ZeroVector;
-        AssaultZoneStepsAfterCapture = 0;
+        StrikeZoneStepsAfterCapture = 0;
         CachedInjuredAllyIdx = -1;
         InjuredAllyStalenessCounter = 0;
         LastCaptureLossPenaltyTime = 0;
@@ -171,7 +171,7 @@ struct DE_API FDECompositeReward
  */
 struct FDERewardBreakdown
 {
-    float StrategyReward       = 0.0f;
+    float ClassReward       = 0.0f;
     float HealthComponent         = 0.0f;
     float PositionComponent    = 0.0f;
     float ObjectiveComponent   = 0.0f;

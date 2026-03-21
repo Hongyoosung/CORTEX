@@ -9,13 +9,13 @@
 /**
  * BTDecorator_DEIsNotSupport
  *
- * Returns true when the owning agent's commanded strategy is Assault or Defend
+ * Returns true when the owning agent's commanded class is Strike or Vanguard
  * (i.e., a combat unit). Returns false for Support agents.
  *
  * Attach to the attack branch in the Behavior Tree so that Support agents
  * are blocked from using offensive abilities — they should only heal.
  *
- * Observer Aborts: set to "Self" to re-evaluate immediately when strategy changes.
+ * Observer Aborts: set to "Self" to re-evaluate immediately when class changes.
  */
 UCLASS(Blueprintable)
 class DE_API UBTDecorator_DEIsNotSupport : public UBTDecorator

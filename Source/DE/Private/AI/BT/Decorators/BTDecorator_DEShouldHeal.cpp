@@ -19,7 +19,7 @@ bool UBTDecorator_DEShouldHeal::CalculateRawConditionValue(UBehaviorTreeComponen
 	const ADEAgent* Char = AIC ? Cast<ADEAgent>(AIC->GetPawn()) : nullptr;
 	if (!Char || !Char->IsAlive()) return false;
 
-	if (Char->GetCommandedStrategy() != EDEStrategyType::Support) return false;
+	if (Char->GetCommandedClass() != EDEClassType::Support) return false;
 
 	// Trigger whenever there is an injured ally in heal range.
 	// HealthThreshold is forwarded so the ability uses the same definition of "injured"

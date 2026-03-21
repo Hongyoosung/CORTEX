@@ -38,15 +38,15 @@ public:
     // Event-Driven Sparse Rewards
     //========================================
 
-    float CalculateDeathPenalty     (FDERewardState& InOutAgentState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateKillReward       (FDERewardState& InOutAgentState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateAssistReward     (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DamageDealt, int32 AgentID);
-    float CalculateTeamWipePenalty  (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateTeamWipeBonus   (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateCaptureReward    (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateLosePointPenalty (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID);
-    float CalculateSurvivalReward   (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float CurrentHP, float MaxHP, int32 AgentID);
-    float CalculateDistanceShaping  (FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DistanceToTarget, int32 AgentID);
+    float CalculateDeathPenalty     (FDERewardState& InOutAgentState, EDEClassType ActiveClass, int32 AgentID);
+    float CalculateKillReward       (FDERewardState& InOutAgentState, EDEClassType ActiveClass, int32 AgentID);
+    float CalculateAssistReward     (FDERewardState& InOutState, EDEClassType ActiveClass, float DamageDealt, int32 AgentID);
+    float CalculateTeamWipePenalty  (FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID);
+    float CalculateTeamWipeBonus   (FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID);
+    float CalculateCaptureReward    (FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID);
+    float CalculateLosePointPenalty (FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID);
+    float CalculateSurvivalReward   (FDERewardState& InOutState, EDEClassType ActiveClass, float CurrentHP, float MaxHP, int32 AgentID);
+    float CalculateDistanceShaping  (FDERewardState& InOutState, EDEClassType ActiveClass, float DistanceToTarget, int32 AgentID);
 
 
     //========================================
@@ -56,24 +56,24 @@ public:
     float ComputeStepReward(
         ADEAgent* Agent,
         FDERewardState& InOutAgentState,
-        EDEStrategyType Strategy,
+        EDEClassType Class,
         const FDEAgentSnapshot& Prev,
         const FDEAgentSnapshot& Current,
         const FDEEQSWeightParameters& Action);
 
     /**
      * Compute cooperative base occupation shaping reward.
-     * Adds spread incentive and penalises stacking / undefended bases.
+     * Adds spread incentive and penalises stacking / unvanguarded bases.
      * Must be called inside ComputeStepReward() before clamping.
      *
      * @param Agent       The agent being evaluated
      * @param InOutState  Agent reward state (HasReachedAssignedBase flag stored here)
-     * @param Strategy    The current strategy of the agent (Assault, Defend, Support)
+     * @param Class    The current class of the agent (Strike, Vanguard, Support)
      * @return            Shaped reward value (not yet scaled by GlobalRewardScale)
      */
-    float ComputeBaseCooperationReward(ADEAgent* Agent, FDERewardState& InOutState, EDEStrategyType Strategy);
+    float ComputeBaseCooperationReward(ADEAgent* Agent, FDERewardState& InOutState, EDEClassType Class);
 
-    float GetStrategyScale(EDEStrategyType Strategy, float AssaultScale, float DefendScale, float SupportScale) const;
+    float GetClassScale(EDEClassType Class, float StrikeScale, float VanguardScale, float SupportScale) const;
     float DrainSparseReward(FDERewardState& InOutState, int32 AgentID);
 
     /**
@@ -90,7 +90,7 @@ public:
 
 
 private:
-    float ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEStrategyType Strategy, float RewardValue, int32 AgentID);
+    float ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEClassType Class, float RewardValue, int32 AgentID);
 
     /** Cast helper — returns the project-specific reward data asset. */
     const UDERewardData* GetSettings() const;

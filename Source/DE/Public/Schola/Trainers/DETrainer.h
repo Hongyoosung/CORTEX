@@ -8,7 +8,7 @@
 #include "Types/DERewardTypes.h"
 #include "Types/DEEQSTypes.h"
 #include "Types/DEObservationTypes.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "DETrainer.generated.h"
 
 class UDEScholaAgent;
@@ -23,11 +23,11 @@ class ADEScholaEnvironment;
  * Schola Trainer
  *
  * Responsibilities:
- * - Train Executor Agent RL Policy (Translates Commander's strategy into EQS weights)
+ * - Train Executor Agent RL Policy (Translates Commander's class into EQS weights)
  * - Bridge between Python (RLlib/Gym) and UE5
- * - Policy training conditioned on Commanded Strategy
+ * - Policy training conditioned on Commanded Class
  * - Action collection and application in the form of EQS weights
- * - Team-level reward calculation based on assigned strategy from Squad Commander
+ * - Team-level reward calculation based on assigned class from Squad Commander
  *
  * Action Space: Box(7) - Continuous EQS weights [-1, 1]
  * Observation Space: Box(167) - Entity-centric V2 (handled by DETacticalObserver)
@@ -114,15 +114,15 @@ protected:
     /** Collects per-step agent state snapshot for reward computation */
     FDEAgentSnapshot GatherStateSnapshot();
 
-    /** Computes team-aligned reward based on commanded strategy quality */
-    float ComputeCommandedStrategyReward(EDEStrategyType CommandedStrategy,
+    /** Computes team-aligned reward based on commanded class quality */
+    float ComputeCommandedClassReward(EDEClassType CommandedClass,
         const FDEAgentSnapshot& Prev,
         const FDEAgentSnapshot& Current,
         const FDEEQSWeightParameters& Action);
 
     /** Logs transitions for World Model offline training */
     void LogTransition(const FDEAgentSnapshot& InState,
-        EDEStrategyType CommandedStrategy,
+        EDEClassType CommandedClass,
         const FDEEQSWeightParameters& Action,
         float Reward,
         const FDEAgentSnapshot& NextState,
@@ -172,8 +172,8 @@ protected:
     /** Most recent action applied */
     FDEEQSWeightParameters LastAction;
 
-    /** Current strategy commanded by the Squad Commander */
-    EDEStrategyType CachedCommandedStrategy;
+    /** Current class commanded by the Squad Commander */
+    EDEClassType CachedCommandedClass;
 
 
     //=========================================

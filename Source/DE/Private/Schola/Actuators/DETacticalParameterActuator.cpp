@@ -159,7 +159,7 @@ void UDETacticalParameterActuator::InitializeActuator()
 
 	UE_LOG(LogTemp, Warning, TEXT("======================================================================"));
 
-	CurrentCommandedStrategy = EDEStrategyType::Assault;
+	CurrentCommandedClass = EDEClassType::Strike;
 	ActionCount = 0;
 }
 
@@ -169,8 +169,8 @@ void UDETacticalParameterActuator::ResetActuator()
 	LastEQSWeights = FDEEQSWeightParameters();
 	ActionCount = 0;
 
-	// Keep commanded strategy (set by Squad Commander)
-	// Don't reset CurrentCommandedStrategy here
+	// Keep commanded class (set by Squad Commander)
+	// Don't reset CurrentCommandedClass here
 
 	if (bDebugLogging)
 	{
@@ -179,17 +179,17 @@ void UDETacticalParameterActuator::ResetActuator()
 	}
 }
 
-void UDETacticalParameterActuator::SetCommandedStrategy(EDEStrategyType CommandedStrategy)
+void UDETacticalParameterActuator::SetCommandedClass(EDEClassType CommandedClass)
 {
-	if (CurrentCommandedStrategy != CommandedStrategy)
+	if (CurrentCommandedClass != CommandedClass)
 	{
-		CurrentCommandedStrategy = CommandedStrategy;
+		CurrentCommandedClass = CommandedClass;
 
 		if (bDebugLogging)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[DETacticalParameterActuator] %s received strategy command: %d"),
+			UE_LOG(LogTemp, Log, TEXT("[DETacticalParameterActuator] %s received class command: %d"),
 				DEAgent ? *DEAgent->GetName() : TEXT("NULL"),
-				static_cast<int32>(CommandedStrategy));
+				static_cast<int32>(CommandedClass));
 		}
 	}
 }

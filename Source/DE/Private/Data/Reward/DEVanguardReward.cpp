@@ -1,13 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Data/Reward/DEDefendReward.h"
+#include "Data/Reward/DEVanguardReward.h"
 #include "Data/Reward/DERewardData.h"
 #include "Types/DERewardTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "Characters/DEAgent.h"
 #include "Actors/DECapturePoint.h"
 
-float DEComputeDefendStepReward(
+float DEComputeVanguardStepReward(
 	ADEAgent* Agent,
 	FDERewardState& InOutState,
 	const FDEAgentSnapshot& Prev,
@@ -20,9 +20,9 @@ float DEComputeDefendStepReward(
 	bool bIsolated,
 	int32 MyTeamID)
 {
-	float Reward = Settings->DefendBaselineReward;
+	float Reward = Settings->VanguardBaselineReward;
 
-	// ---- Objective: approach and capture enemy/neutral bases (identical to Assault) ----
+	// ---- Objective: approach and capture enemy/neutral bases (identical to Strike) ----
 	if (!bIsRespawnStep && EnvCapturePoints.Num() > 0)
 	{
 		int32 PrevFriendlyPoints = 0, CurrFriendlyPoints = 0;
@@ -58,7 +58,7 @@ float DEComputeDefendStepReward(
 		const int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
 		if (NewCaptures > 0)
 		{
-			InOutState.PostCaptureMomentumStepsRemaining = Settings->DefendReward.PostCaptureMomentumDuration;
+			InOutState.PostCaptureMomentumStepsRemaining = Settings->VanguardReward.PostCaptureMomentumDuration;
 			float NearestFriendlyDistSq = FLT_MAX;
 			for (ADECapturePoint* CP : EnvCapturePoints)
 			{
@@ -78,19 +78,19 @@ float DEComputeDefendStepReward(
 			const float ApproachScale = bIsolated ? Settings->IsolationApproachMultiplier : 1.0f;
 			const float ApproachDelta = FMath::Sqrt(PrevNearestDistSq) - FMath::Sqrt(CurrNearestDistSq);
 			const float EffectiveDelta = ApproachDelta >= 0.0f ? ApproachDelta : ApproachDelta * 0.5f;
-			Reward += Settings->DefendReward.ObjectiveProgressReward * ApproachScale * EffectiveDelta;
+			Reward += Settings->VanguardReward.ObjectiveProgressReward * ApproachScale * EffectiveDelta;
 		}
 
 		if (bInNonFriendlyZone)
 		{
-			Reward += Settings->DefendReward.ZonePresenceBonus;
-			Reward += Settings->DefendReward.ActiveCappingBonus * ActiveCappingProgress;
+			Reward += Settings->VanguardReward.ZonePresenceBonus;
+			Reward += Settings->VanguardReward.ActiveCappingBonus * ActiveCappingProgress;
 		}
-		else if (PositionChange < Settings->AssaultIdleMovementThreshold)
+		else if (PositionChange < Settings->StrikeIdleMovementThreshold)
 		{
 			const float IdlePenalty = (CurrNearestDistSq == FLT_MAX || bIsolated)
-				? Settings->DefendReward.IdlePenalty
-				: Settings->DefendReward.IdlePenalty * 0.5f;
+				? Settings->VanguardReward.IdlePenalty
+				: Settings->VanguardReward.IdlePenalty * 0.5f;
 			Reward -= IdlePenalty;
 		}
 
@@ -98,10 +98,10 @@ float DEComputeDefendStepReward(
 		if (InOutState.PostCaptureMomentumStepsRemaining > 0)
 		{
 			InOutState.PostCaptureMomentumStepsRemaining--;
-			if (PositionChange >= Settings->DefendReward.PostCaptureMomentumMinMove &&
+			if (PositionChange >= Settings->VanguardReward.PostCaptureMomentumMinMove &&
 				FVector::DistSquared(Current.Position, InOutState.LastCapturedPointLocation) > CaptureRadiusSq)
 			{
-				Reward += Settings->DefendReward.PostCaptureMomentumBonus;
+				Reward += Settings->VanguardReward.PostCaptureMomentumBonus;
 			}
 		}
 	}
@@ -109,8 +109,8 @@ float DEComputeDefendStepReward(
 	// ---- Melee Range Bonus + Enemy Approach Shaping ----
 	if (!bIsRespawnStep)
 	{
-		const float MeleeRangeSq = FMath::Square(Settings->DefendReward.MeleeRangeDistance);
-		const float ApproachMaxRangeSq = FMath::Square(Settings->DefendReward.EnemyApproachMaxRange);
+		const float MeleeRangeSq = FMath::Square(Settings->VanguardReward.MeleeRangeDistance);
+		const float ApproachMaxRangeSq = FMath::Square(Settings->VanguardReward.EnemyApproachMaxRange);
 		float NearestVisibleEnemyDist = FLT_MAX;
 		float PrevNearestVisibleEnemyDist = FLT_MAX;
 		bool bInMeleeRange = false;
@@ -139,16 +139,16 @@ float DEComputeDefendStepReward(
 
 		if (bInMeleeRange)
 		{
-			Reward += Settings->DefendReward.MeleeRangeBonus;
+			Reward += Settings->VanguardReward.MeleeRangeBonus;
 		}
 
 		// Enemy approach shaping: reward closing distance to nearest visible enemy
-		if (NearestVisibleEnemyDist < Settings->DefendReward.EnemyApproachMaxRange &&
+		if (NearestVisibleEnemyDist < Settings->VanguardReward.EnemyApproachMaxRange &&
 			PrevNearestVisibleEnemyDist < FLT_MAX)
 		{
 			const float ApproachDelta = PrevNearestVisibleEnemyDist - NearestVisibleEnemyDist;
 			if (ApproachDelta > 0.0f)
-				Reward += Settings->DefendReward.EnemyApproachReward * ApproachDelta;
+				Reward += Settings->VanguardReward.EnemyApproachReward * ApproachDelta;
 		}
 	}
 
@@ -158,13 +158,13 @@ float DEComputeDefendStepReward(
 		const float DamageTaken = Prev.Health - Current.Health;
 		if (DamageTaken > 0.0f)
 		{
-			Reward += Settings->DefendReward.ZoneDurabilityBonus * DamageTaken;
+			Reward += Settings->VanguardReward.ZoneDurabilityBonus * DamageTaken;
 		}
 	}
 
 	// ---- Health Bonus: small incentive to stay healthy enough to keep fighting ----
-	if (!bIsRespawnStep && Current.Health > Settings->DefendHealthThreshold)
-		Reward += Settings->DefendReward.HealthBonus;
+	if (!bIsRespawnStep && Current.Health > Settings->VanguardHealthThreshold)
+		Reward += Settings->VanguardReward.HealthBonus;
 
 	return Reward;
 }

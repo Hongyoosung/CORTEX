@@ -121,7 +121,7 @@ struct FDESupportRewardSettings
 
 
 /**
- * Support Strategy: Healer / rear-guard.
+ * Support Class: Healer / rear-guard.
  * Follows and heals the ally with the most accumulated recent damage.
  * No offensive capability — attack branch is blocked in the Behavior Tree.
  */

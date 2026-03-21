@@ -3,7 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "Schola/DynamicEQSAgentComponent.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "DEScholaAgent.generated.h"
 
 
@@ -16,15 +16,15 @@
  * parent class components (Observers, Policy, Brain, Actuators).
  *
  * v10.2 Architecture Integration:
- * 1. DESquadManager performs centralized MCTS → assigns EDEStrategyType
- * 2. ADEAgent.SetCommandedStrategy() updates this agent
- * 3. This agent provides strategy to Observers (included in observation)
- * 4. Policy (Python/ONNX) converts (State + Strategy) → EQS Weights
+ * 1. DESquadManager performs centralized MCTS → assigns EDEClassType
+ * 2. ADEAgent.SetCommandedClass() updates this agent
+ * 3. This agent provides class to Observers (included in observation)
+ * 4. Policy (Python/ONNX) converts (State + Class) → EQS Weights
  * 5. Actuators (DETacticalParameterActuator) apply weights to EQS system
  *
  * Responsibilities (What this class DOES):
- * - Store commanded strategy from DESquadManager
- * - Provide strategy to Observers (via GetCommandedStrategy)
+ * - Store commanded class from DESquadManager
+ * - Provide class to Observers (via GetCommandedClass)
  * - Support mode switching (Training vs Inference) via inherited AgentMode
  * - Configure Schola components in BeginPlay
  *
@@ -39,7 +39,7 @@
  * 1. Add to ADEAgent as component
  * 2. Configure Observers/Actuators in Blueprint
  * 3. Set AgentMode (Training/Inference) — inherited from UDynamicEQSAgentComponent
- * 4. DESquadManager calls UpdateCommandedStrategy()
+ * 4. DESquadManager calls UpdateCommandedClass()
  * 5. Schola's Think/Act cycle handles rest automatically
  */
 UCLASS(ClassGroup = (AI), meta = (BlueprintSpawnableComponent))
@@ -58,26 +58,26 @@ public:
     //========================================
 
     /**
-     * Update commanded strategy from Squad Commander
-     * Called by ADEAgent.SetCommandedStrategy()
+     * Update commanded class from Squad Commander
+     * Called by ADEAgent.SetCommandedClass()
      *
-     * @param NewStrategy - Strategy assigned by centralized MCTS planner
+     * @param NewClass - Class assigned by centralized MCTS planner
      */
     UFUNCTION(BlueprintCallable, Category = "DE|Commands")
-    void UpdateCommandedStrategy(EDEStrategyType NewStrategy);
+    void UpdateCommandedClass(EDEClassType NewClass);
 
     /**
-     * Get current commanded strategy
-     * Used by Observers to include strategy in observation space
+     * Get current commanded class
+     * Used by Observers to include class in observation space
      *
      * Phase 1 Training Mode:
-     * If bUseTrainingStrategyOverride is enabled, returns TrainingStrategyOverride
-     * instead of the commanded strategy from DESquadManager.
+     * If bUseTrainingClassOverride is enabled, returns TrainingClassOverride
+     * instead of the commanded class from DESquadManager.
      */
     UFUNCTION(BlueprintPure, Category = "DE|Commands")
-    EDEStrategyType GetCommandedStrategy() const
+    EDEClassType GetCommandedClass() const
     {
-        return CommandedStrategy;
+        return CommandedClass;
     }
 
 
@@ -94,29 +94,29 @@ public:
 public:
 
     //========================================
-    // Per-Strategy ONNX Policies (Inference Mode)
+    // Per-Class ONNX Policies (Inference Mode)
     //========================================
 
     /**
-     * Policy for Assault strategy.
-     * Assign the Assault ONNX model asset here.
-     * When CommandedStrategy == Assault, this policy drives the EQS weights.
+     * Policy for Strike class.
+     * Assign the Strike ONNX model asset here.
+     * When CommandedClass == Strike, this policy drives the EQS weights.
      */
-    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Strategy|Policies")
-    TObjectPtr<UObject> AssaultPolicyObject;
+    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Class|Policies")
+    TObjectPtr<UObject> StrikePolicyObject;
 
     /**
-     * Policy for Defend strategy.
-     * Assign the Defend ONNX model asset here.
+     * Policy for Vanguard class.
+     * Assign the Vanguard ONNX model asset here.
      */
-    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Strategy|Policies")
-    TObjectPtr<UObject> DefendPolicyObject;
+    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Class|Policies")
+    TObjectPtr<UObject> VanguardPolicyObject;
 
     /**
-     * Policy for Support strategy.
+     * Policy for Support class.
      * Assign the Support ONNX model asset here.
      */
-    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Strategy|Policies")
+    UPROPERTY(EditAnywhere, Instanced, BlueprintReadWrite, Category = "Class|Policies")
     TObjectPtr<UObject> SupportPolicyObject;
 
     //========================================
@@ -124,14 +124,14 @@ public:
     //========================================
 
     /**
-     * Current strategy commanded by DESquadManager
+     * Current class commanded by DESquadManager
      * Injected into observation space by Observers
      * Used by Policy to condition EQS weight output
      */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy")
-    EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class")
+    EDEClassType CommandedClass = EDEClassType::Strike;
 
 private:
-    /** Returns the policy object corresponding to the given strategy. */
-    UObject* GetPolicyForStrategy(EDEStrategyType Strategy) const;
+    /** Returns the policy object corresponding to the given class. */
+    UObject* GetPolicyForClass(EDEClassType Class) const;
 };

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DEAssaultReward.generated.h"
+#include "DEStrikeReward.generated.h"
 
 class ADEAgent;
 class ADECapturePoint;
@@ -13,7 +13,7 @@ struct FDEAgentSnapshot;
 
 
 USTRUCT(BlueprintType)
-struct FDEAssaultRewardSettings
+struct FDEStrikeRewardSettings
 {
 	GENERATED_BODY()
 
@@ -22,14 +22,14 @@ struct FDEAssaultRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float SurvivalRewardScale = 1.5f;
 
-	/** Assault: +3 per kill (base KillReward=10 × 0.3) — reduced to prevent kill-farming over capping */
+	/** Strike: +3 per kill (base KillReward=10 × 0.3) — reduced to prevent kill-farming over capping */
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float KillRewardScale = 0.3f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthPenalty = 0.0f;
 
-	/** Assault: -20 per death (base DeathPenaltyReward=100 × 0.2) */
+	/** Strike: -20 per death (base DeathPenaltyReward=100 × 0.2) */
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float DeathScale = 0.2f;
 
@@ -42,11 +42,11 @@ struct FDEAssaultRewardSettings
 
 	//========== Capture Properties =============
 
-	/** Assault: +15 per capture (base CaptureReward=100 × 0.15) */
+	/** Strike: +15 per capture (base CaptureReward=100 × 0.15) */
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float CaptureRewardScale = 0.15f;
 
-	/** Assault: -25 per loss (base LossCaptureReward=-100 × 0.25) */
+	/** Strike: -25 per loss (base LossCaptureReward=-100 × 0.25) */
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float LossCaptureRewardScale = 0.25f;
 
@@ -72,7 +72,7 @@ struct FDEAssaultRewardSettings
 
 	//========== Ranged Combat =============
 
-	/** Minimum combat range for Assault. Penalty fires each step a visible enemy is closer than this. */
+	/** Minimum combat range for Strike. Penalty fires each step a visible enemy is closer than this. */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
 	float MinCombatRange = 800.0f;
 
@@ -98,10 +98,10 @@ struct FDEAssaultRewardSettings
 
 
 /**
- * Assault Strategy: Ranged damage dealer.
+ * Strike Class: Ranged damage dealer.
  * Captures enemy bases, attacks from distance, penalized for entering melee range.
  */
-float DEComputeAssaultStepReward(
+float DEComputeStrikeStepReward(
 	ADEAgent* Agent,
 	FDERewardState& InOutState,
 	const FDEAgentSnapshot& Prev,

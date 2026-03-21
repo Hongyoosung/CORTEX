@@ -3,7 +3,7 @@
 
 #include "Util/Components/DEVisualLoggerComponent.h"
 #include "DrawDebugHelpers.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 
 
 UDEVisualLoggerComponent::UDEVisualLoggerComponent()
@@ -20,15 +20,15 @@ bool UDEVisualLoggerComponent::IsDebugDrawingEnabled() const
 #endif
 }
 
-FLinearColor UDEVisualLoggerComponent::GetStrategyColor(EDEStrategyType Strategy) const
+FLinearColor UDEVisualLoggerComponent::GetClassColor(EDEClassType Class) const
 {
-	switch (Strategy)
+	switch (Class)
 	{
-	case EDEStrategyType::Assault:
+	case EDEClassType::Strike:
 		return FLinearColor::Red;
-	case EDEStrategyType::Defend:
+	case EDEClassType::Vanguard:
 		return FLinearColor::Blue;
-	case EDEStrategyType::Support:
+	case EDEClassType::Support:
 		return FLinearColor::Green;
 	default:
 		return FLinearColor::White;

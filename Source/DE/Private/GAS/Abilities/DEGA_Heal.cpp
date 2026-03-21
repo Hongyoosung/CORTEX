@@ -12,7 +12,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/DESupportAnimInstance.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Data/DETeamData.h"
 
 
@@ -54,7 +54,7 @@ bool UDEGA_Heal::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 
 	const ADEAgent* OwnerChar = Cast<ADEAgent>(ActorInfo->AvatarActor.Get());
-	if (!OwnerChar || OwnerChar->GetCommandedStrategy() != EDEStrategyType::Support)
+	if (!OwnerChar || OwnerChar->GetCommandedClass() != EDEClassType::Support)
 	{
 		return false;
 	}

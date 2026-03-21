@@ -13,11 +13,11 @@ UDEScholaAgent::UDEScholaAgent()
 
 void UDEScholaAgent::BeginPlay()
 {
-    // In Inference mode, seed InferencePolicyObject with the Assault policy
-    // (default strategy) before the parent wires up the stepper.
+    // In Inference mode, seed InferencePolicyObject with the Strike policy
+    // (default class) before the parent wires up the stepper.
     if (AgentMode == EDynamicEQSAgentMode::Inference)
     {
-        InferencePolicyObject = GetPolicyForStrategy(CommandedStrategy);
+        InferencePolicyObject = GetPolicyForClass(CommandedClass);
     }
 
     Super::BeginPlay();
@@ -36,16 +36,16 @@ void UDEScholaAgent::BeginPlay()
         OwnerCharacter->AgentID, *ModeStr);
 }
 
-void UDEScholaAgent::UpdateCommandedStrategy(EDEStrategyType NewStrategy)
+void UDEScholaAgent::UpdateCommandedClass(EDEClassType NewClass)
 {
-    if (CommandedStrategy != NewStrategy)
+    if (CommandedClass != NewClass)
     {
-        CommandedStrategy = NewStrategy;
+        CommandedClass = NewClass;
 
-        // In Inference mode, hot-swap to the model trained for this strategy.
+        // In Inference mode, hot-swap to the model trained for this class.
         if (AgentMode == EDynamicEQSAgentMode::Inference)
         {
-            UObject* NewPolicy = GetPolicyForStrategy(NewStrategy);
+            UObject* NewPolicy = GetPolicyForClass(NewClass);
             if (NewPolicy)
             {
                 SwapInferencePolicy(NewPolicy);
@@ -53,25 +53,25 @@ void UDEScholaAgent::UpdateCommandedStrategy(EDEStrategyType NewStrategy)
             else
             {
                 UE_LOG(LogTemp, Warning,
-                    TEXT("[DEScholaAgent] No policy assigned for strategy %s — inference unchanged."),
-                    *UEnum::GetValueAsString(NewStrategy));
+                    TEXT("[DEScholaAgent] No policy assigned for class %s — inference unchanged."),
+                    *UEnum::GetValueAsString(NewClass));
             }
         }
 
         ADEAgent* OwnerCharacter = Cast<ADEAgent>(GetOwner());
         if (OwnerCharacter)
         {
-            UE_LOG(LogTemp, Verbose, TEXT("[DEScholaAgent] Agent %d strategy → %s"),
+            UE_LOG(LogTemp, Verbose, TEXT("[DEScholaAgent] Agent %d class → %s"),
                 OwnerCharacter->AgentID,
-                *UEnum::GetValueAsString(NewStrategy));
+                *UEnum::GetValueAsString(NewClass));
         }
     }
 }
 
 void UDEScholaAgent::ResetAgent()
 {
-    // Strategy will be reassigned by DESquadManager at episode start.
-    // Do not force Assault here — let UpdateCommandedStrategy handle the swap.
+    // Class will be reassigned by DESquadManager at episode start.
+    // Do not force Strike here — let UpdateCommandedClass handle the swap.
     ADEAgent* OwnerCharacter = Cast<ADEAgent>(GetOwner());
     if (OwnerCharacter)
     {
@@ -79,13 +79,13 @@ void UDEScholaAgent::ResetAgent()
     }
 }
 
-UObject* UDEScholaAgent::GetPolicyForStrategy(EDEStrategyType Strategy) const
+UObject* UDEScholaAgent::GetPolicyForClass(EDEClassType Class) const
 {
-    switch (Strategy)
+    switch (Class)
     {
-    case EDEStrategyType::Assault: return AssaultPolicyObject.Get();
-    case EDEStrategyType::Defend:  return DefendPolicyObject.Get();
-    case EDEStrategyType::Support: return SupportPolicyObject.Get();
-    default:                       return AssaultPolicyObject.Get();
+    case EDEClassType::Strike: return StrikePolicyObject.Get();
+    case EDEClassType::Vanguard:  return VanguardPolicyObject.Get();
+    case EDEClassType::Support: return SupportPolicyObject.Get();
+    default:                       return StrikePolicyObject.Get();
     }
 }

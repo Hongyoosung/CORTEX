@@ -65,8 +65,8 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Build Network Input"), STAT_RLBuildInput, ST
 /** RL: Forward pass through network */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Forward Pass"), STAT_RLForwardPass, STATGROUP_AI, );
 
-/** RL: Sample strategy from logits */
-DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Sample Strategy"), STAT_RLSampleStrategy, STATGROUP_AI, );
+/** RL: Sample class from logits */
+DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Sample Class"), STAT_RLSampleClass, STATGROUP_AI, );
 
 /** RL: Get state value (for MCTS leaf evaluation) */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("RL: Get State Value"), STAT_RLGetStateValue, STATGROUP_AI, );
@@ -119,11 +119,11 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Team Leader: Coordination"), STAT_TeamLeaderCoor
 /** Team Leader: Broadcast assignments to followers */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Team Leader: Broadcast Assignments"), STAT_TeamLeaderBroadcast, STATGROUP_AI, );
 
-/** Follower: Update strategy (event-driven, v6.0) */
-DECLARE_CYCLE_STAT_EXTERN(TEXT("Follower: Update Strategy"), STAT_FollowerUpdateStrategy, STATGROUP_AI, );
+/** Follower: Update class (event-driven, v6.0) */
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Follower: Update Class"), STAT_FollowerUpdateClass, STATGROUP_AI, );
 
-/** Follower: Execute current strategy */
-DECLARE_CYCLE_STAT_EXTERN(TEXT("Follower: Execute Strategy"), STAT_FollowerExecuteStrategy, STATGROUP_AI, );
+/** Follower: Execute current class */
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Follower: Execute Class"), STAT_FollowerExecuteClass, STATGROUP_AI, );
 
 // ========================================
 // Reward Calculation Performance Stats
@@ -135,8 +135,8 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Calculate"), STAT_RewardCalculate, STATG
 /** Reward: Mission progress reward (v6.0) */
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Mission Progress"), STAT_RewardMissionProgress, STATGROUP_AI, );
 
-/** Reward: Strategy-specific reward */
-DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Strategy Reward"), STAT_RewardStrategy, STATGROUP_AI, );
+/** Reward: Class-specific reward */
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Reward: Class Reward"), STAT_RewardClass, STATGROUP_AI, );
 
 // ========================================
 // Memory Tracking Stats

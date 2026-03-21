@@ -2,8 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
-#include "Types/DEStrategyTypes.h"
-#include "Data/DEStrategyData.h"
+#include "Types/DEClassTypes.h"
+#include "Data/DEClassData.h"
 #include "GameFramework/Character.h"
 #include "DETeamData.generated.h"
 
@@ -12,18 +12,18 @@
  * UDETeamData - Team-Level Configuration Data Asset
  *
  * Purpose:
- * Centralizes team identity, fallback visuals, and per-strategy role data.
- * Per-strategy configuration (mesh/anim/stats) lives in UDEStrategyData assets
- * referenced here, making each strategy independently browsable and reusable.
+ * Centralizes team identity, fallback visuals, and per-class role data.
+ * Per-class configuration (mesh/anim/stats) lives in UDEClassData assets
+ * referenced here, making each class independently browsable and reusable.
  *
  * Usage:
  * 1. Create Asset: Right-click → Miscellaneous → Data Asset → DETeamData
  * 2. Set team identity (name, color, default character class, fallback mesh/anim).
- * 3. Assign a UDEStrategyData asset to each strategy slot.
+ * 3. Assign a UDEClassData asset to each class slot.
  * 4. Assign to DEMatchManager::TeamConfigs.
  *
  * Fallback Chain (per field):
- *   UDEStrategyData field (non-zero/non-null)
+ *   UDEClassData field (non-zero/non-null)
  *     → UDETeamData team-level field
  *       → Blueprint / AbilityData default
  */
@@ -38,8 +38,8 @@ public:
 	//========================================
 
 	/**
-	 * Default character class to spawn when the assigned strategy's
-	 * UDEStrategyData::CharacterClass is null.
+	 * Default character class to spawn when the assigned class's
+	 * UDEClassData::CharacterClass is null.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Agent")
 	TSubclassOf<ACharacter> CharacterClass;
@@ -57,52 +57,52 @@ public:
 	// Visual Appearance (Team-Level Fallbacks)
 	//========================================
 
-	/** Fallback skeletal mesh when a strategy's UDEStrategyData::SkeletalMesh is null */
+	/** Fallback skeletal mesh when a class's UDEClassData::SkeletalMesh is null */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual Appearance")
 	TObjectPtr<USkeletalMesh> SkeletalMesh = nullptr;
 
-	/** Fallback animation Blueprint when a strategy's UDEStrategyData::AnimationBlueprint is null */
+	/** Fallback animation Blueprint when a class's UDEClassData::AnimationBlueprint is null */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual Appearance")
 	TSubclassOf<UAnimInstance> AnimationBlueprint = nullptr;
 
 
 	//========================================
-	// Per-Strategy Data Assets
+	// Per-Class Data Assets
 	//========================================
 
-	/** Configuration applied when an agent is assigned the Assault strategy. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy Data")
-	TObjectPtr<UDEStrategyData> AssaultData;
+	/** Configuration applied when an agent is assigned the Strike class. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Data")
+	TObjectPtr<UDEClassData> StrikeData;
 
-	/** Configuration applied when an agent is assigned the Defend strategy. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy Data")
-	TObjectPtr<UDEStrategyData> DefendData;
+	/** Configuration applied when an agent is assigned the Vanguard class. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Data")
+	TObjectPtr<UDEClassData> VanguardData;
 
-	/** Configuration applied when an agent is assigned the Support strategy. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strategy Data")
-	TObjectPtr<UDEStrategyData> SupportData;
+	/** Configuration applied when an agent is assigned the Support class. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Class Data")
+	TObjectPtr<UDEClassData> SupportData;
 
 	/**
-	 * Returns the UDEStrategyData for the given strategy type, or null if unset.
+	 * Returns the UDEClassData for the given class type, or null if unset.
 	 * Callers should apply team-level fallbacks for any null field on the returned asset.
 	 */
-	UDEStrategyData* GetStrategyData(EDEStrategyType Strategy) const
+	UDEClassData* GetClassData(EDEClassType Class) const
 	{
-		switch (Strategy)
+		switch (Class)
 		{
-		case EDEStrategyType::Defend:  return DefendData.Get();
-		case EDEStrategyType::Support: return SupportData.Get();
-		default:                       return AssaultData.Get();
+		case EDEClassType::Vanguard:  return VanguardData.Get();
+		case EDEClassType::Support: return SupportData.Get();
+		default:                       return StrikeData.Get();
 		}
 	}
 
 	/**
-	 * Resolve the character class to spawn for the given strategy.
-	 * Returns the strategy-specific class if set; falls back to the team-level default.
+	 * Resolve the character class to spawn for the given class.
+	 * Returns the class-specific class if set; falls back to the team-level default.
 	 */
-	TSubclassOf<ACharacter> ResolveCharacterClass(EDEStrategyType Strategy) const
+	TSubclassOf<ACharacter> ResolveCharacterClass(EDEClassType Class) const
 	{
-		if (UDEStrategyData* SD = GetStrategyData(Strategy))
+		if (UDEClassData* SD = GetClassData(Class))
 		{
 			if (SD->CharacterClass) { return SD->CharacterClass; }
 		}

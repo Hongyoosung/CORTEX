@@ -3,17 +3,25 @@ import re
 
 def bulk_replace_keywords():
     # 1. 변환 매핑 정의 (Old -> New)
+    # 이제 부분 일치로 작동하므로 가장 구체적인 단어부터 적을 필요 없이 
+    # 공통되는 키워드 위주로 정리하면 됩니다.
     replacements = {
-        'GAMEAI_PROJECT_API' : 'DE_API'
+        'Assault': 'Strike',
+        'Defend': 'Vanguard',
+        'assault' : 'strike',
+        'defend' : 'vanguard',
+        'Strategy' : 'Class',
+        'strategy' : 'class',
+        'Strategies' : 'Classes',
+        'strategies' : 'classes'
     }
 
     # 2. 대상 디렉토리 및 확장자 설정
     target_dirs = ['public', 'private']
     target_extensions = ('.h', '.cpp')
 
-    # 컴파일된 정규식 패턴 생성 (단어 경계 \b 사용)
-    # 예: 'UTeamData'는 찾지만 'UTeamDataHelper'는 건드리지 않음
-    patterns = {re.compile(rf'\b{old}\b'): new for old, new in replacements.items()}
+    # \b (단어 경계)를 제거하여 'AssaultHelper' 내의 'Assault'도 찾도록 설정
+    patterns = {re.compile(old): new for old, new in replacements.items()}
 
     files_processed = 0
     changes_made = 0
@@ -28,24 +36,31 @@ def bulk_replace_keywords():
                 if file.endswith(target_extensions):
                     file_path = os.path.join(root, file)
                     
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
+                    try:
+                        # 파일 읽기
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
 
-                    new_content = content
-                    file_changed = False
+                        new_content = content
+                        file_changed = False
 
-                    for pattern, replacement in patterns.items():
-                        if pattern.search(new_content):
-                            new_content = pattern.sub(replacement, new_content)
-                            file_changed = True
+                        # 패턴 매칭 및 교체
+                        for pattern, replacement in patterns.items():
+                            if pattern.search(new_content):
+                                # pattern.sub를 사용하여 해당 키워드가 포함된 모든 곳을 교체
+                                new_content = pattern.sub(replacement, new_content)
+                                file_changed = True
 
-                    if file_changed:
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.write(new_content)
-                        print(f"✅ 변환 완료: {file_path}")
-                        changes_made += 1
-                    
-                    files_processed += 1
+                        # 변경 사항이 있을 때만 파일 쓰기
+                        if file_changed:
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                f.write(new_content)
+                            print(f"✅ 변환 완료: {file_path}")
+                            changes_made += 1
+                        
+                        files_processed += 1
+                    except Exception as e:
+                        print(f"❌ 에러 발생 ({file_path}): {e}")
 
     print("-" * 30)
     print(f"📊 작업 통계:")

@@ -12,7 +12,7 @@ class ADEAgent;
  * BTTask_DEHealAbility - BT Task that delegates healing to UHealAbility.
  *
  * Calls HealAbility->ExecuteAbility() (self-selecting target internally).
- * Runs indefinitely while strategy=Support; BT decorator aborts on strategy change.
+ * Runs indefinitely while class=Support; BT decorator aborts on class change.
  *
  * ExecuteTask → InProgress
  * TickTask    → calls HealAbility->ExecuteAbility(DeltaSeconds)

@@ -83,8 +83,8 @@ void ADESpectatorController::OnCameraKeyPressed()
 
 	if (AllAgents.IsEmpty()) return;
 
-	// Immediately switch to the next agent in strategy order (Assault → Defend → Support)
-	SwitchToNextStrategyAgent();
+	// Immediately switch to the next agent in class order (Strike → Vanguard → Support)
+	SwitchToNextClassAgent();
 
 	// Start hold-detection timer — if still held after HoldThreshold, begin cycling
 	GetWorldTimerManager().SetTimer(
@@ -192,21 +192,21 @@ void ADESpectatorController::CollectAgents()
 	}
 }
 
-void ADESpectatorController::SwitchToNextStrategyAgent()
+void ADESpectatorController::SwitchToNextClassAgent()
 {
 	if (AllAgents.IsEmpty()) return;
 
-	// Search all agents (both teams) for the first alive agent matching the current strategy phase.
+	// Search all agents (both teams) for the first alive agent matching the current class phase.
 	// Cycles through all three phases before giving up.
 	ADEAgent* Found = nullptr;
 	for (int32 i = 0; i < 3 && !Found; ++i)
 	{
-		const EDEStrategyType TargetStrategy = StrategyOrder[CurrentStrategyPhase];
-		CurrentStrategyPhase = (CurrentStrategyPhase + 1) % 3;
+		const EDEClassType TargetClass = ClassOrder[CurrentClassPhase];
+		CurrentClassPhase = (CurrentClassPhase + 1) % 3;
 
 		for (ADEAgent* Agent : AllAgents)
 		{
-			if (IsValid(Agent) && Agent->IsAlive() && Agent->GetCommandedStrategy() == TargetStrategy)
+			if (IsValid(Agent) && Agent->IsAlive() && Agent->GetCommandedClass() == TargetClass)
 			{
 				Found = Agent;
 				break;
@@ -317,7 +317,7 @@ void ADESpectatorController::DisableCamera()
 
 	CurrentTarget        = nullptr;
 	CurrentAgentIndex    = -1;
-	CurrentStrategyPhase = 0;
+	CurrentClassPhase = 0;
 	bCameraActive        = false;
 	bIsCycling         = false;
 

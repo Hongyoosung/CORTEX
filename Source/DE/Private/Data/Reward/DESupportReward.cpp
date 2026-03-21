@@ -60,7 +60,7 @@ float DEComputeSupportStepReward(
 		for (ADEAgent* Ally : AllyChars)
 		{
 			if (Ally && Ally != Agent && Ally->IsAlive() &&
-				Ally->GetCommandedStrategy() != EDEStrategyType::Support)
+				Ally->GetCommandedClass() != EDEClassType::Support)
 			{ bAnyNonSupportAlive = true; break; }
 		}
 
@@ -73,7 +73,7 @@ float DEComputeSupportStepReward(
 			const float AllyHP = Current.AllyHealths[i];
 			if (AllyHP <= 0.0f) continue;
 			if (bAnyNonSupportAlive && i < AllyChars.Num() && AllyChars[i] &&
-				AllyChars[i]->GetCommandedStrategy() == EDEStrategyType::Support)
+				AllyChars[i]->GetCommandedClass() == EDEClassType::Support)
 				continue;
 
 			// Primary: most accumulated recent damage

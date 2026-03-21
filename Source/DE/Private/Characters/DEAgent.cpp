@@ -2,7 +2,7 @@
 
 #include "Characters/DEAgent.h"
 #include "Data/DETeamData.h"
-#include "Data/DEStrategyData.h"
+#include "Data/DEClassData.h"
 #include "GAS/DEAttributeSet.h"
 #include "GAS/DEGameplayTags.h"
 #include "GAS/Abilities/DEGA_Attack.h"
@@ -46,7 +46,7 @@ ADEAgent::ADEAgent()
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 	EQSExecutor =	CreateDefaultSubobject<UDynamicEQSExecutor>(TEXT("EQSExecutor"));
 
-	// Overhead strategy + health widget (screen space)
+	// Overhead class + health widget (screen space)
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadWidget"));
 	OverheadWidgetComponent->SetupAttachment(GetCapsuleComponent());
 	OverheadWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 120.0f));
@@ -686,26 +686,26 @@ void ADEAgent::PerformTacticalAction()
 // Command Interface
 //========================================
 
-void ADEAgent::SetCommandedStrategy(EDEStrategyType NewStrategy)
+void ADEAgent::SetCommandedClass(EDEClassType NewClass)
 {
-	if (ScholaAgent && ScholaAgent->GetCommandedStrategy() != NewStrategy)
+	if (ScholaAgent && ScholaAgent->GetCommandedClass() != NewClass)
 	{
-		ScholaAgent->UpdateCommandedStrategy(NewStrategy);
+		ScholaAgent->UpdateCommandedClass(NewClass);
 	}
 
-	ApplyStrategyAppearance(NewStrategy);
+	ApplyClassAppearance(NewClass);
 }
 
-void ADEAgent::ApplyStrategyAppearance(EDEStrategyType Strategy)
+void ADEAgent::ApplyClassAppearance(EDEClassType Class)
 {
 	if (!TeamData) { return; }
 
-	const UDEStrategyData* SD = TeamData->GetStrategyData(Strategy);
+	const UDEClassData* SD = TeamData->GetClassData(Class);
 
 	// ── Mesh & Animation Blueprint ──────────────────────────────────────────
 	if (USkeletalMeshComponent* InMesh = GetMesh())
 	{
-		// Strategy asset takes priority; fall back to team-level default.
+		// Class asset takes priority; fall back to team-level default.
 		USkeletalMesh* NewMesh = (SD && SD->SkeletalMesh)
 			? SD->SkeletalMesh.Get()
 			: TeamData->SkeletalMesh.Get();
@@ -742,13 +742,13 @@ void ADEAgent::ApplyStrategyAppearance(EDEStrategyType Strategy)
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponent())
 		{
 			ASC->SetNumericAttributeBase(UDEAttributeSet::GetMaxHealthAttribute(), SD->MaxHealth);
-			// Set current health to the new max (strategy appearance is applied at spawn/assignment time).
+			// Set current health to the new max (class appearance is applied at spawn/assignment time).
 			ASC->SetNumericAttributeBase(UDEAttributeSet::GetHealthAttribute(), SD->MaxHealth);
 		}
 	}
 
 	// ── Ability Config Override ──────────────────────────────────────────────
-	// If the strategy has its own AbilityData, use it in place of the character's base data.
+	// If the class has its own AbilityData, use it in place of the character's base data.
 	const UDEAbilityData* EffectiveAbilityData = SD->AbilityDataOverride
 		? SD->AbilityDataOverride.Get()
 		: AbilityData.Get();
@@ -766,22 +766,22 @@ void ADEAgent::ApplyStrategyAppearance(EDEStrategyType Strategy)
 	}
 }
 
-EDEStrategyType ADEAgent::GetCommandedStrategy() const
+EDEClassType ADEAgent::GetCommandedClass() const
 {
 	if (!ScholaAgent)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[DEAgent] Schola Agent has null"));
 
-		return EDEStrategyType::Assault;
+		return EDEClassType::Strike;
 	}
 
-	return ScholaAgent->GetCommandedStrategy();
+	return ScholaAgent->GetCommandedClass();
 }
 
-UDEStrategyData* ADEAgent::GetCurrentStrategyData() const
+UDEClassData* ADEAgent::GetCurrentClassData() const
 {
 	if (!TeamData) return nullptr;
-	return TeamData->GetStrategyData(GetCommandedStrategy());
+	return TeamData->GetClassData(GetCommandedClass());
 }
 
 FString ADEAgent::GetTeamName() const
@@ -802,7 +802,7 @@ FLinearColor ADEAgent::GetTeamColor() const
 //========================================
 
 float ADEAgent::ComputeStepReward(
-	EDEStrategyType Strategy,
+	EDEClassType Class,
 	const FDEAgentSnapshot& Prev,
 	const FDEAgentSnapshot& Current,
 	const FDEEQSWeightParameters& Action)
@@ -811,7 +811,7 @@ float ADEAgent::ComputeStepReward(
 	{
 		if ((RewardSubsystem = MM->GetRewardCalculator()))
 		{
-			return RewardSubsystem->ComputeStepReward(this, RewardState, Strategy, Prev, Current, Action);
+			return RewardSubsystem->ComputeStepReward(this, RewardState, Class, Prev, Current, Action);
 		}
 	}
 
@@ -828,8 +828,8 @@ void ADEAgent::ProcessTrainingAbilities()
 	AttackTag.AddTag(DEGameplayTags::Ability_Attack);
 	AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
 
-	// Activate heal ability only for Support strategy
-	if (ScholaAgent->GetCommandedStrategy() == EDEStrategyType::Support)
+	// Activate heal ability only for Support class
+	if (ScholaAgent->GetCommandedClass() == EDEClassType::Support)
 	{
 		FGameplayTagContainer HealTag;
 		HealTag.AddTag(DEGameplayTags::Ability_Heal);

@@ -7,7 +7,7 @@
 #include "AbilitySystemInterface.h"
 #include "GameplayEffect.h"
 #include "Team/DETeamInterface.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "Types/DEGameStateTypes.h"
 #include "Types/DEEQSTypes.h"
 #include "Types/DEObservationTypes.h"
@@ -36,7 +36,7 @@ class UDERewardSubsystem;
 class UDEScholaAgent;
 class UDynamicEQSExecutor;
 class UDETeamData;
-class UDEStrategyData;
+class UDEClassData;
 struct FDEDeathEventData;
 struct FDETeamInfo;
 
@@ -199,14 +199,14 @@ public:
 	//========================================
 
 	UFUNCTION(BlueprintCallable, Category = "Character|Commands")
-	void SetCommandedStrategy(EDEStrategyType NewStrategy);
+	void SetCommandedClass(EDEClassType NewClass);
 
 	UFUNCTION(BlueprintPure, Category = "Character|Commands")
-	EDEStrategyType GetCommandedStrategy() const;
+	EDEClassType GetCommandedClass() const;
 
-	/** Returns the UDEStrategyData for the current commanded strategy, or null if unset. */
+	/** Returns the UDEClassData for the current commanded class, or null if unset. */
 	UFUNCTION(BlueprintPure, Category = "Character|Data")
-	UDEStrategyData* GetCurrentStrategyData() const;
+	UDEClassData* GetCurrentClassData() const;
 
 	/** Returns the team display name from TeamData (e.g. "Red Team"). Empty string if TeamData is unset. */
 	UFUNCTION(BlueprintPure, Category = "Character|Team")
@@ -218,20 +218,20 @@ public:
 
 	/**
 	 * Apply the mesh, animation blueprint, and stat overrides from TeamData
-	 * that correspond to the given strategy.  Falls back to team-level defaults
+	 * that correspond to the given class.  Falls back to team-level defaults
 	 * for any field left unset in the override struct.
-	 * Called automatically by SetCommandedStrategy; can also be called directly
+	 * Called automatically by SetCommandedClass; can also be called directly
 	 * (e.g. after manually setting TeamData at spawn time).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Character|Appearance")
-	void ApplyStrategyAppearance(EDEStrategyType Strategy);
+	void ApplyClassAppearance(EDEClassType Class);
 
 
 	//========================================
 	// Reward Interface (forwarding to RewardCalculator)
 	//========================================
 
-	float ComputeStepReward(EDEStrategyType Strategy,
+	float ComputeStepReward(EDEClassType Class,
 		const FDEAgentSnapshot& Prev,
 		const FDEAgentSnapshot& Current,
 		const FDEEQSWeightParameters& Action);
@@ -348,7 +348,7 @@ public:
 
 	/**
 	 * Team appearance data asset assigned by DEMatchManager at spawn time.
-	 * Used by ApplyStrategyAppearance() to look up per-strategy mesh/anim/stat overrides.
+	 * Used by ApplyClassAppearance() to look up per-class mesh/anim/stat overrides.
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "AI|Identity")
 	TObjectPtr<UDETeamData> TeamData;

@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Core/Subsystems/DERewardSubsystem.h"
-#include "Data/Reward/DEAssaultReward.h"
-#include "Data/Reward/DEDefendReward.h"
+#include "Data/Reward/DEStrikeReward.h"
+#include "Data/Reward/DEVanguardReward.h"
 #include "Data/Reward/DESupportReward.h"
 #include "Data/Reward/DERewardData.h"
 #include "Characters/DEAgent.h"
@@ -16,7 +16,7 @@
 
 float UDERewardSubsystem::CalculateStepReward(const FDynamicEQSStepContext& Context)
 {
-	// Full per-step reward requires game context (character, snapshot, strategy).
+	// Full per-step reward requires game context (character, snapshot, class).
 	// Use ComputeStepReward() directly. This override satisfies the base class contract.
 	return 0.0f;
 }
@@ -40,13 +40,13 @@ const UDERewardData* UDERewardSubsystem::GetSettings() const
 	return Cast<UDERewardData>(RewardData);
 }
 
-float UDERewardSubsystem::GetStrategyScale(EDEStrategyType Strategy, float AssaultScale, float DefendScale, float SupportScale) const
+float UDERewardSubsystem::GetClassScale(EDEClassType Class, float StrikeScale, float VanguardScale, float SupportScale) const
 {
-	switch (Strategy)
+	switch (Class)
 	{
-	case EDEStrategyType::Assault: return AssaultScale;
-	case EDEStrategyType::Defend:  return DefendScale;
-	case EDEStrategyType::Support: return SupportScale;
+	case EDEClassType::Strike: return StrikeScale;
+	case EDEClassType::Vanguard:  return VanguardScale;
+	case EDEClassType::Support: return SupportScale;
 	default:                       return 1.0f;
 	}
 }
@@ -63,85 +63,85 @@ float UDERewardSubsystem::DrainSparseReward(FDERewardState& InOutState, int32 Ag
 
 // ==================== Event-Driven Sparse Rewards ====================
 
-float UDERewardSubsystem::CalculateKillReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
+float UDERewardSubsystem::CalculateKillReward(FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
 	InOutState.bSparseKillFiredThisStep = true;
-	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.KillRewardScale, Settings->DefendReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Kill, ActiveStrategy, Settings->KillReward * Scale, AgentID);
+	float Scale = GetClassScale(ActiveClass, Settings->StrikeReward.KillRewardScale, Settings->VanguardReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Kill, ActiveClass, Settings->KillReward * Scale, AgentID);
 }
 
-float UDERewardSubsystem::CalculateAssistReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DamageDealt, int32 AgentID)
+float UDERewardSubsystem::CalculateAssistReward(FDERewardState& InOutState, EDEClassType ActiveClass, float DamageDealt, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
 	float DamageNorm = FMath::Clamp(DamageDealt / 100.0f, 0.0f, 1.0f);
-	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.KillRewardScale, Settings->DefendReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Assist, ActiveStrategy, Settings->KillReward * Settings->AssistRewardScale * DamageNorm * Scale, AgentID);
+	float Scale = GetClassScale(ActiveClass, Settings->StrikeReward.KillRewardScale, Settings->VanguardReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Assist, ActiveClass, Settings->KillReward * Settings->AssistRewardScale * DamageNorm * Scale, AgentID);
 }
 
-float UDERewardSubsystem::CalculateDeathPenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
+float UDERewardSubsystem::CalculateDeathPenalty(FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.DeathScale, Settings->DefendReward.DeathScale, Settings->SupportReward.DeathScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Death, ActiveStrategy, -Settings->DeathPenaltyReward * Scale, AgentID);
+	float Scale = GetClassScale(ActiveClass, Settings->StrikeReward.DeathScale, Settings->VanguardReward.DeathScale, Settings->SupportReward.DeathScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Death, ActiveClass, -Settings->DeathPenaltyReward * Scale, AgentID);
 }
 
-float UDERewardSubsystem::CalculateTeamWipePenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
+float UDERewardSubsystem::CalculateTeamWipePenalty(FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.DeathScale, Settings->DefendReward.DeathScale, Settings->SupportReward.DeathScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveStrategy, -Settings->TeamWipePenalty * Scale, AgentID);
+	float Scale = GetClassScale(ActiveClass, Settings->StrikeReward.DeathScale, Settings->VanguardReward.DeathScale, Settings->SupportReward.DeathScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveClass, -Settings->TeamWipePenalty * Scale, AgentID);
 }
 
-float UDERewardSubsystem::CalculateTeamWipeBonus(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
+float UDERewardSubsystem::CalculateTeamWipeBonus(FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
-	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveStrategy, Settings->TeamWipeBonus, AgentID);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::TeamWipe, ActiveClass, Settings->TeamWipeBonus, AgentID);
 }
 
-float UDERewardSubsystem::CalculateCaptureReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
+float UDERewardSubsystem::CalculateCaptureReward(FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.CaptureRewardScale, Settings->DefendReward.CaptureRewardScale, Settings->SupportReward.CaptureRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::DECapturePoint, ActiveStrategy, Settings->CaptureReward * Scale, AgentID);
+	float Scale = GetClassScale(ActiveClass, Settings->StrikeReward.CaptureRewardScale, Settings->VanguardReward.CaptureRewardScale, Settings->SupportReward.CaptureRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::DECapturePoint, ActiveClass, Settings->CaptureReward * Scale, AgentID);
 }
 
-float UDERewardSubsystem::CalculateLosePointPenalty(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, int32 AgentID)
+float UDERewardSubsystem::CalculateLosePointPenalty(FDERewardState& InOutState, EDEClassType ActiveClass, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
-	float Scale = GetStrategyScale(ActiveStrategy, Settings->AssaultReward.LossCaptureRewardScale, Settings->DefendReward.LossCaptureRewardScale, Settings->SupportReward.LossCaptureRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::LosePoint, ActiveStrategy, Settings->LossCaptureReward * Scale, AgentID);
+	float Scale = GetClassScale(ActiveClass, Settings->StrikeReward.LossCaptureRewardScale, Settings->VanguardReward.LossCaptureRewardScale, Settings->SupportReward.LossCaptureRewardScale);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::LosePoint, ActiveClass, Settings->LossCaptureReward * Scale, AgentID);
 }
 
-float UDERewardSubsystem::CalculateSurvivalReward(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float CurrentHP, float MaxHP, int32 AgentID)
+float UDERewardSubsystem::CalculateSurvivalReward(FDERewardState& InOutState, EDEClassType ActiveClass, float CurrentHP, float MaxHP, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings || MaxHP <= 0.0f) return 0.0f;
 	if (CurrentHP / MaxHP < Settings->SurvivalHPThreshold) return 0.0f;
-	const float Scale = GetStrategyScale(ActiveStrategy,
-		Settings->AssaultReward.SurvivalRewardScale,
-		Settings->DefendReward.SurvivalRewardScale,
+	const float Scale = GetClassScale(ActiveClass,
+		Settings->StrikeReward.SurvivalRewardScale,
+		Settings->VanguardReward.SurvivalRewardScale,
 		Settings->SupportReward.SurvivalRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Survival, ActiveStrategy, Settings->SurvivalBonus * Scale, AgentID);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Survival, ActiveClass, Settings->SurvivalBonus * Scale, AgentID);
 }
 
-float UDERewardSubsystem::CalculateDistanceShaping(FDERewardState& InOutState, EDEStrategyType ActiveStrategy, float DistanceToTarget, int32 AgentID)
+float UDERewardSubsystem::CalculateDistanceShaping(FDERewardState& InOutState, EDEClassType ActiveClass, float DistanceToTarget, int32 AgentID)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings) return 0.0f;
-	const float Scale = GetStrategyScale(ActiveStrategy,
-		Settings->AssaultReward.PenaltyPerMeterScale,
-		Settings->DefendReward.PenaltyPerMeterScale,
+	const float Scale = GetClassScale(ActiveClass,
+		Settings->StrikeReward.PenaltyPerMeterScale,
+		Settings->VanguardReward.PenaltyPerMeterScale,
 		Settings->SupportReward.PenaltyPerMeterScale);
 	const float Reward = Settings->PenaltyPerMeter * Scale * (DistanceToTarget / 100.0f);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::DistanceShaping, ActiveStrategy, Reward, AgentID);
+	return ApplyAndLogReward(InOutState, EDERewardEventType::DistanceShaping, ActiveClass, Reward, AgentID);
 }
 
 
@@ -151,7 +151,7 @@ float UDERewardSubsystem::CalculateDistanceShaping(FDERewardState& InOutState, E
 float UDERewardSubsystem::ComputeStepReward(
 	ADEAgent* Agent,
 	FDERewardState& InOutState,
-	EDEStrategyType Strategy,
+	EDEClassType Class,
 	const FDEAgentSnapshot& Prev,
 	const FDEAgentSnapshot& Current,
 	const FDEEQSWeightParameters& Action)
@@ -198,21 +198,21 @@ float UDERewardSubsystem::ComputeStepReward(
 		InOutState.IsolatedConsecutiveSteps = 0;
 	const bool bIsolated = (InOutState.IsolatedConsecutiveSteps >= Settings->IsolationDebounceSteps);
 
-	// ---- Dispatch per-strategy step reward ----
+	// ---- Dispatch per-class step reward ----
 	float Reward = 0.0f;
-	switch (Strategy)
+	switch (Class)
 	{
-	case EDEStrategyType::Assault:
-		Reward = DEComputeAssaultStepReward(Agent, InOutState, Prev, Current, EnvCapturePoints, Settings,
+	case EDEClassType::Strike:
+		Reward = DEComputeStrikeStepReward(Agent, InOutState, Prev, Current, EnvCapturePoints, Settings,
 			CaptureRadiusSq, PositionChange, bIsRespawnStep, bIsolated, MyTeamID);
 		break;
 
-	case EDEStrategyType::Defend:
-		Reward = DEComputeDefendStepReward(Agent, InOutState, Prev, Current, EnvCapturePoints, Settings,
+	case EDEClassType::Vanguard:
+		Reward = DEComputeVanguardStepReward(Agent, InOutState, Prev, Current, EnvCapturePoints, Settings,
 			CaptureRadiusSq, PositionChange, bIsRespawnStep, bIsolated, MyTeamID);
 		break;
 
-	case EDEStrategyType::Support:
+	case EDEClassType::Support:
 		Reward = DEComputeSupportStepReward(Agent, InOutState, Prev, Current, EnvCapturePoints, Settings,
 			CaptureRadiusSq, PositionChange, bIsRespawnStep, bIsolated, MyTeamID);
 		break;
@@ -220,11 +220,11 @@ float UDERewardSubsystem::ComputeStepReward(
 
 	// ---- Common: Survival reward ----
 	if (!bIsRespawnStep && Current.bIsAlive)
-		CalculateSurvivalReward(InOutState, Strategy, Current.Health, 1.0f, Agent->AgentID);
+		CalculateSurvivalReward(InOutState, Class, Current.Health, 1.0f, Agent->AgentID);
 
-	// ---- Assault-only: close-range kill tracking (for sparse reward scaling) ----
-	// Defend (melee) intentionally has no penalty for being close.
-	if (!bIsRespawnStep && Strategy == EDEStrategyType::Assault && Settings->CloseRangeKillThreshold > 0.0f)
+	// ---- Strike-only: close-range kill tracking (for sparse reward scaling) ----
+	// Vanguard (melee) intentionally has no penalty for being close.
+	if (!bIsRespawnStep && Class == EDEClassType::Strike && Settings->CloseRangeKillThreshold > 0.0f)
 	{
 		const float KillRangeSq = FMath::Square(Settings->CloseRangeKillThreshold);
 		for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
@@ -253,24 +253,24 @@ float UDERewardSubsystem::ComputeStepReward(
 			else                       NeutralBases++;
 		}
 		const float NetControl = static_cast<float>(FriendlyBases - EnemyBases) - NeutralBases * 0.5f;
-		const float ZoneControlScale = GetStrategyScale(Strategy,
-			Settings->ZoneControlAssaultScale, Settings->ZoneControlDefendScale, Settings->ZoneControlSupportScale);
+		const float ZoneControlScale = GetClassScale(Class,
+			Settings->ZoneControlStrikeScale, Settings->ZoneControlVanguardScale, Settings->ZoneControlSupportScale);
 		Reward += Settings->ZoneControlRewardPerBase * ZoneControlScale * NetControl;
 	}
 
 	// ---- Cooperative base occupation shaping ----
-	Reward += ComputeBaseCooperationReward(Agent, InOutState, Strategy);
+	Reward += ComputeBaseCooperationReward(Agent, InOutState, Class);
 
 	// ---- Step (time) penalty ----
-	const float EffectiveStepPenalty = (Strategy == EDEStrategyType::Assault)
-		? Settings->AssaultReward.TimePenalty
+	const float EffectiveStepPenalty = (Class == EDEClassType::Strike)
+		? Settings->StrikeReward.TimePenalty
 		: -Settings->StepPenalty;
 	Reward -= EffectiveStepPenalty;
 
 	// ---- Drain and scale sparse rewards ----
 	float DrainedSparse = DrainSparseReward(InOutState, Agent->AgentID);
-	// For Assault only: penalise kills made at melee range (ranged DPS should stay back)
-	if (Strategy == EDEStrategyType::Assault &&
+	// For Strike only: penalise kills made at melee range (ranged DPS should stay back)
+	if (Class == EDEClassType::Strike &&
 		InOutState.bWasTooCloseAtKill && InOutState.bSparseKillFiredThisStep)
 	{
 		DrainedSparse *= Settings->CloseRangeKillPenaltyScale;
@@ -312,7 +312,7 @@ float UDERewardSubsystem::ComputeStepReward(
 	return Reward;
 }
 
-float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewardState& InOutState, EDEStrategyType Strategy)
+float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewardState& InOutState, EDEClassType Class)
 {
 	const UDERewardData* Settings = GetSettings();
 	if (!Settings || !Agent) return 0.0f;
@@ -329,42 +329,6 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewar
 	const float RadiusSq = Radius * Radius;
 
 	TArray<ADEAgent*> Teammates = MatchMgr->GetTeamAgents(MyTeamID);
-	TArray<ADEAgent*> Enemies   = MatchMgr->GetEnemyAgents(MyTeamID);
-
-	// ---- Identify frontline bases (closest friendly bases to any hostile base) ----
-	TArray<ADECapturePoint*> FriendlyBases;
-	TArray<ADECapturePoint*> HostileBases;
-	for (ADECapturePoint* CP : CPs)
-	{
-		if (!CP) continue;
-		if (CP->GetTeamID_Implementation() == MyTeamID) FriendlyBases.Add(CP);
-		else HostileBases.Add(CP);
-	}
-
-	TArray<ADECapturePoint*> FrontlineBases;
-	if (HostileBases.Num() > 0 && FriendlyBases.Num() > 0)
-	{
-		float MinDistSqToFront = FLT_MAX;
-		for (ADECapturePoint* FBase : FriendlyBases)
-			for (ADECapturePoint* HBase : HostileBases)
-			{
-				const float DistSq = FVector::DistSquared(FBase->GetActorLocation(), HBase->GetActorLocation());
-				if (DistSq < MinDistSqToFront) MinDistSqToFront = DistSq;
-			}
-
-		const float FrontlineMarginSq = MinDistSqToFront * 1.44f;
-		for (ADECapturePoint* FBase : FriendlyBases)
-			for (ADECapturePoint* HBase : HostileBases)
-				if (FVector::DistSquared(FBase->GetActorLocation(), HBase->GetActorLocation()) <= FrontlineMarginSq)
-				{
-					FrontlineBases.Add(FBase);
-					break;
-				}
-	}
-	else
-	{
-		FrontlineBases = FriendlyBases;
-	}
 
 	// ---- Per-base cooperation reward ----
 	float Reward = 0.0f;
@@ -386,38 +350,18 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewar
 				++AlliesNear;
 		}
 
-		// Count enemies near this base (for contested-base detection)
-		int32 EnemiesNear = 0;
-		for (ADEAgent* Foe : Enemies)
-		{
-			if (!Foe || !Foe->IsAlive()) continue;
-			if (FVector::DistSquared(Foe->GetActorLocation(), CPPos) <= RadiusSq)
-				++EnemiesNear;
-		}
-
 		if (bNearMe)
 		{
 			// Support should never be incentivized toward capture points — skip all base rewards
-			if (Strategy != EDEStrategyType::Support)
+			if (Class != EDEClassType::Support)
 			{
-				// Assault and Defend get BaseOccupationReward when alone in enemy/neutral zone
+				// Strike and Vanguard get BaseOccupationReward when alone in enemy/neutral zone
 				if (Owner != MyTeamID && AlliesNear == 0)
 					Reward += Settings->BaseOccupationReward;
 
-				// Stacking penalty: Assault/Defend should spread across bases
+				// Stacking penalty: Strike/Vanguard should spread across bases
 				if (AlliesNear >= 1)
 					Reward -= Settings->CoOccupationPenalty;
-
-				// Contested-base defense: reward for being near a friendly base that enemies are threatening
-				if (Owner == MyTeamID && EnemiesNear > 0)
-					Reward += Settings->ContestedBaseDefenseReward;
-
-				// Assigned base first-arrival reward
-				if (!InOutState.bHasReachedAssignedBase && Agent->AssignedBaseIndex == i)
-				{
-					InOutState.bHasReachedAssignedBase = true;
-					Reward += Settings->AssignedBaseReachReward;
-				}
 			}
 		}
 	}
@@ -426,7 +370,7 @@ float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewar
 }
 
 
-float UDERewardSubsystem::ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEStrategyType Strategy, float RewardValue, int32 AgentID)
+float UDERewardSubsystem::ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEClassType Class, float RewardValue, int32 AgentID)
 {
 	InOutAgentState.CumulativeReward += RewardValue;
 	return RewardValue;

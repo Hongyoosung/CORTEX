@@ -74,7 +74,7 @@ struct FDEAttackAbilityConfig
 	/**
 	 * Montage played when this unit fires.
 	 * Configurable here so the animation can be set in both Test Mode (via UDEAbilityData)
-	 * and Training Mode (set via UDEStrategyData::AbilityDataOverride).
+	 * and Training Mode (set via UDEClassData::AbilityDataOverride).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
 	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
@@ -123,7 +123,7 @@ struct FDEHealAbilityConfig
 	/**
 	 * Montage played when this unit heals.
 	 * Configurable here so the animation can be set in both Test Mode (via UDEAbilityData)
-	 * and Training Mode (via UDEStrategyData::AbilityDataOverride).
+	 * and Training Mode (via UDEClassData::AbilityDataOverride).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
 	TObjectPtr<UAnimMontage> HealMontage = nullptr;

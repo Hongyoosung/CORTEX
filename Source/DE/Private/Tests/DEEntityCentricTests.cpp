@@ -5,7 +5,7 @@
 // Test suites:
 //   1. FDEObservationV2::ToDict()    — token counts and mask correctness (3v3, 5v5, 3v8)
 //   2. FDEObservationV2::ToFlatArray() — dimension, padding, mask layout
-//   3. AssignBasesToAgents logic     — all agents covered; Defend uniqueness invariant
+//   3. AssignBasesToAgents logic     — all agents covered; Vanguard uniqueness invariant
 //
 // Run via:
 //   Session Frontend → Automation → "CORTEX.EntityCentric"
@@ -250,7 +250,7 @@ bool FDEObsV2SelfTokenValues::RunTest(const FString& Parameters)
 // without instantiating full UE actors. It replicates the greedy assignment
 // logic and verifies:
 //   (a) Every agent receives a valid base index in [0, NumBases)
-//   (b) No two Defend agents are assigned the same base
+//   (b) No two Vanguard agents are assigned the same base
 //
 // To run the true ADEMatchManager path, use the integration test in
 // Suite 5 (requires PIE / Functional Test framework).
@@ -264,12 +264,12 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 {
 	// Simulate three scenarios covering the plan's test cases.
-	// Each scenario defines agent strategies and base positions, then runs
+	// Each scenario defines agent classes and base positions, then runs
 	// a local copy of the greedy algorithm and checks invariants.
 
 	struct FAgentSim
 	{
-		EDEStrategyType Strategy = EDEStrategyType::Assault;
+		EDEClassType Class = EDEClassType::Strike;
 		FVector Position         = FVector::ZeroVector;
 		int32   AssignedBase     = -1;
 	};
@@ -284,31 +284,31 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 	auto RunAssignment = [&](TArray<FAgentSim>& Agents, const TArray<FBaseSim>& Bases,
 	                          int32 TeamID)
 	{
-		TSet<int32> DefendClaimed;
+		TSet<int32> VanguardClaimed;
 
-		// Pass 1: Defend agents — prefer nearest friendly, uniqueness enforced
+		// Pass 1: Vanguard agents — prefer nearest friendly, uniqueness enforced
 		for (FAgentSim& A : Agents)
 		{
-			if (A.Strategy != EDEStrategyType::Defend) continue;
+			if (A.Class != EDEClassType::Vanguard) continue;
 
 			float BestScore = FLT_MAX;
 			int32 BestIdx   = -1;
 
 			for (int32 i = 0; i < Bases.Num(); ++i)
 			{
-				if (DefendClaimed.Contains(i)) continue;
+				if (VanguardClaimed.Contains(i)) continue;
 				const float Dist = FVector::Dist(A.Position, Bases[i].Position);
 				const float Bias = (Bases[i].OwnerID == TeamID) ? 0.0f : 5000.0f;
 				if ((Dist + Bias) < BestScore) { BestScore = Dist + Bias; BestIdx = i; }
 			}
 
-			if (BestIdx >= 0) { DefendClaimed.Add(BestIdx); A.AssignedBase = BestIdx; }
+			if (BestIdx >= 0) { VanguardClaimed.Add(BestIdx); A.AssignedBase = BestIdx; }
 		}
 
-		// Pass 2: Assault / Support
+		// Pass 2: Strike / Support
 		for (FAgentSim& A : Agents)
 		{
-			if (A.Strategy == EDEStrategyType::Defend) continue;
+			if (A.Class == EDEClassType::Vanguard) continue;
 
 			float BestDist = FLT_MAX;
 			int32 BestIdx  = -1;
@@ -316,7 +316,7 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 			for (int32 i = 0; i < Bases.Num(); ++i)
 			{
 				const float Dist = FVector::Dist(A.Position, Bases[i].Position);
-				if (A.Strategy == EDEStrategyType::Assault)
+				if (A.Class == EDEClassType::Strike)
 				{
 					const float Bias = (Bases[i].OwnerID != TeamID) ? 0.0f : 3000.0f;
 					if ((Dist + Bias) < BestDist) { BestDist = Dist + Bias; BestIdx = i; }
@@ -340,11 +340,11 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 		};
 
 		TArray<FAgentSim> Agents = {
-			{ EDEStrategyType::Assault, FVector(100, 100, 0) },
-			{ EDEStrategyType::Assault, FVector(200, 100, 0) },
-			{ EDEStrategyType::Defend,  FVector(2400, 4900, 0) }, // near friendly base
-			{ EDEStrategyType::Defend,  FVector(2600, 4900, 0) },
-			{ EDEStrategyType::Support, FVector(300, 200, 0) },
+			{ EDEClassType::Strike, FVector(100, 100, 0) },
+			{ EDEClassType::Strike, FVector(200, 100, 0) },
+			{ EDEClassType::Vanguard,  FVector(2400, 4900, 0) }, // near friendly base
+			{ EDEClassType::Vanguard,  FVector(2600, 4900, 0) },
+			{ EDEClassType::Support, FVector(300, 200, 0) },
 		};
 
 		RunAssignment(Agents, Bases, 0);
@@ -356,20 +356,20 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 				Agents[i].AssignedBase >= 0 && Agents[i].AssignedBase < 3);
 		}
 
-		// Defend uniqueness
+		// Vanguard uniqueness
 		const int32 D0 = Agents[2].AssignedBase;
 		const int32 D1 = Agents[3].AssignedBase;
-		TestTrue(TEXT("ScenA: Defend agents on different bases"), D0 != D1);
+		TestTrue(TEXT("ScenA: Vanguard agents on different bases"), D0 != D1);
 
-		// Assault agents prefer non-friendly bases (bias 3000 pushed them away from base 2)
-		// Both assault agents are near origin → nearest non-friendly = base 0 or 1
-		TestTrue(TEXT("ScenA: Assault[0] not on friendly base"),
+		// Strike agents prefer non-friendly bases (bias 3000 pushed them away from base 2)
+		// Both strike agents are near origin → nearest non-friendly = base 0 or 1
+		TestTrue(TEXT("ScenA: Strike[0] not on friendly base"),
 			Agents[0].AssignedBase != 2);
 	}
 
-	// ── Scenario B: TurtleFormation (5 Defend) — 3 bases ─────────────────
-	// With 5 Defend agents but only 3 unique bases, bases [0..2] each get
-	// exactly one Defend agent; the remaining 2 fall through to FindBestBase
+	// ── Scenario B: TurtleFormation (5 Vanguard) — 3 bases ─────────────────
+	// With 5 Vanguard agents but only 3 unique bases, bases [0..2] each get
+	// exactly one Vanguard agent; the remaining 2 fall through to FindBestBase
 	// without the uniqueness constraint (all 5 unique slots > base count).
 	{
 		TArray<FBaseSim> Bases = {
@@ -382,7 +382,7 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 		for (int32 i = 0; i < 5; ++i)
 		{
 			FAgentSim A;
-			A.Strategy = EDEStrategyType::Defend;
+			A.Class = EDEClassType::Vanguard;
 			A.Position  = FVector(static_cast<float>(i * 200), 0.0f, 0.0f);
 			Agents.Add(A);
 		}
@@ -396,13 +396,13 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 				Agents[i].AssignedBase >= 0 && Agents[i].AssignedBase < 3);
 		}
 
-		// First 3 Defend agents (fill all bases uniquely)
+		// First 3 Vanguard agents (fill all bases uniquely)
 		TSet<int32> FirstThree;
 		for (int32 i = 0; i < 3; ++i) FirstThree.Add(Agents[i].AssignedBase);
-		TestEqual(TEXT("ScenB: first 3 Defend agents cover all 3 bases"), FirstThree.Num(), 3);
+		TestEqual(TEXT("ScenB: first 3 Vanguard agents cover all 3 bases"), FirstThree.Num(), 3);
 	}
 
-	// ── Scenario C: AllOutRush (5 Assault) — 5 bases ──────────────────────
+	// ── Scenario C: AllOutRush (5 Strike) — 5 bases ──────────────────────
 	{
 		TArray<FBaseSim> Bases;
 		for (int32 i = 0; i < 5; ++i)
@@ -412,7 +412,7 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 		for (int32 i = 0; i < 5; ++i)
 		{
 			FAgentSim A;
-			A.Strategy = EDEStrategyType::Assault;
+			A.Class = EDEClassType::Strike;
 			A.Position  = FVector(static_cast<float>(i * 500 + 100), 0, 0);
 			Agents.Add(A);
 		}
@@ -421,7 +421,7 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 
 		for (int32 i = 0; i < Agents.Num(); ++i)
 		{
-			TestTrue(*FString::Printf(TEXT("ScenC: Assault[%d] assigned"), i),
+			TestTrue(*FString::Printf(TEXT("ScenC: Strike[%d] assigned"), i),
 				Agents[i].AssignedBase >= 0 && Agents[i].AssignedBase < 5);
 		}
 	}
@@ -437,7 +437,7 @@ bool FDEAssignBasesLogic::RunTest(const FString& Parameters)
 // values specified in the refactor plan (Section 3).
 // ─────────────────────────────────────────────────────────────────────────────
 
-#include "Data/DERewardData.h"
+#include "Data/Reward/DERewardData.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FDERewardDataDefaults,
@@ -459,7 +459,7 @@ bool FDERewardDataDefaults::RunTest(const FString& Parameters)
 		return true;
 	}
 
-	// Note: CoOccupationPenalty and UndefendedBasePenalty store *positive* magnitudes;
+	// Note: CoOccupationPenalty stores a *positive* magnitude;
 	// negation is applied at call-site in DERewardSubsystem::ComputeBaseCooperationReward().
 	TestNearlyEqual(TEXT("BaseOccupationReward default == 2.0"),
 		CDO->BaseOccupationReward, 2.0f, 0.01f);
@@ -467,10 +467,6 @@ bool FDERewardDataDefaults::RunTest(const FString& Parameters)
 		CDO->CoOccupationPenalty, 0.5f, 0.01f);
 	TestNearlyEqual(TEXT("BaseCaptureCreditReward default == 5.0"),
 		CDO->BaseCaptureCreditReward, 5.0f, 0.01f);
-	TestNearlyEqual(TEXT("UndefendedBasePenalty magnitude == 1.0"),
-		CDO->UndefendedBasePenalty, 1.0f, 0.01f);
-	TestNearlyEqual(TEXT("AssignedBaseReachReward default == 1.0"),
-		CDO->AssignedBaseReachReward, 1.0f, 0.01f);
 	TestTrue(TEXT("BaseOccupationRadius > 0"),
 		CDO->BaseOccupationRadius > 0.0f);
 

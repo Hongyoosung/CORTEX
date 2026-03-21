@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "DETeamWorldState.generated.h"
 
 /**
@@ -11,7 +11,7 @@
  *
  * Represents the complete state of a 5-agent team for use by Squad Commander.
  * Replaces individual per-agent flat obs (v1, 52-dim) with team-wide awareness including:
- * - Friendly unit status (positions, health, strategies, cooldowns)
+ * - Friendly unit status (positions, health, classes, cooldowns)
  * - Enemy estimates (last known positions with confidence decay)
  * - Map state (capture points)
  *
@@ -46,11 +46,11 @@ struct DE_API FDETeamWorldState
 	TArray<float> FriendlyHealths;
 
 	/**
-	 * Current active strategies
+	 * Current active classes
 	 * [5] = 5-dim (encoded as uint8)
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "TeamState|Friendly")
-	TArray<EDEStrategyType> FriendlyStrategies;
+	TArray<EDEClassType> FriendlyClasses;
 
 	/**
 	 * Weapon cooldown status [0.0-1.0]
@@ -155,10 +155,10 @@ struct DE_API FDETeamWorldState
 			Tensor.Add(bAlive ? 1.0f : 0.0f);
 		}
 
-		// Friendly strategies (5-dim, one-hot encoded)
-		for (EDEStrategyType Strategy : FriendlyStrategies)
+		// Friendly classes (5-dim, one-hot encoded)
+		for (EDEClassType Class : FriendlyClasses)
 		{
-			Tensor.Add(static_cast<float>(Strategy));
+			Tensor.Add(static_cast<float>(Class));
 		}
 
 		// Enemy positions (15-dim)
@@ -243,7 +243,7 @@ struct DE_API FDETeamWorldState
 		// Initialize with 5 agents
 		FriendlyPositions.Init(FVector::ZeroVector, 5);
 		FriendlyHealths.Init(1.0f, 5);
-		FriendlyStrategies.Init(EDEStrategyType::Assault, 5);
+		FriendlyClasses.Init(EDEClassType::Strike, 5);
 		FriendlyCooldowns.Init(0.0f, 5);
 		FriendlyAlive.Init(true, 5);
 

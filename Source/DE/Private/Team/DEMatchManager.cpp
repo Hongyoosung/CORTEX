@@ -313,12 +313,12 @@ ADEAgent* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	Agent->SetEnvID_Implementation(EnvID);
 	Agent->AssignedCapturePoints = EnvCapturePoints;
 
-	// Store TeamData on the agent so ApplyStrategyAppearance() can reference it later.
+	// Store TeamData on the agent so ApplyClassAppearance() can reference it later.
 	Agent->TeamData = TeamData;
 	Agent->TeamColor = TeamData->TeamColor;
 
 	// Apply team-level appearance defaults at spawn time.
-	// These will be overridden per-strategy when SetCommandedStrategy() is called.
+	// These will be overridden per-class when SetCommandedClass() is called.
 	if (USkeletalMeshComponent* Mesh = Agent->GetMesh())
 	{
 		if (TeamData->SkeletalMesh)
@@ -496,14 +496,14 @@ void ADEMatchManager::QueueRespawn(ADEAgent* Agent, int32 TeamID)
 			for (ADEAgent* Queued : State.RespawnQueue)
 			{
 				if (Queued)
-					RewardCalculator->CalculateTeamWipePenalty(Queued->RewardState, Queued->GetCommandedStrategy(), Queued->AgentID);
+					RewardCalculator->CalculateTeamWipePenalty(Queued->RewardState, Queued->GetCommandedClass(), Queued->AgentID);
 			}
 
 			// Bonus to all living agents on the enemy team
 			for (ADEAgent* Enemy : GetTeamAgents(EnemyTeamID))
 			{
 				if (Enemy && Enemy->IsAlive())
-					RewardCalculator->CalculateTeamWipeBonus(Enemy->RewardState, Enemy->GetCommandedStrategy(), Enemy->AgentID);
+					RewardCalculator->CalculateTeamWipeBonus(Enemy->RewardState, Enemy->GetCommandedClass(), Enemy->AgentID);
 			}
 		}
 	}
@@ -693,7 +693,7 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 	for (ADEAgent* Agent : GetTeamAgents(NewTeam))
 	{
 		if (Agent && Agent->IsAlive())
-			RewardCalculator->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+			RewardCalculator->CalculateCaptureReward(Agent->RewardState, Agent->GetCommandedClass(), Agent->AgentID);
 	}
 
 	if (PreviousTeam != -1)
@@ -701,7 +701,7 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 		for (ADEAgent* Agent : GetTeamAgents(PreviousTeam))
 		{
 			if (Agent && Agent->IsAlive())
-				RewardCalculator->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedStrategy(), Agent->AgentID);
+				RewardCalculator->CalculateLosePointPenalty(Agent->RewardState, Agent->GetCommandedClass(), Agent->AgentID);
 		}
 	}
 
@@ -719,10 +719,10 @@ void ADEMatchManager::OnAgentDied(ADEAgent* DeadAgent, ADEAgent* Killer)
 	UDERewardSubsystem* RS = RewardCalculator;
 
 	if (DeadAgent)
-		RS->CalculateDeathPenalty(DeadAgent->RewardState, DeadAgent->GetCommandedStrategy(), DeadAgent->AgentID);
+		RS->CalculateDeathPenalty(DeadAgent->RewardState, DeadAgent->GetCommandedClass(), DeadAgent->AgentID);
 
 	if (Killer)
-		RS->CalculateKillReward(Killer->RewardState, Killer->GetCommandedStrategy(), Killer->AgentID);
+		RS->CalculateKillReward(Killer->RewardState, Killer->GetCommandedClass(), Killer->AgentID);
 
 	// Assist rewards for non-killer contributors
 	if (DeadAgent)
@@ -732,7 +732,7 @@ void ADEMatchManager::OnAgentDied(ADEAgent* DeadAgent, ADEAgent* Killer)
 			ADEAgent* Contributor = Cast<ADEAgent>(Pair.Key);
 			if (!Contributor || Contributor == Killer) continue;
 			if (!Contributor->IsAlive()) continue;
-			RS->CalculateAssistReward(Contributor->RewardState, Contributor->GetCommandedStrategy(), Pair.Value, Contributor->AgentID);
+			RS->CalculateAssistReward(Contributor->RewardState, Contributor->GetCommandedClass(), Pair.Value, Contributor->AgentID);
 		}
 	}
 }
@@ -761,11 +761,11 @@ void ADEMatchManager::AssignBasesToAgents(int32 TeamID)
 	TArray<ADEAgent*> Agents = GetTeamAgents(TeamID);
 	if (Agents.Num() == 0) return;
 
-	// Track which base indices are already claimed by a Defend agent (uniqueness constraint)
-	TSet<int32> DefendClaimed;
+	// Track which base indices are already claimed by a Vanguard agent (uniqueness constraint)
+	TSet<int32> VanguardClaimed;
 
 	// Helper: find nearest uncontested (by this team) or un-owned base
-	auto FindBestBase = [&](ADEAgent* Agent, bool bDefendUniqueOnly) -> int32
+	auto FindBestBase = [&](ADEAgent* Agent, bool bVanguardUniqueOnly) -> int32
 	{
 		float BestDist = FLT_MAX;
 		int32 BestIdx  = -1;
@@ -776,8 +776,8 @@ void ADEMatchManager::AssignBasesToAgents(int32 TeamID)
 			ADECapturePoint* CP = EnvCapturePoints[i];
 			if (!CP) continue;
 
-			// Defend agents must claim unique bases
-			if (bDefendUniqueOnly && DefendClaimed.Contains(i)) continue;
+			// Vanguard agents must claim unique bases
+			if (bVanguardUniqueOnly && VanguardClaimed.Contains(i)) continue;
 
 			const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
 			if (Dist < BestDist)
@@ -789,25 +789,25 @@ void ADEMatchManager::AssignBasesToAgents(int32 TeamID)
 		return BestIdx;
 	};
 
-	// Pass 1 — assign Defend agents first (uniqueness enforced, nearest base — no ownership bias)
+	// Pass 1 — assign Vanguard agents first (uniqueness enforced, nearest base — no ownership bias)
 	for (ADEAgent* Agent : Agents)
 	{
-		if (!Agent || Agent->GetCommandedStrategy() != EDEStrategyType::Defend) continue;
+		if (!Agent || Agent->GetCommandedClass() != EDEClassType::Vanguard) continue;
 
-		const int32 BestIdx = FindBestBase(Agent, /*bDefendUniqueOnly=*/true);
+		const int32 BestIdx = FindBestBase(Agent, /*bVanguardUniqueOnly=*/true);
 		if (BestIdx >= 0)
 		{
-			DefendClaimed.Add(BestIdx);
+			VanguardClaimed.Add(BestIdx);
 			Agent->AssignedBaseIndex = BestIdx;
 		}
 	}
 
-	// Pass 2 — assign remaining roles (Assault → nearest non-friendly; Support → nearest injured ally's base)
+	// Pass 2 — assign remaining roles (Strike → nearest non-friendly; Support → nearest injured ally's base)
 	for (ADEAgent* Agent : Agents)
 	{
 		if (!Agent) continue;
-		const EDEStrategyType InRole = Agent->GetCommandedStrategy();
-		if (InRole == EDEStrategyType::Defend) continue; // already done
+		const EDEClassType InRole = Agent->GetCommandedClass();
+		if (InRole == EDEClassType::Vanguard) continue; // already done
 
 		int32 BestIdx = -1;
 		const FVector AgentPos = Agent->GetActorLocation();
@@ -821,7 +821,7 @@ void ADEMatchManager::AssignBasesToAgents(int32 TeamID)
 			const int32 InOwner = CP->GetTeamID_Implementation();
 			const float Dist  = FVector::Dist(AgentPos, CP->GetActorLocation());
 
-			if (InRole == EDEStrategyType::Assault)
+			if (InRole == EDEClassType::Strike)
 			{
 				// Prefer neutral/enemy bases
 				const float Bias = (InOwner != TeamID) ? 0.0f : 3000.0f;

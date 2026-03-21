@@ -164,7 +164,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "DECapturePoint|Zone")
 	float CaptureHeight = 300.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DECapturePoint|Strategy")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DECapturePoint|Class")
 	FString StrategicBonus = TEXT("Standard Position");
 
 	UPROPERTY(EditAnywhere, Category = "DECapturePoint|Debug")

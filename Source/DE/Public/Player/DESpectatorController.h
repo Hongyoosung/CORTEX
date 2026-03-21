@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "DESpectatorController.generated.h"
 
 class ADEAgent;
@@ -18,7 +18,7 @@ class ADEAgent;
  *
  * Controls:
  *   Button 1 (key "1"):
- *     - Tap  → cycle through agents in strategy order: Assault → Defend → Support → Assault…
+ *     - Tap  → cycle through agents in class order: Strike → Vanguard → Support → Strike…
  *     - Hold → cycle to the next agent every CycleInterval seconds while held
  *   Button 2 (key "2"):
  *     - Disable camera mode, return to default spectator view
@@ -97,7 +97,7 @@ private:
 
 	// ---- Internal Helpers ----
 	void SwitchToAgent(ADEAgent* Agent);
-	void SwitchToNextStrategyAgent();
+	void SwitchToNextClassAgent();
 	void CycleToNextAgent();
 	void DisableCamera();
 	void CollectAgents();
@@ -114,7 +114,7 @@ private:
 	ADEAgent* CurrentTarget = nullptr;
 
 	int32 CurrentAgentIndex      = -1;
-	int32 CurrentStrategyPhase   = 0;   // 0=Assault, 1=Defend, 2=Support (tap cycle order)
+	int32 CurrentClassPhase   = 0;   // 0=Strike, 1=Vanguard, 2=Support (tap cycle order)
 	bool bCameraActive    = false;
 	bool bIsKeyHeld       = false;
 	bool bIsCycling       = false;
@@ -129,11 +129,11 @@ private:
 	float BlendElapsed = 0.f;
 	bool bIsBlending   = false;
 
-	/** Tap-cycle order: Assault → Defend → Support */
-	static constexpr EDEStrategyType StrategyOrder[] = {
-		EDEStrategyType::Assault,
-		EDEStrategyType::Defend,
-		EDEStrategyType::Support
+	/** Tap-cycle order: Strike → Vanguard → Support */
+	static constexpr EDEClassType ClassOrder[] = {
+		EDEClassType::Strike,
+		EDEClassType::Vanguard,
+		EDEClassType::Support
 	};
 
 	FTimerHandle HoldTimerHandle;

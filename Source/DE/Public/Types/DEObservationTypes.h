@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "DEObservationTypes.generated.h"
 
 // ============================================================
@@ -13,13 +13,13 @@ static constexpr int32 DE_MAX_ALLIES  = 8;
 static constexpr int32 DE_MAX_ENEMIES = 8;
 static constexpr int32 DE_MAX_BASES   = 8;
 
-// Token dims: Self=7, Ally=8 (pos+hp+alive+strategy_onehot), Enemy=5, Base=7
+// Token dims: Self=7, Ally=8 (pos+hp+alive+class_onehot), Enemy=5, Base=7
 static constexpr int32 DE_SELF_DIM    = 7;
-static constexpr int32 DE_ALLY_DIM    = 8;   // [rel_pos(3), health, alive, is_assault, is_defend, is_support]
+static constexpr int32 DE_ALLY_DIM    = 8;   // [rel_pos(3), health, alive, is_strike, is_vanguard, is_support]
 static constexpr int32 DE_ENEMY_DIM   = 5;
 static constexpr int32 DE_BASE_DIM    = 7;
 
-// Strategy one-hot dim: Assault=0, Defend=1, Support=2
+// Class one-hot dim: Strike=0, Vanguard=1, Support=2
 static constexpr int32 DE_STRATEGY_DIM = 3;
 
 // Total padded flat size: 7 + 8*8 + 8*5 + 8*7 + 8+8+8 + 3 = 194
@@ -104,11 +104,11 @@ struct DE_API FDEEntityToken
  * padded flat array (194-dim) for NNE / ONNX compatibility.
  *
  * Self (7):      [pos_x/7500, pos_y/7500, pos_z/1000, health, vel_x/600, vel_y/600, vel_z/600]
- * Ally (8):      [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, alive, is_assault, is_defend, is_support]
+ * Ally (8):      [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, alive, is_strike, is_vanguard, is_support]
  * Enemy (5):     [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, visible, confidence]
  * Base (7):      [rel_pos_x/15000, rel_pos_y/15000, rel_pos_z/1000, ownership,
  *                 capture_progress, is_assigned_target, strategic_value]
- * Strategy (3):  one-hot [assault, defend, support]
+ * Class (3):  one-hot [strike, vanguard, support]
  */
 USTRUCT(BlueprintType)
 struct DE_API FDEObservationV2
@@ -131,22 +131,22 @@ struct DE_API FDEObservationV2
 	UPROPERTY(BlueprintReadWrite, Category = "ObservationV2|Bases")
 	TArray<FDEEntityToken> BaseTokens;
 
-	/** Strategy commanded by the Squad Commander (Assault/Defend/Support) */
-	UPROPERTY(BlueprintReadWrite, Category = "ObservationV2|Strategy")
-	EDEStrategyType CommandedStrategy = EDEStrategyType::Assault;
+	/** Class commanded by the Squad Commander (Strike/Vanguard/Support) */
+	UPROPERTY(BlueprintReadWrite, Category = "ObservationV2|Class")
+	EDEClassType CommandedClass = EDEClassType::Strike;
 
 	/**
 	 * Serialise to padded flat array (194-dim) for NNE/ONNX inference.
 	 *
 	 * Layout (total = 194):
 	 *  [0..6]     Self (7)
-	 *  [7..70]    Allies  padded to 8 × 8  (64) — includes ally strategy one-hot
+	 *  [7..70]    Allies  padded to 8 × 8  (64) — includes ally class one-hot
 	 *  [71..110]  Enemies padded to 8 × 5  (40)
 	 *  [111..166] Bases   padded to 8 × 7  (56)
 	 *  [167..174] Ally mask  (8) — 0=present, 1=padding
 	 *  [175..182] Enemy mask (8)
 	 *  [183..190] Base mask  (8)
-	 *  [191..193] Strategy one-hot [assault, defend, support] (3)
+	 *  [191..193] Class one-hot [strike, vanguard, support] (3)
 	 */
 	TArray<float> ToFlatArray() const
 	{
@@ -216,10 +216,10 @@ struct DE_API FDEObservationV2
 		Out.Append(EnemyMask);
 		Out.Append(BaseMask);
 
-		// Strategy one-hot (3): [assault, defend, support]
-		Out.Add(CommandedStrategy == EDEStrategyType::Assault ? 1.0f : 0.0f);
-		Out.Add(CommandedStrategy == EDEStrategyType::Defend  ? 1.0f : 0.0f);
-		Out.Add(CommandedStrategy == EDEStrategyType::Support ? 1.0f : 0.0f);
+		// Class one-hot (3): [strike, vanguard, support]
+		Out.Add(CommandedClass == EDEClassType::Strike ? 1.0f : 0.0f);
+		Out.Add(CommandedClass == EDEClassType::Vanguard  ? 1.0f : 0.0f);
+		Out.Add(CommandedClass == EDEClassType::Support ? 1.0f : 0.0f);
 
 		ensure(Out.Num() == DE_OBS_V2_DIM);
 		return Out;

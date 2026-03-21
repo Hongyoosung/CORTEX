@@ -202,7 +202,7 @@ public:
 	/**
 	 * Assign a capture-point base index to each agent on a team.
 	 * Uses a greedy, role-aware algorithm that guarantees uniqueness
-	 * (no two Defend agents share the same base).
+	 * (no two Vanguard agents share the same base).
 	 * Writes AssignedBaseIndex to the agent and to its Blackboard key.
 	 * Call after a tactical play change or a base-flip event.
 	 */
@@ -342,7 +342,7 @@ public:
 	bool bDrawRoleAssignments = true;
 
 	/**
-	 * Phase 1 RL Training Mode — strategy fixed for entire episode.
+	 * Phase 1 RL Training Mode — class fixed for entire episode.
 	 * ADEScholaEnvironment propagates bPhase1RLTraining here; planners read it via FDESquadConfig.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Training")

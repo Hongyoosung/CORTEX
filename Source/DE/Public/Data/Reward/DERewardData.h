@@ -4,8 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Reward/DynamicEQSRewardData.h"
-#include "Data/Reward/DEAssaultReward.h"
-#include "Data/Reward/DEDefendReward.h"
+#include "Data/Reward/DEStrikeReward.h"
+#include "Data/Reward/DEVanguardReward.h"
 #include "Data/Reward/DESupportReward.h"
 #include "DERewardData.generated.h"
 
@@ -60,13 +60,13 @@ public:
 	float SurvivalHPThreshold = 0.3f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float AssaultHealthLossThreshold = 0.05f;
+	float StrikeHealthLossThreshold = 0.05f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float AssaultIdleMovementThreshold = 50.0f;
+	float StrikeIdleMovementThreshold = 50.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float AssaultCapturedZoneDecaySteps = 15.0f;
+	float StrikeCapturedZoneDecaySteps = 15.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float SupportMinMoveThreshold = 100.0f;
@@ -78,7 +78,7 @@ public:
 	float SupportAllyProximityThreshold = 1200.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
-	float DefendHealthThreshold = 0.7f;
+	float VanguardHealthThreshold = 0.7f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Thresholds")
 	float SupportHealthThreshold = 0.8f;
@@ -100,27 +100,27 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Capture")
 	float CaptureLossCooldownSeconds = 10.0f;
 
-	// ==================== Strategy Baselines ====================
+	// ==================== Class Baselines ====================
 
-	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float AssaultBaselineReward = 0.01f;
+	UPROPERTY(EditAnywhere, Category = "Rewards|Class")
+	float StrikeBaselineReward = 0.01f;
 
-	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	float DefendBaselineReward = 0.01f;
+	UPROPERTY(EditAnywhere, Category = "Rewards|Class")
+	float VanguardBaselineReward = 0.01f;
 
-	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	UPROPERTY(EditAnywhere, Category = "Rewards|Class")
 	float SupportBaselineReward = 0.01f;
 
-	// ==================== Assault Combat Range ====================
-	// Per-step penalty and kill-scale for Assault staying at range.
-	// Configured via AssaultReward.MinCombatRange / AssaultReward.TooCloseEnemyPenalty.
-	// Defend (melee tank) has no minimum range penalty — it gets MeleeRangeBonus instead.
+	// ==================== Strike Combat Range ====================
+	// Per-step penalty and kill-scale for Strike staying at range.
+	// Configured via StrikeReward.MinCombatRange / StrikeReward.TooCloseEnemyPenalty.
+	// Vanguard (melee tank) has no minimum range penalty — it gets MeleeRangeBonus instead.
 
-	/** Distance threshold (cm) below which Assault kill/assist sparse rewards are scaled down. */
+	/** Distance threshold (cm) below which Strike kill/assist sparse rewards are scaled down. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|CombatRange")
 	float CloseRangeKillThreshold = 400.0f;
 
-	/** Multiplier applied to Assault sparse kill rewards when within CloseRangeKillThreshold.
+	/** Multiplier applied to Strike sparse kill rewards when within CloseRangeKillThreshold.
 	 *  0.0 = full penalty; 1.0 = disabled. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|CombatRange")
 	float CloseRangeKillPenaltyScale = 0.0f;
@@ -131,11 +131,11 @@ public:
 	float ZoneControlRewardPerBase = 0.2f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
-	float ZoneControlAssaultScale = 0.1f;
+	float ZoneControlStrikeScale = 0.1f;
 
-	/** Defend is now a frontline tank that captures bases — same scale as Assault. */
+	/** Vanguard is now a frontline tank that captures bases — same scale as Strike. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
-	float ZoneControlDefendScale = 0.1f;
+	float ZoneControlVanguardScale = 0.1f;
 
 	/** Support should NOT be incentivized to capture — keep very low. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
@@ -149,14 +149,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Isolation")
 	int32 IsolationDebounceSteps = 30;
 
-	// ==================== Per-Strategy Settings ====================
-	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	FDEAssaultRewardSettings AssaultReward;
+	// ==================== Per-Class Settings ====================
+	UPROPERTY(EditAnywhere, Category = "Rewards|Class")
+	FDEStrikeRewardSettings StrikeReward;
 
-	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
-	FDEDefendRewardSettings DefendReward;
+	UPROPERTY(EditAnywhere, Category = "Rewards|Class")
+	FDEVanguardRewardSettings VanguardReward;
 
-	UPROPERTY(EditAnywhere, Category = "Rewards|Strategy")
+	UPROPERTY(EditAnywhere, Category = "Rewards|Class")
 	FDESupportRewardSettings SupportReward;
 
 	// ==================== Cooperative Base Occupation (Phase 5) ====================
@@ -174,20 +174,8 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
 	float BaseCaptureCreditReward = 5.0f;
 
-	/** Per-step shared penalty for each friendly base with no ally guarding it. */
-	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
-	float UndefendedBasePenalty = 1.0f;
-
-	/** Sparse reward (once per episode) for first reaching the assigned base. */
-	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
-	float AssignedBaseReachReward = 1.0f;
-
 	/** Radius (cm) used to determine proximity for base cooperation rewards. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
 	float BaseOccupationRadius = 2000.0f;
 
-	/** Per-step bonus when agent is near a friendly base that also has enemies nearby.
-	 *  Incentivizes defending contested bases instead of ignoring approaching threats. */
-	UPROPERTY(EditAnywhere, Category = "Rewards|BaseCooperation")
-	float ContestedBaseDefenseReward = 3.0f;
 };

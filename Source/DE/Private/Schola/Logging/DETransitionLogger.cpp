@@ -50,7 +50,7 @@ void UDETransitionLogger::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void UDETransitionLogger::LogTransition(
 	const TArray<float>& State,
-	EDEStrategyType OptionType,
+	EDEClassType OptionType,
 	const FVector& TargetPosition,
 	float OptionDuration,
 	const TArray<float>& EQSWeights,

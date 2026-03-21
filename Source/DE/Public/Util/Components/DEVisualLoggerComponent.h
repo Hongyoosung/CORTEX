@@ -5,7 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Types/DEStrategyTypes.h"
+#include "Types/DEClassTypes.h"
 #include "DEVisualLoggerComponent.generated.h"
 
 /**
@@ -39,7 +39,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual Logger")
 	bool bEnableDebugDrawing = false;
 
-	/** Draw agent state info (strategy, health, etc.) */
+	/** Draw agent state info (class, health, etc.) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual Logger")
 	bool bDrawAgentInfo = true;
 
@@ -187,9 +187,9 @@ public:
 
 private:
 	/**
-	 * Get strategy color for visualization.
+	 * Get class color for visualization.
 	 */
-	FLinearColor GetStrategyColor(EDEStrategyType Strategy) const;
+	FLinearColor GetClassColor(EDEClassType Class) const;
 
 	/**
 	 * Check if debug drawing is enabled (master switch + shipping build check).

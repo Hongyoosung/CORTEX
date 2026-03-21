@@ -3,30 +3,30 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DEStrategyTypes.generated.h"
+#include "DEClassTypes.generated.h"
 
 /**
- * Five tactical strategies for DE
+ * Five tactical classes for DE
  */
 UENUM(BlueprintType)
-enum class EDEStrategyType : uint8
+enum class EDEClassType : uint8
 {
-	Assault UMETA(DisplayName = "Assault"),
-	Defend UMETA(DisplayName = "Defend"),
+	Strike UMETA(DisplayName = "Strike"),
+	Vanguard UMETA(DisplayName = "Vanguard"),
 	Support UMETA(DisplayName = "Support"),
 };
 
 /**
- * Tactical option — records the commanded strategy assigned to an agent.
+ * Tactical option — records the commanded class assigned to an agent.
  */
 USTRUCT(BlueprintType)
 struct FDETacticalOption
 {
 	GENERATED_BODY()
 
-	/** Selected strategy */
+	/** Selected class */
 	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
-	EDEStrategyType Strategy = EDEStrategyType::Assault;
+	EDEClassType Class = EDEClassType::Strike;
 
 	/** Confidence score from MCTS */
 	UPROPERTY(BlueprintReadWrite, Category = "Tactical")
@@ -39,8 +39,8 @@ struct FDETacticalOption
 	float Duration = 0.5f;
 
 
-	FDETacticalOption(EDEStrategyType InStrategy = EDEStrategyType::Defend, float InConfidence = 0.5f, FVector InTargetPosition = FVector(0.0f, 0.0f, 0.0f), float InDuration = 3.0f)
-		: Strategy(InStrategy)
+	FDETacticalOption(EDEClassType InClass = EDEClassType::Vanguard, float InConfidence = 0.5f, FVector InTargetPosition = FVector(0.0f, 0.0f, 0.0f), float InDuration = 3.0f)
+		: Class(InClass)
 		, Confidence(InConfidence)
 		, TargetPosition(InTargetPosition)
 		, Duration(InDuration)
@@ -48,8 +48,8 @@ struct FDETacticalOption
 
 	FString ToString() const
 	{
-		return FString::Printf(TEXT("Strategy=%d, Confidence=%.2f, TargetPosition=%s, Duration=%f"),
-			static_cast<int32>(Strategy),
+		return FString::Printf(TEXT("Class=%d, Confidence=%.2f, TargetPosition=%s, Duration=%f"),
+			static_cast<int32>(Class),
 			Confidence,
 			*TargetPosition.ToString(),
 			Duration);
