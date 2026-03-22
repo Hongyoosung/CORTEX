@@ -133,17 +133,6 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     const int32 SelfEnvID  = Self ? Self->GetEnvID_Implementation()  : -1;
     const int32 SelfTeamID = Self ? Self->GetTeamID_Implementation() : -1;
 
-    // [DIAG] Log every perception update for env 0 only to avoid log spam
-    if (SelfEnvID == 0)
-    {
-        UE_LOG(LogTemp, Warning,
-            TEXT("[DEAIC|Env0] OnPerceptionUpdated: agent=%s env=%d team=%d "
-                 "perceived=%d class=%d"),
-            Self ? *Self->GetName() : TEXT("NULL"),
-            SelfEnvID, SelfTeamID,
-            PerceivedActors.Num(),
-            Self ? (int32)Self->GetCommandedClass() : -1);
-    }
 
     if (Self)
     {
@@ -155,14 +144,6 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
             const int32 OtherEnvID  = Other->GetEnvID_Implementation();
             const int32 OtherTeamID = Other->GetTeamID_Implementation();
 
-            if (SelfEnvID == 0)
-            {
-                UE_LOG(LogTemp, Warning,
-                    TEXT("[DEAIC|Env0]   candidate=%s env=%d team=%d → envMatch=%s teamDiff=%s"),
-                    *Other->GetName(), OtherEnvID, OtherTeamID,
-                    (OtherEnvID == SelfEnvID) ? TEXT("YES") : TEXT("NO"),
-                    (OtherTeamID != SelfTeamID) ? TEXT("YES") : TEXT("NO"));
-            }
 
             if (OtherEnvID == SelfEnvID && OtherTeamID != SelfTeamID)
             {
@@ -174,15 +155,6 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
 
     // Support agents have no offensive capability — never set an attack target.
     const bool bIsSupport = Self && (Self->GetCommandedClass() == EDEClassType::Support);
-
-    if (SelfEnvID == 0)
-    {
-        UE_LOG(LogTemp, Warning,
-            TEXT("[DEAIC|Env0] result: BestEnemy=%s bIsSupport=%s → HasTarget=%s"),
-            BestEnemy ? *BestEnemy->GetName() : TEXT("NULL"),
-            bIsSupport ? TEXT("true") : TEXT("false"),
-            (BestEnemy && !bIsSupport) ? TEXT("true") : TEXT("false"));
-    }
 
     if (BestEnemy && !bIsSupport)
     {

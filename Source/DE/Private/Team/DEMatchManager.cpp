@@ -152,8 +152,28 @@ void ADEMatchManager::MatchConditionTimerTick()
 		}
 	}
 
-	// Score-based and domination win conditions removed — fixed-length episodes only.
-	// Score is still tracked for determining the winner at timeout.
+	// ── Score-based early win ──
+	if (WinScoreThreshold > 0)
+	{
+		for (int32 TeamID = 0; TeamID <= 1; ++TeamID)
+		{
+			if (TeamScores[TeamID] >= WinScoreThreshold)
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DEMatchManager] Env %d: Team %d reached score %d (threshold %d). Ending episode."),
+					EnvID, TeamID, TeamScores[TeamID], WinScoreThreshold);
+
+				if (RewardCalculator)
+				{
+					RewardCalculator->ApplyMatchEndReward(TeamID, AllAgents);
+				}
+
+				StopMatchTimer();
+				OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
+				return;
+			}
+		}
+	}
 
 	// ── Timeout ──
 	if (MatchTimer >= MaxMatchDuration)

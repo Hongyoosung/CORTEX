@@ -11,7 +11,7 @@
 class ADEAgent;
 
 /**
- * Combat state for the ScriptedAI state machine.
+ * Combat state for the ScriptedAI state machine (active at Tier 2 only).
  *
  * Patrol   — no enemies detected; push aggressively toward objective
  * Approach — enemy spotted; close distance using base class weights
@@ -37,7 +37,7 @@ enum class EScriptedAIState : uint8
  *
  * Features:
  *  - Per-class (Strike/Vanguard/Support) hardcoded weight profiles
- *  - 4 difficulty tiers (Passive → Basic → Standard → Aggressive)
+ *  - 3 difficulty tiers (Random → Directed → Full)
  *  - Per-episode weight noise (±0.1) for robustness
  *  - Lightweight state machine (Patrol→Approach→Engage→Retreat)
  *  - Tier auto-progression via JSON config written by train.py
@@ -57,7 +57,7 @@ public:
 	// Difficulty Tier System
 	//========================================
 
-	/** Set the difficulty tier (0=Passive, 1=Basic, 2=Standard, 3=Aggressive) */
+	/** Set the difficulty tier (0=Random, 1=Directed, 2=Full) */
 	UFUNCTION(BlueprintCallable, Category = "ScriptedAI")
 	void SetDifficultyTier(int32 Tier);
 
@@ -85,7 +85,7 @@ public:
 protected:
 	/** Current difficulty tier */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI")
-	int32 CurrentTier = 2;
+	int32 CurrentTier = 0;
 
 	/** Per-episode weight noise magnitude */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI")
@@ -138,7 +138,7 @@ private:
 	FDEEQSWeightParameters ApplyNoise(const FDEEQSWeightParameters& Weights) const;
 
 	/** Apply state-machine weight overrides (called last, after tier+noise) */
-	FDEEQSWeightParameters ApplyStateBehavior(const FDEEQSWeightParameters& Weights) const;
+	FDEEQSWeightParameters ApplyStateBehavior(const FDEEQSWeightParameters& Weights, EDEClassType Class) const;
 
 	/** Update CurrentState based on health and enemy proximity */
 	void UpdateAIState();

@@ -660,7 +660,10 @@ void ADEAgent::UpdateTacticalWeights(const FDEEQSWeightParameters& NewWeights)
 
 void ADEAgent::PerformTacticalAction()
 {
-	if (!bIsAlive) return;
+	if (!bIsAlive)
+	{
+		return;
+	}
 
 	if (!EQSExecutor)
 	{
@@ -671,7 +674,6 @@ void ADEAgent::PerformTacticalAction()
 	AAIController* AICtrl = CachedAIController.Get();
 	if (!AICtrl)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: No AIController found"), *GetName());
 		return;
 	}
 
@@ -682,8 +684,6 @@ void ADEAgent::PerformTacticalAction()
 			TEXT("[DEAgent] %s PerformTacticalAction#%d: EQS direct path"),
 			*GetName(), TacticalActionCallCount);*/
 	}
-
-	AICtrl->StopMovement();
 
 	EQSExecutor->SetWeights(FDynamicEQSWeightParameters(CurrentEQSWeights.ToArray()));
 	TOptional<FVector> Result = EQSExecutor->ExecuteQuerySynchronous();
@@ -704,6 +704,7 @@ void ADEAgent::PerformTacticalAction()
 
 		LastEQSTargetLocation = FallbackTarget;
 
+		AICtrl->StopMovement();
 		FAIMoveRequest FallbackReq(FallbackTarget);
 		FallbackReq.SetAcceptanceRadius(EQSAcceptanceRadius);
 		FallbackReq.SetUsePathfinding(true);
@@ -711,51 +712,26 @@ void ADEAgent::PerformTacticalAction()
 		return;
 	}
 
-	LastEQSTargetLocation = Result.GetValue();
-
-	// [DIAG] Log EQS-chosen destination for scripted AI agents
-	// Uses per-instance counter (not static) so logs appear every PIE session.
-	if (FindComponentByClass<UDEScriptedAIComponent>())
+	// For scripted AI agents, skip rerouting when the new destination is within
+	// 150 cm of the current one AND the agent is still actively moving toward it.
+	// Without the move-status check, the agent would stop permanently after reaching
+	// its destination (path complete → idle) because EQS keeps returning the same
+	// nearby optimum and the early return prevents issuing a new MoveTo.
+	constexpr float ScriptedAIRerouteThreshold = 150.0f;
+	if (bIsScriptedAI
+		&& FVector::Dist(Result.GetValue(), LastEQSTargetLocation) < ScriptedAIRerouteThreshold
+		&& AICtrl->GetMoveStatus() == EPathFollowingStatus::Moving)
 	{
-		if (ScriptedAIDiagCount < 10 || ScriptedAIDiagCount % 40 == 0)
-		{
-			const FVector MyLoc = GetActorLocation();
-
-			// Find enemy objective to check if EQS is moving toward or away from it
-			FVector EnemyObjLoc = FVector::ZeroVector;
-			bool bHasEnemyObj = false;
-			const int32 MyTeam = GetTeamID_Implementation();
-			for (ADECapturePoint* CP : AssignedCapturePoints)
-			{
-				if (CP && CP->GetTeamID_Implementation() != MyTeam)
-				{
-					EnemyObjLoc = CP->GetActorLocation();
-					bHasEnemyObj = true;
-					break;
-				}
-			}
-
-			const float DistSelfToObj  = bHasEnemyObj ? FVector::Dist(MyLoc, EnemyObjLoc) : -1.0f;
-			const float DistDestToObj  = bHasEnemyObj ? FVector::Dist(LastEQSTargetLocation, EnemyObjLoc) : -1.0f;
-			const bool  bMovingCloser  = bHasEnemyObj && (DistDestToObj < DistSelfToObj);
-
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DEAgent|ScriptedAI] %s EQS#%d class=%d dest=(%.0f,%.0f,%.0f) self=(%.0f,%.0f,%.0f) "
-				     "distToObj: self=%.0f dest=%.0f %s CPs=%d"),
-				*GetName(), ScriptedAIDiagCount, (int32)GetCommandedClass(),
-				LastEQSTargetLocation.X, LastEQSTargetLocation.Y, LastEQSTargetLocation.Z,
-				MyLoc.X, MyLoc.Y, MyLoc.Z,
-				DistSelfToObj, DistDestToObj,
-				bHasEnemyObj ? (bMovingCloser ? TEXT("CLOSER") : TEXT("FARTHER")) : TEXT("NO_OBJ"),
-				AssignedCapturePoints.Num());
-		}
-		ScriptedAIDiagCount++;
+		return;
 	}
+
+	AICtrl->StopMovement();
+	LastEQSTargetLocation = Result.GetValue();
 
 	FAIMoveRequest MoveReq(LastEQSTargetLocation);
 	MoveReq.SetAcceptanceRadius(EQSAcceptanceRadius);
 	MoveReq.SetUsePathfinding(true);
-	AICtrl->MoveTo(MoveReq);
+	EPathFollowingRequestResult::Type MoveResult = AICtrl->MoveTo(MoveReq);
 }
 
 
@@ -917,16 +893,6 @@ void ADEAgent::ResetStepDamage() { if (CombatStats) CombatStats->ResetStepDamage
 void ADEAgent::ProcessTrainingAbilities()
 {
 	if (!bIsAlive || !AbilitySystemComponent) return;
-
-	// [DIAG] Confirm this timer fires for env 0 agents
-	// Uses per-instance counter (not static) so logs appear every PIE session.
-	TrainingAbilityDiagCount++;
-	if (TrainingAbilityDiagCount <= 5 && GetEnvID_Implementation() == 0)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DEAgent|Env0] ProcessTrainingAbilities call #%d — agent=%s team=%d class=%d"),
-			TrainingAbilityDiagCount, *GetName(), GetTeamID_Implementation(), (int32)GetCommandedClass());
-	}
 
 	// Activate attack ability via GAS tag
 	FGameplayTagContainer AttackTag;

@@ -36,21 +36,10 @@ void UDEScriptedAIComponent::BeginPlay()
 		return;
 	}
 
-	// Issue 1 diagnostic: EQSExecutor must have a QueryTemplate assigned in the Blueprint.
-	// If it is null, ExecuteQuerySynchronous() will always fail and the agent will use
-	// the 300 cm fallback wander, causing it to appear stuck at its spawn position.
-	if (UDynamicEQSExecutor* EQSExec = OwnerAgent->FindComponentByClass<UDynamicEQSExecutor>())
-	{
-		if (!EQSExec->QueryTemplate)
-		{
-			UE_LOG(LogTemp, Error,
-				TEXT("[DEScriptedAI] %s: EQSExecutor.QueryTemplate is NULL. "
-				     "Open the agent's Blueprint, select the EQSExecutor component, "
-				     "and assign the same EQS query asset used by the RL agent BPs. "
-				     "Until this is fixed the agent will use 300 cm fallback movement."),
-				*GetOwner()->GetName());
-		}
-	}
+	// Stagger tick intervals so agents don't all call StopMovement() simultaneously.
+	// Without this, 5 agents start ticking in the same frame → nav system gridlock.
+	const float Stagger = FMath::FRandRange(0.0f, UpdateInterval * 0.6f);
+	PrimaryComponentTick.TickInterval = UpdateInterval + Stagger;
 
 	// Load tier set by train.py curriculum scheduler
 	LoadTierFromConfig();
@@ -113,7 +102,7 @@ void UDEScriptedAIComponent::LoadTierFromConfig()
 
 void UDEScriptedAIComponent::SetDifficultyTier(int32 Tier)
 {
-	CurrentTier = FMath::Clamp(Tier, 0, 3);
+	CurrentTier = FMath::Clamp(Tier, 0, 2);
 	UE_LOG(LogTemp, Log, TEXT("[DEScriptedAI] %s tier set to %d"),
 		GetOwner() ? *GetOwner()->GetName() : TEXT("Unknown"), CurrentTier);
 
@@ -240,13 +229,13 @@ FDEEQSWeightParameters UDEScriptedAIComponent::GetBaseWeights(EDEClassType Class
 		break;
 
 	case EDEClassType::Support:
-		W.EnemyObjectiveProximity = -0.3f;
+		W.EnemyObjectiveProximity = 0.0f;   // Neutral: Patrol +0.2 gives net forward push
 		W.AllyObjectiveProximity  = 0.3f;
 		W.CoverDensity            = 0.6f;
 		W.EnemyVisibility         = -0.2f;
 		W.AllyProximity           = 0.9f;   // Follow teammates forward
 		W.CombatRange             = -0.3f;
-		W.AssignedBaseProximity   = 0.0f;   // Neutral: follows allies instead
+		W.AssignedBaseProximity   = -0.1f;  // Slight negative: push out of spawn
 		break;
 	}
 
@@ -259,24 +248,27 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 
 	switch (CurrentTier)
 	{
-	case 0: // Passive — stay near base
-		W.EnemyObjectiveProximity = 0.0f;
+	case 0: // Random roam — randomize all weights each tick interval
+		W.EnemyObjectiveProximity = FMath::FRandRange(-1.0f, 1.0f);
+		W.AllyObjectiveProximity  = FMath::FRandRange(-1.0f, 1.0f);
+		W.CoverDensity            = FMath::FRandRange(-1.0f, 1.0f);
+		W.EnemyVisibility         = FMath::FRandRange(-1.0f, 1.0f);
+		W.AllyProximity           = FMath::FRandRange(-1.0f, 1.0f);
+		W.CombatRange             = FMath::FRandRange(-1.0f, 1.0f);
+		W.AssignedBaseProximity   = FMath::FRandRange(-1.0f, 1.0f);
+		break;
+
+	case 1: // Directed — flat weights targeting nearest enemy base/agent; no per-class differentiation
+		W.EnemyObjectiveProximity = 0.9f;
 		W.AllyObjectiveProximity  = 0.0f;
 		W.CoverDensity            = 0.0f;
-		W.EnemyVisibility         = 0.0f;
+		W.EnemyVisibility         = 0.6f;
 		W.AllyProximity           = 0.0f;
 		W.CombatRange             = 0.0f;
-		W.AssignedBaseProximity   = 0.5f;
+		W.AssignedBaseProximity   = -0.3f;
 		break;
 
-	case 1: // Basic — base weights, combat suppressed at ability level
-		break;
-
-	case 2: // Standard — full weights
-		break;
-
-	case 3: // Aggressive — boost forward pressure
-		W.EnemyObjectiveProximity = FMath::Clamp(W.EnemyObjectiveProximity + 0.2f, -1.0f, 1.0f);
+	case 2: // Full — use per-class base weights; state machine active
 		break;
 	}
 
@@ -295,10 +287,10 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyNoise(const FDEEQSWeightPara
 	return FDEEQSWeightParameters::FromArray(Arr);
 }
 
-FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWeightParameters& In) const
+FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWeightParameters& In, EDEClassType Class) const
 {
-	// Passive tier overrides everything — state machine has no effect
-	if (CurrentTier == 0) return In;
+	// State machine only active at Tier 2 (full architecture)
+	if (CurrentTier < 2) return In;
 
 	FDEEQSWeightParameters W = In;
 
@@ -308,6 +300,21 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWe
 		// No enemies nearby — push hard toward objective, ignore combat range noise
 		W.EnemyObjectiveProximity = FMath::Min(W.EnemyObjectiveProximity + 0.2f, 1.0f);
 		W.CombatRange = 0.0f;
+		// Ensure all classes actively leave spawn during patrol (prevents spawn clustering)
+		W.AssignedBaseProximity = FMath::Min(W.AssignedBaseProximity, -0.1f);
+		if (Class == EDEClassType::Support)
+		{
+			// Support follows allies even in Patrol — keep AllyProximity positive
+			// so it trails Strike/Vanguard as they advance. Cap to avoid pinning
+			// to spawn if teammates haven't moved yet.
+			W.AllyProximity = FMath::Min(W.AllyProximity, 0.5f);
+		}
+		else
+		{
+			// Strike/Vanguard spread out: negative AllyProximity acts as soft
+			// minimum-distance repulsion, preventing spawn clustering.
+			W.AllyProximity = -0.3f;
+		}
 		break;
 
 	case EScriptedAIState::Approach:
@@ -340,7 +347,7 @@ FDEEQSWeightParameters UDEScriptedAIComponent::GetScriptedWeights(EDEClassType C
 	const FDEEQSWeightParameters Base   = GetBaseWeights(Class);
 	const FDEEQSWeightParameters Tiered = ApplyTierModifiers(Base);
 	const FDEEQSWeightParameters Noisy  = ApplyNoise(Tiered);
-	return ApplyStateBehavior(Noisy);
+	return ApplyStateBehavior(Noisy, Class);
 }
 
 void UDEScriptedAIComponent::ResampleNoise(const FRandomStream& Stream)
@@ -360,23 +367,6 @@ void UDEScriptedAIComponent::ApplyWeightsToAgent()
 	const EDEClassType Class = Agent->GetCommandedClass();
 	const FDEEQSWeightParameters Weights = GetScriptedWeights(Class);
 
-	// [DIAG] Log final computed weights per agent (first 3 calls, then every 20s equivalent at 0.5s tick = every 40 ticks)
-	{
-		static TMap<FString, int32> WeightLogCount;
-		int32& WCount = WeightLogCount.FindOrAdd(GetOwner()->GetName());
-		if (WCount < 3 || WCount % 40 == 0)
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DEScriptedAI] %s class=%d state=%s tier=%d | EnemyObj=%.2f AllyObj=%.2f Cover=%.2f EnemyVis=%.2f AllyProx=%.2f Range=%.2f AssignBase=%.2f"),
-				*GetOwner()->GetName(), (int32)Class,
-				*StaticEnum<EScriptedAIState>()->GetNameStringByValue((int64)CurrentState),
-				CurrentTier,
-				Weights.EnemyObjectiveProximity, Weights.AllyObjectiveProximity,
-				Weights.CoverDensity, Weights.EnemyVisibility,
-				Weights.AllyProximity, Weights.CombatRange, Weights.AssignedBaseProximity);
-		}
-		++WCount;
-	}
 
 	Agent->UpdateTacticalWeights(Weights);
 

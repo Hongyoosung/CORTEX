@@ -98,22 +98,24 @@ class CurriculumScheduler:
     UE5's LoadTierFromConfig() picks it up at the next episode reset.
     """
 
+    # Win-rate thresholds: fraction of early-terminated episodes won by RL team.
+    # Timeout episodes are excluded (no clear winner).
     PROMOTION_THRESHOLDS = {
-        0: 0.5,   # Passive  → Basic:      RL is beating a stationary opponent
-        1: 1.5,   # Basic    → Standard:   RL shows consistent objective control
-        2: 3.0,   # Standard → Aggressive: RL dominates standard-difficulty opponent
+        1: 0.55,  # Basic    → Standard:   RL wins >55% of decided episodes
+        2: 0.65,  # Standard → Aggressive: RL wins >65% of decided episodes
+        3: 1.01,  # Aggressive — no further promotion (unreachable sentinel)
     }
 
     def __init__(
         self,
         config_path: str,
-        initial_tier: int = 0,
+        initial_tier: int = 1,
         window: int = 5,
     ):
         self.config_path  = config_path
         self.current_tier = initial_tier
         self.window       = window
-        self._reward_buf: list = []
+        self._win_rate_buf: list = []
 
         # Write initial tier so UE5 always finds a valid config
         self._write_config()
@@ -122,28 +124,29 @@ class CurriculumScheduler:
 
     # ── Public interface ──────────────────────────────────────────────────
 
-    def update(self, episode_reward_mean: float) -> bool:
+    def update(self, win_rate: float) -> bool:
         """
-        Call once per training iteration with the mean episode reward.
-        Returns True if the tier was promoted this call.
+        Call once per training iteration with the RL win rate for that iteration.
+        win_rate is the fraction of early-terminated (non-timeout) episodes won
+        by the RL team. Returns True if the tier was promoted this call.
         """
         if self.current_tier >= 3:
             return False  # already at max
 
-        self._reward_buf.append(episode_reward_mean)
-        if len(self._reward_buf) > self.window:
-            self._reward_buf.pop(0)
+        self._win_rate_buf.append(win_rate)
+        if len(self._win_rate_buf) > self.window:
+            self._win_rate_buf.pop(0)
 
-        if len(self._reward_buf) < self.window:
+        if len(self._win_rate_buf) < self.window:
             return False  # not enough history yet
 
         threshold = self.PROMOTION_THRESHOLDS[self.current_tier]
-        if all(r >= threshold for r in self._reward_buf):
+        if all(r >= threshold for r in self._win_rate_buf):
             self.current_tier += 1
-            self._reward_buf.clear()
+            self._win_rate_buf.clear()
             self._write_config()
             print(f"[Curriculum] *** TIER PROMOTED → {self.current_tier} ***  "
-                  f"(threshold={threshold:.2f} sustained over {self.window} iters)")
+                  f"(win_rate≥{threshold:.0%} sustained over {self.window} iters)")
             return True
 
         return False
@@ -172,7 +175,7 @@ class DETrainingConfig:
 
     # PPO hyperparameters
     LEARNING_RATE    = 3e-4
-    TRAIN_BATCH_SIZE = 4000
+    TRAIN_BATCH_SIZE = 8000
     MINIBATCH_SIZE   = 512
     NUM_SGD_ITER     = 6     # reverted: 8 epochs × VF_CLIP_PARAM=20 caused critic oscillation
     GAMMA            = 0.99
@@ -527,7 +530,14 @@ def train_with_rllib(args):
                             pass
 
         # ── Curriculum tier update ────────────────────────────────────────────
-        tier_promoted = curriculum.update(reward)
+        rl_win_rate = custom.get("rl_win_rate_mean", custom.get("rl_win_rate"))
+        if rl_win_rate is not None and not np.isnan(float(rl_win_rate)):
+            rl_win_rate = float(rl_win_rate)
+            tb.add_scalar("curriculum/rl_win_rate", rl_win_rate, cumul_steps)
+            tier_promoted = curriculum.update(rl_win_rate)
+        else:
+            # No decided episodes this iteration — skip promotion check
+            tier_promoted = False
         tb.add_scalar("curriculum/scripted_ai_tier", curriculum.get_tier(), cumul_steps)
         if tier_promoted:
             tb.add_scalar("curriculum/tier_promotion_step", cumul_steps, curriculum.get_tier())

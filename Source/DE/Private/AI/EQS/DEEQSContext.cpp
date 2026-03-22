@@ -177,13 +177,6 @@ void UEnvQueryContext_DEAllies::ProvideContext(FEnvQueryInstance& QueryInstance,
 		}
 	}
 
-	// [DIAG] Log ally context (first 3 seconds of game time — resets each PIE)
-	if (DEChar->GetWorld() && DEChar->GetWorld()->GetTimeSeconds() < 3.0f)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DEEQSContext|Allies] %s team=%d env=%d foundAllies=%d"),
-			*DEChar->GetName(), MyTeamID, MyEnvID, AllyPositions.Num());
-	}
 
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, AllyPositions);
 }
@@ -246,19 +239,20 @@ void UEnvQueryContext_DEEnemyObjective::ProvideContext(FEnvQueryInstance& QueryI
 		}
 	}
 
-	// [DIAG] Log enemy objective resolution (first 3 seconds of game time — resets each PIE)
-	if (DEChar->GetWorld() && DEChar->GetWorld()->GetTimeSeconds() < 3.0f)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DEEQSContext|EnemyObj] %s team=%d capturePoints=%d nearestNonFriendly=%s loc=%s"),
-			*DEChar->GetName(), MyTeamID, DEChar->AssignedCapturePoints.Num(),
-			NearestNonFriendly ? *NearestNonFriendly->GetName() : TEXT("NONE"),
-			NearestNonFriendly ? *NearestNonFriendly->GetActorLocation().ToString() : TEXT("N/A"));
-	}
 
 	if (NearestNonFriendly)
 	{
 		UEnvQueryItemType_Point::SetContextHelper(ContextData, NearestNonFriendly->GetActorLocation());
+	}
+	else
+	{
+		// No non-friendly capture point found — EQS distance-to-objective test
+		// will have no target, making all positions score equally on that axis.
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DEEQSContext|EnemyObj] %s team=%d: NO enemy objective found! "
+			     "CapturePoints=%d — all owned by team %d? Context NOT set."),
+			*DEChar->GetName(), MyTeamID,
+			DEChar->AssignedCapturePoints.Num(), MyTeamID);
 	}
 }
 
@@ -321,14 +315,6 @@ void UEnvQueryContext_DEAssignedBase::ProvideContext(FEnvQueryInstance& QueryIns
 		UEnvQueryItemType_Point::SetContextHelper(ContextData, CPs[AssignedIndex]->GetActorLocation());
 	}
 
-	// [DIAG] Log assigned base (first 3 seconds of game time — resets each PIE)
-	if (DEChar->GetWorld() && DEChar->GetWorld()->GetTimeSeconds() < 3.0f)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DEEQSContext|AssignedBase] %s assignedIdx=%d totalCPs=%d valid=%s"),
-			*DEChar->GetName(), AssignedIndex, CPs.Num(),
-			(CPs.IsValidIndex(AssignedIndex) && CPs[AssignedIndex]) ? TEXT("YES") : TEXT("NO"));
-	}
 }
 
 
@@ -455,17 +441,6 @@ void UEnvQueryContext_DECoverPoints::ProvideContext(FEnvQueryInstance& QueryInst
 		}
 	}
 
-	// If no cover points found, the CoverDensity weight has no effect.
-	// However, the EQS test behavior with empty context depends on the query asset:
-	// some test types will score all items equally, others may produce degenerate scores.
-	{
-		static bool bLoggedCover = false;
-		if (!bLoggedCover)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext|Cover] Found %d cover points tagged 'Cover'"), CoverPositions.Num());
-			bLoggedCover = true;
-		}
-	}
 
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, CoverPositions);
 }

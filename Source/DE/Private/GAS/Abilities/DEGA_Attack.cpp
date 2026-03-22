@@ -305,14 +305,6 @@ AActor* UDEGA_Attack::FindBestEnemy() const
 	const int32 MyEnvID = OwnerChar->GetEnvID_Implementation();
 	const bool bLogDiag = (MyEnvID == 0);
 
-	if (bLogDiag)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DEGA_Attack|Env0] FindBestEnemy: agent=%s team=%d MatchManager=%s Range=%.0f"),
-			*OwnerChar->GetName(), OwnerChar->GetTeamID_Implementation(),
-			CachedMatchManager ? *CachedMatchManager->GetName() : TEXT("NULL"),
-			Config.Range);
-	}
 
 	if (!CachedMatchManager) return nullptr;
 
@@ -332,31 +324,17 @@ AActor* UDEGA_Attack::FindBestEnemy() const
 
 	TArray<ADEAgent*> Enemies = CachedMatchManager->GetEnemyAgents(OwnerChar->GetTeamID_Implementation());
 
-	if (bLogDiag)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DEGA_Attack|Env0] GetEnemyAgents returned %d agents"), Enemies.Num());
-	}
-
 	for (ADEAgent* Enemy : Enemies)
 	{
 		if (!Enemy || !Enemy->IsAlive())
 		{
-			if (bLogDiag) UE_LOG(LogTemp, Warning, TEXT("[DEGA_Attack|Env0]   skip %s: null or dead"), Enemy ? *Enemy->GetName() : TEXT("NULL"));
 			continue;
 		}
 		const float DistSq = FVector::DistSquared(Enemy->GetActorLocation(), MyLocation);
 		const float Dist = FMath::Sqrt(DistSq);
-		if (bLogDiag)
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DEGA_Attack|Env0]   enemy=%s dist=%.0f range=%.0f minRange=%.0f alive=%s"),
-				*Enemy->GetName(), Dist, AttackRange, Config.MinRange,
-				Enemy->IsAlive() ? TEXT("Y") : TEXT("N"));
-		}
+
 		if (DistSq > AttackRangeSq || DistSq < MinRangeSq)
 		{
-			if (bLogDiag) UE_LOG(LogTemp, Warning, TEXT("[DEGA_Attack|Env0]   → REJECTED by range"));
 			continue;
 		}
 

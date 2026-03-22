@@ -294,11 +294,20 @@ public:
 	/** Maximum match duration in seconds before timeout (fixed-length episodes).
 	 *  Winner at timeout = team with higher score (passive income from held capture points). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
-	float MaxMatchDuration = 120.0f;
+	float MaxMatchDuration = 300.0f;
 
 	/** Score points earned per second per owned capture point */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
 	float PassiveIncomeRate = 1.0f;
+
+	/**
+	 * Score threshold for an early win. A team that reaches this score wins immediately
+	 * rather than waiting for the timeout. Set to 0 to disable score-based early win.
+	 * Default: 300 — roughly holding all 5 points for ~30s after capturing them
+	 * (5 passive pts/s × 30s = 150, plus 5 × 30pt capture bonuses = 150, total ~300).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
+	int32 WinScoreThreshold = 500;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Teams")
 	TArray<FDETeamConfiguration> TeamConfigs;
