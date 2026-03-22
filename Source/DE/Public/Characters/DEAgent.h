@@ -463,6 +463,8 @@ protected:
 	bool bWeightsDirty = false;
 	float SpawnTime = 0.0f;
 	int32 TacticalActionCallCount = 0;
+	int32 ScriptedAIDiagCount = 0;
+	int32 TrainingAbilityDiagCount = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FVector LastEQSTargetLocation = FVector::ZeroVector;

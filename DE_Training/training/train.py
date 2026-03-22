@@ -80,6 +80,87 @@ def process_reward(raw_reward: float) -> float:
     return r
 
 
+# ── Curriculum Scheduler ──────────────────────────────────────────────────────
+
+class CurriculumScheduler:
+    """
+    Automatically promotes ScriptedAI difficulty when RL performance is
+    sustained above a per-tier reward threshold.
+
+    Tier promotion flow:
+        0 (Passive) → 1 (Basic) → 2 (Standard) → 3 (Aggressive)
+
+    A tier is promoted once `window` consecutive reward measurements all
+    exceed `promotion_thresholds[current_tier]`.  Thresholds are expressed
+    in the *scaled* episode reward space (after process_reward scaling).
+
+    On promotion the new tier is written to `config_path` as JSON so that
+    UE5's LoadTierFromConfig() picks it up at the next episode reset.
+    """
+
+    PROMOTION_THRESHOLDS = {
+        0: 0.5,   # Passive  → Basic:      RL is beating a stationary opponent
+        1: 1.5,   # Basic    → Standard:   RL shows consistent objective control
+        2: 3.0,   # Standard → Aggressive: RL dominates standard-difficulty opponent
+    }
+
+    def __init__(
+        self,
+        config_path: str,
+        initial_tier: int = 0,
+        window: int = 5,
+    ):
+        self.config_path  = config_path
+        self.current_tier = initial_tier
+        self.window       = window
+        self._reward_buf: list = []
+
+        # Write initial tier so UE5 always finds a valid config
+        self._write_config()
+        print(f"[Curriculum] Initialized at tier {self.current_tier}  "
+              f"(config → {self.config_path})")
+
+    # ── Public interface ──────────────────────────────────────────────────
+
+    def update(self, episode_reward_mean: float) -> bool:
+        """
+        Call once per training iteration with the mean episode reward.
+        Returns True if the tier was promoted this call.
+        """
+        if self.current_tier >= 3:
+            return False  # already at max
+
+        self._reward_buf.append(episode_reward_mean)
+        if len(self._reward_buf) > self.window:
+            self._reward_buf.pop(0)
+
+        if len(self._reward_buf) < self.window:
+            return False  # not enough history yet
+
+        threshold = self.PROMOTION_THRESHOLDS[self.current_tier]
+        if all(r >= threshold for r in self._reward_buf):
+            self.current_tier += 1
+            self._reward_buf.clear()
+            self._write_config()
+            print(f"[Curriculum] *** TIER PROMOTED → {self.current_tier} ***  "
+                  f"(threshold={threshold:.2f} sustained over {self.window} iters)")
+            return True
+
+        return False
+
+    def get_tier(self) -> int:
+        return self.current_tier
+
+    # ── Internal ──────────────────────────────────────────────────────────
+
+    def _write_config(self):
+        """Write current tier to JSON so UE5 reads it on next episode reset."""
+        os.makedirs(os.path.dirname(self.config_path) or ".", exist_ok=True)
+        payload = json.dumps({"difficulty_tier": self.current_tier}, indent=2)
+        with open(self.config_path, "w") as f:
+            f.write(payload)
+
+
 # ── Training configuration ────────────────────────────────────────────────────
 
 class DETrainingConfig:
@@ -309,12 +390,21 @@ def train_with_rllib(args):
         print(f"Resuming from {args.resume}")
         algo.restore(args.resume)
 
+    # Curriculum scheduler — writes <output_dir>/scripted_ai_config.json which
+    # UE5's LoadTierFromConfig() reads at episode reset to update ScriptedAI tier.
+    scripted_ai_config = os.path.join(output_dir, "scripted_ai_config.json")
+    curriculum = CurriculumScheduler(
+        config_path=scripted_ai_config,
+        initial_tier=args.scripted_ai_tier,
+        window=args.curriculum_window,
+    )
+
     best_reward    = float("-inf")
     cumul_episodes = 0
     cumul_steps    = 0
 
-    print(f"{'Iter':<6} {'Reward':>10} {'EpLen':>8} {'Steps':>12} {'Time':>8}")
-    print("-" * 50)
+    print(f"{'Iter':<6} {'Reward':>10} {'EpLen':>8} {'Steps':>12} {'Time':>8} {'Tier':>5}")
+    print("-" * 58)
 
     for i in range(args.iterations):
         t0     = time.time()
@@ -436,10 +526,16 @@ def train_with_rllib(args):
                         except (ValueError, TypeError):
                             pass
 
+        # ── Curriculum tier update ────────────────────────────────────────────
+        tier_promoted = curriculum.update(reward)
+        tb.add_scalar("curriculum/scripted_ai_tier", curriculum.get_tier(), cumul_steps)
+        if tier_promoted:
+            tb.add_scalar("curriculum/tier_promotion_step", cumul_steps, curriculum.get_tier())
+
         tb.flush()
 
         print(f"{i+1:>3}/{args.iterations:<3}  {reward:>10.2f}  "
-              f"{ep_len:>8.1f}  {cumul_steps:>12}  {dt:>7.1f}s")
+              f"{ep_len:>8.1f}  {cumul_steps:>12}  {dt:>7.1f}s  {curriculum.get_tier():>5}")
 
         if (i + 1) % args.checkpoint_freq == 0:
             algo.save(output_dir)
@@ -698,9 +794,13 @@ if __name__ == '__main__':
     parser.add_argument("--port",           type=int,  default=DETrainingConfig.PORT)
     parser.add_argument("--checkpoint",     type=str,  default=None,
                         help="Checkpoint path for eval mode")
-    parser.add_argument("--resume",         type=str,
+    parser.add_argument("--resume",              type=str,
                         default=os.environ.get("RESUME_CHECKPOINT") or None,
                         help="RLlib checkpoint to resume from")
+    parser.add_argument("--scripted-ai-tier",    type=int, default=0,
+                        help="Initial ScriptedAI difficulty tier (0=Passive … 3=Aggressive)")
+    parser.add_argument("--curriculum-window",   type=int, default=5,
+                        help="Iterations of sustained reward required for tier promotion")
     args = parser.parse_args()
 
     if args.mode == "validate":

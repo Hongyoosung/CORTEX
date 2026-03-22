@@ -130,21 +130,41 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     ADEAgent* Self = Cast<ADEAgent>(GetPawn());
     AActor* BestEnemy = nullptr;
 
+    const int32 SelfEnvID  = Self ? Self->GetEnvID_Implementation()  : -1;
+    const int32 SelfTeamID = Self ? Self->GetTeamID_Implementation() : -1;
+
+    // [DIAG] Log every perception update for env 0 only to avoid log spam
+    if (SelfEnvID == 0)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DEAIC|Env0] OnPerceptionUpdated: agent=%s env=%d team=%d "
+                 "perceived=%d class=%d"),
+            Self ? *Self->GetName() : TEXT("NULL"),
+            SelfEnvID, SelfTeamID,
+            PerceivedActors.Num(),
+            Self ? (int32)Self->GetCommandedClass() : -1);
+    }
+
     if (Self)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DEAIC] OnPerceptionUpdated: Self=%s EnvID=%d TeamID=%d — %d actors in sight"),
-            *GetName(), Self->GetEnvID_Implementation(), Self->GetTeamID_Implementation(), PerceivedActors.Num());
-
         for (AActor* Actor : PerceivedActors)
         {
             ADEAgent* Other = Cast<ADEAgent>(Actor);
-            UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   Perceived: %s (DEAgent=%s EnvID=%d TeamID=%d)"),
-                *Actor->GetName(),
-                Other ? TEXT("YES") : TEXT("NO"),
-                Other ? Other->GetEnvID_Implementation() : -1,
-                Other ? Other->GetTeamID_Implementation() : -1);
+            if (!Other) continue;
 
-            if (Other && Other->GetEnvID_Implementation() == Self->GetEnvID_Implementation() && Other->GetTeamID_Implementation() != Self->GetTeamID_Implementation())
+            const int32 OtherEnvID  = Other->GetEnvID_Implementation();
+            const int32 OtherTeamID = Other->GetTeamID_Implementation();
+
+            if (SelfEnvID == 0)
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DEAIC|Env0]   candidate=%s env=%d team=%d → envMatch=%s teamDiff=%s"),
+                    *Other->GetName(), OtherEnvID, OtherTeamID,
+                    (OtherEnvID == SelfEnvID) ? TEXT("YES") : TEXT("NO"),
+                    (OtherTeamID != SelfTeamID) ? TEXT("YES") : TEXT("NO"));
+            }
+
+            if (OtherEnvID == SelfEnvID && OtherTeamID != SelfTeamID)
             {
                 BestEnemy = Other;
                 break;
@@ -154,6 +174,15 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
 
     // Support agents have no offensive capability — never set an attack target.
     const bool bIsSupport = Self && (Self->GetCommandedClass() == EDEClassType::Support);
+
+    if (SelfEnvID == 0)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DEAIC|Env0] result: BestEnemy=%s bIsSupport=%s → HasTarget=%s"),
+            BestEnemy ? *BestEnemy->GetName() : TEXT("NULL"),
+            bIsSupport ? TEXT("true") : TEXT("false"),
+            (BestEnemy && !bIsSupport) ? TEXT("true") : TEXT("false"));
+    }
 
     if (BestEnemy && !bIsSupport)
     {

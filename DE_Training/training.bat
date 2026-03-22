@@ -176,8 +176,8 @@ if "%LAUNCH_UE5%"=="true" (
         exit /b 1
     )
     start "" "%UE5_EXE%" "%UPROJECT%" -game -nullrhi -nosound -notexturestreaming -nopause -ScholaPort=%SCHOLA_BASE_PORT%~%NUM_SCHOLA_ENVS% -log
-    echo Waiting 20s for UE5 to initialize...
-    timeout /t 20 /nobreak >nul
+    echo Waiting 3s for UE5 to initialize...
+    timeout /t 3 /nobreak >nul
     echo UE5 ready.
     echo.
 )

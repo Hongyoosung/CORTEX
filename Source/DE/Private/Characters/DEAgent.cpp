@@ -10,9 +10,11 @@
 #include "GAS/Abilities/DEGA_Attack.h"
 #include "GAS/Abilities/DEGA_Heal.h"
 #include "Schola/Components/DEScholaAgent.h"
+#include "Components/DEScriptedAIComponent.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
 #include "EQS/DynamicEQSExecutor.h"
 #include "Data/DEAbilityData.h"
+#include "Actors/DECapturePoint.h"
 
 #include "Kismet/GameplayStatics.h"
 #include "AbilitySystemComponent.h"
@@ -126,6 +128,12 @@ void ADEAgent::BeginPlay()
 	InitializeGASAbilities();
 
 	const bool bIsTraining = ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training;
+	UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s BeginPlay: ScholaAgent=%s AgentMode=%d bIsTraining=%s"),
+		*GetName(),
+		ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
+		ScholaAgent ? (int32)ScholaAgent->AgentMode : -1,
+		bIsTraining ? TEXT("true") : TEXT("false"));
+
 	if (bIsTraining)
 	{
 		GetWorld()->GetTimerManager().SetTimer(
@@ -135,6 +143,9 @@ void ADEAgent::BeginPlay()
 			0.2f,
 			true
 		);
+		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: TrainingAbilityTimer started (active=%s)"),
+			*GetName(),
+			GetWorld()->GetTimerManager().IsTimerActive(TrainingAbilityTimerHandle) ? TEXT("YES") : TEXT("NO"));
 	}
 
 	// Mana regen via timer instead of Tick (runs at 10Hz)
@@ -599,6 +610,24 @@ void ADEAgent::ResetCharacter()
 		ScholaAgent->ResetAgent();
 	}
 
+	// Defensive: re-ensure training ability timer is running.
+	// BeginPlay may have missed it if AgentMode was set after initial BeginPlay,
+	// or the timer handle may have been invalidated during episode transition.
+	if (ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training)
+	{
+		if (!GetWorld()->GetTimerManager().IsTimerActive(TrainingAbilityTimerHandle))
+		{
+			GetWorld()->GetTimerManager().SetTimer(
+				TrainingAbilityTimerHandle,
+				this,
+				&ADEAgent::ProcessTrainingAbilities,
+				0.2f,
+				true
+			);
+			UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: Re-started ProcessTrainingAbilities timer in ResetCharacter"), *GetName());
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[DEAgent] %s post-reset EQS state: bWeightsDirty=%d"),
 		*GetName(), bWeightsDirty);
 
@@ -660,7 +689,9 @@ void ADEAgent::PerformTacticalAction()
 	TOptional<FVector> Result = EQSExecutor->ExecuteQuerySynchronous();
 	if (!Result.IsSet())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: EQS query returned no result - using fallback movement"), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: EQS query returned no result - using fallback movement (QueryTemplate=%s)"),
+			*GetName(),
+			EQSExecutor->QueryTemplate ? *EQSExecutor->QueryTemplate->GetName() : TEXT("NULL"));
 
 		const FVector CurrentLocation = GetActorLocation();
 		const float FallbackRadius = 300.0f;
@@ -681,6 +712,45 @@ void ADEAgent::PerformTacticalAction()
 	}
 
 	LastEQSTargetLocation = Result.GetValue();
+
+	// [DIAG] Log EQS-chosen destination for scripted AI agents
+	// Uses per-instance counter (not static) so logs appear every PIE session.
+	if (FindComponentByClass<UDEScriptedAIComponent>())
+	{
+		if (ScriptedAIDiagCount < 10 || ScriptedAIDiagCount % 40 == 0)
+		{
+			const FVector MyLoc = GetActorLocation();
+
+			// Find enemy objective to check if EQS is moving toward or away from it
+			FVector EnemyObjLoc = FVector::ZeroVector;
+			bool bHasEnemyObj = false;
+			const int32 MyTeam = GetTeamID_Implementation();
+			for (ADECapturePoint* CP : AssignedCapturePoints)
+			{
+				if (CP && CP->GetTeamID_Implementation() != MyTeam)
+				{
+					EnemyObjLoc = CP->GetActorLocation();
+					bHasEnemyObj = true;
+					break;
+				}
+			}
+
+			const float DistSelfToObj  = bHasEnemyObj ? FVector::Dist(MyLoc, EnemyObjLoc) : -1.0f;
+			const float DistDestToObj  = bHasEnemyObj ? FVector::Dist(LastEQSTargetLocation, EnemyObjLoc) : -1.0f;
+			const bool  bMovingCloser  = bHasEnemyObj && (DistDestToObj < DistSelfToObj);
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DEAgent|ScriptedAI] %s EQS#%d class=%d dest=(%.0f,%.0f,%.0f) self=(%.0f,%.0f,%.0f) "
+				     "distToObj: self=%.0f dest=%.0f %s CPs=%d"),
+				*GetName(), ScriptedAIDiagCount, (int32)GetCommandedClass(),
+				LastEQSTargetLocation.X, LastEQSTargetLocation.Y, LastEQSTargetLocation.Z,
+				MyLoc.X, MyLoc.Y, MyLoc.Z,
+				DistSelfToObj, DistDestToObj,
+				bHasEnemyObj ? (bMovingCloser ? TEXT("CLOSER") : TEXT("FARTHER")) : TEXT("NO_OBJ"),
+				AssignedCapturePoints.Num());
+		}
+		ScriptedAIDiagCount++;
+	}
 
 	FAIMoveRequest MoveReq(LastEQSTargetLocation);
 	MoveReq.SetAcceptanceRadius(EQSAcceptanceRadius);
@@ -847,6 +917,16 @@ void ADEAgent::ResetStepDamage() { if (CombatStats) CombatStats->ResetStepDamage
 void ADEAgent::ProcessTrainingAbilities()
 {
 	if (!bIsAlive || !AbilitySystemComponent) return;
+
+	// [DIAG] Confirm this timer fires for env 0 agents
+	// Uses per-instance counter (not static) so logs appear every PIE session.
+	TrainingAbilityDiagCount++;
+	if (TrainingAbilityDiagCount <= 5 && GetEnvID_Implementation() == 0)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DEAgent|Env0] ProcessTrainingAbilities call #%d — agent=%s team=%d class=%d"),
+			TrainingAbilityDiagCount, *GetName(), GetTeamID_Implementation(), (int32)GetCommandedClass());
+	}
 
 	// Activate attack ability via GAS tag
 	FGameplayTagContainer AttackTag;

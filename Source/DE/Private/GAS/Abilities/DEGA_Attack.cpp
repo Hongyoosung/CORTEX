@@ -301,6 +301,19 @@ AActor* UDEGA_Attack::FindBestEnemy() const
 	{
 		CachedMatchManager = const_cast<UDEGA_Attack*>(this)->GetMatchManager();
 	}
+
+	const int32 MyEnvID = OwnerChar->GetEnvID_Implementation();
+	const bool bLogDiag = (MyEnvID == 0);
+
+	if (bLogDiag)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DEGA_Attack|Env0] FindBestEnemy: agent=%s team=%d MatchManager=%s Range=%.0f"),
+			*OwnerChar->GetName(), OwnerChar->GetTeamID_Implementation(),
+			CachedMatchManager ? *CachedMatchManager->GetName() : TEXT("NULL"),
+			Config.Range);
+	}
+
 	if (!CachedMatchManager) return nullptr;
 
 	const FVector MyLocation = OwnerChar->GetActorLocation();
@@ -308,7 +321,6 @@ AActor* UDEGA_Attack::FindBestEnemy() const
 	const float AttackRange = Config.Range;
 	const float AttackRangeSq = FMath::Square(AttackRange);
 	const float MinRangeSq = FMath::Square(Config.MinRange);
-	const int32 MyEnvID = OwnerChar->GetEnvID_Implementation();
 
 	// Scoring weights
 	constexpr float W_DIST  = 0.3f;  // Closer is better (but not dominant)
@@ -319,14 +331,37 @@ AActor* UDEGA_Attack::FindBestEnemy() const
 	TArray<FEnemyCandidate> Candidates;
 
 	TArray<ADEAgent*> Enemies = CachedMatchManager->GetEnemyAgents(OwnerChar->GetTeamID_Implementation());
+
+	if (bLogDiag)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DEGA_Attack|Env0] GetEnemyAgents returned %d agents"), Enemies.Num());
+	}
+
 	for (ADEAgent* Enemy : Enemies)
 	{
-		if (!Enemy || !Enemy->IsAlive()) continue;
+		if (!Enemy || !Enemy->IsAlive())
+		{
+			if (bLogDiag) UE_LOG(LogTemp, Warning, TEXT("[DEGA_Attack|Env0]   skip %s: null or dead"), Enemy ? *Enemy->GetName() : TEXT("NULL"));
+			continue;
+		}
 		const float DistSq = FVector::DistSquared(Enemy->GetActorLocation(), MyLocation);
-		if (DistSq > AttackRangeSq || DistSq < MinRangeSq) continue;
-
 		const float Dist = FMath::Sqrt(DistSq);
-		const float DistScore  = 1.0f - FMath::Clamp(Dist / AttackRange, 0.0f, 1.0f);
+		if (bLogDiag)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[DEGA_Attack|Env0]   enemy=%s dist=%.0f range=%.0f minRange=%.0f alive=%s"),
+				*Enemy->GetName(), Dist, AttackRange, Config.MinRange,
+				Enemy->IsAlive() ? TEXT("Y") : TEXT("N"));
+		}
+		if (DistSq > AttackRangeSq || DistSq < MinRangeSq)
+		{
+			if (bLogDiag) UE_LOG(LogTemp, Warning, TEXT("[DEGA_Attack|Env0]   → REJECTED by range"));
+			continue;
+		}
+
+		const float InDist = FMath::Sqrt(DistSq);
+		const float DistScore  = 1.0f - FMath::Clamp(InDist / AttackRange, 0.0f, 1.0f);
 		const float HPScore    = 1.0f - FMath::Clamp(Enemy->GetHealthPercentage(), 0.0f, 1.0f);
 		const float ClassScore = GetClassTargetPriority(Enemy);
 
