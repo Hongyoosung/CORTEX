@@ -1,0 +1,50 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+using UnrealBuildTool;
+
+public class DE : ModuleRules
+{
+    public DE(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
+            "Core",
+            "CoreUObject",
+            "Engine",
+            "InputCore",
+            "EnhancedInput",
+            "AIModule",
+            "NavigationSystem",
+            "Json",
+            "JsonUtilities",
+            "GameplayStateTreeModule",
+            "StateTreeModule",
+            "StructUtils",
+            "Schola",
+            "ScholaInteractors",
+            "ScholaTraining",
+            "ScholaInferenceUtils",
+            "NNE",
+            "NNERuntimeORT",
+            "GameplayTags",
+            "Niagara",
+            "UMG",
+            "Slate",
+            "SlateCore",
+            "GameplayAbilities",
+            "GameplayTags",
+            "GameplayTasks",
+            "DynamicEQS"
+        });
+
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
+            "GameplayTasks",
+        });
+
+        // Add Public directory to include paths
+        PublicIncludePaths.Add(ModuleDirectory + "/Public");
+    }
+}

@@ -4,7 +4,7 @@ DE Entity-Centric Environment Wrapper — Schola 2.0.1
 Wraps Schola/UE5 connection for the entity-centric refactor (v10.2+).
 
 Key differences from the old v10.2 wrapper:
-  - Observation: 170-dim flat (from C++ FDEObservationV2::ToFlatArray)
+  - Observation: 226-dim flat (from C++ FDEObservationV2::ToFlatArray)
   - Action:       7-dim EQS weights in [-1, 1]  (7th = AssignedBaseProximity)
   - No strategy routing: single EntityCentricPolicy handles all agents
   - No uniform strategy assignment: strategies come from UE5 Squad Commander
@@ -27,6 +27,7 @@ Reward source:
 
 from gymnasium import spaces
 import numpy as np
+import os
 import time
 from typing import Dict, Tuple, Optional
 from collections import deque
@@ -50,8 +51,20 @@ except ImportError:
 
 
 # ── Layout constants (must match DEObservationTypes.h) ───────────────────────
-OBS_DIM    = 170
+# DE_OBS_V2_DIM = 7 + 8*9 + 8*8 + 8*7 + 8+8+8 + 3 = 226
+# Layout: Self(7) + Allies(8×9=72) + Enemies(8×8=64) + Bases(8×7=56) +
+#         AllyMask(8) + EnemyMask(8) + BaseMask(8) + Strategy(3)
+# Strategy one-hot starts at: 7+72+64+56+24 = 223
+OBS_DIM    = 226
 ACTION_DIM = 7
+
+# ── Strategy registry ─────────────────────────────────────────────────────────
+# Maps agent_id_str → strategy index (0=Strike, 1=Vanguard, 2=Support).
+# Populated by DEEntityCentricEnv on reset() and step() so that train.py's
+# policy_mapping_fn can route each agent to the correct per-role policy.
+# Works correctly when num_workers=0 (all code in one process).
+AGENT_STRATEGY_REGISTRY: Dict[str, int] = {}
+STRATEGY_ONEHOT_START = 223  # obs[223:226] = strategy one-hot [strike, vanguard, support]
 
 
 class DEEntityCentricEnv(MultiAgentEnv):
@@ -77,6 +90,17 @@ class DEEntityCentricEnv(MultiAgentEnv):
         host           = kwargs.get("host", "localhost")
         port           = self._resolve_port(kwargs)
         self.num_envs  = kwargs.get("num_envs", 4)
+
+        # Individual-respawn guard: wait this many seconds after send_reset_msg()
+        # before sending the first step action.  Individual respawns mean agents
+        # arrive at different times; if the first send_action_msg arrives while
+        # some agents are still spawning, Schola's GymConnector times out and
+        # skips the step (returning nothing → Python hangs indefinitely).
+        # Override via POST_RESET_DELAY env-var or 'post_reset_delay' kwarg.
+        self._post_reset_delay: float = float(
+            kwargs.get("post_reset_delay",
+                       os.environ.get("POST_RESET_DELAY", "4.0"))
+        )
 
         print(f"[DEEntityCentricEnv] Connecting to {host}:{port}  "
               f"num_envs={self.num_envs}")
@@ -142,8 +166,8 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._reward_debug_count  = 0
 
         # Per-strategy reward tracking
-        # Keys: 0=Assault, 1=Defend, 2=Support  (StrategyType from UE5 info)
-        STRATEGY_NAMES = {0: "assault", 1: "defend", 2: "support"}
+        # Keys: 0=Strike, 1=Vanguard, 2=Support  (StrategyType from UE5 info)
+        STRATEGY_NAMES = {0: "strike", 1: "vanguard", 2: "support"}
         self._strategy_names = STRATEGY_NAMES
         self._agent_strategy: Dict[str, int] = {}
         self._strategy_ep_rewards: Dict[int, list] = {k: [] for k in STRATEGY_NAMES}
@@ -152,7 +176,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
         # Per reward-component tracking (UE5 may send these in info)
         REWARD_COMPONENTS = [
             "BaseOccupationReward", "CoOccupationPenalty",
-            "BaseCaptureCreditReward", "UndefendedBasePenalty",
+            "BaseCaptureCreditReward",
             "AssignedBaseReachReward",
         ]
         self._reward_components = REWARD_COMPONENTS
@@ -334,6 +358,14 @@ class DEEntityCentricEnv(MultiAgentEnv):
         # Always send a full reset to C++ (DISABLED mode requires explicit resets)
         obs_list, infos_list = self._protocol.send_reset_msg()
 
+        # Individual-respawn guard: Schola returns as soon as the reset message
+        # is acknowledged, but UE5 spawns each agent separately.  Sending the
+        # first action before all agents have finished BeginPlay causes
+        # GymConnector to time out and return nothing, hanging send_action_msg.
+        if self._post_reset_delay > 0.0:
+            print(f"[RESET] Waiting {self._post_reset_delay:.1f}s for individual spawns…")
+            time.sleep(self._post_reset_delay)
+
         if not self._first_reset_done:
             self._first_reset_done = True
             self._update_agent_map()
@@ -341,6 +373,24 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 self._agent_ep_rewards[fid] = 0.0
 
         obs_d, info_d = self._process_obs(obs_list, infos_list)
+
+        # Populate strategy registry from reset obs so policy_mapping_fn
+        # can route agents to the correct per-role policy immediately.
+        strat_counts = {0: 0, 1: 0, 2: 0}
+        for fid, obs in obs_d.items():
+            one_hot = obs[STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START + 3]
+            strategy_idx = int(np.argmax(one_hot))
+            AGENT_STRATEGY_REGISTRY[fid] = strategy_idx
+            self._agent_strategy[fid] = strategy_idx
+            strat_counts[strategy_idx] = strat_counts.get(strategy_idx, 0) + 1
+        STRAT_NAMES = {0: "strike", 1: "vanguard", 2: "support"}
+        print(f"[RESET] Strategy distribution from obs one-hot: "
+              f"{{{', '.join(f'{STRAT_NAMES[k]}={v}' for k,v in strat_counts.items())}}}")
+        # Sample one obs to show actual one-hot values for diagnosis
+        if obs_d:
+            sample_id = next(iter(obs_d))
+            print(f"[RESET] Sample obs[223:226] for {sample_id}: "
+                  f"{obs_d[sample_id][STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START+3]}")
 
         # Sync cumulative baseline to avoid phantom delta on first step
         for fid in self._agent_ids:
@@ -581,17 +631,41 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 pass
 
         # Per-strategy reward accumulation
+        # Also update AGENT_STRATEGY_REGISTRY from obs one-hot every step so that
+        # the NEXT episode's policy_mapping_fn uses the correct per-role routing.
+        # (policy_mapping_fn is called once per agent per episode at episode start,
+        #  so the registry populated during episode N drives routing in episode N+1.)
         for fid in list(rew_d.keys()):
             if fid == '__all__':
                 continue
             info = info_d.get(fid, {})
+
+            # 1. Prefer explicit StrategyType from info channel
             raw_strat = info.get('StrategyType')
             if raw_strat is not None:
                 try:
-                    strat = int(raw_strat)
-                    self._agent_strategy[fid] = strat
+                    strat_from_info = int(raw_strat)
+                    self._agent_strategy[fid] = strat_from_info
+                    AGENT_STRATEGY_REGISTRY[fid] = strat_from_info
                 except (ValueError, TypeError):
                     pass
+
+            # 2. Fallback: decode from obs one-hot (obs[223:226])
+            #    Only update if the one-hot is non-zero (Squad Commander has run)
+            obs = obs_d.get(fid)
+            if obs is not None:
+                one_hot = obs[STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START + 3]
+                if one_hot.sum() > 0.5:
+                    strat_from_obs = int(np.argmax(one_hot))
+                    prev = self._agent_strategy.get(fid, -1)
+                    if strat_from_obs != prev:
+                        self._agent_strategy[fid] = strat_from_obs
+                        AGENT_STRATEGY_REGISTRY[fid] = strat_from_obs
+                        if self._total_step_count <= 20:
+                            print(f"[STRATEGY UPDATE step={self._total_step_count}] "
+                                  f"{fid}: {self._strategy_names.get(prev,'?')} → "
+                                  f"{self._strategy_names.get(strat_from_obs,'?')}")
+
             strat = self._agent_strategy.get(fid)
             if strat is not None and strat in self._step_rewards_by_strategy:
                 self._step_rewards_by_strategy[strat].append(rew_d[fid])
@@ -617,6 +691,16 @@ class DEEntityCentricEnv(MultiAgentEnv):
         if info_used and self._reward_debug_count == 1:
             print("[REWARD] Using CumulativeLifetimeReward delta channel")
 
+        # Scale and clip raw UE5 rewards before returning to RLlib.
+        # process_reward() in train.py defines these constants but is never
+        # called from env_wrapper — apply the scaling here so PPO sees
+        # rewards in a stable range instead of raw C++ magnitudes.
+        REWARD_SCALE = 0.01
+        REWARD_CLIP  = 5.0
+        for fid in list(rew_d.keys()):
+            if fid != '__all__':
+                rew_d[fid] = float(np.clip(rew_d[fid] * REWARD_SCALE, -REWARD_CLIP, REWARD_CLIP))
+
         return obs_d, rew_d, term_d, trunc_d, info_d
 
     # ── Custom metrics ────────────────────────────────────────────────────
@@ -627,19 +711,34 @@ class DEEntityCentricEnv(MultiAgentEnv):
         and return a flat dict suitable for RLlib custom_metrics.
         Buffers are cleared after each call.
         """
+        # NOTE: RLlib appends its own "_mean"/"_min"/"_max" suffixes during
+        # aggregation.  Do NOT include "_mean" in the key here — the aggregated
+        # result key will be  reward_strategy_strike_mean  (RLlib-added suffix).
         metrics = {}
         for strat_id, name in self._strategy_names.items():
             buf = self._step_rewards_by_strategy[strat_id]
             if buf:
-                metrics[f"reward_strategy_{name}_mean"] = float(np.mean(buf))
-                metrics[f"reward_strategy_{name}_sum"]  = float(np.sum(buf))
-                metrics[f"reward_strategy_{name}_count"]= float(len(buf))
+                metrics[f"reward_strategy_{name}"]       = float(np.mean(buf))
+                metrics[f"reward_strategy_{name}_sum"]   = float(np.sum(buf))
+                metrics[f"reward_strategy_{name}_count"] = float(len(buf))
                 self._step_rewards_by_strategy[strat_id] = []
         for comp in self._reward_components:
             buf = self._component_ep_sums[comp]
             if buf:
-                metrics[f"reward_component_{comp}_mean"] = float(np.mean(buf))
+                metrics[f"reward_component_{comp}"] = float(np.mean(buf))
                 self._component_ep_sums[comp] = []
+
+        # Debug: log strategy buffer state periodically to diagnose routing issues
+        if self._total_step_count <= 5 or self._total_step_count % 200 == 0:
+            dist = {self._strategy_names[k]: len(v)
+                    for k, v in self._step_rewards_by_strategy.items()}
+            known = {name: self._strategy_names.get(idx, '?')
+                     for name, idx in list(self._agent_strategy.items())[:5]}
+            print(f"[CUSTOM_METRICS step={self._total_step_count}] "
+                  f"strategy_buf_sizes(after_drain)={dist}  "
+                  f"returned_keys={list(metrics.keys())}  "
+                  f"agent_strategy_sample={known}")
+
         return metrics
 
     # ── Episode management helpers ────────────────────────────────────────

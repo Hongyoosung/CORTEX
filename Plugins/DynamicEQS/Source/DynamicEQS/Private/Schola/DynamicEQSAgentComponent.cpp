@@ -148,6 +148,57 @@ FDynamicEQSWeightParameters UDynamicEQSAgentComponent::GetCurrentWeights() const
 	return CurrentWeights;
 }
 
+void UDynamicEQSAgentComponent::SwapInferencePolicy(UObject* NewPolicyObject)
+{
+	if (AgentMode != EDynamicEQSAgentMode::Inference)
+	{
+		return;
+	}
+
+	if (NewPolicyObject == InferencePolicyObject)
+	{
+		return;
+	}
+
+	// Tear down existing stepper
+	Stepper = nullptr;
+	InferencePolicyObject = NewPolicyObject;
+
+	if (!NewPolicyObject)
+	{
+		SetComponentTickEnabled(false);
+		return;
+	}
+
+	IPolicy* PolicyInterface = Cast<IPolicy>(NewPolicyObject);
+	if (!PolicyInterface)
+	{
+		UE_LOG(LogDynamicEQS, Warning,
+			TEXT("SwapInferencePolicy: NewPolicyObject on '%s' does not implement IPolicy. Inference stopped."),
+			*GetOwner()->GetName());
+		SetComponentTickEnabled(false);
+		return;
+	}
+
+	FInteractionDefinition Definition;
+	Define_Implementation(Definition);
+	PolicyInterface->Init(Definition);
+
+	Stepper = NewObject<USimpleStepper>(this);
+	TScriptInterface<IAgent> AgentInterface;
+	AgentInterface.SetObject(this);
+	AgentInterface.SetInterface(Cast<IAgent>(this));
+	TScriptInterface<IPolicy> PolicyScriptInterface;
+	PolicyScriptInterface.SetObject(NewPolicyObject);
+	PolicyScriptInterface.SetInterface(PolicyInterface);
+
+	TArray<TScriptInterface<IAgent>> Agents = { AgentInterface };
+	Stepper->Init(Agents, PolicyScriptInterface);
+
+	SetComponentTickEnabled(true);
+	TimeSinceLastStep = 0.0f;
+}
+
 void UDynamicEQSAgentComponent::SetExternalParameters(FInstancedStruct Params)
 {
 	ExternalParams = MoveTemp(Params);

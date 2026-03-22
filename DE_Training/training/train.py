@@ -27,9 +27,21 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from policy import (
-    EntityCentricPolicy, PPOTrainer, ReplayBuffer, Transition,
+    EntityCentricPolicy, EntityCentricPolicy_NoSelfAttn,
+    PPOTrainer, ReplayBuffer, Transition,
     collate_fn, OBS_DIM, EQS_DIM, EQS_LABELS,
 )
+
+# Ablation toggle: set USE_SELF_ATTN=0 to train without Self-Attention
+USE_SELF_ATTN = os.environ.get('USE_SELF_ATTN', '1') == '1'
+
+def _create_policy_network(hidden=64, heads=4):
+    """Create policy based on USE_SELF_ATTN toggle."""
+    if USE_SELF_ATTN:
+        return EntityCentricPolicy(hidden=hidden, heads=heads)
+    else:
+        print("[ABLATION] Self-Attention DISABLED — using CrossAttention-only variant")
+        return EntityCentricPolicy_NoSelfAttn(hidden=hidden, heads=heads)
 
 try:
     from ray.rllib.env.multi_agent_env import MultiAgentEnv
@@ -49,7 +61,6 @@ REWARD_CONFIG = {
     "BaseOccupationReward":    2.0,   # +2.0/step: sole ally within 2000cm of uncontrolled base
     "CoOccupationPenalty":    -0.5,   # -0.5/step: 2+ allies stacking same base
     "BaseCaptureCreditReward": 5.0,   # +5.0 sparse: agent that flipped base ownership
-    "UndefendedBasePenalty":  -1.0,   # -1.0/step: friendly base with no nearby ally (shared)
     "AssignedBaseReachReward": 1.0,   # +1.0 sparse: first time reaching assigned base
 
     # Python-side scaling applied to the received step reward before PPO update
@@ -80,34 +91,37 @@ class DETrainingConfig:
 
     # PPO hyperparameters
     LEARNING_RATE    = 3e-4
-    TRAIN_BATCH_SIZE = 8000
+    TRAIN_BATCH_SIZE = 4000
     MINIBATCH_SIZE   = 512
-    NUM_SGD_ITER     = 6
+    NUM_SGD_ITER     = 6     # reverted: 8 epochs × VF_CLIP_PARAM=20 caused critic oscillation
     GAMMA            = 0.99
     GAE_LAMBDA       = 0.95
     CLIP_PARAM       = 0.2
     ENTROPY_COEFF    = 0.01
-    VF_LOSS_COEFF    = 0.5
-    GRAD_CLIP        = 0.5
-    VF_CLIP_PARAM = float('inf')
+    VF_LOSS_COEFF    = 0.5   # reverted: 1.0 + VF_CLIP=20 + 8 epochs stacked too aggressively
+    GRAD_CLIP        = 1.0   # loosened: 0.5 was too tight when critic needs to close a large value gap
+    VF_CLIP_PARAM    = 10.0  # reverted: 20.0 caused critic oscillation on Support's bimodal reward
 
     LR_SCHEDULE = [
-        [0, 3e-4],
-        [2_000_000, 1e-4],
-        [4_000_000, 5e-5],
+        [0,          3e-4],
+        [1_000_000,  1e-4],  # was 2M — shift earlier; Vanguard expl_var dropped at ~1M steps
+        [3_000_000,  5e-5],
     ]
     ENTROPY_SCHEDULE = [
         [0,          0.01],
         [300_000,    0.005],
         [800_000,    0.003],
-        [1_500_000,  0.001],
-        [2_500_000,  0.0005],
+        [1_500_000,  0.002],  # was 0.001 — keep higher to prevent Strike entropy collapse
+        [2_500_000,  0.001],  # floor: Strike needs exploration budget past 1M steps
+        [5_000_000,  0.001],  # hold floor; do not decay further
     ]
 
     OUTPUT_DIR = "/app/training_results"
 
 
 # ── RLlib helpers ─────────────────────────────────────────────────────────────
+
+STRATEGY_POLICY_NAMES = {0: "strike_policy", 1: "vanguard_policy", 2: "support_policy"}
 
 if RLLIB_AVAILABLE:
     from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
@@ -117,7 +131,8 @@ if RLLIB_AVAILABLE:
         """
         RLlib TorchModelV2 wrapper for EntityCentricPolicy.
 
-        All agents share a single policy (no per-strategy routing).
+        Three separate instances are registered — one per role (strike / vanguard / support).
+        Each only receives observations for its assigned role.
         forward() returns (B, 14) = [means(7), log_stds(7)].
         """
 
@@ -127,12 +142,12 @@ if RLLIB_AVAILABLE:
             cfg = model_config.get("custom_model_config", {})
             hidden = cfg.get("hidden", 64)
             heads  = cfg.get("heads", 4)
-            self.policy = EntityCentricPolicy(hidden=hidden, heads=heads)
+            self.policy = _create_policy_network(hidden=hidden, heads=heads)
             self._last_features = None
 
         @override(TorchModelV2)
         def forward(self, input_dict, state, seq_lens):
-            obs = input_dict["obs"].float()            # (B, 170)
+            obs = input_dict["obs"].float()            # (B, 226)
             self._last_features = obs
             means = self.policy(obs)                   # (B, 7)
             log_stds = torch.clamp(
@@ -148,9 +163,27 @@ if RLLIB_AVAILABLE:
 
 
     def create_ppo_config():
-        """Build RLlib PPO config — single shared EntityCentricPolicy."""
+        """Build RLlib PPO config — three separate per-role EntityCentricPolicy instances."""
         from ray.rllib.algorithms.ppo import PPOConfig
         from ray.rllib.policy.policy import PolicySpec
+
+        try:
+            from env_wrapper import AGENT_STRATEGY_REGISTRY
+        except ImportError:
+            from training.env_wrapper import AGENT_STRATEGY_REGISTRY
+
+        def _policy_mapping_fn(agent_id, episode, worker, **kwargs):
+            strategy_idx = AGENT_STRATEGY_REGISTRY.get(agent_id)
+            if strategy_idx is None:
+                # Agent not yet registered — happens before first reset.
+                # Log a warning so we can detect if UE5 is not sending strategy info.
+                print(f"[POLICY MAP] WARNING: {agent_id} not in registry, defaulting to strike")
+                strategy_idx = 0
+            return STRATEGY_POLICY_NAMES[strategy_idx]
+
+        model_cfg = {"custom_model": "entity_centric_model",
+                     "custom_model_config": {"hidden": 64, "heads": 4},
+                     "max_seq_len": 20}
 
         config = PPOConfig()
         config = config.environment(
@@ -173,10 +206,13 @@ if RLLIB_AVAILABLE:
             rollout_fragment_length="auto",
             batch_mode="complete_episodes",
         )
-        # Single shared policy — all agents mapped here
+        # Three separate policies — one per role
         config = config.multi_agent(
-            policies={"entity_centric_policy": PolicySpec()},
-            policy_mapping_fn=lambda agent_id, episode, worker, **kw: "entity_centric_policy",
+            policies={
+                name: PolicySpec(config={"model": model_cfg})
+                for name in STRATEGY_POLICY_NAMES.values()
+            },
+            policy_mapping_fn=_policy_mapping_fn,
             count_steps_by="agent_steps",
         )
         config = config.debugging(log_level="WARN")
@@ -204,11 +240,6 @@ if RLLIB_AVAILABLE:
             kl_coeff=0.2,
             kl_target=0.01,
         )
-        config.model = {
-            "custom_model": "entity_centric_model",
-            "custom_model_config": {"hidden": 64, "heads": 4},
-            "max_seq_len": 20,
-        }
         return config
 
 
@@ -253,6 +284,7 @@ def train_with_rllib(args):
     )
 
     register_env("de_entity_centric", lambda cfg: DEEntityCentricEnv(**cfg))
+    # Single model class registered; all three per-role policies reference it.
     ModelCatalog.register_custom_model("entity_centric_model", EntityCentricRLlibModel)
 
     timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -290,73 +322,92 @@ def train_with_rllib(args):
         dt     = time.time() - t0
 
         env_r  = result.get("env_runners", {})
-        
+
+        # Old RLlib API stack puts episode metrics at the top-level result dict;
+        # new API stack nests them under "env_runners". Fall back accordingly.
+        def _get(key, default=None):
+            v = env_r.get(key)
+            if v is None:
+                v = result.get(key)
+            return v if v is not None else default
+
         # 1. 기존 지표 추출
-        reward = env_r.get("episode_reward_mean") or 0.0
-        ep_len = env_r.get("episode_len_mean")    or 0.0
-        eps    = env_r.get("episodes_this_iter",  0)
-        
+        reward = _get("episode_reward_mean", 0.0)
+        ep_len = _get("episode_len_mean",    0.0)
+        eps    = _get("episodes_this_iter",  0)
+
         # [수정됨] RLlib은 이미 누적된 스텝 수를 반환하므로, 기존 누적 변수에 더하지 않고 덮어씁니다.
-        cumul_steps = result.get("num_agent_steps_sampled", 0) 
-        
+        cumul_steps = result.get("num_agent_steps_sampled", 0)
+
         # 이번 이터레이션에서 샘플링된 스텝 수 (초당 처리량 계산용)
         steps_this_iter = result.get("num_agent_steps_sampled_this_iter", 0)
-        
+
         # 2. 신규 지표 추가 추출 (최대/최소 보상)
-        reward_max = env_r.get("episode_reward_max")
-        reward_min = env_r.get("episode_reward_min")
+        reward_max = _get("episode_reward_max")
+        reward_min = _get("episode_reward_min")
 
         reward = 0.0 if reward is None or (isinstance(reward, float) and np.isnan(reward)) else reward
         ep_len = 0.0 if ep_len is None or (isinstance(ep_len, float) and np.isnan(ep_len)) else ep_len
 
         cumul_episodes += eps
 
-        # ---------------------------------------------------------------------
-        # 텐서보드 기록
-        # ---------------------------------------------------------------------
-        
-        # 에피소드 보상 (평균, 최대, 최소)
-        tb.add_scalar("reward/episode_reward_mean", reward, cumul_steps)
-        
+        # ── Global metrics (all agents combined) ──────────────────────────────
+        tb.add_scalar("global/reward/episode_mean", reward, cumul_steps)
         if reward_max is not None and not np.isnan(float(reward_max)):
-            tb.add_scalar("reward/episode_reward_max", float(reward_max), cumul_steps)
+            tb.add_scalar("global/reward/episode_max", float(reward_max), cumul_steps)
         if reward_min is not None and not np.isnan(float(reward_min)):
-            tb.add_scalar("reward/episode_reward_min", float(reward_min), cumul_steps)
-
-        # 에피소드 길이 및 횟수
-        tb.add_scalar("env/episode_len_mean", ep_len, cumul_steps)
-        tb.add_scalar("env/episodes_completed", cumul_episodes, cumul_steps)
-        
-        # 시스템 퍼포먼스 (초당 스텝 처리량)
-        # 누적 스텝(cumul_steps)이 아닌 이번 이터레이션 스텝(steps_this_iter)으로 계산해야 정확합니다.
+            tb.add_scalar("global/reward/episode_min", float(reward_min), cumul_steps)
+        tb.add_scalar("global/env/episode_len_mean", ep_len, cumul_steps)
+        tb.add_scalar("global/env/episodes_completed", cumul_episodes, cumul_steps)
         steps_per_sec = steps_this_iter / max(dt, 1e-6)
-        tb.add_scalar("performance/steps_per_sec", steps_per_sec, cumul_steps)
+        tb.add_scalar("global/performance/steps_per_sec", steps_per_sec, cumul_steps)
 
-        # Custom env metrics
+        # ── Per-role reward & component metrics ───────────────────────────────
         custom = env_r.get("custom_metrics", {})
-        for strat in ("assault", "defend", "support"):
-            key_mean = f"reward_strategy_{strat}_mean"
-            key_sum  = f"reward_strategy_{strat}_sum"
-            if key_mean in custom:
-                tb.add_scalar(f"reward/strategy_{strat}_mean", float(custom[key_mean]), cumul_steps)
-            if key_sum in custom:
-                tb.add_scalar(f"reward/strategy_{strat}_sum",  float(custom[key_sum]),  cumul_steps)
+        
+        # 1. RLlib Native Policy Rewards (가장 확실한 전략별 보상 지표)
+        policy_reward_mean = _get("policy_reward_mean", {})
+        policy_reward_min  = _get("policy_reward_min", {})
+        policy_reward_max  = _get("policy_reward_max", {})
 
+        # 디버깅: 처음 3번의 이터레이션 동안 실제 RLlib이 뱉어내는 키들을 출력하여 구조 확인
+        if i < 3:
+            print(f"[DEBUG iter={i}] policy_reward_mean: {policy_reward_mean}")
+            print(f"[DEBUG iter={i}] custom_metrics keys: {list(custom.keys())[:15]}")
+            # 만약 result 최상위 키가 궁금하다면 아래 주석을 해제하세요.
+            # print(f"[DEBUG iter={i}] result keys: {list(result.keys())}")
+
+        # 2. RLlib 기본 제공 Policy별 보상 텐서보드 기록
+        for strat, policy_name in zip(("strike", "vanguard", "support"), STRATEGY_POLICY_NAMES.values()):
+            if policy_name in policy_reward_mean:
+                tb.add_scalar(f"{strat}/reward/episode_mean", float(policy_reward_mean[policy_name]), cumul_steps)
+            if policy_name in policy_reward_max:
+                tb.add_scalar(f"{strat}/reward/episode_max", float(policy_reward_max[policy_name]), cumul_steps)
+            if policy_name in policy_reward_min:
+                tb.add_scalar(f"{strat}/reward/episode_min", float(policy_reward_min[policy_name]), cumul_steps)
+
+            # 3. Custom Metrics (기존 로직 유지 - 환경 래퍼에서 따로 커스텀 기록을 하는 경우)
+            key_mean = f"reward_strategy_{strat}_mean"
+            key_sum  = f"reward_strategy_{strat}_sum_mean"
+            if key_mean in custom:
+                tb.add_scalar(f"{strat}/custom_reward/step_mean", float(custom[key_mean]), cumul_steps)
+            if key_sum in custom:
+                tb.add_scalar(f"{strat}/custom_reward/step_sum",  float(custom[key_sum]),  cumul_steps)
+
+        # 4. 세부 보상 컴포넌트 기록 (기존 유지)
         REWARD_COMPONENTS = [
             "BaseOccupationReward", "CoOccupationPenalty",
-            "BaseCaptureCreditReward", "UndefendedBasePenalty",
+            "BaseCaptureCreditReward",
             "AssignedBaseReachReward",
         ]
         for comp in REWARD_COMPONENTS:
             ckey = f"reward_component_{comp}_mean"
             if ckey in custom:
-                tb.add_scalar(f"reward/component_{comp}", float(custom[ckey]), cumul_steps)
+                tb.add_scalar(f"global/reward_components/{comp}", float(custom[ckey]), cumul_steps)
 
-        # [수정됨] Learner Metrics 추출 - numpy.float32 등의 타입 호환성 문제 해결
-        policy_stats = result.get("info", {}).get("learner", {}).get("entity_centric_policy", {})
-        stats = policy_stats.get("learner_stats", policy_stats)
-
-        # RLlib 버전에 대비해 키 후보군(candidates)을 보강했습니다.
+        # ── Per-role PPO learner metrics ──────────────────────────────────────
+        # TB hierarchy: {role}/{metric_group}/{metric}
+        # e.g. strike/losses/policy_loss, vanguard/kl/value, support/entropy/value
         TRAIN_METRICS = {
             "losses/policy_loss":  ["policy_loss", "mean_policy_loss"],
             "losses/vf_loss":      ["vf_loss", "mean_vf_loss"],
@@ -367,19 +418,23 @@ def train_with_rllib(args):
             "lr/value":            ["cur_lr", "lr"],
             "vf/explained_var":    ["vf_explained_var", "explained_variance"],
         }
-        
-        for tag, candidates in TRAIN_METRICS.items():
-            for k in candidates:
-                if k in stats:
-                    v = stats[k]
-                    try:
-                        # numpy 데이터 타입이 섞여 있어도 강제로 float으로 변환하여 기록합니다.
-                        val = float(v)
-                        if not np.isnan(val):
-                            tb.add_scalar(tag, val, cumul_steps)
-                            break # 값을 찾았으면 다음 태그로 넘어감
-                    except (ValueError, TypeError):
-                        pass
+        learner_info = result.get("info", {}).get("learner", {})
+        for policy_name in STRATEGY_POLICY_NAMES.values():
+            role  = policy_name.replace("_policy", "")   # "strike" / "vanguard" / "support"
+            raw   = learner_info.get(policy_name, {})
+            stats = raw.get("learner_stats", raw)
+            if not stats:
+                continue
+            for tag, candidates in TRAIN_METRICS.items():
+                for k in candidates:
+                    if k in stats:
+                        try:
+                            val = float(stats[k])
+                            if not np.isnan(val):
+                                tb.add_scalar(f"{role}/{tag}", val, cumul_steps)
+                                break
+                        except (ValueError, TypeError):
+                            pass
 
         tb.flush()
 
@@ -409,15 +464,17 @@ def train_with_rllib(args):
 
     algo.save(output_dir)
 
-    # Export ONNX from best checkpoint
+    # Export one ONNX per role from best checkpoint
     best_dir = os.path.join(output_dir, "best")
     if os.path.exists(best_dir):
         algo.restore(os.path.abspath(best_dir))
-    rllib_policy = algo.get_policy("entity_centric_policy")
-    if rllib_policy:
-        model = rllib_policy.model.policy
-        onnx_path = os.path.join(output_dir, "de_policy_entity_centric.onnx")
-        model.export_onnx(onnx_path)
+    for strategy_idx, policy_name in STRATEGY_POLICY_NAMES.items():
+        role_name = policy_name.replace("_policy", "")  # "strike" / "vanguard" / "support"
+        rllib_policy = algo.get_policy(policy_name)
+        if rllib_policy:
+            model = rllib_policy.model.policy
+            onnx_path = os.path.join(output_dir, f"de_policy_{role_name}.onnx")
+            model.export_onnx(onnx_path)
 
     tb.close()
     algo.stop()
@@ -491,11 +548,11 @@ def run_validation() -> bool:
         out_pad = policy(obs_all_pad)
     check("forward works with all-padding ally mask", out_pad.shape == (B, EQS_DIM))
 
-    # -- Test 6: obs dimension = 170 --
-    print("[Test 6] OBS_DIM == 170")
-    check("OBS_DIM == 170", OBS_DIM == 170, f"got {OBS_DIM}")
-    expected = 7 + 8 * 5 + 8 * 5 + 8 * 7 + 8 + 8 + 8 + 3
-    check("Layout arithmetic == 170", expected == 170, f"got {expected}")
+    # -- Test 6: obs dimension = 226 --
+    print("[Test 6] OBS_DIM == 226")
+    check("OBS_DIM == 226", OBS_DIM == 226, f"got {OBS_DIM}")
+    expected = 7 + 8 * 9 + 8 * 8 + 8 * 7 + 8 + 8 + 8 + 3
+    check("Layout arithmetic == 226", expected == 226, f"got {expected}")
 
     # -- Test 7: ONNX export + reload --
     print("[Test 7] ONNX export and ORT reload")
@@ -541,14 +598,13 @@ def run_validation() -> bool:
     check("BaseOccupationReward == 2.0",    REWARD_CONFIG["BaseOccupationReward"]    == 2.0)
     check("CoOccupationPenalty == -0.5",    REWARD_CONFIG["CoOccupationPenalty"]     == -0.5)
     check("BaseCaptureCreditReward == 5.0", REWARD_CONFIG["BaseCaptureCreditReward"] == 5.0)
-    check("UndefendedBasePenalty == -1.0",  REWARD_CONFIG["UndefendedBasePenalty"]   == -1.0)
     check("AssignedBaseReachReward == 1.0", REWARD_CONFIG["AssignedBaseReachReward"] == 1.0)
 
     # -- Test 10: collate_fn --
     print("[Test 10] collate_fn")
     obs_list = [np.random.randn(OBS_DIM).astype(np.float32) for _ in range(4)]
     batch    = collate_fn(obs_list)
-    check("collate_fn shape (4, 170)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
+    check("collate_fn shape (4, 226)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
 
     print("\n" + "=" * 70)
     print(f"Results: {passed} passed, {failed} failed / {passed+failed} total")
@@ -596,24 +652,27 @@ def evaluate_checkpoint(checkpoint_path: str):
         ray.init(ignore_reinit_error=True, include_dashboard=False, logging_level="ERROR")
         register_env("de_entity_centric", lambda cfg: DEEntityCentricEnv(**cfg))
         ModelCatalog.register_custom_model("entity_centric_model", EntityCentricRLlibModel)
-        config = create_ppo_config()
-        algo   = config.build()
+        algo = create_ppo_config().build()
         algo.restore(checkpoint_path)
 
-        rllib_policy = algo.get_policy("entity_centric_policy")
-        model  = rllib_policy.model.policy
-        model.eval()
-        with torch.no_grad():
-            out = model(obs)
-        means = out.mean(dim=0).numpy()
-        stds  = out.std(dim=0).numpy()
-        learned_std = model.get_std().detach().numpy()
+        for policy_name in STRATEGY_POLICY_NAMES.values():
+            role = policy_name.replace("_policy", "")
+            rllib_policy = algo.get_policy(policy_name)
+            if not rllib_policy:
+                continue
+            model  = rllib_policy.model.policy
+            model.eval()
+            with torch.no_grad():
+                out = model(obs)
+            means = out.mean(dim=0).numpy()
+            stds  = out.std(dim=0).numpy()
+            learned_std = model.get_std().detach().numpy()
 
-        print("EQS Weight Profile:")
-        for i, label in enumerate(EQS_LABELS):
-            bar = "#" * int((means[i] + 1) / 2 * 20) + "." * int((1 - means[i]) / 2 * 20)
-            print(f"  {label:<28} {means[i]:>6.3f} ± {stds[i]:.3f}  [{bar}]")
-        print(f"\nLearned σ: {np.round(learned_std, 3)}")
+            print(f"\nEQS Weight Profile — {role.upper()}:")
+            for i, label in enumerate(EQS_LABELS):
+                bar = "#" * int((means[i] + 1) / 2 * 20) + "." * int((1 - means[i]) / 2 * 20)
+                print(f"  {label:<28} {means[i]:>6.3f} ± {stds[i]:.3f}  [{bar}]")
+            print(f"  Learned σ: {np.round(learned_std, 3)}")
 
         algo.stop()
         ray.shutdown()

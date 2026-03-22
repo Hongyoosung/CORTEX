@@ -112,6 +112,15 @@ public:
 	FDynamicEQSWeightParameters GetCurrentWeights() const;
 
 	/**
+	 * Hot-swap the active inference policy at runtime.
+	 * Tears down the existing stepper and rebuilds it with NewPolicyObject.
+	 * No-op if not in Inference mode or if NewPolicyObject is the same object.
+	 * @param NewPolicyObject  Must implement IPolicy. Pass null to stop inference.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "DynamicEQS|Agent|Inference")
+	void SwapInferencePolicy(UObject* NewPolicyObject);
+
+	/**
 	 * Store an opaque external parameter struct that Observer / Actuator /
 	 * Trainer subclasses can retrieve to customise their behaviour without
 	 * requiring concrete component dependencies.
