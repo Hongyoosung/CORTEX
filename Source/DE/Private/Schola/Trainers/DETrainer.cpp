@@ -789,6 +789,14 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
         Info.Add(TEXT("MatchResult"), FString::FromInt(static_cast<int32>(CachedScholaEnvironment->GetMatchState())));
     }
 
+    // Team scores and winner (for win rate tracking in Python)
+    if (CachedMatchManager)
+    {
+        Info.Add(TEXT("TeamScore0"), FString::FromInt(CachedMatchManager->GetTeamScore(0)));
+        Info.Add(TEXT("TeamScore1"), FString::FromInt(CachedMatchManager->GetTeamScore(1)));
+        Info.Add(TEXT("WinnerTeamID"), FString::FromInt(CachedMatchManager->GetWinnerTeamID()));
+    }
+
     // Provide comprehensive debug/training information
     Info.Add(TEXT("TotalEpisodes"), FString::FromInt(TotalEpisodes));
     Info.Add(TEXT("CurrentSteps"), FString::FromInt(CurrentEpisodeSteps));

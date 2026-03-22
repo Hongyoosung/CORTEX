@@ -151,6 +151,9 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 			for (ADEAgent* DEChar : TeamAgents)
 			{
 				if (!DEChar) continue;
+				// Skip scripted AI agents — they don't participate in the Schola pipeline
+				if (DEChar->bIsScriptedAI) continue;
+
 				UDEScholaAgent* ScholaAgent = DEChar->GetScholaAgent();
 				if (!ScholaAgent)
 				{

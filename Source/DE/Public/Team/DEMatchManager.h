@@ -18,6 +18,7 @@ class UDETeamData;
 class ADESpawnArea;
 class UDERewardData;
 class UDERewardSubsystem;
+class UDEScriptedAIComponent;
 
 
 /**
@@ -342,6 +343,22 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Training")
 	bool bRLTrainingMode = false;
+
+	/**
+	 * Fixed-Opponent Training Mode.
+	 * When true, Red team (TeamID 0) uses scripted AI (UDEScriptedAIComponent)
+	 * instead of Schola RL policies. Blue team (TeamID 1) remains RL-driven.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Training")
+	bool bUseScriptedOpponent = false;
+
+	/** The team ID used for the scripted opponent (default: 0 = Red) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Training")
+	int32 ScriptedOpponentTeamID = 0;
+
+	/** Set difficulty tier on all scripted opponent agents */
+	UFUNCTION(BlueprintCallable, Category = "DEMatchManager|Training")
+	void SetOpponentDifficulty(int32 Tier);
 
 	/** Convenience: build an FDESquadConfig snapshot from current properties */
 	FDESquadConfig MakeSquadConfig() const;
