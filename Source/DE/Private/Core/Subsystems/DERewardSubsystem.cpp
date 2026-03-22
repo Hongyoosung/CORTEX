@@ -9,8 +9,8 @@
 #include "Types/DERewardTypes.h"
 #include "Actors/DECapturePoint.h"
 #include "Team/DEMatchManager.h"
-#include "Kismet/GameplayStatics.h"
-#include "EngineUtils.h"
+
+namespace { static const TArray<ADECapturePoint*> EmptyCapturePoints; }
 
 // ==================== UDynamicEQSRewardCalculatorBase Overrides ====================
 
@@ -154,7 +154,8 @@ float UDERewardSubsystem::ComputeStepReward(
 	EDEClassType Class,
 	const FDEAgentSnapshot& Prev,
 	const FDEAgentSnapshot& Current,
-	const FDEEQSWeightParameters& Action)
+	const FDEEQSWeightParameters& Action,
+	ADEMatchManager* MatchManager)
 {
 	if (!Agent) {
 		UE_LOG(LogTemp, Error, TEXT("DERewardSubsystem: Invalid Agent reference, returning 0 reward"));
@@ -169,18 +170,12 @@ float UDERewardSubsystem::ComputeStepReward(
 
 	const float PositionChange = FVector::Dist(Prev.Position, Current.Position);
 	const int32 MyTeamID = Agent->GetTeamID_Implementation();
-	const int32 MyEnvID  = Agent->GetEnvID_Implementation();
 	const bool bIsRespawnStep = !Prev.bIsAlive;
 
-	TArray<ADECapturePoint*> EnvCapturePoints;
-	for (TActorIterator<ADEMatchManager> It(GetWorld()); It; ++It)
-	{
-		if ((*It)->GetEnvID() == MyEnvID)
-		{
-			EnvCapturePoints = (*It)->GetCapturePoints();
-			break;
-		}
-	}
+	// Use passed MatchManager (cached by caller) instead of per-step world scan
+	const TArray<ADECapturePoint*>& EnvCapturePoints = MatchManager
+		? MatchManager->GetCapturePoints()
+		: EmptyCapturePoints;
 
 	float CaptureRadiusSq = 250000.0f;
 	if (EnvCapturePoints.Num() > 0 && EnvCapturePoints[0])
@@ -218,27 +213,12 @@ float UDERewardSubsystem::ComputeStepReward(
 		break;
 	}
 
+	// ---- Reset per-step damage accumulator (consumed by Strike reward above) ----
+	Agent->ResetStepDamage();
+
 	// ---- Common: Survival reward ----
 	if (!bIsRespawnStep && Current.bIsAlive)
 		CalculateSurvivalReward(InOutState, Class, Current.Health, 1.0f, Agent->AgentID);
-
-	// ---- Strike-only: close-range kill tracking (for sparse reward scaling) ----
-	// Vanguard (melee) intentionally has no penalty for being close.
-	if (!bIsRespawnStep && Class == EDEClassType::Strike && Settings->CloseRangeKillThreshold > 0.0f)
-	{
-		const float KillRangeSq = FMath::Square(Settings->CloseRangeKillThreshold);
-		for (int32 i = 0; i < Current.EnemyPositions.Num(); ++i)
-		{
-			if (i < Current.EnemyVisible.Num() && Current.EnemyVisible[i])
-			{
-				if (FVector::DistSquared(Current.Position, Current.EnemyPositions[i]) < KillRangeSq)
-				{
-					InOutState.bWasTooCloseAtKill = true;
-					break;
-				}
-			}
-		}
-	}
 
 	// ---- Zone Control Reward ----
 	if (MyTeamID >= 0 && EnvCapturePoints.Num() > 0)
@@ -283,31 +263,7 @@ float UDERewardSubsystem::ComputeStepReward(
 	InOutState.bSparseKillFiredThisStep = false;
 	InOutState.bWasTooCloseAtKill       = false;
 
-	// ---- Team reward mixing ----
-	const float CurrentIndividualReward = Reward;
-	if (Settings->TeamRewardMixingRatio > 0.0f)
-	{
-		if (ADEMatchManager* MatchMgr = Agent->GetMatchManager())
-		{
-			const TArray<ADEAgent*>& Teammates = MatchMgr->GetTeamAgents(MyTeamID);
-			float TeamRewardSum = 0.0f;
-			int32 TeamCount = 0;
-			for (ADEAgent* Mate : Teammates)
-			{
-				if (Mate)
-				{
-					TeamRewardSum += Mate->RewardState.LastIndividualStepReward;
-					TeamCount++;
-				}
-			}
-			if (TeamCount > 0)
-			{
-				const float TeamAvg = TeamRewardSum / static_cast<float>(TeamCount);
-				Reward = (1.0f - Settings->TeamRewardMixingRatio) * CurrentIndividualReward + Settings->TeamRewardMixingRatio * TeamAvg;
-			}
-		}
-	}
-	InOutState.LastIndividualStepReward = CurrentIndividualReward;
+	InOutState.LastIndividualStepReward = Reward;
 
 	return Reward;
 }

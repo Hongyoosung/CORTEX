@@ -7,6 +7,7 @@
 #include "Characters/DEAgent.h"
 #include "Actors/DECapturePoint.h"
 #include "Team/DEMatchManager.h"
+#include "GAS/Abilities/DEGA_Heal.h"
 
 float DEComputeSupportStepReward(
 	ADEAgent* Agent,
@@ -22,6 +23,13 @@ float DEComputeSupportStepReward(
 	int32 MyTeamID)
 {
 	float Reward = Settings->SupportBaselineReward;
+
+	// Two separate reward channels to prevent full stacking (mutual weighting).
+	// ProximityReward = bonuses for being near allies and positioning correctly.
+	// HealReward      = bonuses for actively healing.
+	// Combined at the end via: max(a,b) + 0.3 * min(a,b).
+	float ProximityReward = 0.0f;
+	float HealReward = 0.0f;
 
 	// Movement reward: encourage steady repositioning without sprinting
 	if (PositionChange > Settings->SupportMinMoveThreshold && PositionChange < Settings->SupportMaxMoveThreshold)
@@ -95,7 +103,7 @@ float DEComputeSupportStepReward(
 		InOutState.InjuredAllyStalenessCounter = 0;
 	}
 
-	// ---- Proximity and approach reward toward injured ally ----
+	// ---- Proximity and approach reward toward injured ally → ProximityReward ----
 	const int32 InjuredAllyIdx = InOutState.CachedInjuredAllyIdx;
 	if (InjuredAllyIdx >= 0 && InjuredAllyIdx < Current.AllyPositions.Num())
 	{
@@ -105,24 +113,24 @@ float DEComputeSupportStepReward(
 			const float AllyHP = Current.AllyHealths[InjuredAllyIdx];
 			if (AllyHP > 0.0f && AllyHP < Settings->SupportReward.AllyInjuryThreshold)
 			{
-				Reward += Settings->SupportReward.AllyProximityBonus;
-				if (AllyHP < 0.3f) Reward += Settings->SupportReward.AllyProximityBonus * 0.5f;
+				ProximityReward += Settings->SupportReward.AllyProximityBonus;
+				if (AllyHP < 0.3f) ProximityReward += Settings->SupportReward.AllyProximityBonus * 0.5f;
 			}
 			if (Current.Health > Settings->SupportHealthThreshold)
-				Reward += Settings->SupportReward.HealthBonus;
+				ProximityReward += Settings->SupportReward.HealthBonus;
 		}
 
 		if (!bIsRespawnStep && InjuredAllyIdx < Prev.AllyPositions.Num())
 		{
 			const float PrevAllyDist = FVector::Dist(Prev.Position, Prev.AllyPositions[InjuredAllyIdx]);
-			Reward += Settings->SupportReward.AllyApproachReward * FMath::Max(PrevAllyDist - CurrAllyDist, 0.0f);
+			ProximityReward += Settings->SupportReward.AllyApproachReward * FMath::Max(PrevAllyDist - CurrAllyDist, 0.0f);
 		}
 	}
 	else if (bIsolated && !bIsRespawnStep)
 	{
 		// Isolated: approach nearest friendly base to regroup (NOT enemy objectives)
 		if (Current.Health > Settings->SupportHealthThreshold)
-			Reward += Settings->SupportReward.HealthBonus * 0.5f;
+			ProximityReward += Settings->SupportReward.HealthBonus * 0.5f;
 
 		float PrevNearestFriendlyDist = FLT_MAX, CurrNearestFriendlyDist = FLT_MAX;
 		for (ADECapturePoint* CP : EnvCapturePoints)
@@ -132,14 +140,14 @@ float DEComputeSupportStepReward(
 			CurrNearestFriendlyDist = FMath::Min(CurrNearestFriendlyDist, FVector::Dist(Current.Position, CP->GetActorLocation()));
 		}
 		if (PrevNearestFriendlyDist < FLT_MAX && CurrNearestFriendlyDist < FLT_MAX)
-			Reward += Settings->SupportReward.AllyApproachReward * Settings->IsolationApproachMultiplier * (PrevNearestFriendlyDist - CurrNearestFriendlyDist);
+			ProximityReward += Settings->SupportReward.AllyApproachReward * Settings->IsolationApproachMultiplier * (PrevNearestFriendlyDist - CurrNearestFriendlyDist);
 	}
 	else
 	{
-		Reward += Settings->SupportReward.PositionReward * 0.5f;
+		ProximityReward += Settings->SupportReward.PositionReward * 0.5f;
 	}
 
-	// ---- Ally formation / isolation rewards ----
+	// ---- Ally formation / isolation → ProximityReward (bonus) / Reward (penalty) ----
 	if (!bIsRespawnStep && Current.AllyPositions.Num() > 0)
 	{
 		float NearestAllyDist = FLT_MAX;
@@ -154,17 +162,40 @@ float DEComputeSupportStepReward(
 		if (NearestAllyDist < FLT_MAX)
 		{
 			if (NearestAllyDist <= Settings->SupportAllyProximityThreshold)
-				Reward += Settings->SupportReward.AllyFormationBonus;
+				ProximityReward += Settings->SupportReward.AllyFormationBonus;
 			if (NearestAllyDist > Settings->SupportReward.AllyIsolationDistance)
-				Reward -= Settings->SupportReward.AllyIsolationPenalty;
+				Reward -= Settings->SupportReward.AllyIsolationPenalty;  // penalties stay additive
 		}
 	}
 
-	// ---- Heal tick reward ----
+	// ---- Heal tick reward → HealReward ----
 	if (Agent && Agent->GetLastTickHealAmount() > 0.0f)
-		Reward += Settings->SupportReward.HealTickReward;
+	{
+		HealReward += Settings->SupportReward.HealTickReward;
 
-	// ---- Rear-guard positioning rewards ----
+		// Bonus for healing a low-HP ally
+		UDEGA_Heal* HealAbility = Agent->GetHealAbility();
+		if (HealAbility)
+		{
+			ADEAgent* HealTarget = HealAbility->GetCurrentTarget();
+			if (HealTarget && HealTarget->GetHealthPercentage() < Settings->SupportReward.HealLowHPThreshold)
+			{
+				HealReward += Settings->SupportReward.HealOnLowHPReward;
+			}
+		}
+	}
+
+	// ---- Near injured ally reward → HealReward ----
+	if (Agent)
+	{
+		UDEGA_Heal* HealAbility = Agent->GetHealAbility();
+		if (HealAbility && HealAbility->HasInjuredAllyInRange(Settings->SupportReward.NearInjuredAllyHPThreshold))
+		{
+			HealReward += Settings->SupportReward.NearInjuredAllyReward;
+		}
+	}
+
+	// ---- Rear-guard positioning → ProximityReward (bonus) / Reward (penalty) ----
 	if (!bIsRespawnStep && Current.EnemyPositions.Num() > 0 && Current.AllyPositions.Num() > 0)
 	{
 		float NearestEnemyDist = FLT_MAX;
@@ -195,11 +226,11 @@ float DEComputeSupportStepReward(
 
 			if (NearestEnemyDist > NearestAllyToEnemyDist)
 			{
-				Reward += Settings->SupportReward.RearGuardBonus;
+				ProximityReward += Settings->SupportReward.RearGuardBonus;
 			}
 			else
 			{
-				Reward -= Settings->SupportReward.FrontlinePenalty;
+				Reward -= Settings->SupportReward.FrontlinePenalty;  // penalties stay additive
 			}
 
 			// Ally shield bonus: at least one ally is between Support and the nearest enemy
@@ -213,13 +244,20 @@ float DEComputeSupportStepReward(
 					const float AllyToSelf  = FVector::Dist(Current.AllyPositions[a], Current.Position);
 					if (AllyToEnemy < NearestEnemyDist && AllyToSelf < NearestEnemyDist)
 					{
-						Reward += Settings->SupportReward.AllyShieldBonus;
+						ProximityReward += Settings->SupportReward.AllyShieldBonus;
 						break;
 					}
 				}
 			}
 		}
 	}
+
+	// ---- Mutual weighting: prevent proximity + heal from fully stacking ----
+	// Uses max(a,b) + 0.3 * min(a,b) so the dominant channel gets full credit
+	// but the secondary channel is heavily discounted.
+	const float MajorReward = FMath::Max(ProximityReward, HealReward);
+	const float MinorReward = FMath::Min(ProximityReward, HealReward);
+	Reward += MajorReward + 0.3f * MinorReward;
 
 	return Reward;
 }

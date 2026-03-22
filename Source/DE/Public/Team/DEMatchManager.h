@@ -96,7 +96,6 @@ public:
 	ADEMatchManager();
 
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
 
 	//========================================
 	// Team Spawning
@@ -140,9 +139,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager")
 	FDETeamConfiguration GetTeamConfiguration(int32 TeamID) const;
 
-	/** Live (active) agents for a team */
-	UFUNCTION(BlueprintPure, Category = "DEMatchManager")
-	TArray<ADEAgent*> GetTeamAgents(int32 TeamID) const;
+	/** Live (active) agents for a team (C++ — returns by const ref for zero-copy hot-path access) */
+	const TArray<ADEAgent*>& GetTeamAgents(int32 TeamID) const;
+
+	/** Blueprint wrapper — returns a copy */
+	UFUNCTION(BlueprintPure, Category = "DEMatchManager", meta = (DisplayName = "Get Team Agents"))
+	TArray<ADEAgent*> K2_GetTeamAgents(int32 TeamID) const { return GetTeamAgents(TeamID); }
 
 	/** All agents on the opposite team */
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager")
@@ -288,17 +290,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Score")
 	int32 CaptureScorePoints = 30;
 
-	/** Score a team must reach to win the match */
+	/** Maximum match duration in seconds before timeout (fixed-length episodes).
+	 *  Winner at timeout = team with higher score (passive income from held capture points). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
-	int32 WinningScore = 120;
-
-	/** Maximum match duration in seconds before timeout */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
-	float MaxMatchDuration = 600.0f;
-
-	/** If true, owning all capture points triggers an immediate win */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
-	bool bDominationWinEnabled = true;
+	float MaxMatchDuration = 120.0f;
 
 	/** Score points earned per second per owned capture point */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Match")
@@ -418,4 +413,14 @@ protected:
 
 	/** Per-team cumulative scores (index = TeamID) */
 	int32 TeamScores[2] = {0, 0};
+
+	/** Timer handles replacing per-frame Tick */
+	FTimerHandle GameplayTimerHandle;
+	FTimerHandle MatchConditionTimerHandle;
+
+	/** Timer-driven gameplay update (respawn queue + squad planner) */
+	void GameplayTimerTick();
+
+	/** Timer-driven match condition check (passive income + win conditions + debug) */
+	void MatchConditionTimerTick();
 };

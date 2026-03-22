@@ -83,13 +83,13 @@ struct FDEVanguardRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float ObjectiveProgressReward = 0.15f;
 
-	/** Bonus per step while inside an enemy or neutral capture zone. */
+	/** Vanguard: moderate capture bonuses — reduced from 8/12 to prevent clamp saturation. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZonePresenceBonus = 6.0f;
+	float ZonePresenceBonus = 3.0f;
 
 	/** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ActiveCappingBonus = 8.0f;
+	float ActiveCappingBonus = 4.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float PostCaptureMomentumBonus = 3.0f;

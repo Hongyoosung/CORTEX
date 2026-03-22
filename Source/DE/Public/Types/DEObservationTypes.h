@@ -13,16 +13,16 @@ static constexpr int32 DE_MAX_ALLIES  = 8;
 static constexpr int32 DE_MAX_ENEMIES = 8;
 static constexpr int32 DE_MAX_BASES   = 8;
 
-// Token dims: Self=7, Ally=8 (pos+hp+alive+class_onehot), Enemy=5, Base=7
+// Token dims: Self=7, Ally=9 (pos+hp+hp_delta+alive+class_onehot), Enemy=8 (pos+hp+visible+conf+class_onehot), Base=7
 static constexpr int32 DE_SELF_DIM    = 7;
-static constexpr int32 DE_ALLY_DIM    = 8;   // [rel_pos(3), health, alive, is_strike, is_vanguard, is_support]
-static constexpr int32 DE_ENEMY_DIM   = 5;
+static constexpr int32 DE_ALLY_DIM    = 9;   // [rel_pos(3), health, hp_delta, alive, is_strike, is_vanguard, is_support]
+static constexpr int32 DE_ENEMY_DIM   = 8;   // [rel_pos(3), health, visible, is_strike, is_vanguard, is_support]
 static constexpr int32 DE_BASE_DIM    = 7;
 
 // Class one-hot dim: Strike=0, Vanguard=1, Support=2
 static constexpr int32 DE_STRATEGY_DIM = 3;
 
-// Total padded flat size: 7 + 8*8 + 8*5 + 8*7 + 8+8+8 + 3 = 194
+// Total padded flat size: 7 + 8*9 + 8*8 + 8*7 + 8+8+8 + 3 = 226
 static constexpr int32 DE_OBS_V2_DIM  = DE_SELF_DIM
                                        + DE_MAX_ALLIES  * DE_ALLY_DIM
                                        + DE_MAX_ENEMIES * DE_ENEMY_DIM
@@ -83,7 +83,7 @@ struct DE_API FDEAgentSnapshot
 
 /**
  * Single entity token — flat float array of fixed dimension per entity type.
- * Ally=5-dim, Enemy=5-dim, Base=7-dim (see plan Section 2.2).
+ * Ally=9-dim, Enemy=8-dim, Base=7-dim.
  */
 USTRUCT(BlueprintType)
 struct DE_API FDEEntityToken
@@ -104,8 +104,8 @@ struct DE_API FDEEntityToken
  * padded flat array (194-dim) for NNE / ONNX compatibility.
  *
  * Self (7):      [pos_x/7500, pos_y/7500, pos_z/1000, health, vel_x/600, vel_y/600, vel_z/600]
- * Ally (8):      [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, alive, is_strike, is_vanguard, is_support]
- * Enemy (5):     [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, visible, confidence]
+ * Ally (9):      [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, hp_delta, alive, is_strike, is_vanguard, is_support]
+ * Enemy (8):     [rel_pos_x/8000, rel_pos_y/8000, rel_pos_z/8000, health, visible, is_strike, is_vanguard, is_support]
  * Base (7):      [rel_pos_x/15000, rel_pos_y/15000, rel_pos_z/1000, ownership,
  *                 capture_progress, is_assigned_target, strategic_value]
  * Class (3):  one-hot [strike, vanguard, support]
@@ -136,17 +136,17 @@ struct DE_API FDEObservationV2
 	EDEClassType CommandedClass = EDEClassType::Strike;
 
 	/**
-	 * Serialise to padded flat array (194-dim) for NNE/ONNX inference.
+	 * Serialise to padded flat array (226-dim) for NNE/ONNX inference.
 	 *
-	 * Layout (total = 194):
+	 * Layout (total = 226):
 	 *  [0..6]     Self (7)
-	 *  [7..70]    Allies  padded to 8 × 8  (64) — includes ally class one-hot
-	 *  [71..110]  Enemies padded to 8 × 5  (40)
-	 *  [111..166] Bases   padded to 8 × 7  (56)
-	 *  [167..174] Ally mask  (8) — 0=present, 1=padding
-	 *  [175..182] Enemy mask (8)
-	 *  [183..190] Base mask  (8)
-	 *  [191..193] Class one-hot [strike, vanguard, support] (3)
+	 *  [7..78]    Allies  padded to 8 × 9  (72) — includes hp_delta + ally class one-hot
+	 *  [79..142]  Enemies padded to 8 × 8  (64) — includes enemy health + class one-hot
+	 *  [143..198] Bases   padded to 8 × 7  (56)
+	 *  [199..206] Ally mask  (8) — 0=present, 1=padding
+	 *  [207..214] Enemy mask (8)
+	 *  [215..222] Base mask  (8)
+	 *  [223..225] Class one-hot [strike, vanguard, support] (3)
 	 */
 	TArray<float> ToFlatArray() const
 	{

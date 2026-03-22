@@ -122,7 +122,7 @@ void UDEGA_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 	else
 	{
-		CurrentTarget = FindNearestInjuredAlly();
+		CurrentTarget = FindBestInjuredAlly();
 	}
 
 	if (!CurrentTarget)
@@ -173,7 +173,7 @@ void UDEGA_Heal::OnHealTick()
 {
 	// Re-find the nearest injured ally every tick so the healer naturally switches
 	// to a more injured teammate who moves into range.
-	ADEAgent* NewTarget = FindNearestInjuredAlly();
+	ADEAgent* NewTarget = FindBestInjuredAlly();
 	if (!NewTarget)
 	{
 		// No valid target — end the channel.
@@ -374,16 +374,16 @@ void UDEGA_Heal::ResetHealState()
 
 bool UDEGA_Heal::HasInjuredAllyInRange(float HealthThreshold) const
 {
-	return FindNearestInjuredAlly(HealthThreshold) != nullptr;
+	return FindBestInjuredAlly(HealthThreshold) != nullptr;
 }
 
-ADEAgent* UDEGA_Heal::FindNearestInjuredAlly(float HealthThreshold) const
+ADEAgent* UDEGA_Heal::FindBestInjuredAlly(float HealthThreshold) const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
 	const ADEAgent* OwnerChar = Cast<ADEAgent>(AvatarActor);
 	if (!OwnerChar) return nullptr;
 
-TArray<ADEAgent*> Candidates;
+	TArray<ADEAgent*> Allies;
 
 	// Use MatchManager to enumerate allies directly — perception only tracks enemies (sight sense)
 	// and would miss same-team members in both training and inference mode.
@@ -396,7 +396,7 @@ TArray<ADEAgent*> Candidates;
 		TArray<ADEAgent*> TeamAgents = CachedMatchManager->GetTeamAgents(OwnerChar->GetTeamID_Implementation());
 		for (ADEAgent* A : TeamAgents)
 		{
-			if (A && A != OwnerChar && A->IsAlive()) Candidates.Add(A);
+			if (A && A != OwnerChar && A->IsAlive()) Allies.Add(A);
 		}
 	}
 	else
@@ -409,39 +409,53 @@ TArray<ADEAgent*> Candidates;
 			ADEAgent* A = Cast<ADEAgent>(Actor);
 			if (A && A != OwnerChar && A->IsAlive() && A->GetTeamID_Implementation() == OwnerChar->GetTeamID_Implementation())
 			{
-				Candidates.Add(A);
+				Allies.Add(A);
 			}
 		}
 	}
 
-	ADEAgent* BestTarget = nullptr;
-	float MinDistSq = FMath::Square(Config.Range);
-	FVector MyLoc = OwnerChar->GetActorLocation();
+	// Scoring weights: HP urgency dominates, distance is secondary
+	constexpr float W_HP   = 0.7f;  // Lower HP = higher priority
+	constexpr float W_DIST = 0.3f;  // Closer is better
 
-	for (ADEAgent* Ally : Candidates)
+	const float HealRange = Config.Range;
+	const float HealRangeSq = FMath::Square(HealRange);
+	const FVector MyLoc = OwnerChar->GetActorLocation();
+
+	ADEAgent* BestTarget = nullptr;
+	float BestScore = -1.0f;
+
+	for (ADEAgent* Ally : Allies)
 	{
 		// Use KINDA_SMALL_NUMBER epsilon to avoid treating an ally as injured when GAS
 		// health is at e.g. 0.9999 due to float precision after healing to near-maximum.
 		if (Ally->GetHealthPercentage() >= (HealthThreshold - KINDA_SMALL_NUMBER)) continue;
 
-		float DistSq = FVector::DistSquared(Ally->GetActorLocation(), MyLoc);
-		if (DistSq < MinDistSq)
+		const float DistSq = FVector::DistSquared(Ally->GetActorLocation(), MyLoc);
+		if (DistSq > HealRangeSq) continue;
+
+		if (Config.bRequireLineOfSight)
 		{
-			if (Config.bRequireLineOfSight)
-			{
-				FHitResult Hit;
-				FCollisionQueryParams Params;
-				Params.AddIgnoredActor(OwnerChar);
-				Params.AddIgnoredActor(Ally);
+			FHitResult Hit;
+			FCollisionQueryParams Params;
+			Params.AddIgnoredActor(OwnerChar);
+			Params.AddIgnoredActor(Ally);
 
-				bool bBlocked = OwnerChar->GetWorld()->LineTraceSingleByChannel(
-					Hit, MyLoc + FVector(0, 0, 90), Ally->GetActorLocation() + FVector(0, 0, 90),
-					ECC_Visibility, Params);
+			bool bBlocked = OwnerChar->GetWorld()->LineTraceSingleByChannel(
+				Hit, MyLoc + FVector(0, 0, 90), Ally->GetActorLocation() + FVector(0, 0, 90),
+				ECC_Visibility, Params);
 
-				if (bBlocked) continue;
-			}
+			if (bBlocked) continue;
+		}
 
-			MinDistSq = DistSq;
+		const float Dist = FMath::Sqrt(DistSq);
+		const float HPScore   = 1.0f - FMath::Clamp(Ally->GetHealthPercentage(), 0.0f, 1.0f);
+		const float DistScore = 1.0f - FMath::Clamp(Dist / HealRange, 0.0f, 1.0f);
+		const float TotalScore = W_HP * HPScore + W_DIST * DistScore;
+
+		if (TotalScore > BestScore)
+		{
+			BestScore = TotalScore;
 			BestTarget = Ally;
 		}
 	}

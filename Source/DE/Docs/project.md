@@ -40,11 +40,13 @@ math: true
 
 - **승리 조건:** 더 많은 거점을 점령하고 유지하여 목표 점수를 먼저 달성하는 팀이 승리합니다.
 - **부활 규칙:** 개별 사망이 아닌 **팀 전멸(Team Wipe)** 시 해당 팀 전체가 리스폰됩니다. 부활 대기 시간(`RespawnDelay`) 동안 대기 후 팀 스폰 지점 근처에 동시 재배치됩니다.
-- **전략 역할:** 각 에이전트는 매 에피소드마다 **Assault / Defend / Support** 전략을 부여받으며, 해당 전략에 최적화된 포지셔닝 행동을 학습합니다.
+- **클래스 역할:** 각 에이전트는 매 에피소드마다 **Strike / Vanguard / Support** 클래스를 부여받으며, 해당 클래스에 최적화된 포지셔닝 행동을 학습합니다.
 - **에피소드 길이:** 고정 스텝 수 기반으로 종료됩니다.
 - **셀프플레이:** 양 팀이 동일한 정책을 공유하며 서로의 전략에 반응하는 Self-Play 방식으로 학습합니다.
 
 각 에이전트는 강화학습 정책 네트워크를 통해 실시간 상황에 따라 공간 이동 파라미터를 추론하여 현재 상황에서의 최적 위치를 결정할 수 있습니다.
+
+공격(Attack)과 치유(Heal) 어빌리티는 **우선순위 점수(Priority Scoring)** 기반 타겟 선정 정책을 사용합니다. Attack은 `거리 × 0.3 + 낮은 체력 × 0.4 + 클래스 우선순위 × 0.3` 점수로 가장 위협적이거나 취약한 적을 공격하고(Support 클래스 우선), Heal은 `낮은 체력 × 0.7 + 거리 × 0.3` 점수로 가장 위급한 아군을 치유합니다. 이를 통해 어빌리티 행동이 RL 포지셔닝 정책과 자연스럽게 연계됩니다.
 
 Schola 플러그인을 통해 Unreal Engine 5의 강화학습 환경과 외부 스크립트(Ray Rllib)와의 gRPC 기반 브릿지를 구성하였으며 Schola Layer 위에 EQS 가중치를 설정하고 정책 네트워크 출력과 연결하는 Dynamic EQS를 플러그인 형태로 구현하였습니다.
 
@@ -163,7 +165,7 @@ if (Ctx)
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
 
 
-### 2. 관측 공간 및 전략 조건부 보상 설계 (Strategy-Conditioned Reward Shaping)
+### 2. 관측 공간 및 클래스 조건부 보상 설계 (Class-Conditioned Reward Shaping)
 
 
 <div style="margin-top: 40px;"></div>
@@ -171,7 +173,7 @@ if (Ctx)
 <font size="4">**관측 공간**</font>
 
 
-`FDEObservationV2::ToFlatArray()`가 생성하는 194-dim 엔티티 중심(Entity-Centric) 벡터입니다. 아군·적·거점을 고정 크기 슬롯 토큰으로 인코딩하고, 패딩 마스크를 별도로 제공해 Python MultiheadAttention이 유효 엔티티만 처리하도록 합니다.
+`FDEObservationV2::ToFlatArray()`가 생성하는 218-dim 엔티티 중심(Entity-Centric) 벡터입니다. 아군·적·거점을 고정 크기 슬롯 토큰으로 인코딩하고, 패딩 마스크를 별도로 제공해 Python MultiheadAttention이 유효 엔티티만 처리하도록 합니다.
 
 <div style="margin-top: 40px;"></div>
 
@@ -180,14 +182,14 @@ if (Ctx)
 | Index | Dim | 토큰 내용 | 정규화 및 상세 설명 |
 | --- | --- | --- | --- |
 | **[0 : 7]** | 7 | 자신 토큰 | 위치/7500(3) + 속도/600(3) + 체력(1) |
-| **[7 : 71]** | 64 | 아군 토큰 (8×8) | 상대 위치/8000(3) + 체력(1) + 생존 여부(1) + 전략 원-핫(3) |
-| **[71 : 111]** | 40 | 적 토큰 (8×5) | 상대 위치/8000(3) + 체력(1) + 신뢰도(1) |
-| **[111 : 167]** | 56 | 거점 토큰 (8×7) | 상대 위치/15000(2) + 높이/1000(1) + 점유(1) + 점령 진행도(1) + 할당 여부(1) + 전략적 가치(1) |
-| **[167 : 175]** | 8 | 아군 마스크 | 0=유효, 1=패딩 |
-| **[175 : 183]** | 8 | 적 마스크 | 0=유효, 1=패딩 |
-| **[183 : 191]** | 8 | 거점 마스크 | 0=유효, 1=패딩 |
-| **[191 : 194]** | 3 | 전략 원-핫 | [assault, defend, support] |
-| **TOTAL** | **194** |  |  |
+| **[7 : 71]** | 64 | 아군 토큰 (8×8) | 상대 위치/8000(3) + 체력(1) + 생존 여부(1) + 클래스 원-핫(3) |
+| **[71 : 135]** | 64 | 적 토큰 (8×8) | 상대 위치/8000(3) + 체력(1) + 가시성(1) + 클래스 원-핫(3) |
+| **[135 : 191]** | 56 | 거점 토큰 (8×7) | 상대 위치/15000(2) + 높이/1000(1) + 점유(1) + 점령 진행도(1) + 할당 여부(1) + 전략적 가치(1) |
+| **[191 : 199]** | 8 | 아군 마스크 | 0=유효, 1=패딩 |
+| **[199 : 207]** | 8 | 적 마스크 | 0=유효, 1=패딩 |
+| **[207 : 215]** | 8 | 거점 마스크 | 0=유효, 1=패딩 |
+| **[215 : 218]** | 3 | 클래스 원-핫 | [strike, vanguard, support] |
+| **TOTAL** | **218** |  |  |
 
 
 > **마스크 처리:** Python 정책의 `_safe_mask()`는 모든 슬롯이 패딩일 때 슬롯 0을 강제 언마스크하여 MultiheadAttention의 NaN을 방지합니다. 마스크 임계값은 `> 0.5` (float 비교)로, `0.0=유효 / 1.0=패딩` 의미론을 보존합니다.
@@ -200,12 +202,12 @@ if (Ctx)
 <font size="4">**보상 구조 개요**</font>
 
 
-> **돌격: 거점의 확보**
+> **스트라이크: 원거리 공격의 높은 데미지**
 
-목표는 적 거점 접근과 점령 완료입니다. 적 거점까지의 거리 감소분에 비례한 접근 보상을 매 스텝 부여하고, 거점 반경 내 진입 시 추가 존재 보너스를 부여합니다. 점령이 완료되면 즉시 `PostCaptureMomentumDuration` 스텝 동안 모멘텀 보너스가 활성화되어, 점령 후 제자리에 머무는 대신 다음 거점으로 계속 전진하도록 유도합니다.
+목표는 원거리에서 높은 데미지를 유지하며 거점을 점령하는 것입니다. 적 거점까지의 거리 감소분에 비례한 접근 보상을 매 스텝 부여하고, 거점 반경 내 진입 시 추가 존재 보너스를 부여합니다. 점령이 완료되면 즉시 `PostCaptureMomentumDuration` 스텝 동안 모멘텀 보너스가 활성화됩니다. 적과 너무 가까운 경우 원거리 역할 이탈 패널티가 부과됩니다.
 
 ```cpp
-# Assault reward (per step)
+# Strike reward (per step)
 reward = 0
 if distance_to_target_base decreased:
     reward += approach_reward * delta_distance
@@ -216,31 +218,37 @@ if base just captured:
     reward += capture_bonus
 if momentum active:
     reward += momentum_bonus  # encourages moving to next base
+if distance_to_enemy < MinCombatRange:
+    reward -= too_close_enemy_penalty  # ranged: maintain combat distance
 ```
 
 ---
 
-> **방어: 거점의 유지**
+> **뱅가드: 높은 체력, 근접 공격**
 
-목표는 아군 거점 유지와 거점 내 적 격퇴입니다. 아군 거점 반경 내에 위치할 때 기본 존재 보상이 부여됩니다. 거점 내에서 적에게 데미지를 받으면 추가 내구도 보너스(`ZoneDurabilityBonus`)가 지급되어, 거점에서 물러나지 않고 버티는 행동을 강화합니다. 아군 거점이 없는 상황에서는 중립/적 거점 접근으로 목표가 전환됩니다.
+목표는 전열에서 근접 전투를 수행하며 거점을 점령하는 것입니다. 적 거점 접근 및 점령 방식은 스트라이크와 동일하게 적용됩니다. 거점 내에서 근접 사거리에 적이 있을 때 추가 근접 보너스(`MeleeRangeBonus`)가 지급되어, 전선을 유지하며 적과 밀착하는 행동을 강화합니다.
 
 ```cpp
-# Defend reward (per step)
+# Vanguard reward (per step)
 reward = 0
-if agent inside friendly_base radius:
+if distance_to_target_base decreased:
+    reward += approach_reward * delta_distance
+if agent inside target_base radius:
     reward += zone_presence_bonus
-    if agent took damage this step:
-        reward += zone_durability_bonus   # reward staying under fire
-if no friendly base exists:
-    if distance_to_neutral_or_enemy_base decreased:
-        reward += approach_reward * delta_distance  # fallback objective
+    if enemy within melee range:
+        reward += melee_range_bonus  # frontline tank: reward close engagement
+if base just captured:
+    activate momentum_bonus for PostCaptureMomentumDuration steps
+    reward += capture_bonus
+if momentum active:
+    reward += momentum_bonus
 ```
 
 ---
 
-> **지원: 아군의 유지**
+> **지원: 후방 힐링**
 
-목표는 체력이 낮은 아군을 추적하고 힐링하며 후방을 유지하는 것입니다. 매 스텝 부상 아군 탐색을 수행하되, 잦은 타겟 전환으로 인한 진동 행동을 막기 위해 5스텝 캐시를 적용합니다. 캐시된 아군이 현재 가장 낮은 체력이 아니더라도 5스텝이 지나기 전까지는 교체하지 않습니다. 아군 뒤편에 위치하면 후방 포지셔닝 보너스를 받으며, 아군이 부상 중인 상황에서 직접 킬을 시도하면 역할 이탈 패널티가 부과됩니다.
+목표는 데미지를 많이 받은 아군을 추적하고 힐링하며 후방을 유지하는 것입니다. 매 스텝 부상 아군 탐색을 수행하되, 잦은 타겟 전환으로 인한 진동 행동을 막기 위해 5스텝 캐시를 적용합니다. 캐시된 아군이 현재 가장 낮은 체력이 아니더라도 5스텝이 지나기 전까지는 교체하지 않습니다. 아군 뒤편에 위치하면 후방 포지셔닝 보너스를 받으며, 아군이 부상 중인 상황에서 직접 킬을 시도하면 역할 이탈 패널티가 부과됩니다.
 
 ```cpp
 # Support reward (per step)
@@ -267,7 +275,7 @@ if cached_target.health < threshold and agent attempted kill:
 
 <font size="4">**PPO 알고리즘 선택 근거**</font>
 
-본 프로젝트는 PPO(Proximal Policy Optimization)를 사용하며, 역할별로 독립된 3개의 정책 인스턴스(`assault_policy`, `defend_policy`, `support_policy`)를 학습합니다. RLlib의 `policy_mapping_fn`이 에이전트의 전략 인덱스에 따라 해당 정책으로 라우팅합니다.
+본 프로젝트는 PPO(Proximal Policy Optimization)를 사용하며, 역할별로 독립된 3개의 정책 인스턴스(`strike_policy`, `vanguard_policy`, `support_policy`)를 학습합니다. RLlib의 `policy_mapping_fn`이 에이전트의 클래스 인덱스에 따라 해당 정책으로 라우팅합니다.
 
 PPO를 선택한 핵심 이유는 **셀프플레이 환경에서의 정책 안정성**입니다. 상대 팀이 동일한 정책을 공유하므로 매 업데이트마다 환경의 분포 자체가 이동(non-stationarity)합니다. PPO의 클리핑 메커니즘(`clip_param=0.2`)과 KL 페널티(`kl_target=0.01`)가 이 분포 이동 하에서 정책의 급격한 붕괴를 방지합니다. SAC 등 off-policy 알고리즘은 리플레이 버퍼의 과거 데이터가 현재 상대 정책과 일치하지 않아 학습이 불안정해지는 문제가 있습니다.
 
@@ -275,14 +283,14 @@ MAPPO(Multi-Agent PPO)는 모든 에이전트의 관측을 결합한 중앙집�
 
 ```python
 # train.py — 역할별 독립 정책 라우팅
-STRATEGY_POLICY_NAMES = {0: "assault_policy", 1: "defend_policy", 2: "support_policy"}
+STRATEGY_POLICY_NAMES = {0: "strike_policy", 1: "vanguard_policy", 2: "support_policy"}
 
 config = config.multi_agent(
     policies={
         name: PolicySpec(config={"model": model_cfg})
         for name in STRATEGY_POLICY_NAMES.values()
     },
-    policy_mapping_fn=_policy_mapping_fn,  # agent_id → strategy → policy
+    policy_mapping_fn=_policy_mapping_fn,  # agent_id → class → policy
     count_steps_by="agent_steps",
 )
 ```
@@ -429,7 +437,7 @@ void ADECharacter::PerformTacticalAction()
 
 ---
 
-<font size="4">**근본 원인 분석: 두 종료 시스템의 충돌**</font>
+<font size="4">**원인 분석: 두 종료 시스템의 충돌**</font>
 
 Schola 측(`AutoResetType::SAME_STEP`)과 Python 측(RLlib) 사이에 에피소드 종료 신호가 서로 모순되는 상태였습니다.
 
@@ -482,7 +490,71 @@ C++ (Unreal Plugin):
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
 
 
-### Problem 2: 스텝 속도와 에이전트 이동 간의 타이밍 불일치
+
+### Problem 2: 엔티티 간 관계 정보 손실
+
+
+학습된 정책이 "적 2명이 같은 거점에 집결" 같은 엔티티 간 공간 패턴을 인식하지 못하는 문제가 관찰되었습니다. 에이전트가 아군이 이미 점령 중인 거점에 중복 배치되는 비효율이 반복되었고, `CoOccupationPenalty`(-0.5/step)만으로는 이 행동이 충분히 억제되지 않았습니다.
+
+
+<font size="4">**원인 분석: 두 종료 시스템의 충돌**</font>
+
+218-dim 관측 벡터에서 각 엔티티 슬롯은 선형 인코더(`nn.Linear`)를 통해 독립적으로 임베딩됩니다. 이후 Self Token이 Cross-Attention으로 엔티티 집합을 조회하지만, Query가 Self Token 1개이므로 **엔티티 간 상대적 관계**(밀집도, 협공 패턴, 동일 거점 중복)는 Attention weight에 반영되지 않습니다. Cross-Attention의 출력은 "각 엔티티가 Self에게 얼마나 중요한가"의 가중합이지, "엔티티들이 서로 어떤 관계인가"의 정보는 아닙니다.
+
+
+<font size="4">**Solution**</font>
+
+**Intra-Set Self-Attention (Zambaldi et al., 2018)**
+
+각 엔티티 그룹(아군 / 적 / 거점)에 대해, Cross-Attention 이전에 **Self-Attention 레이어**를 삽입하여 엔티티들이 서로를 참조하도록 했습니다. Self-Attention을 거친 엔티티 토큰은 "나와 같은 거점 근처에 있는 아군이 2명이다"와 같은 문맥 정보를 내포하게 되며, 이후 Cross-Attention에서 Self Token이 이 **문맥화된** 엔티티 정보를 집약합니다.
+
+```python
+# policy.py — Relational Self-Attention 파이프라인 (아군 그룹 예시)
+
+# 1. 선형 인코딩: 원본 특성 → hidden 차원
+a_enc = self.ally_enc(allies)                  # (B, 8, 64)
+
+# 2. Self-Attention: 아군 토큰끼리 상호 참조
+#    → "슬롯 3과 슬롯 5가 같은 거점 근처에 있다" 등의 관계를 학습
+a_rel, _ = self.ally_self_attn(a_enc, a_enc, a_enc,
+                               key_padding_mask=ally_mask)
+
+# 3. Residual + LayerNorm: 원본 정보 보존 + 학습 안정화
+a_enc = self.ally_ln(a_enc + a_rel)            # (B, 8, 64)
+
+# 4. Cross-Attention: Self Token이 문맥화된 아군 정보를 집약
+a_ctx, _ = self.ally_attn(q, a_enc, a_enc,
+                          key_padding_mask=ally_mask)  # (B, 1, 64)
+```
+
+**패딩 마스크 처리**: C++ 관측 레이아웃의 `0=유효, 1=패딩` 마스크를 Self-Attention과 Cross-Attention 양쪽에 동일하게 적용합니다. `_safe_mask()`가 모든 슬롯이 패딩인 경우 슬롯 0을 강제 언마스크하여 NaN을 방지합니다. C++ 측 수정 없이 Python 정책만으로 완결됩니다.
+
+```python
+# policy.py — 안전한 마스크 처리
+def _safe_mask(m: torch.Tensor) -> torch.Tensor:
+    all_masked = m.all(dim=1, keepdim=True)   # (B, 1)
+    return m & ~all_masked                     # 모든 슬롯 패딩 시 슬롯 0 언마스크
+```
+
+**설계 제약과 Trade-off**
+
+| 항목 | 값 |
+|---|---|
+| 파라미터 증가 | 168K → 268K (+60%) |
+| 추론 레이턴시 | < 2ms (0.3초 스텝 예산 대비 0.7%) |
+| ONNX 호환성 | opset 14 — UE5 NNE 변경 없음 |
+| C++ 수정 | 없음 (패딩 마스크 레이아웃 재사용) |
+
+**정량적 비교:** Self-Attention 도입 전후 ablation 비교 결과는 별도 실험 후 추가 예정입니다.
+
+
+
+
+<hr style="border: 0; height: 1px; background: #b3b3b3;">
+
+
+
+### Problem 3: 스텝 속도와 에이전트 이동 간의 타이밍 불일치
 
 학습 환경에서 `AGymConnectorManager`의 `Tick()`이 매 프레임(60Hz+) `Connector->Step()`을 호출하여, EQS 이동이 완료되기 전에 다음 스텝이 실행되는 문제가 발생했습니다. 에이전트가 목적지에 도달하기 전에 새로운 EQS 목표 위치가 덮어써지면서 이동이 취소되어 목표 지점에 도달하지 못한 채 관측이 수집되면서 학습 데이터의 품질이 저하되었습니다.
 
@@ -567,93 +639,6 @@ void ADEGymConnectorManager::Tick(float DeltaTime)
 
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
 
-### Problem 3: 학습 환경 병렬화에 따른 환경 불안정 및 엔티티 간 관계 정보 손실
-
-본 프로젝트에서는 두 가지 독립적인 기술적 난제를 해결했습니다: (1) Windows 환경에서의 멀티 워커 학습 파이프라인 불안정, (2) 정책 네트워크가 엔티티 간 상호 관계를 포착하지 못하는 표현력 한계.
-
----
-
-<font size="4">**3-A: 멀티 워커 병렬화 불안정**</font>
-
-Windows 환경에서 Ray의 멀티 워커 아키텍처를 구동할 때 두 가지 문제가 발생했습니다. (1) 가중치 동기화 단계에서 Ray Learner 액터가 멈추는 현상, (2) 단일 UE5 인스턴스에 모든 워커가 연결을 시도하여 처리량이 병목되는 문제였습니다.
-
-**Solution:**
-
-**Docker 컨테이너화**: Python 학습 스크립트와 Ray RLlib 의존성 전체를 Linux Docker 이미지로 패키징했습니다. Windows의 `spawn`/`fork` 프로세스 생성 방식이 Ray와 충돌하던 문제를 컨테이너 레이어에서 원천적으로 차단했습니다.
-
-**gRPC 포트 라우팅**: 각 RLlib env-runner가 `base_port + worker_index` 공식으로 고유한 포트를 계산해 서로 다른 UE5 인스턴스에 1:1로 접속하도록 했습니다.
-
-```python
-# de_env.py — 워커별 포트 자동 배정
-def _resolve_port(self, **kwargs):
-    base_port = kwargs.get("base_port")
-    if base_port is not None:
-        from ray.rllib.evaluation.rollout_worker import get_global_worker
-        worker = get_global_worker()
-        worker_index = worker.worker_index if worker else 0
-        return base_port + max(0, worker_index - 1)
-    return base_port
-```
-
-**Result:** UE5 인스턴스와 Python 워커를 독립적으로 수평 확장할 수 있는 구조가 완성되었습니다. Docker 기반 파이프라인 도입으로 로컬 환경 의존성을 제거했으며, Docker Compose 파일 교체만으로 하이퍼파라미터 스윕을 실행할 수 있게 되었습니다.
-
----
-
-<font size="4">**3-B: 엔티티 간 관계 정보 손실 — Relational Self-Attention 도입**</font>
-
-**현상**
-
-학습된 정책이 "적 2명이 같은 거점에 집결" 같은 엔티티 간 공간 패턴을 인식하지 못하는 문제가 관찰되었습니다. 에이전트가 아군이 이미 점령 중인 거점에 중복 배치되는 비효율이 반복되었고, `CoOccupationPenalty`(-0.5/step)만으로는 이 행동이 충분히 억제되지 않았습니다.
-
-**원인 분석**
-
-194-dim 관측 벡터에서 각 엔티티 슬롯은 선형 인코더(`nn.Linear`)를 통해 독립적으로 임베딩됩니다. 이후 Self Token이 Cross-Attention으로 엔티티 집합을 조회하지만, Query가 Self Token 1개이므로 **엔티티 간 상대적 관계**(밀집도, 협공 패턴, 동일 거점 중복)는 Attention weight에 반영되지 않습니다. Cross-Attention의 출력은 "각 엔티티가 Self에게 얼마나 중요한가"의 가중합이지, "엔티티들이 서로 어떤 관계인가"의 정보는 아닙니다.
-
-**Solution: Intra-Set Self-Attention (Zambaldi et al., 2018)**
-
-각 엔티티 그룹(아군 / 적 / 거점)에 대해, Cross-Attention 이전에 **Self-Attention 레이어**를 삽입하여 엔티티들이 서로를 참조하도록 했습니다. Self-Attention을 거친 엔티티 토큰은 "나와 같은 거점 근처에 있는 아군이 2명이다"와 같은 문맥 정보를 내포하게 되며, 이후 Cross-Attention에서 Self Token이 이 **문맥화된** 엔티티 정보를 집약합니다.
-
-```python
-# policy.py — Relational Self-Attention 파이프라인 (아군 그룹 예시)
-
-# 1. 선형 인코딩: 원본 특성 → hidden 차원
-a_enc = self.ally_enc(allies)                  # (B, 8, 64)
-
-# 2. Self-Attention: 아군 토큰끼리 상호 참조
-#    → "슬롯 3과 슬롯 5가 같은 거점 근처에 있다" 등의 관계를 학습
-a_rel, _ = self.ally_self_attn(a_enc, a_enc, a_enc,
-                               key_padding_mask=ally_mask)
-
-# 3. Residual + LayerNorm: 원본 정보 보존 + 학습 안정화
-a_enc = self.ally_ln(a_enc + a_rel)            # (B, 8, 64)
-
-# 4. Cross-Attention: Self Token이 문맥화된 아군 정보를 집약
-a_ctx, _ = self.ally_attn(q, a_enc, a_enc,
-                          key_padding_mask=ally_mask)  # (B, 1, 64)
-```
-
-**패딩 마스크 처리**: C++ 관측 레이아웃의 `0=유효, 1=패딩` 마스크를 Self-Attention과 Cross-Attention 양쪽에 동일하게 적용합니다. `_safe_mask()`가 모든 슬롯이 패딩인 경우 슬롯 0을 강제 언마스크하여 NaN을 방지합니다. C++ 측 수정 없이 Python 정책만으로 완결됩니다.
-
-```python
-# policy.py — 안전한 마스크 처리
-def _safe_mask(m: torch.Tensor) -> torch.Tensor:
-    all_masked = m.all(dim=1, keepdim=True)   # (B, 1)
-    return m & ~all_masked                     # 모든 슬롯 패딩 시 슬롯 0 언마스크
-```
-
-**설계 제약과 Trade-off**
-
-| 항목 | 값 |
-|---|---|
-| 파라미터 증가 | 168K → 268K (+60%) |
-| 추론 레이턴시 | < 2ms (0.3초 스텝 예산 대비 0.7%) |
-| ONNX 호환성 | opset 14 — UE5 NNE 변경 없음 |
-| C++ 수정 | 없음 (패딩 마스크 레이아웃 재사용) |
-
-**정량적 비교:** Self-Attention 도입 전후 ablation 비교 결과는 별도 실험 후 추가 예정입니다.
-
-
-<hr style="border: 0; height: 1px; background: #b3b3b3;">
 
 
 

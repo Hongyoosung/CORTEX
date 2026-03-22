@@ -23,8 +23,8 @@ class UDEScholaAgent;
  * - Layer 1 (Squad Commander): Uses FDETeamState (60-dim) for centralized MCTS
  * - Layer 2 (Executor Agents): Use this observer for RL Policy → EQS Weights
  *
- * Observation Space (170-dim, entity-centric V2):
- *   Self (7) + Allies 8×5 (40) + Enemies 8×5 (40) + Bases 8×7 (56) + Masks 8+8+8 (24) + Class (3) = 170
+ * Observation Space (226-dim, entity-centric V2):
+ *   Self (7) + Allies 8×9 (72) + Enemies 8×8 (64) + Bases 8×7 (56) + Masks 8+8+8 (24) + Class (3) = 226
  *   Serialised as a fixed-size padded flat array via FDEObservationV2::ToFlatArray().
  *
  * Usage:
@@ -36,7 +36,7 @@ class UDEScholaAgent;
  * Integration:
  * - Owner: ADETrainer (Schola trainer)
  * - Data Source: ADEAgent (via trainer reference)
- * - Output: FBoxPoint with 170 continuous values
+ * - Output: FBoxPoint with 218 continuous values
  */
 UCLASS(BlueprintType, EditInlineNew, meta = (DisplayName = "DE Tactical Observer"))
 class DE_API UDETacticalObserver : public UDynamicEQSObserverBase
@@ -52,13 +52,13 @@ public:
 
 	/**
 	 * Define observation space bounds
-	 * @return FBoxSpace with 170 dimensions, normalized ranges
+	 * @return FBoxSpace with 218 dimensions, normalized ranges
 	 */
 	virtual FBoxSpace GetObservationSpace() const override;
 
 	/**
 	 * Collect current observation from character
-	 * @param OutObservations - FBoxPoint to fill with 170-dim observation vector
+	 * @param OutObservations - FBoxPoint to fill with 218-dim observation vector
 	 */
 	virtual void CollectObservations(FBoxPoint& OutObservations) override;
 
@@ -100,10 +100,10 @@ protected:
 	//========================================
 
 	/**
-	 * Gather entity-centric V2 observation (170-dim padded flat).
+	 * Gather entity-centric V2 observation (226-dim padded flat).
 	 * Populates ally, enemy, and base tokens from MatchManager.
 	 */
-	FDEObservationV2 GatherObservationV2() const;
+	FDEObservationV2 GatherObservationV2();
 
 	/**
 	 * Convert commanded class to one-hot encoding
@@ -147,6 +147,9 @@ private:
 
 	/** Cached environment origin for position normalization (set in InitializeObserver) */
 	FVector CachedEnvironmentOrigin = FVector::ZeroVector;
+
+	/** Previous-step HP per ally agent (for hp_delta observation). Keyed by agent pointer. */
+	TMap<ADEAgent*, float> LastAllyHealths;
 
 #if WITH_EDITORONLY_DATA
 	/** Last collected observation (for editor inspection) */

@@ -73,8 +73,8 @@ void UDEGA_Attack::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 	else
 	{
-		// Training mode: auto-select nearest enemy
-		Target = FindNearestEnemy();
+		// Training mode: auto-select best enemy via priority scoring
+		Target = FindBestEnemy();
 	}
 
 	if (Target)
@@ -279,7 +279,19 @@ ADEProjectileBase* UDEGA_Attack::SpawnProjectile(const FVector& FireLocation, co
 	return Projectile;
 }
 
-AActor* UDEGA_Attack::FindNearestEnemy() const
+float UDEGA_Attack::GetClassTargetPriority(const ADEAgent* Enemy) const
+{
+	if (!Enemy) return 0.0f;
+	switch (Enemy->GetCommandedClass())
+	{
+	case EDEClassType::Support:  return 1.0f;  // Kill the healer first
+	case EDEClassType::Strike:   return 0.6f;  // Squishy DPS second
+	case EDEClassType::Vanguard: return 0.2f;  // Tanky, low priority
+	default:                     return 0.5f;
+	}
+}
+
+AActor* UDEGA_Attack::FindBestEnemy() const
 {
 	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
 	const ADEAgent* OwnerChar = Cast<ADEAgent>(AvatarActor);
@@ -293,25 +305,37 @@ AActor* UDEGA_Attack::FindNearestEnemy() const
 
 	const FVector MyLocation = OwnerChar->GetActorLocation();
 	const FVector EyeLocation = MyLocation + FVector(0, 0, 90);
-	const float AttackRangeSq = FMath::Square(Config.Range);
+	const float AttackRange = Config.Range;
+	const float AttackRangeSq = FMath::Square(AttackRange);
 	const float MinRangeSq = FMath::Square(Config.MinRange);
 	const int32 MyEnvID = OwnerChar->GetEnvID_Implementation();
 
-	struct FEnemyData { ADEAgent* Enemy; float DistSq; };
-	TArray<FEnemyData> NearbyEnemies;
+	// Scoring weights
+	constexpr float W_DIST  = 0.3f;  // Closer is better (but not dominant)
+	constexpr float W_HP    = 0.4f;  // Lower HP = higher priority (finish kills)
+	constexpr float W_CLASS = 0.3f;  // Support > Strike > Vanguard
+
+	struct FEnemyCandidate { ADEAgent* Enemy; float Score; };
+	TArray<FEnemyCandidate> Candidates;
 
 	TArray<ADEAgent*> Enemies = CachedMatchManager->GetEnemyAgents(OwnerChar->GetTeamID_Implementation());
 	for (ADEAgent* Enemy : Enemies)
 	{
 		if (!Enemy || !Enemy->IsAlive()) continue;
-		float DistSq = FVector::DistSquared(Enemy->GetActorLocation(), MyLocation);
-		if (DistSq <= AttackRangeSq && DistSq >= MinRangeSq)
-		{
-			NearbyEnemies.Add({ Enemy, DistSq });
-		}
+		const float DistSq = FVector::DistSquared(Enemy->GetActorLocation(), MyLocation);
+		if (DistSq > AttackRangeSq || DistSq < MinRangeSq) continue;
+
+		const float Dist = FMath::Sqrt(DistSq);
+		const float DistScore  = 1.0f - FMath::Clamp(Dist / AttackRange, 0.0f, 1.0f);
+		const float HPScore    = 1.0f - FMath::Clamp(Enemy->GetHealthPercentage(), 0.0f, 1.0f);
+		const float ClassScore = GetClassTargetPriority(Enemy);
+
+		const float TotalScore = W_DIST * DistScore + W_HP * HPScore + W_CLASS * ClassScore;
+		Candidates.Add({ Enemy, TotalScore });
 	}
 
-	NearbyEnemies.Sort([](const FEnemyData& A, const FEnemyData& B) { return A.DistSq < B.DistSq; });
+	// Sort by score descending (highest priority first)
+	Candidates.Sort([](const FEnemyCandidate& A, const FEnemyCandidate& B) { return A.Score > B.Score; });
 
 	// Collect cross-environment actors for LOS exclusion
 	TArray<AActor*> CrossEnvActors;
@@ -323,21 +347,22 @@ AActor* UDEGA_Attack::FindNearestEnemy() const
 		}
 	}
 
-	for (const FEnemyData& Data : NearbyEnemies)
+	// Return first candidate with clear LOS
+	for (const FEnemyCandidate& C : Candidates)
 	{
 		FCollisionQueryParams QueryParams;
 		QueryParams.AddIgnoredActor(OwnerChar);
-		QueryParams.AddIgnoredActor(Data.Enemy);
+		QueryParams.AddIgnoredActor(C.Enemy);
 		QueryParams.AddIgnoredActors(CrossEnvActors);
 
 		FHitResult HitResult;
 		bool bBlocked = OwnerChar->GetWorld()->LineTraceSingleByChannel(
-			HitResult, EyeLocation, Data.Enemy->GetActorLocation() + FVector(0, 0, 90),
+			HitResult, EyeLocation, C.Enemy->GetActorLocation() + FVector(0, 0, 90),
 			ECC_Visibility, QueryParams);
 
 		if (!bBlocked)
 		{
-			return Data.Enemy;
+			return C.Enemy;
 		}
 	}
 

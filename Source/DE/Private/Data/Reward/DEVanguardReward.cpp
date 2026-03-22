@@ -152,16 +152,6 @@ float DEComputeVanguardStepReward(
 		}
 	}
 
-	// ---- Durability Bonus: reward per HP absorbed (soaking damage for the team) ----
-	if (!bIsRespawnStep)
-	{
-		const float DamageTaken = Prev.Health - Current.Health;
-		if (DamageTaken > 0.0f)
-		{
-			Reward += Settings->VanguardReward.ZoneDurabilityBonus * DamageTaken;
-		}
-	}
-
 	// ---- Health Bonus: small incentive to stay healthy enough to keep fighting ----
 	if (!bIsRespawnStep && Current.Health > Settings->VanguardHealthThreshold)
 		Reward += Settings->VanguardReward.HealthBonus;

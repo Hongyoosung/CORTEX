@@ -13,16 +13,18 @@
 #include "Types/DEObservationTypes.h"
 #include "Types/DERewardTypes.h"
 #include "Types/DEEventTypes.h"
-#include "Team/DEMatchManager.h"
 #include "DEAgent.generated.h"
 
-// Forward declarations
+class ADEMatchManager;
+class AAIController;
+class ADEAgent;
+class ADECapturePoint;
+
 class UAbilitySystemComponent;
 class UDEAttributeSet;
 class UDEGA_Attack;
 class UDEGA_Heal;
 class UDEAbilityData;
-
 class UAIPerceptionStimuliSourceComponent;
 class USpringArmComponent;
 class UCameraComponent;
@@ -30,13 +32,13 @@ class UEnvQuery;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class UWidgetComponent;
-
-class ADEAgent;
 class UDERewardSubsystem;
 class UDEScholaAgent;
+class UDECombatStatsComponent;
 class UDynamicEQSExecutor;
 class UDETeamData;
 class UDEClassData;
+
 struct FDEDeathEventData;
 struct FDETeamInfo;
 
@@ -83,7 +85,6 @@ public:
 	ADEAgent();
 
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
 	virtual void PossessedBy(AController* NewController) override;
 
 
@@ -337,6 +338,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UDynamicEQSExecutor> EQSExecutor = nullptr;
 
+	/** Combat statistics tracking (damage, kills, assists) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Combat")
+	TObjectPtr<UDECombatStatsComponent> CombatStats;
+
 
 	//========================================
 	// Ability Configuration
@@ -393,23 +398,34 @@ public:
 
 
 	//========================================
-	// Damage Stats (replaces DEHealthComponent stats)
+	// Damage Stats (delegated to UDECombatStatsComponent)
 	//========================================
 
-	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
-	float TotalDamageTaken = 0.0f;
+	/** BP-compatible adapter: total damage taken */
+	UFUNCTION(BlueprintPure, Category = "Combat|Stats")
+	float GetTotalDamageTaken() const;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
-	float TotalDamageDealt = 0.0f;
+	/** BP-compatible adapter: total damage dealt */
+	UFUNCTION(BlueprintPure, Category = "Combat|Stats")
+	float GetTotalDamageDealt() const;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Combat|Stats")
-	int32 KillCount = 0;
+	/** BP-compatible adapter: kill count */
+	UFUNCTION(BlueprintPure, Category = "Combat|Stats")
+	int32 GetKillCount() const;
 
 	/** Tracks cumulative damage dealt by each attacker (for assist rewards) */
-	const TMap<AActor*, float>& GetDamageContributors() const { return DamageContributors; }
+	const TMap<AActor*, float>& GetDamageContributors() const;
+
+	/** Per-step damage dealt (for Strike in-range hit reward) */
+	float GetStepDamageDealt() const;
+	void ResetStepDamage();
 
 
 protected:
+	/** Cached match manager — resolved once in BeginPlay, avoids per-step GetAllActorsOfClass scan */
+	UPROPERTY()
+	TObjectPtr<ADEMatchManager> CachedMatchManager;
+
 	TObjectPtr<UDERewardSubsystem> RewardSubsystem;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI|Identity")
@@ -437,6 +453,10 @@ protected:
 	FDEEQSWeightParameters CurrentEQSWeights;
 
 	FTimerHandle TrainingAbilityTimerHandle;
+	FTimerHandle ManaRegenTimerHandle;
+
+	/** Cached AI controller — set in PossessedBy, avoids per-action Cast */
+	TWeakObjectPtr<AAIController> CachedAIController;
 
 
 private:
@@ -447,19 +467,14 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UDEGA_Heal> HealAbility;
 
-	/** Last actor to deal damage (for death attribution) */
-	UPROPERTY(Transient)
-	TWeakObjectPtr<AActor> LastDamageInstigator;
-	float LastDamageAmount = 0.0f;
-
-	/** Damage contributors for assist tracking */
-	TMap<AActor*, float> DamageContributors;
-
 	/** Has died flag (prevents double-death) */
 	bool bHasDied = false;
 
 	/** Initialize GAS abilities from AbilityData */
 	void InitializeGASAbilities();
+
+	/** One-time world scan to find the MatchManager matching this agent's EnvID */
+	ADEMatchManager* FindMatchManagerForEnv() const;
 
 
 public:
@@ -472,18 +487,10 @@ public:
 
 	// Compatibility delegates (for systems that subscribed to DEHealthComponent events)
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamageTakenDel, const FDEDamageEventData&, DamageEvent, float, CurrentHealth);
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamageDealtDel, AActor*, Victim, float, DamageAmount);
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnKillConfirmedDel, AActor*, Victim, float, DamageDealt);
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChangedDel, float, CurrentHealth, float, MaxHealth);
 
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
 	FOnDamageTakenDel OnDamageTaken_Delegate;
-
-	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
-	FOnDamageDealtDel OnDamageDealt_Delegate;
-
-	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
-	FOnKillConfirmedDel OnKillConfirmed_Delegate;
 
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Events")
 	FOnHealthChangedDel OnHealthChanged_Delegate;

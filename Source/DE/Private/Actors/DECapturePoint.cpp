@@ -15,7 +15,7 @@
 
 ADECapturePoint::ADECapturePoint()
 {
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
 	RootComponent = RootComp;
@@ -67,11 +67,17 @@ void ADECapturePoint::BeginPlay()
 
 	UpdateVisuals();
 	UpdateNiagaraColor();
+
+	// Start timer-based capture update at 10Hz (replaces per-frame Tick)
+	constexpr float CaptureUpdateInterval = 0.1f;
+	GetWorld()->GetTimerManager().SetTimer(
+		CaptureUpdateTimerHandle, this, &ADECapturePoint::CaptureUpdateTick,
+		CaptureUpdateInterval, true);
 }
 
-void ADECapturePoint::Tick(float DeltaTime)
+void ADECapturePoint::CaptureUpdateTick()
 {
-	Super::Tick(DeltaTime);
+	constexpr float DeltaTime = 0.1f;
 
 	bJustCaptured = false;
 	UpdateCaptureProgress(DeltaTime);
@@ -100,11 +106,13 @@ void ADECapturePoint::Tick(float DeltaTime)
 		else if (CapturingTeam != -1) CylinderColor = GetTeamColor(CapturingTeam).ToFColor(true);
 		else CylinderColor = GetTeamColor(CurrentOwner).ToFColor(true);
 
+		// Lifetime slightly exceeds the 0.1s tick interval so the cylinder
+		// stays visible continuously rather than blinking every tick.
 		DrawDebugCylinder(
 			GetWorld(),
 			GetActorLocation() - FVector(0, 0, CaptureHeight / 2),
 			GetActorLocation() + FVector(0, 0, CaptureHeight / 2),
-			CaptureRadius, 32, CylinderColor, false, -1.0f, 0, 2.0f
+			CaptureRadius, 32, CylinderColor, false, 0.12f, 0, 2.0f
 		);
 	}
 }
@@ -221,11 +229,15 @@ void ADECapturePoint::UpdateVisuals()
 {
 	if (!DynamicMaterial) return;
 
-	const FLinearColor TeamColor = GetTeamColor(CurrentOwner);
+	static const FName ParamTeamColor(TEXT("TeamColor"));
+	static const FName ParamCaptureProgress(TEXT("CaptureProgress"));
+	static const FName ParamIsContested(TEXT("IsContested"));
 
-	DynamicMaterial->SetVectorParameterValue(FName("TeamColor"), TeamColor);
-	DynamicMaterial->SetScalarParameterValue(FName("CaptureProgress"), CaptureProgress);
-	DynamicMaterial->SetScalarParameterValue(FName("IsContested"), IsContested() ? 1.0f : 0.0f);
+	const FLinearColor TeamCol = GetTeamColor(CurrentOwner);
+
+	DynamicMaterial->SetVectorParameterValue(ParamTeamColor, TeamCol);
+	DynamicMaterial->SetScalarParameterValue(ParamCaptureProgress, CaptureProgress);
+	DynamicMaterial->SetScalarParameterValue(ParamIsContested, IsContested() ? 1.0f : 0.0f);
 }
 
 void ADECapturePoint::UpdateNiagaraColor()
@@ -259,6 +271,11 @@ void ADECapturePoint::SetOwnership(int32 NewOwnerTeamID)
 	OnPointCaptured_Delegate.Broadcast(PreviousOwner, CurrentOwner);
 	UpdateVisuals();
 	UpdateNiagaraColor();
+}
+
+void ADECapturePoint::SetMatchManager(ADEMatchManager* InMatchManager)
+{
+	OwnerMatchManager = TWeakObjectPtr<ADEMatchManager>(InMatchManager);
 }
 
 int32 ADECapturePoint::GetTeamCountInZone(int32 TeamID) const
@@ -318,7 +335,7 @@ void ADECapturePoint::OnCaptureZoneEndOverlap(UPrimitiveComponent* OverlappedCom
 
 FLinearColor ADECapturePoint::GetTeamColor(int32 TeamID) const
 {
-	if (TeamID == -1 || !OwnerMatchManager) return FLinearColor::Gray;
+	if (TeamID == -1 || !OwnerMatchManager.IsValid()) return FLinearColor::Gray;
 	const FDETeamConfiguration Config = OwnerMatchManager->GetTeamConfiguration(TeamID);
 	return Config.GetTeamColor();
 }

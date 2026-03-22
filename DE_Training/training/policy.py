@@ -3,28 +3,28 @@ Relational Entity-Centric Policy for DE v10.2+ (entity-centric refactor).
 
 Architecture:
     Self encoder     : Linear(7, 64)
-    Ally encoder     : Linear(8, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
-    Enemy encoder    : Linear(5, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
+    Ally encoder     : Linear(9, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
+    Enemy encoder    : Linear(8, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
     Base encoder     : Linear(7, 64) → SelfAttn(64, heads=4) + LayerNorm → CrossAttn(64, heads=4)
     Policy head      : Linear(64*4, 256) → ReLU → Linear(256, 128) → ReLU → Linear(128, 7) → Tanh
     Value head       : Linear(64*4, 256) → ReLU → Linear(256, 1)
     Learnable log_std: (7,)
 
 NOTE: Strategy encoder removed. Three separate model instances are trained
-per role (Assault / Defend / Support). Each model only receives observations
-for its assigned role, so the strategy one-hot at [191:194] is always constant
+per role (Strike / Vanguard / Support). Each model only receives observations
+for its assigned role, so the strategy one-hot at [223:226] is always constant
 and encoding it adds no information.
 
-Input: 194-dim flat array (from C++ FDEObservationV2::ToFlatArray)
+Input: 226-dim flat array (from C++ FDEObservationV2::ToFlatArray)
 Layout:
     [  0:  7]  Self token (7)
-    [  7: 71]  Ally tokens  8×8  (64)  — [rel_pos(3), health, alive, is_assault, is_defend, is_support]
-    [ 71:111]  Enemy tokens 8×5  (40)
-    [111:167]  Base tokens  8×7  (56)
-    [167:175]  Ally mask    8    (0=present, 1=padding)
-    [175:183]  Enemy mask   8
-    [183:191]  Base mask    8
-    [191:194]  Strategy one-hot  [assault, defend, support]  (3)
+    [  7: 79]  Ally tokens  8×9  (72)  — [rel_pos(3), health, hp_delta, alive, is_strike, is_vanguard, is_support]
+    [ 79:143]  Enemy tokens 8×8  (64)  — [rel_pos(3), health, visible, is_strike, is_vanguard, is_support]
+    [143:199]  Base tokens  8×7  (56)
+    [199:207]  Ally mask    8    (0=present, 1=padding)
+    [207:215]  Enemy mask   8
+    [215:223]  Base mask    8
+    [223:226]  Strategy one-hot  [strike, vanguard, support]  (3)
 
 Output: 7-dim EQS weights in [-1, 1]
     [0] EnemyObjectiveProximity
@@ -35,7 +35,7 @@ Output: 7-dim EQS weights in [-1, 1]
     [5] CombatRange
     [6] AssignedBaseProximity
 
-ONNX export: fixed-shape (B, 194) → (B, 7) for UE5 NNE compatibility.
+ONNX export: fixed-shape (B, 226) → (B, 7) for UE5 NNE compatibility.
 """
 
 import os
@@ -48,10 +48,10 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 # ── Observation layout constants (must match DEObservationTypes.h) ──────────
-OBS_DIM          = 194
+OBS_DIM          = 226
 SELF_DIM         = 7
-ALLY_DIM         = 8    # [rel_pos(3), health, alive, is_assault, is_defend, is_support]
-ENEMY_DIM        = 5
+ALLY_DIM         = 9    # [rel_pos(3), health, hp_delta, alive, is_strike, is_vanguard, is_support]
+ENEMY_DIM        = 8    # [rel_pos(3), health, visible, is_strike, is_vanguard, is_support]
 BASE_DIM         = 7
 STRATEGY_DIM     = 3
 MAX_ALLIES       = 8
@@ -61,13 +61,13 @@ EQS_DIM          = 7
 HIDDEN           = 64
 
 SELF_START       = 0
-ALLY_START       = 7           # 7  + 8*8 = 71
-ENEMY_START      = 71          # 71 + 8*5 = 111
-BASE_START       = 111         # 111 + 8*7 = 167
-ALLY_MASK_START  = 167
-ENEMY_MASK_START = 175
-BASE_MASK_START  = 183
-STRATEGY_START   = 191         # 183 + 8  = 191; [191:194] strategy one-hot
+ALLY_START       = 7           # 7  + 8*9 = 79
+ENEMY_START      = 79          # 79 + 8*8 = 143
+BASE_START       = 143         # 143 + 8*7 = 199
+ALLY_MASK_START  = 199
+ENEMY_MASK_START = 207
+BASE_MASK_START  = 215
+STRATEGY_START   = 223         # 215 + 8  = 223; [223:226] strategy one-hot
 
 EQS_LABELS = [
     "EnemyObjectiveProximity",
@@ -84,10 +84,10 @@ EQS_LABELS = [
 
 @dataclass
 class Transition:
-    state:      np.ndarray   # (170,) padded flat observation
+    state:      np.ndarray   # (226,) padded flat observation
     action:     np.ndarray   # (7,)  EQS weights in [-1, 1]
     reward:     float
-    next_state: np.ndarray   # (170,)
+    next_state: np.ndarray   # (226,)
     done:       bool
     log_prob:   float = 0.0
 
@@ -218,7 +218,7 @@ class EntityCentricPolicy(nn.Module):
         3. LayerNorm        : stabilise self-attention output
         4. Cross-attention  : self token queries the contextualised entity set
 
-    Takes a flat 194-dim observation, unpacks entity sets, and passes through
+    Takes a flat 226-dim observation, unpacks entity sets, and passes through
     the relational encoder → shared policy/value head.
     """
 
@@ -279,22 +279,22 @@ class EntityCentricPolicy(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
                torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Unpack (B, 170) flat observation into entity tensors, bool masks, and strategy index.
+        Unpack (B, 226) flat observation into entity tensors, bool masks, and strategy index.
 
         Returns:
             self_obs      : (B, 7)
-            allies        : (B, 8, 5)
-            enemies       : (B, 8, 5)
+            allies        : (B, 8, 9)
+            enemies       : (B, 8, 8)
             bases         : (B, 8, 7)
             ally_mask     : (B, 8) bool — True means padding (ignore in attention)
             enemy_mask    : (B, 8) bool
             base_mask     : (B, 8) bool
-            strategy_idx  : (B,)  long — argmax of the 3-dim one-hot at [167:170]
+            strategy_idx  : (B,)  long — argmax of the 3-dim one-hot at [223:226]
         """
         B = flat.shape[0]
         self_obs = flat[:, SELF_START:ALLY_START]                               # (B, 7)
         allies   = flat[:, ALLY_START:ENEMY_START].view(B, MAX_ALLIES, ALLY_DIM)   # (B, 8, 5)
-        enemies  = flat[:, ENEMY_START:BASE_START].view(B, MAX_ENEMIES, ENEMY_DIM) # (B, 8, 5)
+        enemies  = flat[:, ENEMY_START:BASE_START].view(B, MAX_ENEMIES, ENEMY_DIM) # (B, 8, 8)
         bases    = flat[:, BASE_START:ALLY_MASK_START].view(B, MAX_BASES, BASE_DIM) # (B, 8, 7)
 
         # Masks: C++ writes 0.0=present, 1.0=padding.  PyTorch attn: True=ignore.
@@ -313,7 +313,7 @@ class EntityCentricPolicy(nn.Module):
         enemy_mask = _safe_mask(enemy_mask)
         base_mask  = _safe_mask(base_mask)
 
-        # Strategy one-hot → index (0=Assault, 1=Defend, 2=Support)
+        # Strategy one-hot → index (0=Strike, 1=Vanguard, 2=Support)
         strategy_onehot = flat[:, STRATEGY_START:STRATEGY_START + STRATEGY_DIM]  # (B, 3)
         strategy_idx    = strategy_onehot.argmax(dim=1)                           # (B,)
 
@@ -373,7 +373,7 @@ class EntityCentricPolicy(nn.Module):
     def forward(self, flat_obs: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            flat_obs: (B, 170) padded flat observation
+            flat_obs: (B, 226) padded flat observation
 
         Returns:
             eqs_weights: (B, 7) in range [-1, 1]
@@ -416,7 +416,7 @@ class EntityCentricPolicy(nn.Module):
 
     def export_onnx(self, filepath: str, batch_size: int = 1):
         """
-        Export to ONNX for UE5 NNE inference (fixed shape: B×170 → B×7).
+        Export to ONNX for UE5 NNE inference (fixed shape: B×226 → B×7).
 
         Args:
             filepath   : Output .onnx path
@@ -436,7 +436,7 @@ class EntityCentricPolicy(nn.Module):
             },
             opset_version=14,
         )
-        print(f"[ONNX] Exported → {filepath}  (input: B×{OBS_DIM}, output: B×{EQS_DIM})")  # B×194 → B×7
+        print(f"[ONNX] Exported → {filepath}  (input: B×{OBS_DIM}, output: B×{EQS_DIM})")  # B×226 → B×7
 
 
 # ── Replay buffer ─────────────────────────────────────────────────────────────
@@ -558,7 +558,7 @@ class PPOTrainer:
 
 def collate_fn(obs_list: List[np.ndarray]) -> torch.Tensor:
     """
-    Stack a list of 170-dim flat observations into a (B, 170) tensor.
+    Stack a list of 226-dim flat observations into a (B, 226) tensor.
     All observations are already fixed-shape (padded by C++), so this is
     a straightforward stack. The function exists as a named hook so callers
     can replace it if the serialization changes.

@@ -59,6 +59,12 @@ float DEComputeStrikeStepReward(
 		{
 			Reward += Settings->StrikeReward.OptimalRangeBonus;
 		}
+
+		// In-range hit reward: reward actual damage output at optimal range
+		if (bAtOptimalRange && Agent->GetStepDamageDealt() > 0.0f)
+		{
+			Reward += Settings->StrikeReward.InRangeHitReward;
+		}
 	}
 
 	if (!bIsRespawnStep && EnvCapturePoints.Num() > 0)
@@ -124,10 +130,9 @@ float DEComputeStrikeStepReward(
 		if (bInNonFriendlyZone)
 		{
 			InOutState.StrikeZoneStepsAfterCapture = 0;
-			// Scale down zone bonus when too close to enemy — don't reward rushing in blindly
-			const float ZoneScale = bEnemyTooClose ? 0.3f : 1.0f;
-			Reward += Settings->StrikeReward.ZonePresenceBonus * ZoneScale;
-			Reward += Settings->StrikeReward.ActiveCappingBonus * ActiveCappingProgress * ZoneScale;
+			// Range discipline is enforced by TooCloseEnemyPenalty — zone bonus stays full
+			Reward += Settings->StrikeReward.ZonePresenceBonus;
+			Reward += Settings->StrikeReward.ActiveCappingBonus * ActiveCappingProgress;
 		}
 		else if (bInFriendlyZoneStrike && Settings->StrikeCapturedZoneDecaySteps > 0.0f)
 		{

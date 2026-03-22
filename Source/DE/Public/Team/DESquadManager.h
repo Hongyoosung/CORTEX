@@ -7,7 +7,6 @@
 #include "Types/DEClassTypes.h"
 #include "Types/DEEventTypes.h"
 #include "Types/DERewardTypes.h"
-#include "Actors/DECapturePoint.h"
 #include "DESquadManager.generated.h"
 
 

@@ -3,6 +3,7 @@
 #include "Player/DESpectatorController.h"
 #include "Characters/DEAgent.h"
 #include "Camera/CameraComponent.h"
+#include "Components/WidgetComponent.h"
 #include "EngineUtils.h"
 #include "TimerManager.h"
 #include "Math/RandomStream.h"
@@ -268,6 +269,36 @@ void ADESpectatorController::GetPlayerViewPoint(FVector& OutLocation, FRotator& 
 	Super::GetPlayerViewPoint(OutLocation, OutRotation);
 }
 
+// ---------------------------------------------------------------------------
+// Environment Visibility
+// ---------------------------------------------------------------------------
+
+int32 ADESpectatorController::GetObservedEnvID() const
+{
+	return (bCameraActive && IsValid(CurrentTarget))
+		? CurrentTarget->Execute_GetEnvID(CurrentTarget)
+		: -1;
+}
+
+void ADESpectatorController::UpdateEnvironmentVisibility(int32 ObservedEnvID)
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	for (ADEAgent* Agent : TActorRange<ADEAgent>(World))
+	{
+		if (!IsValid(Agent)) continue;
+
+		if (UWidgetComponent* Widget = Agent->OverheadWidgetComponent)
+		{
+			// -1 means camera off — show everything; otherwise hide other envs
+			const bool bVisible = (ObservedEnvID == -1) ||
+				(Agent->Execute_GetEnvID(Agent) == ObservedEnvID);
+			Widget->SetHiddenInGame(!bVisible, false);
+		}
+	}
+}
+
 void ADESpectatorController::SwitchToAgent(ADEAgent* Agent)
 {
 	if (!IsValid(Agent)) return;
@@ -305,6 +336,11 @@ void ADESpectatorController::SwitchToAgent(ADEAgent* Agent)
 
 	// View through this controller so GetPlayerViewPoint drives the camera.
 	SetViewTarget(this);
+
+	// Show overhead widgets only for agents in the same environment
+	const int32 NewEnvID = Agent->Execute_GetEnvID(Agent);
+	UpdateEnvironmentVisibility(NewEnvID);
+	OnObservedEnvChanged.Broadcast(NewEnvID);
 }
 
 void ADESpectatorController::DisableCamera()
@@ -326,4 +362,8 @@ void ADESpectatorController::DisableCamera()
 
 	// Return to default spectator view (no explicit target)
 	SetViewTarget(this);
+
+	// Restore all overhead widgets and notify Blueprints (spawn area score widgets)
+	UpdateEnvironmentVisibility(-1);
+	OnObservedEnvChanged.Broadcast(-1);
 }

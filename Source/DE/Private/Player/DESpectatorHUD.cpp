@@ -43,11 +43,11 @@ void ADESpectatorHUD::DrawHUD()
 	switch (Class)
 	{
 	case EDEClassType::Strike:
-		ClassName  = TEXT("ASSAULT");
+		ClassName  = TEXT("STRIKE");
 		ClassColor = FLinearColor(1.0f, 0.15f, 0.05f, 1.0f);
 		break;
 	case EDEClassType::Vanguard:
-		ClassName  = TEXT("DEFEND");
+		ClassName  = TEXT("VANGUARD");
 		ClassColor = FLinearColor(0.1f, 0.4f, 1.0f, 1.0f);
 		break;
 	case EDEClassType::Support:

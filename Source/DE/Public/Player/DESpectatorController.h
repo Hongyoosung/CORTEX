@@ -9,6 +9,8 @@
 
 class ADEAgent;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnObservedEnvChanged, int32, NewEnvID);
+
 /**
  * ADESpectatorController
  *
@@ -42,6 +44,22 @@ public:
 
 	/** Returns the agent currently being observed, or null if camera is off */
 	ADEAgent* GetObservedCharacter() const { return CurrentTarget; }
+
+	/**
+	 * Returns the EnvID of the currently observed agent, or -1 when no agent
+	 * is being watched (camera disabled).  Blueprint score widgets placed near
+	 * spawn areas can query this to decide whether to show or hide themselves.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Camera|Environment")
+	int32 GetObservedEnvID() const;
+
+	/**
+	 * Broadcast whenever the observed environment changes — fires with the new
+	 * EnvID on agent switch, and with -1 when the camera is disabled.
+	 * Bind this in spawn-area score widgets to avoid polling every frame.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Camera|Environment")
+	FOnObservedEnvChanged OnObservedEnvChanged;
 
 	/** Time after key press that hold-cycling begins (seconds) */
 	UPROPERTY(EditAnywhere, Category = "Camera|Settings")
@@ -97,6 +115,12 @@ private:
 
 	// ---- Internal Helpers ----
 	void SwitchToAgent(ADEAgent* Agent);
+
+	/**
+	 * Show/hide each agent's OverheadWidgetComponent based on EnvID.
+	 * Pass the desired observed EnvID; -1 makes ALL widgets visible (camera off).
+	 */
+	void UpdateEnvironmentVisibility(int32 ObservedEnvID);
 	void SwitchToNextClassAgent();
 	void CycleToNextAgent();
 	void DisableCamera();

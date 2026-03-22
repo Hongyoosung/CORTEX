@@ -61,7 +61,6 @@ REWARD_CONFIG = {
     "BaseOccupationReward":    2.0,   # +2.0/step: sole ally within 2000cm of uncontrolled base
     "CoOccupationPenalty":    -0.5,   # -0.5/step: 2+ allies stacking same base
     "BaseCaptureCreditReward": 5.0,   # +5.0 sparse: agent that flipped base ownership
-    "UndefendedBasePenalty":  -1.0,   # -1.0/step: friendly base with no nearby ally (shared)
     "AssignedBaseReachReward": 1.0,   # +1.0 sparse: first time reaching assigned base
 
     # Python-side scaling applied to the received step reward before PPO update
@@ -94,26 +93,27 @@ class DETrainingConfig:
     LEARNING_RATE    = 3e-4
     TRAIN_BATCH_SIZE = 4000
     MINIBATCH_SIZE   = 512
-    NUM_SGD_ITER     = 6
+    NUM_SGD_ITER     = 6     # reverted: 8 epochs × VF_CLIP_PARAM=20 caused critic oscillation
     GAMMA            = 0.99
     GAE_LAMBDA       = 0.95
     CLIP_PARAM       = 0.2
     ENTROPY_COEFF    = 0.01
-    VF_LOSS_COEFF    = 0.5
-    GRAD_CLIP        = 0.5
-    VF_CLIP_PARAM = float('inf')
+    VF_LOSS_COEFF    = 0.5   # reverted: 1.0 + VF_CLIP=20 + 8 epochs stacked too aggressively
+    GRAD_CLIP        = 1.0   # loosened: 0.5 was too tight when critic needs to close a large value gap
+    VF_CLIP_PARAM    = 10.0  # reverted: 20.0 caused critic oscillation on Support's bimodal reward
 
     LR_SCHEDULE = [
-        [0, 3e-4],
-        [2_000_000, 1e-4],
-        [4_000_000, 5e-5],
+        [0,          3e-4],
+        [1_000_000,  1e-4],  # was 2M — shift earlier; Vanguard expl_var dropped at ~1M steps
+        [3_000_000,  5e-5],
     ]
     ENTROPY_SCHEDULE = [
         [0,          0.01],
         [300_000,    0.005],
         [800_000,    0.003],
-        [1_500_000,  0.001],
-        [2_500_000,  0.0005],
+        [1_500_000,  0.002],  # was 0.001 — keep higher to prevent Strike entropy collapse
+        [2_500_000,  0.001],  # floor: Strike needs exploration budget past 1M steps
+        [5_000_000,  0.001],  # hold floor; do not decay further
     ]
 
     OUTPUT_DIR = "/app/training_results"
@@ -121,7 +121,7 @@ class DETrainingConfig:
 
 # ── RLlib helpers ─────────────────────────────────────────────────────────────
 
-STRATEGY_POLICY_NAMES = {0: "assault_policy", 1: "defend_policy", 2: "support_policy"}
+STRATEGY_POLICY_NAMES = {0: "strike_policy", 1: "vanguard_policy", 2: "support_policy"}
 
 if RLLIB_AVAILABLE:
     from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
@@ -131,7 +131,7 @@ if RLLIB_AVAILABLE:
         """
         RLlib TorchModelV2 wrapper for EntityCentricPolicy.
 
-        Three separate instances are registered — one per role (assault / defend / support).
+        Three separate instances are registered — one per role (strike / vanguard / support).
         Each only receives observations for its assigned role.
         forward() returns (B, 14) = [means(7), log_stds(7)].
         """
@@ -147,7 +147,7 @@ if RLLIB_AVAILABLE:
 
         @override(TorchModelV2)
         def forward(self, input_dict, state, seq_lens):
-            obs = input_dict["obs"].float()            # (B, 194)
+            obs = input_dict["obs"].float()            # (B, 226)
             self._last_features = obs
             means = self.policy(obs)                   # (B, 7)
             log_stds = torch.clamp(
@@ -177,7 +177,7 @@ if RLLIB_AVAILABLE:
             if strategy_idx is None:
                 # Agent not yet registered — happens before first reset.
                 # Log a warning so we can detect if UE5 is not sending strategy info.
-                print(f"[POLICY MAP] WARNING: {agent_id} not in registry, defaulting to assault")
+                print(f"[POLICY MAP] WARNING: {agent_id} not in registry, defaulting to strike")
                 strategy_idx = 0
             return STRATEGY_POLICY_NAMES[strategy_idx]
 
@@ -378,7 +378,7 @@ def train_with_rllib(args):
             # print(f"[DEBUG iter={i}] result keys: {list(result.keys())}")
 
         # 2. RLlib 기본 제공 Policy별 보상 텐서보드 기록
-        for strat, policy_name in zip(("assault", "defend", "support"), STRATEGY_POLICY_NAMES.values()):
+        for strat, policy_name in zip(("strike", "vanguard", "support"), STRATEGY_POLICY_NAMES.values()):
             if policy_name in policy_reward_mean:
                 tb.add_scalar(f"{strat}/reward/episode_mean", float(policy_reward_mean[policy_name]), cumul_steps)
             if policy_name in policy_reward_max:
@@ -397,7 +397,7 @@ def train_with_rllib(args):
         # 4. 세부 보상 컴포넌트 기록 (기존 유지)
         REWARD_COMPONENTS = [
             "BaseOccupationReward", "CoOccupationPenalty",
-            "BaseCaptureCreditReward", "UndefendedBasePenalty",
+            "BaseCaptureCreditReward",
             "AssignedBaseReachReward",
         ]
         for comp in REWARD_COMPONENTS:
@@ -407,7 +407,7 @@ def train_with_rllib(args):
 
         # ── Per-role PPO learner metrics ──────────────────────────────────────
         # TB hierarchy: {role}/{metric_group}/{metric}
-        # e.g. assault/losses/policy_loss, defend/kl/value, support/entropy/value
+        # e.g. strike/losses/policy_loss, vanguard/kl/value, support/entropy/value
         TRAIN_METRICS = {
             "losses/policy_loss":  ["policy_loss", "mean_policy_loss"],
             "losses/vf_loss":      ["vf_loss", "mean_vf_loss"],
@@ -420,7 +420,7 @@ def train_with_rllib(args):
         }
         learner_info = result.get("info", {}).get("learner", {})
         for policy_name in STRATEGY_POLICY_NAMES.values():
-            role  = policy_name.replace("_policy", "")   # "assault" / "defend" / "support"
+            role  = policy_name.replace("_policy", "")   # "strike" / "vanguard" / "support"
             raw   = learner_info.get(policy_name, {})
             stats = raw.get("learner_stats", raw)
             if not stats:
@@ -469,7 +469,7 @@ def train_with_rllib(args):
     if os.path.exists(best_dir):
         algo.restore(os.path.abspath(best_dir))
     for strategy_idx, policy_name in STRATEGY_POLICY_NAMES.items():
-        role_name = policy_name.replace("_policy", "")  # "assault" / "defend" / "support"
+        role_name = policy_name.replace("_policy", "")  # "strike" / "vanguard" / "support"
         rllib_policy = algo.get_policy(policy_name)
         if rllib_policy:
             model = rllib_policy.model.policy
@@ -548,11 +548,11 @@ def run_validation() -> bool:
         out_pad = policy(obs_all_pad)
     check("forward works with all-padding ally mask", out_pad.shape == (B, EQS_DIM))
 
-    # -- Test 6: obs dimension = 194 --
-    print("[Test 6] OBS_DIM == 194")
-    check("OBS_DIM == 194", OBS_DIM == 194, f"got {OBS_DIM}")
-    expected = 7 + 8 * 8 + 8 * 5 + 8 * 7 + 8 + 8 + 8 + 3
-    check("Layout arithmetic == 194", expected == 194, f"got {expected}")
+    # -- Test 6: obs dimension = 226 --
+    print("[Test 6] OBS_DIM == 226")
+    check("OBS_DIM == 226", OBS_DIM == 226, f"got {OBS_DIM}")
+    expected = 7 + 8 * 9 + 8 * 8 + 8 * 7 + 8 + 8 + 8 + 3
+    check("Layout arithmetic == 226", expected == 226, f"got {expected}")
 
     # -- Test 7: ONNX export + reload --
     print("[Test 7] ONNX export and ORT reload")
@@ -598,14 +598,13 @@ def run_validation() -> bool:
     check("BaseOccupationReward == 2.0",    REWARD_CONFIG["BaseOccupationReward"]    == 2.0)
     check("CoOccupationPenalty == -0.5",    REWARD_CONFIG["CoOccupationPenalty"]     == -0.5)
     check("BaseCaptureCreditReward == 5.0", REWARD_CONFIG["BaseCaptureCreditReward"] == 5.0)
-    check("UndefendedBasePenalty == -1.0",  REWARD_CONFIG["UndefendedBasePenalty"]   == -1.0)
     check("AssignedBaseReachReward == 1.0", REWARD_CONFIG["AssignedBaseReachReward"] == 1.0)
 
     # -- Test 10: collate_fn --
     print("[Test 10] collate_fn")
     obs_list = [np.random.randn(OBS_DIM).astype(np.float32) for _ in range(4)]
     batch    = collate_fn(obs_list)
-    check("collate_fn shape (4, 194)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
+    check("collate_fn shape (4, 226)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
 
     print("\n" + "=" * 70)
     print(f"Results: {passed} passed, {failed} failed / {passed+failed} total")

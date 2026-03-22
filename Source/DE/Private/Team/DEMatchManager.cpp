@@ -19,6 +19,7 @@
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
+#include "Player/DESpectatorController.h"
 
 
 
@@ -28,7 +29,7 @@
 
 ADEMatchManager::ADEMatchManager()
 {
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 }
 
 void ADEMatchManager::BeginPlay()
@@ -59,6 +60,12 @@ void ADEMatchManager::BeginPlay()
 		// Configuration is pushed later by ADEScholaEnvironment via MakeSquadConfig().
 		SquadCommanders.Add(ID, Commander);
 	}
+
+	// Start timer-based gameplay loop (replaces Tick)
+	GetWorld()->GetTimerManager().SetTimer(
+		GameplayTimerHandle, this, &ADEMatchManager::GameplayTimerTick, 0.05f, true);
+	GetWorld()->GetTimerManager().SetTimer(
+		MatchConditionTimerHandle, this, &ADEMatchManager::MatchConditionTimerTick, 1.0f, true);
 
 	// In standalone/inference mode there is no ADEScholaEnvironment to call
 	// CapturePointInitialize(), so we do it here ourselves.
@@ -102,13 +109,14 @@ void ADEMatchManager::BeginPlay()
 	}
 }
 
-void ADEMatchManager::Tick(float DeltaTime)
+// Tick disabled — logic split into GameplayTimerTick (0.05s) and MatchConditionTimerTick (1.0s)
+
+void ADEMatchManager::GameplayTimerTick()
 {
-	Super::Tick(DeltaTime);
+	constexpr float DeltaTime = 0.05f;
 
 	ProcessRespawnQueue(DeltaTime);
 
-	// Tick each squad planner, supplying up-to-date agent lists.
 	for (auto& Pair : SquadCommanders)
 	{
 		if (UDESquadManager* Commander = Pair.Value)
@@ -119,71 +127,32 @@ void ADEMatchManager::Tick(float DeltaTime)
 			                       GetTeamAgents(EnemyTeamID));
 		}
 	}
+}
+
+void ADEMatchManager::MatchConditionTimerTick()
+{
+	constexpr float DeltaTime = 1.0f;
 
 	if (!bMatchActive) return;
 
 	MatchTimer += DeltaTime;
 
-	// ── Passive income ──
+	// ── Passive income (score tracking for winner determination at timeout) ──
 	if (PassiveIncomeRate > 0.0f)
 	{
-		PassiveIncomeAccumulator += DeltaTime;
-		if (PassiveIncomeAccumulator >= 1.0f)
+		for (const ADECapturePoint* CP : EnvCapturePoints)
 		{
-			const float WholeSeconds = FMath::FloorToFloat(PassiveIncomeAccumulator);
-			PassiveIncomeAccumulator -= WholeSeconds;
-
-			for (const ADECapturePoint* CP : EnvCapturePoints)
+			if (!CP) continue;
+			const int32 OwnerTeam = CP->GetTeamID_Implementation();
+			if (OwnerTeam >= 0)
 			{
-				if (!CP) continue;
-				const int32 OwnerTeam = CP->GetTeamID_Implementation();
-				if (OwnerTeam >= 0)
-				{
-					AddTeamScore(OwnerTeam, FMath::RoundToInt(PassiveIncomeRate * WholeSeconds));
-				}
+				AddTeamScore(OwnerTeam, FMath::RoundToInt(PassiveIncomeRate));
 			}
 		}
 	}
 
-	// ── Win condition ──
-	for (int32 TeamID = 0; TeamID < TeamConfigs.Num(); ++TeamID)
-	{
-		if (TeamScores[TeamID] >= WinningScore)
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[DEMatchManager] Env %d: Team %d reached winning score %d — firing OnMatchConditionMet"),
-				EnvID, TeamID, WinningScore);
-			StopMatchTimer();
-			OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
-			return;
-		}
-	}
-
-	// ── Domination ──
-	if (bDominationWinEnabled && EnvCapturePoints.Num() > 0)
-	{
-		for (int32 TeamID = 0; TeamID < TeamConfigs.Num(); ++TeamID)
-		{
-			bool bOwnsAll = true;
-			for (const ADECapturePoint* CP : EnvCapturePoints)
-			{
-				if (!CP || CP->GetTeamID_Implementation() != TeamID)
-				{
-					bOwnsAll = false;
-					break;
-				}
-			}
-			if (bOwnsAll)
-			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("[DEMatchManager] Env %d: Team %d domination — firing OnMatchConditionMet"),
-					EnvID, TeamID);
-				StopMatchTimer();
-				OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
-				return;
-			}
-		}
-	}
+	// Score-based and domination win conditions removed — fixed-length episodes only.
+	// Score is still tracked for determining the winner at timeout.
 
 	// ── Timeout ──
 	if (MatchTimer >= MaxMatchDuration)
@@ -201,15 +170,33 @@ void ADEMatchManager::Tick(float DeltaTime)
 		return;
 	}
 
-	// ── Debug score display ──
-	for (const FDETeamConfiguration& Config : TeamConfigs)
+	// ── Debug score display — only for the environment currently observed by the spectator ──
 	{
-		if (!Config.DESpawnArea) continue;
-		const FVector Loc  = Config.DESpawnArea->GetActorLocation() + FVector(0.0f, 0.0f, 300.0f);
-		const FColor  Col  = Config.GetTeamColor().ToFColor(true);
-		const FString Text = FString::Printf(TEXT("Team %d Score: %d / %d"),
-			Config.TeamID, TeamScores[Config.TeamID], WinningScore);
-		DrawDebugString(GetWorld(), Loc, Text, nullptr, Col, 0.0f, true, 1.5f);
+		int32 ObservedEnvID = -1;
+		if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
+		{
+			if (const ADESpectatorController* SC = Cast<ADESpectatorController>(PC))
+			{
+				ObservedEnvID = SC->GetObservedEnvID();
+			}
+		}
+
+		// -1 means no agent is being watched — show all environments' scores.
+		// Otherwise only draw for the environment that is currently being observed.
+		if (ObservedEnvID == -1 || ObservedEnvID == EnvID)
+		{
+			for (const FDETeamConfiguration& Config : TeamConfigs)
+			{
+				if (!Config.DESpawnArea) continue;
+				const FVector Loc  = Config.DESpawnArea->GetActorLocation() + FVector(0.0f, 0.0f, 300.0f);
+				const FColor  Col  = Config.GetTeamColor().ToFColor(true);
+				const FString Text = FString::Printf(TEXT("Team %d Score: %d  [%.0fs]"),
+					Config.TeamID, TeamScores[Config.TeamID], GetTimeRemaining());
+				// Duration matches the 1-second timer interval so the string stays
+				// visible continuously instead of flashing once per second.
+				DrawDebugString(GetWorld(), Loc, Text, nullptr, Col, 1.0f, true, 1.5f);
+			}
+		}
 	}
 }
 
@@ -586,11 +573,14 @@ FDETeamConfiguration ADEMatchManager::GetTeamConfiguration(int32 TeamID) const
 	return FDETeamConfiguration();
 }
 
-TArray<ADEAgent*> ADEMatchManager::GetTeamAgents(int32 TeamID) const
+const TArray<ADEAgent*>& ADEMatchManager::GetTeamAgents(int32 TeamID) const
 {
-	return TeamStates.Contains(TeamID)
-		? TeamStates[TeamID].ActiveAgents
-		: TArray<ADEAgent*>();
+	if (const FDETeamState* State = TeamStates.Find(TeamID))
+	{
+		return State->ActiveAgents;
+	}
+	static const TArray<ADEAgent*> EmptyAgents;
+	return EmptyAgents;
 }
 
 TArray<ADEAgent*> ADEMatchManager::GetEnemyAgents(int32 TeamID) const

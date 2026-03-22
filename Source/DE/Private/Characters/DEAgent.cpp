@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Characters/DEAgent.h"
+#include "Components/DECombatStatsComponent.h"
+#include "Team/DEMatchManager.h"
 #include "Data/DETeamData.h"
 #include "Data/DEClassData.h"
 #include "GAS/DEAttributeSet.h"
@@ -35,7 +37,7 @@
 ADEAgent::ADEAgent()
 	: Super()
 {
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 
 	// Create GAS components
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
@@ -45,6 +47,7 @@ ADEAgent::ADEAgent()
 	ScholaAgent =	CreateDefaultSubobject<UDEScholaAgent>(TEXT("ScholaAgent"));
 	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
 	EQSExecutor =	CreateDefaultSubobject<UDynamicEQSExecutor>(TEXT("EQSExecutor"));
+	CombatStats =	CreateDefaultSubobject<UDECombatStatsComponent>(TEXT("CombatStats"));
 
 	// Overhead class + health widget (screen space)
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadWidget"));
@@ -116,7 +119,8 @@ void ADEAgent::BeginPlay()
 		StimuliSource->RegisterForSense(TSubclassOf<UAISense_Sight>());
 	}
 
-	// RewardSubsystem is obtained lazily from the MatchManager in ComputeStepReward().
+	// Cache MatchManager reference (avoids per-step GetAllActorsOfClass world scan)
+	CachedMatchManager = FindMatchManagerForEnv();
 
 	// Initialize GAS abilities from data asset
 	InitializeGASAbilities();
@@ -132,11 +136,35 @@ void ADEAgent::BeginPlay()
 			true
 		);
 	}
+
+	// Mana regen via timer instead of Tick (runs at 10Hz)
+	if (AttributeSet && AbilityData && AbilityData->ManaRegenRate > 0.0f)
+	{
+		constexpr float ManaRegenInterval = 0.1f;
+		GetWorld()->GetTimerManager().SetTimer(
+			ManaRegenTimerHandle,
+			FTimerDelegate::CreateWeakLambda(this, [this, ManaRegenInterval]()
+			{
+				if (!AttributeSet || !AbilityData) return;
+				const float CurrentMana = AttributeSet->GetMana();
+				const float Cap = AttributeSet->GetMaxMana();
+				if (CurrentMana < Cap)
+				{
+					AttributeSet->SetMana(FMath::Min(CurrentMana + AbilityData->ManaRegenRate * ManaRegenInterval, Cap));
+				}
+			}),
+			ManaRegenInterval,
+			true
+		);
+	}
 }
 
 void ADEAgent::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
+
+	// Cache AI controller for zero-cost access in PerformTacticalAction hot path
+	CachedAIController = Cast<AAIController>(NewController);
 
 	// GAS requires ASC to be initialized after possession
 	if (AbilitySystemComponent)
@@ -145,21 +173,7 @@ void ADEAgent::PossessedBy(AController* NewController)
 	}
 }
 
-void ADEAgent::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-
-	// Mana regeneration — rate is slower than heal cost, so continuous healing depletes mana
-	if (AttributeSet && AbilityData && AbilityData->ManaRegenRate > 0.0f)
-	{
-		const float CurrentMana = AttributeSet->GetMana();
-		const float Cap = AttributeSet->GetMaxMana();
-		if (CurrentMana < Cap)
-		{
-			AttributeSet->SetMana(FMath::Min(CurrentMana + AbilityData->ManaRegenRate * DeltaTime, Cap));
-		}
-	}
-}
+// Tick disabled — mana regen moved to timer-based (see BeginPlay)
 
 
 //========================================
@@ -253,7 +267,11 @@ bool ADEAgent::ConsumeHealBurst(float Threshold)
 int32 ADEAgent::GetTeamID_Implementation() const { return TeamID; }
 int32 ADEAgent::GetEnvID_Implementation() const { return EnvID; }
 void ADEAgent::SetTeamID_Implementation(int32 NewTeamID) { TeamID = NewTeamID; }
-void ADEAgent::SetEnvID_Implementation(int32 NewEnvID) { EnvID = NewEnvID; }
+void ADEAgent::SetEnvID_Implementation(int32 NewEnvID)
+{
+	EnvID = NewEnvID;
+	CachedMatchManager = FindMatchManagerForEnv();
+}
 
 
 //========================================
@@ -329,17 +347,6 @@ float ADEAgent::ApplyDamageToSelf(float DamageAmount, AActor* DamageInstigator, 
 
 	float OldHealth = AttributeSet->GetHealth();
 
-	// Track damage instigator for death attribution
-	LastDamageInstigator = DamageInstigator;
-	LastDamageAmount = DamageAmount;
-
-	// Track damage contributors for assist rewards
-	if (DamageInstigator)
-	{
-		float& ContributorDamage = DamageContributors.FindOrAdd(DamageInstigator);
-		ContributorDamage += DamageAmount;
-	}
-
 	// Get DamageEffectClass from the instigator's AbilityData (the shooter owns the attack config)
 	TSubclassOf<UGameplayEffect> DamageEffectClass = nullptr;
 	if (const ADEAgent* InstigatorChar = Cast<ADEAgent>(DamageInstigator))
@@ -378,8 +385,8 @@ float ADEAgent::ApplyDamageToSelf(float DamageAmount, AActor* DamageInstigator, 
 
 	float ActualDamage = OldHealth - AttributeSet->GetHealth();
 
-	// Accumulate stats
-	TotalDamageTaken += ActualDamage;
+	// Record in CombatStatsComponent (damage taken, instigator, contributor tracking)
+	if (CombatStats) CombatStats->RecordDamageTaken(ActualDamage, DamageInstigator);
 
 	// Broadcast damage event
 	FDEDamageEventData DamageEvent(DamageInstigator, DamageCauser, ActualDamage, HitLocation, HitNormal);
@@ -421,14 +428,12 @@ float ADEAgent::GetAmmoPercentage() const
 
 void ADEAgent::NotifyDamageDealt(AActor* Victim, float DamageAmount)
 {
-	TotalDamageDealt += DamageAmount;
-	OnDamageDealt_Delegate.Broadcast(Victim, DamageAmount);
+	if (CombatStats) CombatStats->NotifyDamageDealt(Victim, DamageAmount);
 }
 
 void ADEAgent::NotifyKillConfirmed(AActor* Victim, float TotalDamageDealtToVictim)
 {
-	KillCount++;
-	OnKillConfirmed_Delegate.Broadcast(Victim, TotalDamageDealtToVictim);
+	if (CombatStats) CombatStats->NotifyKillConfirmed(Victim, TotalDamageDealtToVictim);
 }
 
 
@@ -440,7 +445,9 @@ void ADEAgent::OnHealthChanged(const FOnAttributeChangeData& Data)
 {
 	if (Data.NewValue <= 0.0f && bIsAlive && !bHasDied)
 	{
-		HandleDeath(LastDamageInstigator.Get(), LastDamageAmount);
+		AActor* InInstigator = CombatStats ? CombatStats->GetLastDamageInstigator() : nullptr;
+		float DmgAmount = CombatStats ? CombatStats->GetLastDamageAmount() : 0.0f;
+		HandleDeath(InInstigator, DmgAmount);
 	}
 
 	OnHealthChanged_Delegate.Broadcast(Data.NewValue,
@@ -452,7 +459,9 @@ void ADEAgent::HandleDeath(AActor* Killer, float FinalDamage)
 	bIsAlive = false;
 	bHasDied = true;
 
-	float TimeSinceSpawn = GetWorld() ? (GetWorld()->GetTimeSeconds() - SpawnTime) : -1.0f;
+	const UWorld* World = GetWorld();
+	const float CurrentTime = World ? World->GetTimeSeconds() : 0.0f;
+	const float TimeSinceSpawn = World ? (CurrentTime - SpawnTime) : -1.0f;
 	UE_LOG(LogTemp, Error, TEXT("[DEAgent DEATH] %s died %.2fs after spawn - Health=%.1f%%, Killer=%s, Location=%s"),
 		*GetName(), TimeSinceSpawn,
 		GetHealthPercentage() * 100.0f,
@@ -467,7 +476,8 @@ void ADEAgent::HandleDeath(AActor* Killer, float FinalDamage)
 	// Notify killer's stats
 	if (ADEAgent* KillerChar = Cast<ADEAgent>(Killer))
 	{
-		KillerChar->NotifyKillConfirmed(this, DamageContributors.Contains(Killer) ? DamageContributors[Killer] : 0.0f);
+		const TMap<AActor*, float>& Contributors = GetDamageContributors();
+		KillerChar->NotifyKillConfirmed(this, Contributors.Contains(Killer) ? Contributors[Killer] : 0.0f);
 	}
 
 	// Disable movement
@@ -495,14 +505,18 @@ void ADEAgent::HandleDeath(AActor* Killer, float FinalDamage)
 	}
 
 	// Broadcast death events
-	FDEDeathEventData DeathEvent(this, Killer, FinalDamage,
-		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+	FDEDeathEventData DeathEvent(this, Killer, FinalDamage, CurrentTime);
 
 	OnAgentDied_Delegate.Broadcast(this, Cast<ADEAgent>(Killer));
 	OnAgentDeathEvent_Delegate.Broadcast(DeathEvent);
 }
 
 ADEMatchManager* ADEAgent::GetMatchManager() const
+{
+	return CachedMatchManager;
+}
+
+ADEMatchManager* ADEAgent::FindMatchManagerForEnv() const
 {
 	TArray<AActor*> MatchManagers;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ADEMatchManager::StaticClass(), MatchManagers);
@@ -531,7 +545,6 @@ void ADEAgent::ResetCharacter()
 
 	SetActorHiddenInGame(false);
 	SetActorEnableCollision(true);
-	SetActorTickEnabled(true);
 
 	// Reset health via GAS
 	if (AttributeSet && AbilitySystemComponent)
@@ -551,11 +564,7 @@ void ADEAgent::ResetCharacter()
 	if (HealAbility) HealAbility->ResetHealState();
 
 	// Reset damage stats
-	TotalDamageTaken = 0.0f;
-	TotalDamageDealt = 0.0f;
-	KillCount = 0;
-	DamageContributors.Empty();
-	LastDamageInstigator = nullptr;
+	if (CombatStats) CombatStats->ResetStats();
 	bHasDied = false;
 
 	// Re-enable movement
@@ -600,7 +609,6 @@ void ADEAgent::Activate()
 {
 	SetActorHiddenInGame(false);
 	SetActorEnableCollision(true);
-	SetActorTickEnabled(true);
 	ResetCharacter();
 }
 
@@ -608,7 +616,6 @@ void ADEAgent::Deactivate()
 {
 	SetActorHiddenInGame(true);
 	SetActorEnableCollision(false);
-	SetActorTickEnabled(false);
 }
 
 
@@ -632,7 +639,7 @@ void ADEAgent::PerformTacticalAction()
 		return;
 	}
 
-	AAIController* AICtrl = Cast<AAIController>(GetController());
+	AAIController* AICtrl = CachedAIController.Get();
 	if (!AICtrl)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: No AIController found"), *GetName());
@@ -807,16 +814,34 @@ float ADEAgent::ComputeStepReward(
 	const FDEAgentSnapshot& Current,
 	const FDEEQSWeightParameters& Action)
 {
-	if (ADEMatchManager* MM = GetMatchManager())
+	if (CachedMatchManager)
 	{
-		if ((RewardSubsystem = MM->GetRewardCalculator()))
+		if ((RewardSubsystem = CachedMatchManager->GetRewardCalculator()))
 		{
-			return RewardSubsystem->ComputeStepReward(this, RewardState, Class, Prev, Current, Action);
+			return RewardSubsystem->ComputeStepReward(this, RewardState, Class, Prev, Current, Action, CachedMatchManager);
 		}
 	}
 
 	return 0.0f;
 }
+
+
+//========================================
+// Combat Stats Adapters (delegate to UDECombatStatsComponent)
+//========================================
+
+float ADEAgent::GetTotalDamageTaken() const { return CombatStats ? CombatStats->GetTotalDamageTaken() : 0.0f; }
+float ADEAgent::GetTotalDamageDealt() const { return CombatStats ? CombatStats->GetTotalDamageDealt() : 0.0f; }
+int32 ADEAgent::GetKillCount() const { return CombatStats ? CombatStats->GetKillCount() : 0; }
+const TMap<AActor*, float>& ADEAgent::GetDamageContributors() const
+{
+	if (CombatStats) return CombatStats->GetDamageContributors();
+	static const TMap<AActor*, float> EmptyMap;
+	return EmptyMap;
+}
+
+float ADEAgent::GetStepDamageDealt() const { return CombatStats ? CombatStats->GetStepDamageDealt() : 0.0f; }
+void ADEAgent::ResetStepDamage() { if (CombatStats) CombatStats->ResetStepDamage(); }
 
 
 void ADEAgent::ProcessTrainingAbilities()

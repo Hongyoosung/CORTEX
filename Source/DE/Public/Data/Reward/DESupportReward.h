@@ -23,7 +23,7 @@ struct FDESupportRewardSettings
 	float SurvivalRewardScale = 1.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float PositionReward = 0.0f;
+	float PositionReward = 0.0f;  // disabled: movement thresholds unverified; re-enable after tuning SupportMinMoveThreshold
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthBonus = 0.3f;
@@ -45,11 +45,13 @@ struct FDESupportRewardSettings
 
 	/** Flat bonus per step for being within SupportAllyProximityThreshold of the most-injured ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyProximityBonus = 2.0f;
+	float AllyProximityBonus = 1.0f;
 
-	/** HP fraction (0-1) below which the most-injured ally is considered to need support. */
+	/** HP fraction (0-1) below which the most-injured ally is considered to need support.
+	 *  0.70 = fires when ally has taken ~30% damage (common in active combat).
+	 *  Was 0.55 — too sparse, created a binary reward cliff that destabilized the critic. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyInjuryThreshold = 0.9f;
+	float AllyInjuryThreshold = 0.70f;
 
 	/** Per-cm shaping reward for approaching the most-injured ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
@@ -58,7 +60,7 @@ struct FDESupportRewardSettings
 	/** Per-step bonus for being within SupportAllyProximityThreshold of ANY alive ally,
 	 *  regardless of their health. Ensures Support always stays with the team. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyFormationBonus = 1.5f;
+	float AllyFormationBonus = 0.5f;
 
 	/** Per-step penalty when Support is farther than this distance from the nearest alive ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
@@ -91,13 +93,29 @@ struct FDESupportRewardSettings
 
 	/** Per-tick reward when actively healing an ally */
 	UPROPERTY(EditAnywhere, Category = "Heal")
-	float HealTickReward = 8.0f;
+	float HealTickReward = 4.0f;
+
+	/** Bonus reward when healing an ally whose HP is below HealLowHPThreshold */
+	UPROPERTY(EditAnywhere, Category = "Heal")
+	float HealOnLowHPReward = 1.5f;
+
+	/** HP fraction threshold for HealOnLowHPReward to fire */
+	UPROPERTY(EditAnywhere, Category = "Heal")
+	float HealLowHPThreshold = 0.6f;
+
+	/** Per-step reward when within heal range of any ally below NearInjuredAllyHPThreshold */
+	UPROPERTY(EditAnywhere, Category = "Heal")
+	float NearInjuredAllyReward = 0.5f;
+
+	/** HP fraction threshold for NearInjuredAllyReward */
+	UPROPERTY(EditAnywhere, Category = "Heal")
+	float NearInjuredAllyHPThreshold = 0.7f;
 
 	//========== Positioning Properties =============
 
 	/** Per-step bonus for being farther from the nearest visible enemy than the nearest ally. */
 	UPROPERTY(EditAnywhere, Category = "Positioning")
-	float RearGuardBonus = 1.5f;
+	float RearGuardBonus = 0.5f;
 
 	/** Maximum distance to nearest visible enemy (cm) for RearGuardBonus to fire. */
 	UPROPERTY(EditAnywhere, Category = "Positioning")
@@ -110,7 +128,7 @@ struct FDESupportRewardSettings
 
 	/** Per-step bonus when at least one alive ally is between Support and the nearest visible enemy. */
 	UPROPERTY(EditAnywhere, Category = "Positioning")
-	float AllyShieldBonus = 1.0f;
+	float AllyShieldBonus = 0.3f;
 
 
 	//========== Movement Properties =============

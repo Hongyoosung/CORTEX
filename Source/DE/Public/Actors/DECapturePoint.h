@@ -51,7 +51,6 @@ public:
 	ADECapturePoint();
 
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
 
 	//========================================
 	// Team Interface Implementations
@@ -87,7 +86,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "DECapturePoint")
 	void SetOwnership(int32 NewOwnerTeamID);
 
-	void SetMatchManager(ADEMatchManager* InMatchManager) { OwnerMatchManager = InMatchManager; }
+	void SetMatchManager(ADEMatchManager* InMatchManager);
 
 	//========================================
 	// Agent Tracking
@@ -210,6 +209,11 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UMaterialInstanceDynamic> DynamicMaterial;
 
-	UPROPERTY()
-	TObjectPtr<ADEMatchManager> OwnerMatchManager = nullptr;
+	TWeakObjectPtr<ADEMatchManager> OwnerMatchManager;
+
+	/** Timer handle replacing per-frame Tick (runs at 10Hz) */
+	FTimerHandle CaptureUpdateTimerHandle;
+
+	/** Timer-driven capture update */
+	void CaptureUpdateTick();
 };

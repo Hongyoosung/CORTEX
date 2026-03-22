@@ -4,7 +4,7 @@ DE Entity-Centric Environment Wrapper — Schola 2.0.1
 Wraps Schola/UE5 connection for the entity-centric refactor (v10.2+).
 
 Key differences from the old v10.2 wrapper:
-  - Observation: 170-dim flat (from C++ FDEObservationV2::ToFlatArray)
+  - Observation: 226-dim flat (from C++ FDEObservationV2::ToFlatArray)
   - Action:       7-dim EQS weights in [-1, 1]  (7th = AssignedBaseProximity)
   - No strategy routing: single EntityCentricPolicy handles all agents
   - No uniform strategy assignment: strategies come from UE5 Squad Commander
@@ -51,20 +51,20 @@ except ImportError:
 
 
 # ── Layout constants (must match DEObservationTypes.h) ───────────────────────
-# DE_OBS_V2_DIM = 7 + 8*8 + 8*5 + 8*7 + 8+8+8 + 3 = 194
-# Layout: Self(7) + Allies(8×8=64) + Enemies(8×5=40) + Bases(8×7=56) +
+# DE_OBS_V2_DIM = 7 + 8*9 + 8*8 + 8*7 + 8+8+8 + 3 = 226
+# Layout: Self(7) + Allies(8×9=72) + Enemies(8×8=64) + Bases(8×7=56) +
 #         AllyMask(8) + EnemyMask(8) + BaseMask(8) + Strategy(3)
-# Strategy one-hot starts at: 7+64+40+56+24 = 191
-OBS_DIM    = 194
+# Strategy one-hot starts at: 7+72+64+56+24 = 223
+OBS_DIM    = 226
 ACTION_DIM = 7
 
 # ── Strategy registry ─────────────────────────────────────────────────────────
-# Maps agent_id_str → strategy index (0=Assault, 1=Defend, 2=Support).
+# Maps agent_id_str → strategy index (0=Strike, 1=Vanguard, 2=Support).
 # Populated by DEEntityCentricEnv on reset() and step() so that train.py's
 # policy_mapping_fn can route each agent to the correct per-role policy.
 # Works correctly when num_workers=0 (all code in one process).
 AGENT_STRATEGY_REGISTRY: Dict[str, int] = {}
-STRATEGY_ONEHOT_START = 191  # obs[191:194] = strategy one-hot [assault, defend, support]
+STRATEGY_ONEHOT_START = 223  # obs[223:226] = strategy one-hot [strike, vanguard, support]
 
 
 class DEEntityCentricEnv(MultiAgentEnv):
@@ -166,8 +166,8 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._reward_debug_count  = 0
 
         # Per-strategy reward tracking
-        # Keys: 0=Assault, 1=Defend, 2=Support  (StrategyType from UE5 info)
-        STRATEGY_NAMES = {0: "assault", 1: "defend", 2: "support"}
+        # Keys: 0=Strike, 1=Vanguard, 2=Support  (StrategyType from UE5 info)
+        STRATEGY_NAMES = {0: "strike", 1: "vanguard", 2: "support"}
         self._strategy_names = STRATEGY_NAMES
         self._agent_strategy: Dict[str, int] = {}
         self._strategy_ep_rewards: Dict[int, list] = {k: [] for k in STRATEGY_NAMES}
@@ -176,7 +176,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
         # Per reward-component tracking (UE5 may send these in info)
         REWARD_COMPONENTS = [
             "BaseOccupationReward", "CoOccupationPenalty",
-            "BaseCaptureCreditReward", "UndefendedBasePenalty",
+            "BaseCaptureCreditReward",
             "AssignedBaseReachReward",
         ]
         self._reward_components = REWARD_COMPONENTS
@@ -383,13 +383,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
             AGENT_STRATEGY_REGISTRY[fid] = strategy_idx
             self._agent_strategy[fid] = strategy_idx
             strat_counts[strategy_idx] = strat_counts.get(strategy_idx, 0) + 1
-        STRAT_NAMES = {0: "assault", 1: "defend", 2: "support"}
+        STRAT_NAMES = {0: "strike", 1: "vanguard", 2: "support"}
         print(f"[RESET] Strategy distribution from obs one-hot: "
               f"{{{', '.join(f'{STRAT_NAMES[k]}={v}' for k,v in strat_counts.items())}}}")
         # Sample one obs to show actual one-hot values for diagnosis
         if obs_d:
             sample_id = next(iter(obs_d))
-            print(f"[RESET] Sample obs[167:170] for {sample_id}: "
+            print(f"[RESET] Sample obs[223:226] for {sample_id}: "
                   f"{obs_d[sample_id][STRATEGY_ONEHOT_START:STRATEGY_ONEHOT_START+3]}")
 
         # Sync cumulative baseline to avoid phantom delta on first step
@@ -650,7 +650,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 except (ValueError, TypeError):
                     pass
 
-            # 2. Fallback: decode from obs one-hot (obs[167:170])
+            # 2. Fallback: decode from obs one-hot (obs[223:226])
             #    Only update if the one-hot is non-zero (Squad Commander has run)
             obs = obs_d.get(fid)
             if obs is not None:
@@ -691,6 +691,16 @@ class DEEntityCentricEnv(MultiAgentEnv):
         if info_used and self._reward_debug_count == 1:
             print("[REWARD] Using CumulativeLifetimeReward delta channel")
 
+        # Scale and clip raw UE5 rewards before returning to RLlib.
+        # process_reward() in train.py defines these constants but is never
+        # called from env_wrapper — apply the scaling here so PPO sees
+        # rewards in a stable range instead of raw C++ magnitudes.
+        REWARD_SCALE = 0.01
+        REWARD_CLIP  = 5.0
+        for fid in list(rew_d.keys()):
+            if fid != '__all__':
+                rew_d[fid] = float(np.clip(rew_d[fid] * REWARD_SCALE, -REWARD_CLIP, REWARD_CLIP))
+
         return obs_d, rew_d, term_d, trunc_d, info_d
 
     # ── Custom metrics ────────────────────────────────────────────────────
@@ -703,7 +713,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
         """
         # NOTE: RLlib appends its own "_mean"/"_min"/"_max" suffixes during
         # aggregation.  Do NOT include "_mean" in the key here — the aggregated
-        # result key will be  reward_strategy_assault_mean  (RLlib-added suffix).
+        # result key will be  reward_strategy_strike_mean  (RLlib-added suffix).
         metrics = {}
         for strat_id, name in self._strategy_names.items():
             buf = self._step_rewards_by_strategy[strat_id]

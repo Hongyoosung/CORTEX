@@ -20,7 +20,8 @@ class ADEMatchManager;
  * - AI: TryActivateAbilityByTag(Ability.Attack)
  * - Training: ActivateAbility called from ProcessTrainingAbilities timer
  *
- * The ability auto-selects the nearest enemy if no explicit target is provided via EventData.
+ * The ability auto-selects the best enemy via priority scoring if no explicit target is provided.
+ * Priority: low-HP enemies + Support class (kill the healer) > distance.
  */
 UCLASS()
 class DE_API UDEGA_Attack : public UDEGameplayAbility
@@ -64,7 +65,16 @@ public:
 
 protected:
 	ADEProjectileBase* SpawnProjectile(const FVector& FireLocation, const FVector& FireDirection, float ProjectileDamage);
-	AActor* FindNearestEnemy() const;
+
+	/**
+	 * Find the best enemy target using priority scoring.
+	 * Score = DistanceScore * 0.3 + LowHPScore * 0.4 + ClassPriority * 0.3
+	 * Prioritizes low-HP enemies and Support class (kill the healer).
+	 */
+	AActor* FindBestEnemy() const;
+
+	/** Get class-based targeting priority (0.0-1.0). Support > Strike > Vanguard. */
+	float GetClassTargetPriority(const ADEAgent* Enemy) const;
 
 	FVector GetMuzzleLocation() const;
 	float CalculateRandomizedDamage() const;

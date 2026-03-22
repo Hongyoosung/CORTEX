@@ -15,7 +15,7 @@ class UDESupportAnimInstance;
 /**
  * UDEGA_Heal - GAS-based healing ability.
  *
- * Replaces UDEHealAbility. Heals nearest injured ally within range.
+ * Replaces UDEHealAbility. Heals the most injured ally within range (HP-priority scoring).
  * Applies a GE_Heal GameplayEffect to the target's ASC.
  *
  * Activation:
@@ -62,9 +62,16 @@ public:
 	 */
 	bool HasInjuredAllyInRange(float HealthThreshold = 1.0f) const;
 
+	/** Get the current heal target (may be null if not channeling) */
+	ADEAgent* GetCurrentTarget() const { return CurrentTarget; }
+
 protected:
-	/** Finds the nearest ally whose health is below HealthThreshold and within heal range. */
-	ADEAgent* FindNearestInjuredAlly(float HealthThreshold = 1.0f) const;
+	/**
+	 * Find the best injured ally using priority scoring.
+	 * Score = LowHPScore * 0.7 + DistanceScore * 0.3
+	 * Prioritizes lowest-HP ally over nearest.
+	 */
+	ADEAgent* FindBestInjuredAlly(float HealthThreshold = 1.0f) const;
 	void UpdateHealBeam(const AActor* Target);
 
 private:

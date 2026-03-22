@@ -38,12 +38,13 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float AssistRewardScale = 0.5f;
 
+	/** Reduced: team wipe is not episode-ending, just a modest signal. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float TeamWipePenalty = 50.0f;
+	float TeamWipePenalty = 10.0f;
 
-	/** Bonus awarded to each surviving enemy agent when they achieve a team wipe */
+	/** Reduced: team wipe is not episode-ending, just a modest signal. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float TeamWipeBonus = 30.0f;
+	float TeamWipeBonus = 10.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float CaptureReward = 100.0f;
@@ -90,10 +91,10 @@ public:
 	float SparseRewardScale = 0.2f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMin = -2.0f;
+	float StepRewardClampMin = -10.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMax = 2.0f;
+	float StepRewardClampMax = 10.0f;
 
 	// ==================== Capture Loss Cooldown ====================
 

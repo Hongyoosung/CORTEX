@@ -7,6 +7,7 @@
 #include "DERewardSubsystem.generated.h"
 
 class ADEAgent;
+class ADEMatchManager;
 class UDERewardData;
 struct FDEEQSWeightParameters;
 
@@ -59,7 +60,8 @@ public:
         EDEClassType Class,
         const FDEAgentSnapshot& Prev,
         const FDEAgentSnapshot& Current,
-        const FDEEQSWeightParameters& Action);
+        const FDEEQSWeightParameters& Action,
+        ADEMatchManager* MatchManager = nullptr);
 
     /**
      * Compute cooperative base occupation shaping reward.

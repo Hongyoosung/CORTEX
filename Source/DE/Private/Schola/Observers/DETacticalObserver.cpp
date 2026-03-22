@@ -13,9 +13,10 @@
 
 UDETacticalObserver::UDETacticalObserver()
 {
-	// Build observation space (V2 entity-centric: 194-dim padded flat)
-	// Layout: Self(7) + Allies(8×8=64) + Enemies(8×5=40) + Bases(8×7=56) + Masks(8+8+8=24) + Class(3) = 194
+	// Build observation space (V2 entity-centric: 226-dim padded flat)
+	// Layout: Self(7) + Allies(8×9=72) + Enemies(8×8=64) + Bases(8×7=56) + Masks(8+8+8=24) + Class(3) = 226
 	// Ally token: [rel_pos(3), health, alive, is_strike, is_vanguard, is_support]
+	// Enemy token: [rel_pos(3), health, visible, is_strike, is_vanguard, is_support]
 	TArray<FBoxSpaceDimension> Dimensions;
 	Dimensions.Reserve(DE_OBS_V2_DIM);
 
@@ -104,6 +105,7 @@ void UDETacticalObserver::ResetObserver()
 {
 	Super::ResetObserver();
 	ObservationCallCount = 0;
+	LastAllyHealths.Empty();
 }
 
 FBoxSpace UDETacticalObserver::GetObservationSpace() const
@@ -123,7 +125,7 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 			GetControlledCharacter() ? *GetControlledCharacter()->GetName() : TEXT("NULL"));
 	}
 
-	// Initialize output (V2: 170-dim padded flat)
+	// Initialize output (V2: 226-dim padded flat)
 	OutObservations.Values.SetNum(DE_OBS_V2_DIM);
 
 	ADEAgent* Character = GetControlledCharacter();
@@ -203,10 +205,12 @@ void UDETacticalObserver::CollectObservations(FBoxPoint& OutObservations)
 		for (int32 i = 0; i < ObsV2.EnemyTokens.Num(); ++i)
 		{
 			const auto& T = ObsV2.EnemyTokens[i];
-			if (T.Features.Num() >= 5)
+			if (T.Features.Num() >= 8)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("  Enemy[%d]: relPos(%.3f,%.3f,%.3f) vis=%.0f conf=%.0f"),
-					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4]);
+				const FString ClassStr = T.Features[5] > 0.5f ? TEXT("Strike")
+					: (T.Features[6] > 0.5f ? TEXT("Vanguard") : TEXT("Support"));
+				UE_LOG(LogTemp, Warning, TEXT("  Enemy[%d]: relPos(%.3f,%.3f,%.3f) hp=%.2f vis=%.0f class=%s"),
+					i, T.Features[0], T.Features[1], T.Features[2], T.Features[3], T.Features[4], *ClassStr);
 			}
 		}
 
@@ -281,7 +285,7 @@ ADEAgent* UDETacticalObserver::GetControlledCharacter() const
 }
 
 
-FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
+FDEObservationV2 UDETacticalObserver::GatherObservationV2()
 {
 	FDEObservationV2 Obs;
 
@@ -356,7 +360,7 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		}
 	}
 
-	// ---- Ally tokens (8-dim each): [rel_pos/8000(3), health, alive, is_strike, is_vanguard, is_support] ----
+	// ---- Ally tokens (9-dim each): [rel_pos/8000(3), health, hp_delta, alive, is_strike, is_vanguard, is_support] ----
 	for (ADEAgent* Ally : Allies)
 	{
 		if (!Ally || Ally == Character) continue;
@@ -368,13 +372,21 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		const FVector RelPos = bAllyAlive
 			? (Ally->GetActorLocation() - MyPos) / 8000.0f
 			: FVector::ZeroVector;
+		const float CurrentHP = bAllyAlive ? Ally->GetHealthPercentage() : 0.0f;
+
+		// hp_delta: previous HP - current HP (positive = ally took damage this step)
+		const float* PrevHP = LastAllyHealths.Find(Ally);
+		const float HPDelta = PrevHP ? FMath::Clamp(*PrevHP - CurrentHP, -1.0f, 1.0f) : 0.0f;
+		LastAllyHealths.FindOrAdd(Ally) = CurrentHP;
+
 		const EDEClassType AllyClass = Ally->GetCommandedClass();
 		FDEEntityToken Tok;
 		Tok.Features = {
 			static_cast<float>(RelPos.X),
 			static_cast<float>(RelPos.Y),
 			static_cast<float>(RelPos.Z),
-			bAllyAlive ? Ally->GetHealthPercentage() : 0.0f,
+			CurrentHP,
+			HPDelta,
 			bAllyAlive ? 1.0f : 0.0f,
 			(AllyClass == EDEClassType::Strike) ? 1.0f : 0.0f,
 			(AllyClass == EDEClassType::Vanguard)  ? 1.0f : 0.0f,
@@ -383,7 +395,7 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		Obs.AllyTokens.Add(MoveTemp(Tok));
 	}
 
-	// ---- Enemy tokens (5-dim each): [rel_pos/8000(3), visible, confidence=1] ----
+	// ---- Enemy tokens (8-dim each): [rel_pos/8000(3), health, visible, is_strike, is_vanguard, is_support] ----
 	for (ADEAgent* Enemy : Enemies)
 	{
 		if (!Enemy) continue;
@@ -393,7 +405,7 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		if (!Enemy->IsAlive())
 		{
 			FDEEntityToken Tok;
-			Tok.Features = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+			Tok.Features = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 			Obs.EnemyTokens.Add(MoveTemp(Tok));
 			continue;
 		}
@@ -413,13 +425,17 @@ FDEObservationV2 UDETacticalObserver::GatherObservationV2() const
 		}
 
 		const FVector RelPos = bVisible ? (Enemy->GetActorLocation() - MyPos) / 8000.0f : FVector::ZeroVector;
+		const EDEClassType EnemyClass = Enemy->GetCommandedClass();
 		FDEEntityToken Tok;
 		Tok.Features = {
 			static_cast<float>(RelPos.X),
 			static_cast<float>(RelPos.Y),
 			static_cast<float>(RelPos.Z),
+			bVisible ? Enemy->GetHealthPercentage() : 0.0f,
 			bVisible ? 1.0f : 0.0f,
-			bVisible ? 1.0f : 0.0f
+			(EnemyClass == EDEClassType::Strike) ? 1.0f : 0.0f,
+			(EnemyClass == EDEClassType::Vanguard) ? 1.0f : 0.0f,
+			(EnemyClass == EDEClassType::Support) ? 1.0f : 0.0f
 		};
 		Obs.EnemyTokens.Add(MoveTemp(Tok));
 	}
