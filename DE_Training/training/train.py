@@ -103,6 +103,7 @@ class CurriculumScheduler:
     # Win-rate thresholds: fraction of early-terminated episodes won by RL team.
     # Timeout episodes are excluded (no clear winner).
     PROMOTION_THRESHOLDS = {
+        0: 0.50,  # Passive  → Basic:      RL wins >50% of decided episodes
         1: 0.55,  # Basic    → Standard:   RL wins >55% of decided episodes
         2: 0.65,  # Standard → Aggressive: RL wins >65% of decided episodes
         3: 1.01,  # Aggressive — no further promotion (unreachable sentinel)
@@ -503,7 +504,7 @@ def train_with_rllib(args):
         tb.add_scalar("global/performance/steps_per_sec", steps_per_sec, cumul_steps)
 
         # ── Per-role reward & component metrics ───────────────────────────────
-        custom = env_r.get("custom_metrics", {})
+        custom = _get("custom_metrics", {})
         
         # 1. RLlib Native Policy Rewards (가장 확실한 전략별 보상 지표)
         policy_reward_mean = _get("policy_reward_mean", {})

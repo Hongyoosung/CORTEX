@@ -144,15 +144,28 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 	// ── Step 1: Discover agents ──
 	if (bAutoDiscoverAgents && OwnedMatchManager)
 	{
+		// Guard against the race where Schola calls InitializeEnvironment before
+		// BeginPlay's StartMatch() -> SpawnTeams() has run for this env.
+		// Check team 0 as a proxy; if empty, force-spawn now.
+		if (OwnedMatchManager->GetTeamAgents(0).Num() == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] EnvID %d: No agents found yet — SpawnTeams() likely not called. Triggering StartMatch() now."), EnvironmentId);
+			StartMatch();
+		}
+
 		RegisteredAgents.Empty();
 		for (int32 TeamID = 0; TeamID <= 1; TeamID++)
 		{
 			TArray<ADEAgent*> TeamAgents = OwnedMatchManager->GetTeamAgents(TeamID);
+			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] EnvID %d Team %d: GetTeamAgents returned %d agents"),
+				EnvironmentId, TeamID, TeamAgents.Num());
+
+			int32 SkippedScripted = 0, SkippedNoComponent = 0;
 			for (ADEAgent* DEChar : TeamAgents)
 			{
 				if (!DEChar) continue;
 				// Skip scripted AI agents — they don't participate in the Schola pipeline
-				if (DEChar->bIsScriptedAI) continue;
+				if (DEChar->bIsScriptedAI) { ++SkippedScripted; continue; }
 
 				UDEScholaAgent* ScholaAgent = DEChar->GetScholaAgent();
 				if (!ScholaAgent)
@@ -163,10 +176,30 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 				{
 					RegisteredAgents.Add(ScholaAgent);
 				}
+				else
+				{
+					++SkippedNoComponent;
+					UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] EnvID %d: Agent %s has no UDEScholaAgent component — skipped"),
+						EnvironmentId, *DEChar->GetName());
+				}
 			}
+
+			if (SkippedScripted > 0)
+				UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] EnvID %d Team %d: Skipped %d scripted AI agents"),
+					EnvironmentId, TeamID, SkippedScripted);
+			if (SkippedNoComponent > 0)
+				UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] EnvID %d Team %d: Skipped %d agents (no ScholaAgent component)"),
+					EnvironmentId, TeamID, SkippedNoComponent);
 		}
 		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] Discovered %d agents for EnvID %d"),
 			RegisteredAgents.Num(), EnvironmentId);
+	}
+	else
+	{
+		if (!bAutoDiscoverAgents)
+			UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] EnvID %d: bAutoDiscoverAgents=false — skipping agent discovery"), EnvironmentId);
+		if (!OwnedMatchManager)
+			UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] EnvID %d: OwnedMatchManager is NULL — cannot discover agents. Check Blueprint assignment."), EnvironmentId);
 	}
 
 	// ── Step 2: Spawn / assign trainers and build AgentTrainerMap ──
@@ -224,6 +257,15 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 				FInteractionDefinition Def;
 				IAgent::Execute_Define(Agent, Def);
 				OutAgentDefinitions.Add(AgentId, Def);
+				UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] EnvID %d: Registered agent %s"), EnvironmentId, *AgentId);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("[ScholaEnv] EnvID %d: Failed to assign Trainer for agent index %d (%s). "
+					"Controller=%s  bAutoSpawnTrainers=%d"),
+					EnvironmentId, i, *AgentId,
+					ControlledPawn->GetController() ? *ControlledPawn->GetController()->GetClass()->GetName() : TEXT("nullptr"),
+					bAutoSpawnTrainers ? 1 : 0);
 			}
 		}
 

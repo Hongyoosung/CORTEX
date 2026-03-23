@@ -118,7 +118,22 @@ class DEEntityCentricEnv(MultiAgentEnv):
             self._simulator.start(self._protocol.properties)
             self._protocol.send_startup_msg(auto_reset_type=AutoresetMode.DISABLED)
 
-            self._ids, _, obs_defns, self._action_defns = self._protocol.get_definition()
+            agents_per_env = kwargs.get("agents_per_env", 5)
+            expected_agents = self.num_envs * agents_per_env
+            _retry_delay    = float(kwargs.get("definition_retry_delay", 3.0))
+            _max_retries    = int(kwargs.get("definition_max_retries", 10))
+
+            for _attempt in range(_max_retries):
+                self._ids, _, obs_defns, self._action_defns = self._protocol.get_definition()
+                total = sum(len(a) for a in self._ids)
+                if total >= expected_agents:
+                    break
+                print(f"[DEEntityCentricEnv] get_definition attempt {_attempt+1}: "
+                      f"{total}/{expected_agents} agents — retrying in {_retry_delay}s...")
+                time.sleep(_retry_delay)
+            else:
+                print(f"[DEEntityCentricEnv] WARNING: only {total}/{expected_agents} agents "
+                      f"registered after {_max_retries} retries. Proceeding anyway.")
 
             self._single_action_spaces = {}
             _defns_iterable = self._action_defns.values() if isinstance(self._action_defns, dict) else self._action_defns

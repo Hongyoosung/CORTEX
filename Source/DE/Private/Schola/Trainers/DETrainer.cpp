@@ -766,11 +766,21 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
                                  MatchState != EDEMatchState::WaitingToStart);
         if (bMatchOver && !bHasNewReward)
         {
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] Episode TRUNCATED — Match ended (State=%d) after %d steps — Agent: %s"),
-                static_cast<int32>(MatchState), CurrentEpisodeSteps, *GetName());
             bEpisodeCompleted = true;
-            return EAgentTrainingStatus::Truncated;
+            if (MatchState == EDEMatchState::TeamWon)
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DETrainer] Episode TERMINATED — Team won after %d steps — Agent: %s"),
+                    CurrentEpisodeSteps, *GetName());
+                return EAgentTrainingStatus::Completed;
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DETrainer] Episode TRUNCATED — Match ended (State=%d) after %d steps — Agent: %s"),
+                    static_cast<int32>(MatchState), CurrentEpisodeSteps, *GetName());
+                return EAgentTrainingStatus::Truncated;
+            }
         }
     }
 
