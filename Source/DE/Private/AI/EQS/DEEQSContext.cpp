@@ -177,6 +177,7 @@ void UEnvQueryContext_DEAllies::ProvideContext(FEnvQueryInstance& QueryInstance,
 		}
 	}
 
+
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, AllyPositions);
 }
 
@@ -204,6 +205,8 @@ void UEnvQueryContext_DECapturePoints::ProvideContext(FEnvQueryInstance& QueryIn
 
 void UEnvQueryContext_DEEnemyObjective::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
 {
+	
+
 	ADEAgent* DEChar = Cast<ADEAgent>(QueryInstance.Owner.Get());
 	if (!DEChar)
 	{
@@ -211,7 +214,11 @@ void UEnvQueryContext_DEEnemyObjective::ProvideContext(FEnvQueryInstance& QueryI
 		if (AIC) DEChar = Cast<ADEAgent>(AIC->GetPawn());
 	}
 
-	if (!DEChar) return;
+	if (!DEChar)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("qqqqqqqqqqqqqqqqqqqq"));
+		return;
+	}
 
 	const int32 MyTeamID = DEChar->GetTeamID_Implementation();
 	const FVector AgentPos = DEChar->GetActorLocation();
@@ -232,9 +239,20 @@ void UEnvQueryContext_DEEnemyObjective::ProvideContext(FEnvQueryInstance& QueryI
 		}
 	}
 
+
 	if (NearestNonFriendly)
 	{
 		UEnvQueryItemType_Point::SetContextHelper(ContextData, NearestNonFriendly->GetActorLocation());
+	}
+	else
+	{
+		// No non-friendly capture point found — EQS distance-to-objective test
+		// will have no target, making all positions score equally on that axis.
+		UE_LOG(LogTemp, Warning,
+			TEXT("[DEEQSContext|EnemyObj] %s team=%d: NO enemy objective found! "
+			     "CapturePoints=%d — all owned by team %d? Context NOT set."),
+			*DEChar->GetName(), MyTeamID,
+			DEChar->AssignedCapturePoints.Num(), MyTeamID);
 	}
 }
 
@@ -296,6 +314,7 @@ void UEnvQueryContext_DEAssignedBase::ProvideContext(FEnvQueryInstance& QueryIns
 	{
 		UEnvQueryItemType_Point::SetContextHelper(ContextData, CPs[AssignedIndex]->GetActorLocation());
 	}
+
 }
 
 
@@ -422,12 +441,6 @@ void UEnvQueryContext_DECoverPoints::ProvideContext(FEnvQueryInstance& QueryInst
 		}
 	}
 
-	// If no cover points found, use level geometry as fallback
-	// (This could be enhanced with a nav mesh query for nearby walls)
-	if (CoverPositions.Num() == 0)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEEQSContext] No cover points found with 'Cover' tag. Place cover actors in level."));
-	}
 
 	UEnvQueryItemType_Point::SetContextHelper(ContextData, CoverPositions);
 }

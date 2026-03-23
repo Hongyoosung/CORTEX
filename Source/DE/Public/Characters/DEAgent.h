@@ -229,6 +229,21 @@ public:
 
 
 	//========================================
+	// Scripted AI Support (Fixed-Opponent Training)
+	//========================================
+
+	/** When true, this agent is driven by UDEScriptedAIComponent (no Schola/RL) */
+	UPROPERTY(BlueprintReadOnly, Category = "AI|ScriptedAI")
+	bool bIsScriptedAI = false;
+
+	/**
+	 * Set the commanded class directly (for scripted AI agents that lack ScholaAgent).
+	 * This stores the class locally and applies appearance, without touching ScholaAgent.
+	 */
+	void SetCommandedClassDirect(EDEClassType NewClass);
+
+
+	//========================================
 	// Reward Interface (forwarding to RewardCalculator)
 	//========================================
 
@@ -442,9 +457,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "State")
 	bool bIsAlive = true;
 
+	/** Class override for scripted AI agents (used when bIsScriptedAI && ScholaAgent is null) */
+	EDEClassType ScriptedClassOverride = EDEClassType::Strike;
+
 	bool bWeightsDirty = false;
 	float SpawnTime = 0.0f;
 	int32 TacticalActionCallCount = 0;
+	int32 ScriptedAIDiagCount = 0;
+	int32 TrainingAbilityDiagCount = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "AI|EQS")
 	FVector LastEQSTargetLocation = FVector::ZeroVector;

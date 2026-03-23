@@ -2,6 +2,7 @@
 
 #include "Team/DEMatchManager.h"
 #include "Team/DESquadManager.h"
+#include "Components/DEScriptedAIComponent.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
 #include "Data/Reward/DERewardData.h"
 #include "Characters/DEAgent.h"
@@ -151,8 +152,28 @@ void ADEMatchManager::MatchConditionTimerTick()
 		}
 	}
 
-	// Score-based and domination win conditions removed — fixed-length episodes only.
-	// Score is still tracked for determining the winner at timeout.
+	// ── Score-based early win ──
+	if (WinScoreThreshold > 0)
+	{
+		for (int32 TeamID = 0; TeamID <= 1; ++TeamID)
+		{
+			if (TeamScores[TeamID] >= WinScoreThreshold)
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[DEMatchManager] Env %d: Team %d reached score %d (threshold %d). Ending episode."),
+					EnvID, TeamID, TeamScores[TeamID], WinScoreThreshold);
+
+				if (RewardCalculator)
+				{
+					RewardCalculator->ApplyMatchEndReward(TeamID, AllAgents);
+				}
+
+				StopMatchTimer();
+				OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
+				return;
+			}
+		}
+	}
 
 	// ── Timeout ──
 	if (MatchTimer >= MaxMatchDuration)
@@ -318,6 +339,19 @@ ADEAgent* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	Agent->OnAgentDeathEvent_Delegate.AddDynamic(this, &ADEMatchManager::RegisterKill);
 	Agent->OnAgentDied_Delegate.AddDynamic(this, &ADEMatchManager::OnAgentDied);
 
+	// Fixed-opponent mode: attach scripted AI component to opponent team
+	if (bUseScriptedOpponent && TeamID == ScriptedOpponentTeamID)
+	{
+		Agent->bIsScriptedAI = true;
+
+		UDEScriptedAIComponent* ScriptedComp = NewObject<UDEScriptedAIComponent>(Agent);
+		ScriptedComp->RegisterComponent();
+		ScriptedComp->ResampleNoise(EnvRandomStream);
+
+		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Scripted AI attached to %s (Team %d, Tier %d)"),
+			*Agent->GetName(), TeamID, ScriptedComp->GetDifficultyTier());
+	}
+
 	const FString TeamName  = TeamData->TeamName.IsEmpty()
 		? FString::Printf(TEXT("Team_%d"), TeamID)
 		: TeamData->TeamName;
@@ -327,8 +361,8 @@ ADEAgent* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	Agent->SetActorLabel(AgentName);
 #endif
 
-	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Spawned %s (Class: %s) at %s"),
-		*AgentName, *TeamData->CharacterClass->GetName(), *SpawnLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Spawned %s (Class: %s, Scripted=%d) at %s"),
+		*AgentName, *TeamData->CharacterClass->GetName(), Agent->bIsScriptedAI, *SpawnLocation.ToString());
 
 	return Agent;
 }
@@ -420,6 +454,19 @@ void ADEMatchManager::ResetTeams()
 		if (UDESquadManager* Commander = GetSquadCommander(Conf.TeamID))
 		{
 			Commander->Reset(GetTeamAgents(Conf.TeamID));
+		}
+	}
+
+	// 4. Resample noise on scripted AI components for the new episode
+	if (bUseScriptedOpponent)
+	{
+		for (ADEAgent* Agent : GetTeamAgents(ScriptedOpponentTeamID))
+		{
+			if (!Agent || !Agent->bIsScriptedAI) continue;
+			if (UDEScriptedAIComponent* Scripted = Agent->FindComponentByClass<UDEScriptedAIComponent>())
+			{
+				Scripted->ResampleNoise(EnvRandomStream);
+			}
 		}
 	}
 
@@ -844,6 +891,28 @@ void ADEMatchManager::AssignBasesToAgents(int32 TeamID)
 
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] AssignBasesToAgents team=%d: %d agents assigned across %d bases"),
 		TeamID, Agents.Num(), EnvCapturePoints.Num());
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scripted Opponent
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ADEMatchManager::SetOpponentDifficulty(int32 Tier)
+{
+	if (!bUseScriptedOpponent) return;
+
+	for (ADEAgent* Agent : AllAgents)
+	{
+		if (!Agent || !Agent->bIsScriptedAI) continue;
+		if (UDEScriptedAIComponent* Scripted = Agent->FindComponentByClass<UDEScriptedAIComponent>())
+		{
+			Scripted->SetDifficultyTier(Tier);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Opponent difficulty set to Tier %d"),
+		EnvID, Tier);
 }
 
 

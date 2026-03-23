@@ -130,21 +130,22 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     ADEAgent* Self = Cast<ADEAgent>(GetPawn());
     AActor* BestEnemy = nullptr;
 
+    const int32 SelfEnvID  = Self ? Self->GetEnvID_Implementation()  : -1;
+    const int32 SelfTeamID = Self ? Self->GetTeamID_Implementation() : -1;
+
+
     if (Self)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DEAIC] OnPerceptionUpdated: Self=%s EnvID=%d TeamID=%d — %d actors in sight"),
-            *GetName(), Self->GetEnvID_Implementation(), Self->GetTeamID_Implementation(), PerceivedActors.Num());
-
         for (AActor* Actor : PerceivedActors)
         {
             ADEAgent* Other = Cast<ADEAgent>(Actor);
-            UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   Perceived: %s (DEAgent=%s EnvID=%d TeamID=%d)"),
-                *Actor->GetName(),
-                Other ? TEXT("YES") : TEXT("NO"),
-                Other ? Other->GetEnvID_Implementation() : -1,
-                Other ? Other->GetTeamID_Implementation() : -1);
+            if (!Other) continue;
 
-            if (Other && Other->GetEnvID_Implementation() == Self->GetEnvID_Implementation() && Other->GetTeamID_Implementation() != Self->GetTeamID_Implementation())
+            const int32 OtherEnvID  = Other->GetEnvID_Implementation();
+            const int32 OtherTeamID = Other->GetTeamID_Implementation();
+
+
+            if (OtherEnvID == SelfEnvID && OtherTeamID != SelfTeamID)
             {
                 BestEnemy = Other;
                 break;

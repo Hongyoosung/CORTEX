@@ -10,9 +10,11 @@
 #include "GAS/Abilities/DEGA_Attack.h"
 #include "GAS/Abilities/DEGA_Heal.h"
 #include "Schola/Components/DEScholaAgent.h"
+#include "Components/DEScriptedAIComponent.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
 #include "EQS/DynamicEQSExecutor.h"
 #include "Data/DEAbilityData.h"
+#include "Actors/DECapturePoint.h"
 
 #include "Kismet/GameplayStatics.h"
 #include "AbilitySystemComponent.h"
@@ -126,6 +128,12 @@ void ADEAgent::BeginPlay()
 	InitializeGASAbilities();
 
 	const bool bIsTraining = ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training;
+	UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s BeginPlay: ScholaAgent=%s AgentMode=%d bIsTraining=%s"),
+		*GetName(),
+		ScholaAgent ? TEXT("Valid") : TEXT("NULL"),
+		ScholaAgent ? (int32)ScholaAgent->AgentMode : -1,
+		bIsTraining ? TEXT("true") : TEXT("false"));
+
 	if (bIsTraining)
 	{
 		GetWorld()->GetTimerManager().SetTimer(
@@ -135,6 +143,9 @@ void ADEAgent::BeginPlay()
 			0.2f,
 			true
 		);
+		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: TrainingAbilityTimer started (active=%s)"),
+			*GetName(),
+			GetWorld()->GetTimerManager().IsTimerActive(TrainingAbilityTimerHandle) ? TEXT("YES") : TEXT("NO"));
 	}
 
 	// Mana regen via timer instead of Tick (runs at 10Hz)
@@ -599,6 +610,24 @@ void ADEAgent::ResetCharacter()
 		ScholaAgent->ResetAgent();
 	}
 
+	// Defensive: re-ensure training ability timer is running.
+	// BeginPlay may have missed it if AgentMode was set after initial BeginPlay,
+	// or the timer handle may have been invalidated during episode transition.
+	if (ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training)
+	{
+		if (!GetWorld()->GetTimerManager().IsTimerActive(TrainingAbilityTimerHandle))
+		{
+			GetWorld()->GetTimerManager().SetTimer(
+				TrainingAbilityTimerHandle,
+				this,
+				&ADEAgent::ProcessTrainingAbilities,
+				0.2f,
+				true
+			);
+			UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: Re-started ProcessTrainingAbilities timer in ResetCharacter"), *GetName());
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[DEAgent] %s post-reset EQS state: bWeightsDirty=%d"),
 		*GetName(), bWeightsDirty);
 
@@ -631,7 +660,10 @@ void ADEAgent::UpdateTacticalWeights(const FDEEQSWeightParameters& NewWeights)
 
 void ADEAgent::PerformTacticalAction()
 {
-	if (!bIsAlive) return;
+	if (!bIsAlive)
+	{
+		return;
+	}
 
 	if (!EQSExecutor)
 	{
@@ -642,7 +674,6 @@ void ADEAgent::PerformTacticalAction()
 	AAIController* AICtrl = CachedAIController.Get();
 	if (!AICtrl)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: No AIController found"), *GetName());
 		return;
 	}
 
@@ -654,13 +685,13 @@ void ADEAgent::PerformTacticalAction()
 			*GetName(), TacticalActionCallCount);*/
 	}
 
-	AICtrl->StopMovement();
-
 	EQSExecutor->SetWeights(FDynamicEQSWeightParameters(CurrentEQSWeights.ToArray()));
 	TOptional<FVector> Result = EQSExecutor->ExecuteQuerySynchronous();
 	if (!Result.IsSet())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: EQS query returned no result - using fallback movement"), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: EQS query returned no result - using fallback movement (QueryTemplate=%s)"),
+			*GetName(),
+			EQSExecutor->QueryTemplate ? *EQSExecutor->QueryTemplate->GetName() : TEXT("NULL"));
 
 		const FVector CurrentLocation = GetActorLocation();
 		const float FallbackRadius = 300.0f;
@@ -673,6 +704,7 @@ void ADEAgent::PerformTacticalAction()
 
 		LastEQSTargetLocation = FallbackTarget;
 
+		AICtrl->StopMovement();
 		FAIMoveRequest FallbackReq(FallbackTarget);
 		FallbackReq.SetAcceptanceRadius(EQSAcceptanceRadius);
 		FallbackReq.SetUsePathfinding(true);
@@ -680,12 +712,26 @@ void ADEAgent::PerformTacticalAction()
 		return;
 	}
 
+	// For scripted AI agents, skip rerouting when the new destination is within
+	// 150 cm of the current one AND the agent is still actively moving toward it.
+	// Without the move-status check, the agent would stop permanently after reaching
+	// its destination (path complete → idle) because EQS keeps returning the same
+	// nearby optimum and the early return prevents issuing a new MoveTo.
+	constexpr float ScriptedAIRerouteThreshold = 150.0f;
+	if (bIsScriptedAI
+		&& FVector::Dist(Result.GetValue(), LastEQSTargetLocation) < ScriptedAIRerouteThreshold
+		&& AICtrl->GetMoveStatus() == EPathFollowingStatus::Moving)
+	{
+		return;
+	}
+
+	AICtrl->StopMovement();
 	LastEQSTargetLocation = Result.GetValue();
 
 	FAIMoveRequest MoveReq(LastEQSTargetLocation);
 	MoveReq.SetAcceptanceRadius(EQSAcceptanceRadius);
 	MoveReq.SetUsePathfinding(true);
-	AICtrl->MoveTo(MoveReq);
+	EPathFollowingRequestResult::Type MoveResult = AICtrl->MoveTo(MoveReq);
 }
 
 
