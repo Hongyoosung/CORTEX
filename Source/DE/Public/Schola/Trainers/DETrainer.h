@@ -9,6 +9,7 @@
 #include "Types/DEEQSTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "Types/DEClassTypes.h"
+#include "Team/DETeamWorldState.h"
 #include "DETrainer.generated.h"
 
 class UDEScholaAgent;
@@ -130,6 +131,12 @@ protected:
 
     /** Updates internal training metrics and averages */
     void UpdateTrainingStatistics();
+
+    /**
+     * Build FDETeamWorldState from this agent's team perspective.
+     * Used by GetInfo() to broadcast global state for MAPPO centralized critic.
+     */
+    FDETeamWorldState BuildTeamWorldState() const;
 
 
     //=========================================

@@ -777,6 +777,90 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
     return EAgentTrainingStatus::Running;
 }
 
+FDETeamWorldState ADETrainer::BuildTeamWorldState() const
+{
+    FDETeamWorldState State;
+
+    if (!CachedMatchManager || !ControlledCharacter)
+    {
+        return State; // Return default-initialized (zeros/defaults)
+    }
+
+    const int32 InTeamID = ControlledCharacter->GetTeamID_Implementation();
+    const int32 EnemyTeamID = (InTeamID == 0) ? 1 : 0;
+
+    // ── Friendly units ──────────────────────────────────────────────────
+    const TArray<ADEAgent*>& Friendlies = CachedMatchManager->GetTeamAgents(InTeamID);
+    for (int32 i = 0; i < 5; ++i)
+    {
+        if (i < Friendlies.Num() && Friendlies[i] && IsValid(Friendlies[i]))
+        {
+            State.FriendlyPositions[i] = Friendlies[i]->GetActorLocation();
+            State.FriendlyHealths[i]   = Friendlies[i]->GetHealthPercentage();
+            State.FriendlyClasses[i]   = Friendlies[i]->GetCommandedClass();
+            State.FriendlyCooldowns[i] = Friendlies[i]->GetWeaponCooldown();
+            State.FriendlyAlive[i]     = Friendlies[i]->IsAlive();
+        }
+        else
+        {
+            State.FriendlyPositions[i] = FVector::ZeroVector;
+            State.FriendlyHealths[i]   = 0.0f;
+            State.FriendlyClasses[i]   = EDEClassType::Strike;
+            State.FriendlyCooldowns[i] = 0.0f;
+            State.FriendlyAlive[i]     = false;
+        }
+    }
+
+    // ── Enemy estimates ─────────────────────────────────────────────────
+    const TArray<ADEAgent*> Enemies = CachedMatchManager->GetEnemyAgents(InTeamID);
+    for (int32 i = 0; i < 5; ++i)
+    {
+        if (i < Enemies.Num() && Enemies[i] && IsValid(Enemies[i]))
+        {
+            State.EnemyPositions[i]   = Enemies[i]->GetActorLocation();
+            State.EnemyConfidences[i] = 1.0f; // Direct observation — full confidence
+            State.EnemyHealths[i]     = Enemies[i]->GetHealthPercentage();
+            State.EnemyAlive[i]       = Enemies[i]->IsAlive();
+        }
+        else
+        {
+            State.EnemyPositions[i]   = FVector::ZeroVector;
+            State.EnemyConfidences[i] = 0.0f;
+            State.EnemyHealths[i]     = 0.0f;
+            State.EnemyAlive[i]       = false;
+        }
+    }
+
+    // ── Map state ───────────────────────────────────────────────────────
+    const TArray<ADECapturePoint*>& CPs = CachedMatchManager->GetCapturePoints();
+    for (int32 i = 0; i < 5; ++i)
+    {
+        if (i < CPs.Num() && CPs[i] && IsValid(CPs[i]))
+        {
+            // Map ownership relative to this agent's team:
+            // +1 = friendly, -1 = enemy, 0 = neutral
+            const int32 InOwner = CPs[i]->GetOwnership();
+            if (InOwner == InTeamID)
+                State.CapturePointOwnership[i] = 1;
+            else if (InOwner == EnemyTeamID)
+                State.CapturePointOwnership[i] = -1;
+            else
+                State.CapturePointOwnership[i] = 0;
+        }
+    }
+
+    // Time remaining — read from match manager if available
+    if (CachedScholaEnvironment)
+    {
+        const float MaxTime = static_cast<float>(MaxEpisodeSteps);
+        State.TimeRemaining = MaxTime > 0.0f
+            ? FMath::Clamp(1.0f - static_cast<float>(CurrentEpisodeSteps) / MaxTime, 0.0f, 1.0f)
+            : 1.0f;
+    }
+
+    return State;
+}
+
 void ADETrainer::GetInfo(TMap<FString, FString>& Info)
 {
     // Match termination signal — Python reads this to end the episode when UE5 decides match is over
@@ -795,6 +879,24 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
         Info.Add(TEXT("TeamScore0"), FString::FromInt(CachedMatchManager->GetTeamScore(0)));
         Info.Add(TEXT("TeamScore1"), FString::FromInt(CachedMatchManager->GetTeamScore(1)));
         Info.Add(TEXT("WinnerTeamID"), FString::FromInt(CachedMatchManager->GetWinnerTeamID()));
+    }
+
+    // ── MAPPO: global state for centralized critic ──────────────────────
+    // Serialize FDETeamWorldState::ToTensor() as comma-separated floats.
+    // Python env_wrapper reads this under key "global_state" and appends
+    // the 71-dim vector to each agent's 226-dim obs → 297-dim MAPPO obs.
+    {
+        FDETeamWorldState TeamState = BuildTeamWorldState();
+        TArray<float> Tensor = TeamState.ToTensor();
+
+        FString GlobalStateStr;
+        GlobalStateStr.Reserve(Tensor.Num() * 8); // ~8 chars per float
+        for (int32 i = 0; i < Tensor.Num(); ++i)
+        {
+            if (i > 0) GlobalStateStr.AppendChar(TEXT(','));
+            GlobalStateStr.Append(FString::Printf(TEXT("%.6f"), Tensor[i]));
+        }
+        Info.Add(TEXT("global_state"), GlobalStateStr);
     }
 
     // Provide comprehensive debug/training information

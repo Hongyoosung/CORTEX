@@ -55,8 +55,13 @@ except ImportError:
 # Layout: Self(7) + Allies(8×9=72) + Enemies(8×8=64) + Bases(8×7=56) +
 #         AllyMask(8) + EnemyMask(8) + BaseMask(8) + Strategy(3)
 # Strategy one-hot starts at: 7+72+64+56+24 = 223
-OBS_DIM    = 226
-ACTION_DIM = 7
+AGENT_OBS_DIM = 226
+ACTION_DIM    = 7
+
+# MAPPO: global state from FDETeamWorldState::ToTensor() = 71-dim
+# Appended after agent obs → total 297-dim
+GLOBAL_STATE_DIM = 71
+OBS_DIM          = AGENT_OBS_DIM + GLOBAL_STATE_DIM   # 297
 
 # ── Strategy registry ─────────────────────────────────────────────────────────
 # Maps agent_id_str → strategy index (0=Strike, 1=Vanguard, 2=Support).
@@ -104,7 +109,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
         print(f"[DEEntityCentricEnv] Connecting to {host}:{port}  "
               f"num_envs={self.num_envs}")
-        print(f"[DEEntityCentricEnv] Obs={OBS_DIM}-dim, Action={ACTION_DIM}-dim EQS")
+        print(f"[DEEntityCentricEnv] Obs={OBS_DIM}-dim (agent={AGENT_OBS_DIM} + global={GLOBAL_STATE_DIM}), Action={ACTION_DIM}-dim EQS")
 
         try:
             self._protocol = gRPCProtocol(url=host, port=port)
@@ -186,6 +191,11 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._reward_components = REWARD_COMPONENTS
         self._component_ep_sums: Dict[str, list] = {c: [] for c in REWARD_COMPONENTS}
 
+        # MAPPO: per-env global state cache (71-dim FDETeamWorldState)
+        self._global_state: Dict[int, np.ndarray] = {
+            i: np.zeros(GLOBAL_STATE_DIM, dtype=np.float32) for i in range(self.num_envs)
+        }
+
         self._completed_envs: set       = set()   # sub-envs whose match has ended
         self._schola_env_done: Dict[int, str] = {}  # per-step: sub-envs Schola terminated
         self._max_episode_steps        = 1000
@@ -239,6 +249,68 @@ class DEEntityCentricEnv(MultiAgentEnv):
     def _agents_for_env(self, env_idx: int):
         return [a for a, (eidx, _) in self.agent_map.items() if eidx == env_idx]
 
+    # ── MAPPO global state ────────────────────────────────────────────────
+
+    def _extract_global_state(self, info_nested, env_idx: int) -> np.ndarray:
+        """
+        Extract FDETeamWorldState tensor from Schola info channel.
+
+        The C++ side broadcasts the 71-dim global state under key "global_state"
+        in each agent's info dict as a comma-separated float string.
+        All agents in the same team share the same global state, so we read
+        from the first agent that has the key.
+
+        Falls back to zeros if unavailable (e.g., before UE5 build is updated).
+
+        Returns: (GLOBAL_STATE_DIM,) float32
+        """
+        if isinstance(info_nested, list):
+            env_info = info_nested[env_idx] if env_idx < len(info_nested) else {}
+        else:
+            env_info = info_nested.get(env_idx, {})
+
+        # global_state is in each agent's info dict as a comma-separated string
+        gs_raw = None
+        if isinstance(env_info, dict):
+            # Check each agent's info for the key
+            for agent_info in env_info.values():
+                if isinstance(agent_info, dict):
+                    gs_raw = agent_info.get("global_state")
+                    if gs_raw is not None:
+                        break
+
+        if gs_raw is not None:
+            try:
+                if isinstance(gs_raw, str):
+                    # C++ sends comma-separated floats: "0.123,0.456,..."
+                    arr = np.fromstring(gs_raw, sep=',', dtype=np.float32)
+                else:
+                    # May already be a list/array if Schola parses it
+                    arr = np.asarray(gs_raw, dtype=np.float32).flatten()
+
+                if len(arr) >= GLOBAL_STATE_DIM:
+                    return arr[:GLOBAL_STATE_DIM]
+                elif len(arr) > 0:
+                    return np.pad(arr, (0, GLOBAL_STATE_DIM - len(arr)))
+            except (ValueError, TypeError):
+                pass
+
+        return self._global_state.get(env_idx, np.zeros(GLOBAL_STATE_DIM, dtype=np.float32))
+
+    def _append_global_state(self, obs_d: dict) -> dict:
+        """
+        Append per-env global state (71-dim) to each agent's 226-dim obs,
+        producing 297-dim MAPPO observations.
+
+        All agents in the same sub-env share the same global state suffix.
+        """
+        mappo_obs = {}
+        for fid, agent_obs in obs_d.items():
+            env_idx = self.agent_map[fid][0]
+            gs = self._global_state.get(env_idx, np.zeros(GLOBAL_STATE_DIM, dtype=np.float32))
+            mappo_obs[fid] = np.concatenate([agent_obs, gs])
+        return mappo_obs
+
     # ── Observation extraction ────────────────────────────────────────────
 
     def _extract_obs(
@@ -248,14 +320,15 @@ class DEEntityCentricEnv(MultiAgentEnv):
         info_nested,
     ) -> Tuple[np.ndarray, dict]:
         """
-        Extract a single agent's OBS_DIM-dim flat observation and info dict
-        from Schola 2.0.1 nested data.
+        Extract a single agent's observation and info dict from Schola 2.0.1
+        nested data. Returns AGENT_OBS_DIM (226) obs — global state is
+        appended later by _append_global_state().
 
         obs_nested: List[Dict[agent_id_str, obs]] or Dict[env_id, Dict[agent_id_str, obs]]
         info_nested: same structure, values are Dict[str,str]
 
         Returns:
-            obs  : (OBS_DIM,) float32
+            obs  : (AGENT_OBS_DIM,) float32  (226-dim, without global state)
             info : dict
         """
         env_idx, agent_id_str = self.agent_map[flat_id]
@@ -272,13 +345,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 raw = list(raw.values())[0]
             obs = np.asarray(raw, dtype=np.float32).flatten()
         else:
-            obs = np.zeros(OBS_DIM, dtype=np.float32)
+            obs = np.zeros(AGENT_OBS_DIM, dtype=np.float32)
 
-        # Pad or truncate to exactly OBS_DIM
-        if len(obs) < OBS_DIM:
-            obs = np.pad(obs, (0, OBS_DIM - len(obs)))
+        # Pad or truncate to exactly AGENT_OBS_DIM (226)
+        if len(obs) < AGENT_OBS_DIM:
+            obs = np.pad(obs, (0, AGENT_OBS_DIM - len(obs)))
         else:
-            obs = obs[:OBS_DIM]
+            obs = obs[:AGENT_OBS_DIM]
 
         if isinstance(info_nested, list):
             info_env = info_nested[env_idx] if env_idx < len(info_nested) else {}
@@ -378,6 +451,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
         obs_d, info_d = self._process_obs(obs_list, infos_list)
 
+        # Extract per-env global state from info channel (MAPPO)
+        for ei in range(self.num_envs):
+            self._global_state[ei] = self._extract_global_state(infos_list, ei)
+
+        # Append global state to each agent obs (226 → 297)
+        obs_d = self._append_global_state(obs_d)
+
         # Populate strategy registry from reset obs so policy_mapping_fn
         # can route agents to the correct per-role policy immediately.
         strat_counts = {0: 0, 1: 0, 2: 0}
@@ -435,6 +515,14 @@ class DEEntityCentricEnv(MultiAgentEnv):
             self.poll_durations.append(time.time() - poll_t)
 
             obs_d, rew_d, term_d, trunc_d, info_d = self._parse_full(result)
+
+            # Extract per-env global state from info channel (MAPPO)
+            info_n = result[4]
+            for ei in range(self.num_envs):
+                self._global_state[ei] = self._extract_global_state(info_n, ei)
+
+            # Append global state to each agent obs (226 → 297)
+            obs_d = self._append_global_state(obs_d)
 
             if not self._max_episode_steps_synced:
                 self._sync_max_steps(info_d)

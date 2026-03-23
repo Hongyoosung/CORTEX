@@ -50,7 +50,7 @@ void ADESpectatorController::Tick(float DeltaTime)
 		{
 			FixedCameraRotation.Yaw  += DeltaX * MouseSensitivity;
 			FixedCameraRotation.Pitch = FMath::Clamp(
-				FixedCameraRotation.Pitch - DeltaY * MouseSensitivity,  // subtract: mouse up = camera up
+				FixedCameraRotation.Pitch + DeltaY * MouseSensitivity,  // add: mouse down = camera down
 				PitchMin, PitchMax);
 		}
 	}
@@ -185,7 +185,7 @@ void ADESpectatorController::CollectAgents()
 	{
 		for (ADEAgent* Char : TActorRange<ADEAgent>(World))
 		{
-			if (IsValid(Char) && Char->IsAlive())
+			if (IsValid(Char) && Char->IsAlive() && !Char->bIsScriptedAI)
 			{
 				AllAgents.Add(Char);
 			}

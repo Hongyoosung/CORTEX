@@ -377,7 +377,8 @@ void ADEMatchManager::StartMatchTimer()
 	MatchTimer = 0.0f;
 	PassiveIncomeAccumulator = 0.0f;
 	bMatchActive = true;
-	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Match timer started"), EnvID);
+	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Match timer started (MaxMatchDuration=%.1f, WinScoreThreshold=%d)"),
+		EnvID, MaxMatchDuration, WinScoreThreshold);
 }
 
 void ADEMatchManager::StopMatchTimer()

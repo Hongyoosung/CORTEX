@@ -246,13 +246,23 @@ void UEnvQueryContext_DEEnemyObjective::ProvideContext(FEnvQueryInstance& QueryI
 	}
 	else
 	{
-		// No non-friendly capture point found — EQS distance-to-objective test
-		// will have no target, making all positions score equally on that axis.
-		UE_LOG(LogTemp, Warning,
-			TEXT("[DEEQSContext|EnemyObj] %s team=%d: NO enemy objective found! "
-			     "CapturePoints=%d — all owned by team %d? Context NOT set."),
-			*DEChar->GetName(), MyTeamID,
-			DEChar->AssignedCapturePoints.Num(), MyTeamID);
+		// All points owned by this team — fall back to nearest friendly point (defend posture)
+		ADECapturePoint* NearestFriendly = nullptr;
+		float NearestFriendlyDist = FLT_MAX;
+		for (ADECapturePoint* CP : DEChar->AssignedCapturePoints)
+		{
+			if (!CP) continue;
+			const float Dist = FVector::Dist(AgentPos, CP->GetActorLocation());
+			if (Dist < NearestFriendlyDist)
+			{
+				NearestFriendlyDist = Dist;
+				NearestFriendly = CP;
+			}
+		}
+		if (NearestFriendly)
+		{
+			UEnvQueryItemType_Point::SetContextHelper(ContextData, NearestFriendly->GetActorLocation());
+		}
 	}
 }
 

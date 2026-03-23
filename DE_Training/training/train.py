@@ -28,8 +28,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from policy import (
     EntityCentricPolicy, EntityCentricPolicy_NoSelfAttn,
+    CentralizedCritic,
     PPOTrainer, ReplayBuffer, Transition,
     collate_fn, OBS_DIM, EQS_DIM, EQS_LABELS,
+    GLOBAL_STATE_DIM, MAPPO_OBS_DIM,
 )
 
 # Ablation toggle: set USE_SELF_ATTN=0 to train without Self-Attention
@@ -213,12 +215,28 @@ if RLLIB_AVAILABLE:
 
     class EntityCentricRLlibModel(TorchModelV2, nn.Module):
         """
-        RLlib TorchModelV2 wrapper for EntityCentricPolicy.
+        RLlib TorchModelV2 wrapper for EntityCentricPolicy with MAPPO dual critics.
 
         Three separate instances are registered — one per role (strike / vanguard / support).
         Each only receives observations for its assigned role.
+
+        Observation layout (297-dim):
+            [0:226]   agent obs  → actor input + local critic input
+            [226:297]  global state (FDETeamWorldState, 71-dim) → centralized critic input
+
+        Value estimation (dual):
+            V = α · V_local(agent_obs) + (1-α) · V_central(global_state)
+            α is a learnable mixing coefficient (initialized to 0.5).
+
         forward() returns (B, 14) = [means(7), log_stds(7)].
         """
+
+        # Shared centralized critic across all three role policies (within same worker).
+        # RLlib instantiates all three policies in the same process for num_workers=0.
+        # Each policy gets its own EntityCentricRLlibModel instance but they share
+        # the centralized critic via this class-level reference. For multi-worker
+        # setups, each worker gets its own copy (gradients are synced by RLlib).
+        _shared_centralized_critic = None
 
         def __init__(self, obs_space, action_space, num_outputs, model_config, name):
             TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
@@ -226,24 +244,53 @@ if RLLIB_AVAILABLE:
             cfg = model_config.get("custom_model_config", {})
             hidden = cfg.get("hidden", 64)
             heads  = cfg.get("heads", 4)
+
+            # Per-role actor + local critic (unchanged)
             self.policy = _create_policy_network(hidden=hidden, heads=heads)
-            self._last_features = None
+
+            # Shared centralized critic (MAPPO)
+            if EntityCentricRLlibModel._shared_centralized_critic is None:
+                EntityCentricRLlibModel._shared_centralized_critic = CentralizedCritic(
+                    state_dim=GLOBAL_STATE_DIM, hidden=256,
+                )
+            self.centralized_critic = EntityCentricRLlibModel._shared_centralized_critic
+
+            # Learnable mixing coefficient for dual value estimation
+            # sigmoid(0.0) = 0.5 → equal weight initially
+            self._value_mix_logit = nn.Parameter(torch.tensor(0.0))
+
+            self._last_agent_obs = None
+            self._last_global_state = None
 
         @override(TorchModelV2)
         def forward(self, input_dict, state, seq_lens):
-            obs = input_dict["obs"].float()            # (B, 226)
-            self._last_features = obs
-            means = self.policy(obs)                   # (B, 7)
+            obs = input_dict["obs"].float()                       # (B, 297)
+
+            # Slice: actor uses agent obs [0:226], critic uses global state [226:297]
+            self._last_agent_obs    = obs[:, :OBS_DIM]                     # (B, 226)
+            self._last_global_state = obs[:, OBS_DIM:]                     # (B, 71)
+
+            means = self.policy(self._last_agent_obs)             # (B, 7)
             log_stds = torch.clamp(
                 self.policy.log_std,
                 EntityCentricPolicy.LOG_STD_MIN,
                 EntityCentricPolicy.LOG_STD_MAX,
-            ).unsqueeze(0).expand_as(means)            # (B, 7)
-            return torch.cat([means, log_stds], dim=-1), state   # (B, 14)
+            ).unsqueeze(0).expand_as(means)                       # (B, 7)
+            return torch.cat([means, log_stds], dim=-1), state    # (B, 14)
 
         @override(TorchModelV2)
         def value_function(self):
-            return self.policy.get_value(self._last_features)
+            """
+            Dual value estimation: α · V_local + (1-α) · V_central
+
+            V_local:   entity-centric attention critic on 226-dim agent obs
+            V_central: MLP critic on 71-dim global team state
+            α:         learned mixing coefficient (sigmoid of _value_mix_logit)
+            """
+            alpha = torch.sigmoid(self._value_mix_logit)
+            v_local   = self.policy.get_value(self._last_agent_obs)           # (B,)
+            v_central = self.centralized_critic(self._last_global_state)      # (B,)
+            return alpha * v_local + (1.0 - alpha) * v_central
 
 
     def create_ppo_config():
@@ -529,6 +576,15 @@ def train_with_rllib(args):
                         except (ValueError, TypeError):
                             pass
 
+        # ── MAPPO dual-critic metrics ──────────────────────────────────────────
+        # Log the learned mixing coefficient α = sigmoid(logit) for each role
+        for policy_name in STRATEGY_POLICY_NAMES.values():
+            role = policy_name.replace("_policy", "")
+            rllib_policy = algo.get_policy(policy_name)
+            if rllib_policy and hasattr(rllib_policy.model, '_value_mix_logit'):
+                alpha = torch.sigmoid(rllib_policy.model._value_mix_logit).item()
+                tb.add_scalar(f"{role}/mappo/value_mix_alpha", alpha, cumul_steps)
+
         # ── Curriculum tier update ────────────────────────────────────────────
         rl_win_rate = custom.get("rl_win_rate_mean", custom.get("rl_win_rate"))
         if rl_win_rate is not None and not np.isnan(float(rl_win_rate)):
@@ -711,6 +767,54 @@ def run_validation() -> bool:
     obs_list = [np.random.randn(OBS_DIM).astype(np.float32) for _ in range(4)]
     batch    = collate_fn(obs_list)
     check("collate_fn shape (4, 226)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
+
+    # -- Test 11: CentralizedCritic --
+    print("[Test 11] CentralizedCritic shape and output")
+    cc = CentralizedCritic(state_dim=GLOBAL_STATE_DIM)
+    dummy_gs = torch.randn(B, GLOBAL_STATE_DIM)
+    with torch.no_grad():
+        cc_val = cc(dummy_gs)
+    check("CentralizedCritic output shape (B,)", cc_val.shape == (B,), f"got {cc_val.shape}")
+    check("CentralizedCritic output finite", torch.isfinite(cc_val).all().item())
+
+    # -- Test 12: MAPPO obs slicing (297 = 226 + 71) --
+    print("[Test 12] MAPPO obs dimension arithmetic")
+    check("MAPPO_OBS_DIM == 297", MAPPO_OBS_DIM == 297, f"got {MAPPO_OBS_DIM}")
+    check("GLOBAL_STATE_DIM == 71", GLOBAL_STATE_DIM == 71, f"got {GLOBAL_STATE_DIM}")
+    check("OBS_DIM + GLOBAL_STATE_DIM == MAPPO_OBS_DIM",
+          OBS_DIM + GLOBAL_STATE_DIM == MAPPO_OBS_DIM,
+          f"{OBS_DIM} + {GLOBAL_STATE_DIM} != {MAPPO_OBS_DIM}")
+
+    # -- Test 13: Dual value estimation (EntityCentricRLlibModel) --
+    print("[Test 13] Dual value estimation")
+    if RLLIB_AVAILABLE:
+        from gymnasium import spaces as gym_spaces
+        mappo_obs_space = gym_spaces.Box(-np.inf, np.inf, shape=(MAPPO_OBS_DIM,), dtype=np.float32)
+        mappo_act_space = gym_spaces.Box(-1.0, 1.0, shape=(EQS_DIM,), dtype=np.float32)
+        model_cfg = {"custom_model_config": {"hidden": 64, "heads": 4}}
+        # Reset shared critic for clean test
+        EntityCentricRLlibModel._shared_centralized_critic = None
+        rllib_model = EntityCentricRLlibModel(
+            mappo_obs_space, mappo_act_space, 14, model_cfg, "test_model"
+        )
+        dummy_mappo = torch.randn(B, MAPPO_OBS_DIM)
+        with torch.no_grad():
+            out, _ = rllib_model.forward({"obs": dummy_mappo}, [], None)
+            val = rllib_model.value_function()
+        check("RLlib model output shape (B, 14)", out.shape == (B, 14), f"got {out.shape}")
+        check("Dual value output shape (B,)", val.shape == (B,), f"got {val.shape}")
+        check("Dual value finite", torch.isfinite(val).all().item())
+
+        # Verify shared critic across instances
+        EntityCentricRLlibModel._shared_centralized_critic = None
+        m1 = EntityCentricRLlibModel(mappo_obs_space, mappo_act_space, 14, model_cfg, "m1")
+        m2 = EntityCentricRLlibModel(mappo_obs_space, mappo_act_space, 14, model_cfg, "m2")
+        check("Shared centralized critic (same object)",
+              m1.centralized_critic is m2.centralized_critic)
+        # Clean up
+        EntityCentricRLlibModel._shared_centralized_critic = None
+    else:
+        print("  SKIP: RLlib not available")
 
     print("\n" + "=" * 70)
     print(f"Results: {passed} passed, {failed} failed / {passed+failed} total")
