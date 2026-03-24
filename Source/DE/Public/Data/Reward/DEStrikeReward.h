@@ -65,7 +65,7 @@ struct FDEStrikeRewardSettings
 	float PostCaptureMomentumBonus = 3.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	int32 PostCaptureMomentumDuration = 30;
+	int32 PostCaptureMomentumDuration = 90;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float PostCaptureMomentumMinMove = 100.0f;

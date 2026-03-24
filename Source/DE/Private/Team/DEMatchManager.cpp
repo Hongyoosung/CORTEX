@@ -138,20 +138,6 @@ void ADEMatchManager::MatchConditionTimerTick()
 
 	MatchTimer += DeltaTime;
 
-	// ── Passive income (score tracking for winner determination at timeout) ──
-	if (PassiveIncomeRate > 0.0f)
-	{
-		for (const ADECapturePoint* CP : EnvCapturePoints)
-		{
-			if (!CP) continue;
-			const int32 OwnerTeam = CP->GetTeamID_Implementation();
-			if (OwnerTeam >= 0)
-			{
-				AddTeamScore(OwnerTeam, FMath::RoundToInt(PassiveIncomeRate));
-			}
-		}
-	}
-
 	// ── Score-based early win ──
 	if (WinScoreThreshold > 0)
 	{

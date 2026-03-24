@@ -480,6 +480,7 @@ def train_with_rllib(args):
     best_reward    = float("-inf")
     cumul_episodes = 0
     cumul_steps    = 0
+    last_step_ckp  = 0
 
     print(f"{'Iter':<6} {'Reward':>10} {'EpLen':>8} {'Steps':>12} {'Time':>8} {'Tier':>5}")
     print("-" * 58)
@@ -638,6 +639,12 @@ def train_with_rllib(args):
 
         print(f"{i+1:>3}/{args.iterations:<3}  {reward:>10.2f}  "
               f"{ep_len:>8.1f}  {cumul_steps:>12}  {dt:>7.1f}s  {curriculum.get_tier():>5}")
+
+        # Step-based periodic checkpoint (every --step-checkpoint-freq agent steps)
+        if args.step_checkpoint_freq > 0 and cumul_steps - last_step_ckp >= args.step_checkpoint_freq:
+            ckp_path = algo.save(output_dir)
+            last_step_ckp = cumul_steps
+            print(f"  >> Step Checkpoint @ {cumul_steps:,} steps  ({ckp_path})")
 
         if (i + 1) % args.checkpoint_freq == 0:
             algo.save(output_dir)
@@ -938,8 +945,10 @@ if __name__ == '__main__':
                         choices=["rllib", "validate", "eval"],
                         default="rllib")
     parser.add_argument("--iterations",     type=int,  default=DETrainingConfig.NUM_ITERATIONS)
-    parser.add_argument("--checkpoint-freq",type=int,  default=10)
-    parser.add_argument("--latest-freq",    type=int,  default=1)
+    parser.add_argument("--checkpoint-freq",     type=int,  default=10)
+    parser.add_argument("--latest-freq",         type=int,  default=1)
+    parser.add_argument("--step-checkpoint-freq",type=int,  default=100_000,
+                        help="Save a periodic checkpoint every N agent steps (default: 100000)")
     parser.add_argument("--host",           type=str,  default=DETrainingConfig.HOST)
     parser.add_argument("--port",           type=int,  default=DETrainingConfig.PORT)
     parser.add_argument("--checkpoint",     type=str,  default=None,

@@ -137,7 +137,7 @@ echo Press ENTER to use the defaults above, or type 'c' to customise checkpoints
 set /p "CUSTOM_CHOICE=Choice [ENTER / c]: "
 
 if /i "%CUSTOM_CHOICE%"=="c" (
-    echo.
+    echo(
     echo ----------------------------------------
     echo  Available checkpoints in %SELECTED_RUN%:
     echo ----------------------------------------
@@ -157,23 +157,26 @@ if /i "%CUSTOM_CHOICE%"=="c" (
         set "CKP_!CKP_COUNT!=best"
         echo    !CKP_COUNT!^) best
     )
-    echo.
-    set /p "A_CHOICE=Select checkpoint A (env 0 / 'best' slot) [1-%CKP_COUNT%]: "
-    set /p "B_CHOICE=Select checkpoint B (env 1 / 'latest' slot) [1-%CKP_COUNT%]: "
+    echo(
+    REM 
+    set /p "A_CHOICE=Select checkpoint A ^(env 0 / 'best' slot^) [1-!CKP_COUNT!]: "
+    set /p "B_CHOICE=Select checkpoint B ^(env 1 / 'latest' slot^) [1-!CKP_COUNT!]: "
 
     SET "CKP_A=" & SET "CKP_B="
-    for /l %%i in (1,1,%CKP_COUNT%) do (
+    REM 
+    for /l %%i in (1,1,!CKP_COUNT!) do (
         if "!A_CHOICE!"=="%%i" set "CKP_A=!CKP_%%i!"
         if "!B_CHOICE!"=="%%i" set "CKP_B=!CKP_%%i!"
     )
+    
     if "!CKP_A!"=="" ( echo Invalid selection A. & pause & exit /b 1 )
     if "!CKP_B!"=="" ( echo Invalid selection B. & pause & exit /b 1 )
 
     SET "CHECKPOINT_BEST=/app/training_results/%SELECTED_RUN%/!CKP_A!"
     SET "CHECKPOINT_LATEST=/app/training_results/%SELECTED_RUN%/!CKP_B!"
-    echo.
-    echo  A (env 0) : !CHECKPOINT_BEST!
-    echo  B (env 1) : !CHECKPOINT_LATEST!
+    echo(
+    echo  A ^(env 0^) : !CHECKPOINT_BEST!
+    echo  B ^(env 1^) : !CHECKPOINT_LATEST!
 )
 
 REM ── Launch UE5 ────────────────────────────────────────────────────────────────
@@ -181,7 +184,7 @@ if "%LAUNCH_UE5%"=="true" (
     echo.
     echo [0/2] Launching UE5 with %NUM_SCHOLA_ENVS% Schola environments on port %SCHOLA_BASE_PORT%...
     echo       IMPORTANT: Make sure the level has bUseScriptedOpponent=true on both
-    echo                  MatchManagers (Red = ScriptedAI, Blue = RL).
+    echo                  MatchManagers (Red = ScriptedAI, Blue = RL^).
     if not exist "%UE5_EXE%" (
         echo ERROR: UE5 not found at: %UE5_EXE%
         pause

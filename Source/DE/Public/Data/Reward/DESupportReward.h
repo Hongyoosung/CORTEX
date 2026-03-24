@@ -59,17 +59,24 @@ struct FDESupportRewardSettings
 
 	/** Per-step bonus for being within SupportAllyProximityThreshold of ANY alive ally,
 	 *  regardless of their health. Provides a stable reward floor that does not
-	 *  erode as ally survivability improves. */
+	 *  erode as ally survivability improves. Reduced to prevent Support-Support deadlock. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyFormationBonus = 1.5f;
+	float AllyFormationBonus = 0.8f;
 
 	/** Per-step penalty when Support is farther than this distance from the nearest alive ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
 	float AllyIsolationPenalty = 3.0f;
 
-	/** Distance (cm) beyond which AllyIsolationPenalty fires. */
+	/** Distance (cm) beyond which AllyIsolationPenalty fires.
+	 *  Tightened from 2000 to force Support to follow the most forward alive ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyIsolationDistance = 2000.0f;
+	float AllyIsolationDistance = 1500.0f;
+
+	/** Per-step penalty when 2+ Support agents are within SupportAllyProximityThreshold
+	 *  of each other. Breaks the Support-Support deadlock where two supports satisfy
+	 *  each other's formation requirements and stop following frontline agents. */
+	UPROPERTY(EditAnywhere, Category = "AllyProximity")
+	float SupportCoStackPenalty = 1.5f;
 
 
 	//========== Capture Properties =============

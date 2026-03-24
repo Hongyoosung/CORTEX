@@ -129,7 +129,7 @@ public:
 	// ==================== Zone Control Reward ====================
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
-	float ZoneControlRewardPerBase = 0.2f;
+	float ZoneControlRewardPerBase = 0.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|ZoneControl")
 	float ZoneControlStrikeScale = 0.1f;

@@ -745,7 +745,17 @@ void ADEAgent::SetCommandedClass(EDEClassType NewClass)
 	{
 		ScholaAgent->UpdateCommandedClass(NewClass);
 	}
+	else if (bIsScriptedAI)
+	{
+		ScriptedClassOverride = NewClass;
+	}
 
+	ApplyClassAppearance(NewClass);
+}
+
+void ADEAgent::SetCommandedClassDirect(EDEClassType NewClass)
+{
+	ScriptedClassOverride = NewClass;
 	ApplyClassAppearance(NewClass);
 }
 
@@ -823,9 +833,7 @@ EDEClassType ADEAgent::GetCommandedClass() const
 {
 	if (!ScholaAgent)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[DEAgent] Schola Agent has null"));
-
-		return EDEClassType::Strike;
+		return ScriptedClassOverride;
 	}
 
 	return ScholaAgent->GetCommandedClass();

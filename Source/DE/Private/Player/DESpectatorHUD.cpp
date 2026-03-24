@@ -144,12 +144,17 @@ void ADESpectatorHUD::DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 M
 	const FString HealthLabel = FString::Printf(TEXT("HP  %d%%"), FMath::RoundToInt(HealthPct * 100.0f));
 	DrawBar(HealthLabel, HealthPct, FLinearColor(0.05f, 0.85f, 0.1f, 0.9f), MarginX, TopY, BarWidth, BarHeight);
 
-	const float AmmoPct = (MaxAmmo > 0) ? FMath::Clamp(static_cast<float>(CurrentAmmo) / static_cast<float>(MaxAmmo), 0.0f, 1.0f) : 0.0f;
-	const FString AmmoLabel = FString::Printf(TEXT("AMM %d / %d"), CurrentAmmo, MaxAmmo);
-	DrawBar(AmmoLabel, AmmoPct, FLinearColor(0.9f, 0.75f, 0.1f, 0.9f), MarginX, TopY + RowSpacing, BarWidth, BarHeight);
+	float NextRowY = TopY + RowSpacing;
+	if (MaxAmmo > 0)
+	{
+		const float AmmoPct = FMath::Clamp(static_cast<float>(CurrentAmmo) / static_cast<float>(MaxAmmo), 0.0f, 1.0f);
+		const FString AmmoLabel = FString::Printf(TEXT("AMM %d / %d"), CurrentAmmo, MaxAmmo);
+		DrawBar(AmmoLabel, AmmoPct, FLinearColor(0.9f, 0.75f, 0.1f, 0.9f), MarginX, NextRowY, BarWidth, BarHeight);
+		NextRowY += RowSpacing;
+	}
 
 	const FString ManaLabel = FString::Printf(TEXT("MP  %d%%"), FMath::RoundToInt(ManaPct * 100.0f));
-	DrawBar(ManaLabel, ManaPct, FLinearColor(0.2f, 0.5f, 1.0f, 0.9f), MarginX, TopY + RowSpacing * 2.0f, BarWidth, BarHeight);
+	DrawBar(ManaLabel, ManaPct, FLinearColor(0.2f, 0.5f, 1.0f, 0.9f), MarginX, NextRowY, BarWidth, BarHeight);
 }
 
 void ADESpectatorHUD::DrawBar(const FString& Label, float Fraction, const FLinearColor& BarColor, float X, float Y, float Width, float Height)

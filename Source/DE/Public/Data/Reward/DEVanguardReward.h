@@ -44,7 +44,7 @@ struct FDEVanguardRewardSettings
 	float HealthBonus = 0.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float IdlePenalty = 1.5f;
+	float IdlePenalty = 2.5f;
 
 	//========== Melee Engagement =============
 
@@ -77,7 +77,7 @@ struct FDEVanguardRewardSettings
 
 	/** Per-cm shaping toward nearest enemy/neutral base. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ObjectiveProgressReward = 0.15f;
+	float ObjectiveProgressReward = 0.3f;
 
 	/** Vanguard: moderate capture bonuses — reduced from 8/12 to prevent clamp saturation. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
@@ -91,7 +91,7 @@ struct FDEVanguardRewardSettings
 	float PostCaptureMomentumBonus = 3.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	int32 PostCaptureMomentumDuration = 30;
+	int32 PostCaptureMomentumDuration = 90;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float PostCaptureMomentumMinMove = 100.0f;
