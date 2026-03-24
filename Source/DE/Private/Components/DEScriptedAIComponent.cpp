@@ -102,9 +102,32 @@ void UDEScriptedAIComponent::LoadTierFromConfig()
 
 void UDEScriptedAIComponent::SetDifficultyTier(int32 Tier)
 {
-	CurrentTier = FMath::Clamp(Tier, 0, 2);
+	CurrentTier = FMath::Clamp(Tier, 0, 3);
 	UE_LOG(LogTemp, Log, TEXT("[DEScriptedAI] %s tier set to %d"),
 		GetOwner() ? *GetOwner()->GetName() : TEXT("Unknown"), CurrentTier);
+
+	// Reduce noise as tier increases — higher tiers use consistent, competent strategies.
+	// Tier 3 is fully deterministic so the RL agent faces a stable, hard opponent.
+	switch (CurrentTier)
+	{
+	case 0: NoiseMagnitude = 0.0f;  break; // Pure random — noise has no meaning
+	case 1: NoiseMagnitude = 0.08f; break;
+	case 2: NoiseMagnitude = 0.04f; break;
+	case 3: NoiseMagnitude = 0.0f;  break; // Deterministic expert
+	}
+
+	// Tighten state-machine thresholds at Tier 3: agents fight longer before retreating
+	// and recover faster, making them more aggressive overall.
+	if (CurrentTier >= 3)
+	{
+		RetreatHealthThreshold  = 0.20f;
+		RecoverHealthThreshold  = 0.75f;
+	}
+	else
+	{
+		RetreatHealthThreshold  = 0.30f;
+		RecoverHealthThreshold  = 0.60f;
+	}
 
 	if (OwnerAgent.IsValid())
 	{
@@ -204,38 +227,40 @@ bool UDEScriptedAIComponent::IsEnemyWithinRange(float Radius) const
 
 FDEEQSWeightParameters UDEScriptedAIComponent::GetBaseWeights(EDEClassType Class)
 {
+	// Base weights represent the Tier 2 (Full) per-class profile.
+	// Tier 3 (Expert) overrides these in ApplyTierModifiers.
 	FDEEQSWeightParameters W;
 
 	switch (Class)
 	{
 	case EDEClassType::Strike:
-		W.EnemyObjectiveProximity = 0.8f;   // Dominant: push toward enemy objective
+		W.EnemyObjectiveProximity = 0.8f;   // Push toward enemy objective
 		W.AllyObjectiveProximity  = 0.1f;
-		W.CoverDensity            = 0.3f;   // Reduced: don't hug walls
+		W.CoverDensity            = 0.5f;   // Use cover: ranged DPS benefits from concealment
 		W.EnemyVisibility         = 0.7f;
 		W.AllyProximity           = 0.2f;
-		W.CombatRange             = 0.2f;   // Low: don't fight EnemyObjectiveProximity at match start
-		W.AssignedBaseProximity   = -0.2f;  // Negative: actively leave spawn
+		W.CombatRange             = 0.5f;   // Maintain engagement distance
+		W.AssignedBaseProximity   = -0.2f;  // Actively leave spawn
 		break;
 
 	case EDEClassType::Vanguard:
 		W.EnemyObjectiveProximity = 0.9f;   // Strongest forward push (melee tank)
 		W.AllyObjectiveProximity  = 0.0f;
 		W.CoverDensity            = 0.1f;   // Melee doesn't need cover
-		W.EnemyVisibility         = 0.4f;
-		W.AllyProximity           = 0.3f;
-		W.CombatRange             = -0.5f;
-		W.AssignedBaseProximity   = -0.3f;  // Negative: push out of base
+		W.EnemyVisibility         = 0.7f;   // Seek out enemies actively
+		W.AllyProximity           = 0.2f;
+		W.CombatRange             = -0.7f;  // Close distance aggressively
+		W.AssignedBaseProximity   = -0.3f;  // Push out of base
 		break;
 
 	case EDEClassType::Support:
-		W.EnemyObjectiveProximity = 0.0f;   // Neutral: Patrol +0.2 gives net forward push
+		W.EnemyObjectiveProximity = 0.0f;
 		W.AllyObjectiveProximity  = 0.3f;
-		W.CoverDensity            = 0.6f;
-		W.EnemyVisibility         = -0.2f;
+		W.CoverDensity            = 0.7f;   // Stay in cover while supporting
+		W.EnemyVisibility         = -0.3f;  // Avoid enemy line of sight
 		W.AllyProximity           = 0.9f;   // Follow teammates forward
 		W.CombatRange             = -0.3f;
-		W.AssignedBaseProximity   = -0.1f;  // Slight negative: push out of spawn
+		W.AssignedBaseProximity   = -0.1f;  // Push out of spawn
 		break;
 	}
 
@@ -248,7 +273,9 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 
 	switch (CurrentTier)
 	{
-	case 0: // Random roam — randomize all weights each tick interval
+	case 0:
+		// Random roam — randomize all weights each tick interval.
+		// Introduces chaotic but non-threatening behaviour for early curriculum.
 		W.EnemyObjectiveProximity = FMath::FRandRange(-1.0f, 1.0f);
 		W.AllyObjectiveProximity  = FMath::FRandRange(-1.0f, 1.0f);
 		W.CoverDensity            = FMath::FRandRange(-1.0f, 1.0f);
@@ -258,17 +285,78 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 		W.AssignedBaseProximity   = FMath::FRandRange(-1.0f, 1.0f);
 		break;
 
-	case 1: // Directed — flat weights targeting nearest enemy base/agent; no per-class differentiation
-		W.EnemyObjectiveProximity = 0.9f;
-		W.AllyObjectiveProximity  = 0.0f;
-		W.CoverDensity            = 0.0f;
-		W.EnemyVisibility         = 0.6f;
-		W.AllyProximity           = 0.0f;
-		W.CombatRange             = 0.0f;
-		W.AssignedBaseProximity   = -0.3f;
+	case 1:
+		// Directed — per-class differentiation but no state machine.
+		// Strike keeps range, Vanguard charges, Support follows.
+		switch (OwnerAgent.IsValid() ? OwnerAgent->GetCommandedClass() : EDEClassType::Strike)
+		{
+		case EDEClassType::Strike:
+			W.EnemyObjectiveProximity = 0.7f;
+			W.AllyObjectiveProximity  = 0.0f;
+			W.CoverDensity            = 0.4f;
+			W.EnemyVisibility         = 0.8f;
+			W.AllyProximity           = 0.0f;
+			W.CombatRange             = 0.5f;
+			W.AssignedBaseProximity   = -0.3f;
+			break;
+		case EDEClassType::Vanguard:
+			W.EnemyObjectiveProximity = 1.0f;
+			W.AllyObjectiveProximity  = 0.0f;
+			W.CoverDensity            = 0.0f;
+			W.EnemyVisibility         = 0.5f;
+			W.AllyProximity           = 0.0f;
+			W.CombatRange             = -0.8f;
+			W.AssignedBaseProximity   = -0.4f;
+			break;
+		case EDEClassType::Support:
+			W.EnemyObjectiveProximity = -0.2f;
+			W.AllyObjectiveProximity  = 0.5f;
+			W.CoverDensity            = 0.7f;
+			W.EnemyVisibility         = -0.4f;
+			W.AllyProximity           = 1.0f;
+			W.CombatRange             = -0.3f;
+			W.AssignedBaseProximity   = -0.1f;
+			break;
+		}
 		break;
 
-	case 2: // Full — use per-class base weights; state machine active
+	case 2:
+		// Full — use per-class base weights from GetBaseWeights(); state machine active.
+		break;
+
+	case 3:
+		// Expert — maximally competent, fully deterministic (NoiseMagnitude=0).
+		// Strike kites at range; Vanguard flanks; Support strict rear-guard.
+		switch (OwnerAgent.IsValid() ? OwnerAgent->GetCommandedClass() : EDEClassType::Strike)
+		{
+		case EDEClassType::Strike:
+			W.EnemyObjectiveProximity = 0.8f;
+			W.AllyObjectiveProximity  = 0.0f;
+			W.CoverDensity            = 0.7f;   // Prefer flanking/cover positions
+			W.EnemyVisibility         = 0.9f;   // Always maintain sight
+			W.AllyProximity           = -0.1f;  // Spread for fire coverage
+			W.CombatRange             = 0.8f;   // Strong range discipline
+			W.AssignedBaseProximity   = -0.3f;
+			break;
+		case EDEClassType::Vanguard:
+			W.EnemyObjectiveProximity = 1.0f;
+			W.AllyObjectiveProximity  = 0.0f;
+			W.CoverDensity            = 0.0f;
+			W.EnemyVisibility         = 0.8f;
+			W.AllyProximity           = -0.2f;  // Spread flanks independently
+			W.CombatRange             = -1.0f;  // Always close to melee
+			W.AssignedBaseProximity   = -0.5f;
+			break;
+		case EDEClassType::Support:
+			W.EnemyObjectiveProximity = -0.5f;  // Stay away from enemy objectives
+			W.AllyObjectiveProximity  = 0.4f;
+			W.CoverDensity            = 0.9f;   // Maximum cover usage
+			W.EnemyVisibility         = -0.5f;  // Avoid all enemy sight
+			W.AllyProximity           = 1.0f;   // Lock onto team
+			W.CombatRange             = -0.4f;
+			W.AssignedBaseProximity   = -0.2f;
+			break;
+		}
 		break;
 	}
 
@@ -289,7 +377,7 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyNoise(const FDEEQSWeightPara
 
 FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWeightParameters& In, EDEClassType Class) const
 {
-	// State machine only active at Tier 2 (full architecture)
+	// State machine active at Tier 2 and above
 	if (CurrentTier < 2) return In;
 
 	FDEEQSWeightParameters W = In;

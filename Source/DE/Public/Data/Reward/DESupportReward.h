@@ -58,9 +58,10 @@ struct FDESupportRewardSettings
 	float AllyApproachReward = 0.05f;
 
 	/** Per-step bonus for being within SupportAllyProximityThreshold of ANY alive ally,
-	 *  regardless of their health. Ensures Support always stays with the team. */
+	 *  regardless of their health. Provides a stable reward floor that does not
+	 *  erode as ally survivability improves. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyFormationBonus = 0.5f;
+	float AllyFormationBonus = 1.5f;
 
 	/** Per-step penalty when Support is farther than this distance from the nearest alive ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")

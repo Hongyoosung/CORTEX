@@ -45,6 +45,40 @@ services:
 
 
   # =============================================================================
+  # EVALUATION SERVICE
+  # =============================================================================
+
+  # Live evaluation: best vs latest checkpoint head-to-head against ScriptedAI
+  # Requires UE5 running with exactly 2 environments (bUseScriptedOpponent=true)
+  eval:
+    build:
+      context: .
+      dockerfile: DE_Training/Dockerfile
+    container_name: DE_eval
+    volumes:
+      - ./DE_Training/training_results:/app/training_results
+    environment:
+      - CHECKPOINT_BEST=${CHECKPOINT_BEST}
+      - CHECKPOINT_LATEST=${CHECKPOINT_LATEST}
+      - EVAL_EPISODES=${EVAL_EPISODES:-50}
+      - HOST=host.docker.internal
+      - PORT=50051
+      - POST_RESET_DELAY=${POST_RESET_DELAY:-4.0}
+      - PYTHONUNBUFFERED=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: >-
+      sh -c "python training/eval_live.py
+      --checkpoint-best $$CHECKPOINT_BEST
+      --checkpoint-latest $$CHECKPOINT_LATEST
+      --episodes $$EVAL_EPISODES
+      --host host.docker.internal
+      --port 50051"
+    profiles:
+      - eval
+
+
+  # =============================================================================
   # MONITORING SERVICES
   # =============================================================================
 

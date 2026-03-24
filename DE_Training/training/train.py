@@ -37,6 +37,10 @@ from policy import (
 # Ablation toggle: set USE_SELF_ATTN=0 to train without Self-Attention
 USE_SELF_ATTN = os.environ.get('USE_SELF_ATTN', '1') == '1'
 
+
+
+
+
 def _create_policy_network(hidden=64, heads=4):
     """Create policy based on USE_SELF_ATTN toggle."""
     if USE_SELF_ATTN:
@@ -51,6 +55,8 @@ try:
 except ImportError:
     RLLIB_AVAILABLE = False
     print("Warning: RLlib not available. Install with: pip install ray[rllib]")
+
+
 
 
 # ── Reward configuration ──────────────────────────────────────────────────────
@@ -80,6 +86,24 @@ def process_reward(raw_reward: float) -> float:
     r = raw_reward * REWARD_CONFIG["reward_scale"]
     r = float(np.clip(r, -REWARD_CONFIG["reward_clip"], REWARD_CONFIG["reward_clip"]))
     return r
+
+
+
+
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
+
+class DECustomCallbacks(DefaultCallbacks):
+    def on_episode_end(self, *, worker, base_env, policies, episode, **kwargs):
+        # custom_metrics are injected into each agent's info dict by env_wrapper.
+        # They sit under info["custom_metrics"], not at the top level of info.
+        for agent_id in episode.get_agents():
+            info = episode.last_info_for(agent_id)
+            cm = (info or {}).get("custom_metrics", {})
+            if cm:
+                for key in ("rl_win_rate", "script_win_rate", "draw_rate"):
+                    if key in cm:
+                        episode.custom_metrics[key] = cm[key]
+                break  # 팀 전체의 지표이므로 한 번만 기록하면 충분함
 
 
 # ── Curriculum Scheduler ──────────────────────────────────────────────────────
@@ -352,6 +376,9 @@ if RLLIB_AVAILABLE:
             metrics_num_episodes_for_smoothing=10,
             min_sample_timesteps_per_iteration=DETrainingConfig.TRAIN_BATCH_SIZE,
         )
+
+        config = config.callbacks(DECustomCallbacks)
+        
         config = config.training(
             lr=DETrainingConfig.LEARNING_RATE,
             lr_schedule=DETrainingConfig.LR_SCHEDULE,
@@ -595,6 +622,14 @@ def train_with_rllib(args):
         else:
             # No decided episodes this iteration — skip promotion check
             tier_promoted = False
+
+        for rate_key, tb_tag in (
+            ("script_win_rate_mean", "curriculum/script_win_rate"),
+            ("draw_rate_mean",       "curriculum/draw_rate"),
+        ):
+            v = custom.get(rate_key, custom.get(rate_key.replace("_mean", "")))
+            if v is not None and not np.isnan(float(v)):
+                tb.add_scalar(tb_tag, float(v), cumul_steps)
         tb.add_scalar("curriculum/scripted_ai_tier", curriculum.get_tier(), cumul_steps)
         if tier_promoted:
             tb.add_scalar("curriculum/tier_promotion_step", cumul_steps, curriculum.get_tier())

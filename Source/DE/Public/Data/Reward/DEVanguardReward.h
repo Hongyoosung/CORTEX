@@ -56,18 +56,14 @@ struct FDEVanguardRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Melee")
 	float MeleeRangeDistance = 1000.0f;
 
-	/** Per-cm shaping reward for approaching a visible enemy. Provides gradient toward melee range. */
+	/** Per-cm shaping reward for approaching a visible enemy. Provides gradient toward melee range.
+	 *  Calibrated at ~200 cm/step typical movement → ~0.4 reward/step at full approach. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
-	float EnemyApproachReward = 0.06f;
+	float EnemyApproachReward = 0.002f;
 
 	/** Maximum distance (cm) at which EnemyApproachReward activates. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
 	float EnemyApproachMaxRange = 2500.0f;
-
-	/** Per-step penalty when taking damage but not moving toward the attacker.
-	 *  Prevents standing still under fire. */
-	UPROPERTY(EditAnywhere, Category = "Melee")
-	float DamageTakenIdlePenalty = 3.0f;
 
 	//========== Capture Properties (same tendency as Strike) =============
 

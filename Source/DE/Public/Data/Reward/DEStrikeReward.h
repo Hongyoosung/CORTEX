@@ -29,9 +29,9 @@ struct FDEStrikeRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthPenalty = 0.0f;
 
-	/** Strike: -20 per death (base DeathPenaltyReward=100 × 0.2) */
+	/** Strike: -10 per death (base DeathPenaltyReward=100 × 0.1) — kept within StepRewardClampMin to avoid impulse spikes. */
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float DeathScale = 0.2f;
+	float DeathScale = 0.1f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float IdlePenalty = 1.5f;
@@ -78,9 +78,10 @@ struct FDEStrikeRewardSettings
 	float MinCombatRange = 800.0f;
 
 	/** Per-step penalty when any visible enemy is within MinCombatRange.
-	 *  Must dominate capture zone bonuses to enforce range discipline. */
+	 *  Suppressed while actively capping a non-friendly zone (range discipline
+	 *  is irrelevant when the agent must stand on the point). */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
-	float TooCloseEnemyPenalty = 15.0f;
+	float TooCloseEnemyPenalty = 6.0f;
 
 	/** Per-step bonus when a visible enemy is between MinCombatRange and MaxEngagementRange.
 	 *  Encourages maintaining optimal attack distance. */

@@ -57,7 +57,7 @@ public:
 	// Difficulty Tier System
 	//========================================
 
-	/** Set the difficulty tier (0=Random, 1=Directed, 2=Full) */
+	/** Set the difficulty tier (0=Random, 1=Directed, 2=Full, 3=Expert) */
 	UFUNCTION(BlueprintCallable, Category = "ScriptedAI")
 	void SetDifficultyTier(int32 Tier);
 

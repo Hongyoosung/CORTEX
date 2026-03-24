@@ -1,1 +1,0 @@
-{"type": "Algorithm", "checkpoint_version": "1.1", "format": "cloudpickle", "state_file": "/app/training_results/20260323_165056/best/algorithm_state.pkl", "policy_ids": ["support_policy", "strike_policy", "vanguard_policy"], "ray_version": "2.52.1", "ray_commit": "4ebdc0abe5e5a551625fe7f87053c7e668a6ff74"}

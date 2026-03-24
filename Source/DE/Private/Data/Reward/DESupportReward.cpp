@@ -72,8 +72,10 @@ float DEComputeSupportStepReward(
 			{ bAnyNonSupportAlive = true; break; }
 		}
 
-		float HighestAccumDamage = 0.0f;
-		float LowestHP = FLT_MAX;
+		// Target selection: blend urgency (low current HP) with recent damage activity.
+		// Score = (1 - HP) * 2 + normalized_accum * 0.3, so a critically low ally
+		// always outranks one who merely took recent chip damage.
+		float BestScore = -1.0f;
 		int32 NewInjuredIdx = -1;
 
 		for (int32 i = 0; i < AllyCount; ++i)
@@ -84,17 +86,13 @@ float DEComputeSupportStepReward(
 				AllyChars[i]->GetCommandedClass() == EDEClassType::Support)
 				continue;
 
-			// Primary: most accumulated recent damage
-			if (i < InOutState.AllyAccumulatedDamage.Num() &&
-				InOutState.AllyAccumulatedDamage[i] > HighestAccumDamage)
+			const float AccumNorm = (i < InOutState.AllyAccumulatedDamage.Num())
+				? FMath::Min(InOutState.AllyAccumulatedDamage[i] / 50.0f, 1.0f)
+				: 0.0f;
+			const float UrgencyScore = (1.0f - AllyHP) * 2.0f + AccumNorm * 0.3f;
+			if (UrgencyScore > BestScore)
 			{
-				HighestAccumDamage = InOutState.AllyAccumulatedDamage[i];
-				NewInjuredIdx = i;
-			}
-			// Fallback: lowest current HP (when no recent damage recorded)
-			else if (HighestAccumDamage == 0.0f && AllyHP < LowestHP)
-			{
-				LowestHP = AllyHP;
+				BestScore     = UrgencyScore;
 				NewInjuredIdx = i;
 			}
 		}
@@ -252,12 +250,11 @@ float DEComputeSupportStepReward(
 		}
 	}
 
-	// ---- Mutual weighting: prevent proximity + heal from fully stacking ----
-	// Uses max(a,b) + 0.3 * min(a,b) so the dominant channel gets full credit
-	// but the secondary channel is heavily discounted.
-	const float MajorReward = FMath::Max(ProximityReward, HealReward);
-	const float MinorReward = FMath::Min(ProximityReward, HealReward);
-	Reward += MajorReward + 0.3f * MinorReward;
+	// ---- Independent channels: proximity and healing are distinct role behaviours ----
+	// Both contribute fully so that performing both simultaneously (staying near an
+	// injured ally AND actively healing them) is correctly rewarded.
+	Reward += ProximityReward;
+	Reward += HealReward;
 
 	return Reward;
 }

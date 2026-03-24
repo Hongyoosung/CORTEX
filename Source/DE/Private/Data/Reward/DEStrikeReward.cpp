@@ -27,6 +27,23 @@ float DEComputeStrikeStepReward(
 	if (HealthLoss > Settings->StrikeHealthLossThreshold)
 		Reward -= Settings->StrikeReward.HealthPenalty * HealthLoss;
 
+	// Early zone check: TooCloseEnemyPenalty is suppressed while actively capping.
+	// A Strike standing on a non-friendly point must tolerate close enemies — the
+	// ZonePresenceBonus already provides the correct incentive there.
+	bool bInNonFriendlyZoneEarly = false;
+	if (!bIsRespawnStep && EnvCapturePoints.Num() > 0)
+	{
+		for (const ADECapturePoint* CP : EnvCapturePoints)
+		{
+			if (!CP || CP->GetTeamID_Implementation() == MyTeamID) continue;
+			if (FVector::DistSquared(Current.Position, CP->GetActorLocation()) <= CaptureRadiusSq)
+			{
+				bInNonFriendlyZoneEarly = true;
+				break;
+			}
+		}
+	}
+
 	// Ranged combat: penalise too close, reward optimal range
 	bool bEnemyTooClose = false;
 	{
@@ -52,7 +69,9 @@ float DEComputeStrikeStepReward(
 		if (bTooClose)
 		{
 			bEnemyTooClose = true;
-			Reward -= Settings->StrikeReward.TooCloseEnemyPenalty;
+			// Only penalise range violation outside capture zones
+			if (!bInNonFriendlyZoneEarly)
+				Reward -= Settings->StrikeReward.TooCloseEnemyPenalty;
 			InOutState.bWasTooCloseAtKill = true;
 		}
 		else if (bAtOptimalRange)

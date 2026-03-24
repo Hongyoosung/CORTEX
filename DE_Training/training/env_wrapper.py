@@ -186,8 +186,10 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._reward_debug_count  = 0
 
         # Win rate tracking (for curriculum scheduler)
-        self._rl_episode_wins:  int = 0
-        self._rl_episodes_total: int = 0
+        self._rl_episode_wins:     int = 0
+        self._script_episode_wins: int = 0
+        self._draw_episodes:       int = 0
+        self._rl_episodes_total:   int = 0
 
         # Per-strategy reward tracking
         # Keys: 0=Strike, 1=Vanguard, 2=Support  (StrategyType from UE5 info)
@@ -588,7 +590,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
                             term_d[aid] = True
                         else:
                             trunc_d[aid] = True
-                    self._log_episode(ei, agents, term_d, trunc_d)
+                    self._log_episode(ei, agents, term_d, trunc_d, info_d)
                     self._completed_envs.add(ei)
                     self._env_episodes_done[ei] += 1
 
@@ -835,11 +837,16 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 metrics[f"reward_component_{comp}"] = float(np.mean(buf))
                 self._component_ep_sums[comp] = []
 
-        # Win rate (only non-timeout episodes count)
+        # Win/loss/draw rates (only non-timeout episodes count)
         if self._rl_episodes_total > 0:
-            metrics["rl_win_rate"] = self._rl_episode_wins / self._rl_episodes_total
-        self._rl_episode_wins   = 0
-        self._rl_episodes_total = 0
+            total = self._rl_episodes_total
+            metrics["rl_win_rate"]     = self._rl_episode_wins     / total
+            metrics["script_win_rate"] = self._script_episode_wins / total
+            metrics["draw_rate"]       = self._draw_episodes        / total
+        self._rl_episode_wins     = 0
+        self._script_episode_wins = 0
+        self._draw_episodes       = 0
+        self._rl_episodes_total   = 0
 
         # Debug: log strategy buffer state periodically to diagnose routing issues
         if self._total_step_count <= 5 or self._total_step_count % 200 == 0:
@@ -871,23 +878,42 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._max_episode_steps_synced = True
         print(f"[DEEntityCentricEnv] max_episode_steps={self._max_episode_steps} (default)")
 
-    def _log_episode(self, ei, agents, term_d, trunc_d):
+    def _log_episode(self, ei, agents, term_d, trunc_d, info_d=None):
         dur     = time.time() - (self._env_episode_start.get(ei) or time.time())
         total_r = sum(self._agent_ep_rewards.get(a, 0.0) for a in agents)
         truncated = any(trunc_d.get(a) for a in agents)
         end_t   = "TRUNCATED" if truncated else "TERMINATED"
 
-        # Win rate tracking: early termination (TERMINATED, not TRUNCATED) with
-        # positive mean episode reward indicates RL team captured all points (win).
-        # Timeout episodes (TRUNCATED) do not count toward win rate.
+        # Win/loss/draw tracking from explicit UE5 WinnerTeamID.
+        # RL team = Blue (TeamID 1), Script AI team = Red (TeamID 0), -1 = draw.
+        # Timeout episodes (TRUNCATED) do not count toward win/loss/draw.
+        winner_team_id = None
+        if info_d is not None:
+            for aid in agents:
+                raw = info_d.get(aid, {}).get("WinnerTeamID")
+                if raw is not None:
+                    try:
+                        winner_team_id = int(raw)
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
         if not truncated:
             self._rl_episodes_total += 1
-            mean_r = total_r / max(1, len(agents))
-            if mean_r > 0.0:
+            if winner_team_id == 1:        # Blue / RL team wins
                 self._rl_episode_wins += 1
+                result_str = "RL_WIN"
+            elif winner_team_id == 0:      # Red / Script AI team wins
+                self._script_episode_wins += 1
+                result_str = "SCRIPT_WIN"
+            else:                          # -1 or missing → draw / unknown
+                self._draw_episodes += 1
+                result_str = "DRAW"
+        else:
+            result_str = "TIMEOUT"
 
         print("=" * 70)
-        print(f"[EP END] env={ei}  ep={self._env_episodes_done[ei]}  {end_t}")
+        print(f"[EP END] env={ei}  ep={self._env_episodes_done[ei]}  {end_t}  result={result_str}")
         print(f"  steps={self._env_episode_steps[ei]}  dur={dur:.1f}s  total_r={total_r:.2f}")
         for a in sorted(agents):
             print(f"    {a}: {self._agent_ep_rewards.get(a, 0.0):.2f}")
