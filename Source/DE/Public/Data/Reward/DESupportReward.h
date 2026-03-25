@@ -138,6 +138,16 @@ struct FDESupportRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Positioning")
 	float AllyShieldBonus = 0.3f;
 
+	/** Hard minimum distance (cm) Support must maintain from any visible enemy.
+	 *  Fires regardless of ally positions — prevents Support from charging into melee range
+	 *  while following an injured frontline ally. */
+	UPROPERTY(EditAnywhere, Category = "Positioning")
+	float MinEnemyDistancePenaltyThreshold = 1000.0f;
+
+	/** Per-step penalty when Support is closer than MinEnemyDistancePenaltyThreshold to any visible enemy. */
+	UPROPERTY(EditAnywhere, Category = "Positioning")
+	float TooCloseEnemyPenalty = 4.0f;
+
 
 	//========== Movement Properties =============
 

@@ -211,6 +211,13 @@ float DEComputeSupportStepReward(
 			}
 		}
 
+		// Absolute enemy proximity penalty — fires regardless of ally positions.
+		// Prevents Support from charging into melee range while chasing an injured ally.
+		if (NearestEnemyDist < FLT_MAX && NearestEnemyDist < Settings->SupportReward.MinEnemyDistancePenaltyThreshold)
+		{
+			Reward -= Settings->SupportReward.TooCloseEnemyPenalty;
+		}
+
 		if (NearestEnemyDist < FLT_MAX && NearestEnemyDist <= Settings->SupportReward.RearGuardMaxEnemyDist)
 		{
 			float NearestAllyToEnemyDist = FLT_MAX;

@@ -291,7 +291,7 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 			W.AllyObjectiveProximity  = 0.0f;
 			W.CoverDensity            = 0.7f;   // Prefer flanking/cover positions
 			W.EnemyVisibility         = 0.9f;   // Always maintain sight
-			W.AllyProximity           = -0.1f;  // Spread for fire coverage
+			W.AllyProximity           = 0.2f;   // Loose team cohesion — advance with squad
 			W.CombatRange             = 0.8f;   // Strong range discipline
 			W.AssignedBaseProximity   = -0.3f;
 			break;
@@ -300,7 +300,7 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 			W.AllyObjectiveProximity  = 0.0f;
 			W.CoverDensity            = 0.0f;
 			W.EnemyVisibility         = 0.8f;
-			W.AllyProximity           = -0.2f;  // Spread flanks independently
+			W.AllyProximity           = 0.2f;   // Flank with squad rather than fully solo
 			W.CombatRange             = -1.0f;  // Always close to melee
 			W.AssignedBaseProximity   = -0.5f;
 			break;
@@ -309,7 +309,11 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 			W.AllyObjectiveProximity  = 0.4f;
 			W.CoverDensity            = 0.9f;   // Maximum cover usage
 			W.EnemyVisibility         = -0.5f;  // Avoid all enemy sight
-			W.AllyProximity           = 1.0f;   // Lock onto team
+			// 0.5 (not 1.0) — moderate pull keeps Support within healing range
+			// without two Support agents converging to the exact same point.
+			// For hard minimum-distance enforcement the EQS AllyProximity test
+			// would need a donut scoring curve; this is the weight-layer cap.
+			W.AllyProximity           = 0.5f;
 			W.CombatRange             = -0.4f;
 			W.AssignedBaseProximity   = -0.2f;
 			break;
@@ -370,6 +374,13 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWe
 		// In fight — maximize visibility, close distance slightly
 		W.EnemyVisibility = FMath::Min(W.EnemyVisibility + 0.2f, 1.0f);
 		W.CombatRange     = FMath::Max(W.CombatRange - 0.1f, -1.0f);
+		// Support: cap AllyProximity so two Support agents don't converge
+		// to the same position while trying to heal the same target.
+		// 0.4 provides enough pull to stay in healing range without stacking.
+		if (Class == EDEClassType::Support)
+		{
+			W.AllyProximity = FMath::Min(W.AllyProximity, 0.4f);
+		}
 		break;
 
 	case EScriptedAIState::Retreat:
