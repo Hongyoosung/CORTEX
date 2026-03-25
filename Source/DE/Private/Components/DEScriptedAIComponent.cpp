@@ -3,11 +3,6 @@
 #include "Components/DEScriptedAIComponent.h"
 #include "Characters/DEAgent.h"
 #include "Team/DETeamInterface.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
-#include "Serialization/JsonReader.h"
-#include "Serialization/JsonSerializer.h"
-#include "Dom/JsonObject.h"
 #include "Engine/OverlapResult.h"
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -41,12 +36,6 @@ void UDEScriptedAIComponent::BeginPlay()
 	const float Stagger = FMath::FRandRange(0.0f, UpdateInterval * 0.6f);
 	PrimaryComponentTick.TickInterval = UpdateInterval + Stagger;
 
-	// Load tier set by train.py curriculum scheduler
-	LoadTierFromConfig();
-
-	// Apply initial weights
-	ApplyWeightsToAgent();
-
 	UE_LOG(LogTemp, Log, TEXT("[DEScriptedAI] Initialized on %s (Tier %d, State %s)"),
 		*GetOwner()->GetName(), CurrentTier,
 		*StaticEnum<EScriptedAIState>()->GetNameStringByValue((int64)CurrentState));
@@ -61,38 +50,6 @@ void UDEScriptedAIComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	// State machine runs every tick interval (0.5s)
 	UpdateAIState();
 	ApplyWeightsToAgent();
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Config loading (tier set by train.py)
-// ─────────────────────────────────────────────────────────────────────────────
-
-void UDEScriptedAIComponent::LoadTierFromConfig()
-{
-	const FString ConfigPath = FPaths::ProjectDir() / TEXT("scripted_ai_config.json");
-
-	FString JsonStr;
-	if (!FFileHelper::LoadFileToString(JsonStr, *ConfigPath))
-	{
-		// Config not present — keep default tier
-		return;
-	}
-
-	TSharedPtr<FJsonObject> JsonObj;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
-	if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[DEScriptedAI] Failed to parse scripted_ai_config.json"));
-		return;
-	}
-
-	int32 NewTier = CurrentTier;
-	if (JsonObj->TryGetNumberField(TEXT("difficulty_tier"), NewTier))
-	{
-		SetDifficultyTier(NewTier);
-		UE_LOG(LogTemp, Log, TEXT("[DEScriptedAI] Loaded tier %d from scripted_ai_config.json"), CurrentTier);
-	}
 }
 
 

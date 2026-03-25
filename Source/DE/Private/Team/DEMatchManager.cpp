@@ -138,6 +138,21 @@ void ADEMatchManager::MatchConditionTimerTick()
 
 	MatchTimer += DeltaTime;
 
+	// ── Passive income (1 pt/s per owned capture point) ──
+	for (auto& Pair : TeamStates)
+	{
+		const int32 TeamID = Pair.Key;
+		const int32 OwnedPoints = Pair.Value.CapturePointCount;
+		if (OwnedPoints > 0 && PassiveIncomeRate > 0.0f)
+		{
+			const int32 Earned = FMath::RoundToInt(OwnedPoints * PassiveIncomeRate * DeltaTime);
+			if (Earned > 0)
+			{
+				AddTeamScore(TeamID, Earned);
+			}
+		}
+	}
+
 	// ── Score-based early win ──
 	if (WinScoreThreshold > 0)
 	{
@@ -325,16 +340,22 @@ ADEAgent* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	Agent->OnAgentDeathEvent_Delegate.AddDynamic(this, &ADEMatchManager::RegisterKill);
 	Agent->OnAgentDied_Delegate.AddDynamic(this, &ADEMatchManager::OnAgentDied);
 
-	// Fixed-opponent mode: attach scripted AI component to opponent team
+	// Fixed-opponent mode: use existing scripted AI component (from BP_ScriptAgent)
+	// or create one dynamically as fallback. Tier is configured in the editor.
 	if (bUseScriptedOpponent && TeamID == ScriptedOpponentTeamID)
 	{
 		Agent->bIsScriptedAI = true;
 
-		UDEScriptedAIComponent* ScriptedComp = NewObject<UDEScriptedAIComponent>(Agent);
-		ScriptedComp->RegisterComponent();
+		UDEScriptedAIComponent* ScriptedComp = Agent->FindComponentByClass<UDEScriptedAIComponent>();
+		if (!ScriptedComp)
+		{
+			ScriptedComp = NewObject<UDEScriptedAIComponent>(Agent);
+			ScriptedComp->RegisterComponent();
+		}
+
 		ScriptedComp->ResampleNoise(EnvRandomStream);
 
-		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Scripted AI attached to %s (Team %d, Tier %d)"),
+		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Scripted AI on %s (Team %d, Tier %d)"),
 			*Agent->GetName(), TeamID, ScriptedComp->GetDifficultyTier());
 	}
 
@@ -705,6 +726,21 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 {
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Capture point transferred Team %d → Team %d | Scores: [%d, %d]"),
 		EnvID, PreviousTeam, NewTeam, TeamScores[0], TeamScores[1]);
+
+	// Update CapturePointCount for both teams
+	for (auto& Pair : TeamStates)
+	{
+		Pair.Value.CapturePointCount = 0;
+	}
+	for (const ADECapturePoint* CP : EnvCapturePoints)
+	{
+		if (!CP) continue;
+		const int32 InOwner = CP->GetOwnership();
+		if (FDETeamState* State = TeamStates.Find(InOwner))
+		{
+			State->CapturePointCount++;
+		}
+	}
 
 	// Award match score to the capturing team
 	if (NewTeam >= 0 && CaptureScorePoints > 0)

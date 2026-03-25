@@ -163,7 +163,16 @@ void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
     }
     else
     {
-        BB->SetValueAsBool(TEXT("HasTarget"), false);
+        // Only clear HasTarget when the stored TargetEnemy is also gone.
+        // OnPerceptionUpdated fires for all stimuli (damage, hearing, etc.);
+        // a non-sight update would return no sight actors and incorrectly
+        // clear HasTarget even though TargetEnemy is still a valid enemy.
+        AActor* ExistingTarget = Cast<AActor>(BB->GetValueAsObject(TEXT("TargetEnemy")));
+        if (!ExistingTarget || !IsValid(ExistingTarget))
+        {
+            BB->SetValueAsObject(TEXT("TargetEnemy"), nullptr);
+            BB->SetValueAsBool(TEXT("HasTarget"), false);
+        }
     }
 }
 

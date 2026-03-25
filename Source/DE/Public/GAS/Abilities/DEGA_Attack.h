@@ -42,6 +42,7 @@ public:
 		const FGameplayAbilityActivationInfo ActivationInfo,
 		const FGameplayEventData* TriggerEventData) override;
 
+
 	// --- Ammo Management ---
 
 	void SetConfig(const FDEAttackAbilityConfig& InConfig) { Config = InConfig; CurrentAmmo = Config.MaxAmmo; }

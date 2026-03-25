@@ -37,10 +37,9 @@ enum class EScriptedAIState : uint8
  *
  * Features:
  *  - Per-class (Strike/Vanguard/Support) hardcoded weight profiles
- *  - 3 difficulty tiers (Random → Directed → Full)
+ *  - 4 difficulty tiers (0=Random, 1=Directed, 2=Full, 3=Expert)
  *  - Per-episode weight noise (±0.1) for robustness
  *  - Lightweight state machine (Patrol→Approach→Engage→Retreat)
- *  - Tier auto-progression via JSON config written by train.py
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class DE_API UDEScriptedAIComponent : public UActorComponent
@@ -65,10 +64,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ScriptedAI")
 	int32 GetDifficultyTier() const { return CurrentTier; }
 
-	/** Read difficulty_tier from <ProjectDir>/scripted_ai_config.json (written by train.py) */
-	UFUNCTION(BlueprintCallable, Category = "ScriptedAI")
-	void LoadTierFromConfig();
-
 	/** Get the scripted EQS weights for a given class at the current tier + state */
 	FDEEQSWeightParameters GetScriptedWeights(EDEClassType Class) const;
 
@@ -83,7 +78,7 @@ public:
 	EScriptedAIState GetAIState() const { return CurrentState; }
 
 protected:
-	/** Current difficulty tier */
+	/** Current difficulty tier (set in editor: 0=Random, 1=Directed, 2=Full, 3=Expert) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI")
 	int32 CurrentTier = 0;
 
