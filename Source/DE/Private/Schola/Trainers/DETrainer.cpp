@@ -77,6 +77,10 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
     {
         UE_LOG(LogTemp, Warning, TEXT("[DETrainer] DEMatchManager not yet available — GatherStateSnapshot will fall back to world scan"));
     }
+    else
+    {
+        CachedMatchManager->OnMatchConditionMet.AddDynamic(this, &ADETrainer::OnMatchEnded);
+    }
 
     // Cache DEScholaEnvironment — find the one whose OwnedMatchManager matches ours
     {
@@ -176,9 +180,8 @@ void ADETrainer::Tick(float DeltaTime)
             // That blocks AllAgentsThink()'s AllDone=true check, preventing the SAME_STEP
             // auto-reset from firing and leaving alive agents permanently stuck in Truncated.
             CurrentEpisodeSteps++;
-            UE_LOG(LogTemp, Log, TEXT("[DETrainer] %s (DEAD): action drained (step %d/%d)"),
-                *ControlledCharacter->GetName(), CurrentEpisodeSteps,
-                MaxEpisodeSteps);
+            UE_LOG(LogTemp, Log, TEXT("[DETrainer] %s (DEAD): action drained (step %d)"),
+                *ControlledCharacter->GetName(), CurrentEpisodeSteps);
         }
         bWasDeadLastTick = true;
         return;
@@ -336,15 +339,25 @@ float ADETrainer::ComputeReward()
 
 bool ADETrainer::IsEpisodeDone()
 {
-    // 종료 조건
-    const int32 MaxSteps = MaxEpisodeSteps;
-    if (CurrentEpisodeSteps >= MaxSteps)
+    // Primary: DEMatchManager fired OnMatchConditionMet (score threshold / timeout)
+    if (bMatchEnded)
+        return true;
+
+    // Safety net: should never fire in normal play (set MaxEpisodeSteps=9999 in editor)
+    if (CurrentEpisodeSteps >= MaxEpisodeSteps)
     {
-        UE_LOG(LogTemp, Log, TEXT("Episode ended: Max steps reached"));
+        UE_LOG(LogTemp, Warning, TEXT("[DETrainer] Safety-net step limit reached (%d) — "
+            "DEMatchManager did not end the episode. Check MaxMatchDuration / WinScoreThreshold."),
+            MaxEpisodeSteps);
         return true;
     }
-    
+
     return false;
+}
+
+void ADETrainer::OnMatchEnded(EDEMatchState WinnerState, int32 WinningTeamID)
+{
+    bMatchEnded = true;
 }
 
 void ADETrainer::ResetEpisode()
@@ -358,6 +371,7 @@ void ADETrainer::ResetEpisode()
     // 통계 초기화
     CurrentEpisodeSteps = 0;
     EpisodeReward = 0.0f;
+    bMatchEnded = false;
 
     // v10.2: Squad Commander가 새로운 전략을 할당
     if (ControlledCharacter)

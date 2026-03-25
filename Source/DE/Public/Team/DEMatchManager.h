@@ -289,7 +289,7 @@ public:
 
 	/** Score points awarded to the capturing team per capture */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Score")
-	int32 CaptureScorePoints = 30;
+	int32 CaptureScorePoints = 20;
 
 	/** Maximum match duration in seconds before timeout (fixed-length episodes).
 	 *  Winner at timeout = team with higher score (passive income from held capture points). */

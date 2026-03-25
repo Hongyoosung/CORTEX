@@ -29,9 +29,9 @@ struct FDESupportRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float KillRewardScale = 0.0f;
 
-	/** Support: -10 per death (base DeathPenaltyReward=100 × 0.10) */
+	/** Support: -20 per death (base DeathPenaltyReward=100 × 0.20) */
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float DeathScale = 0.10f;
+	float DeathScale = 0.20f;
 
 
 	//========== Ally Proximity Properties =============

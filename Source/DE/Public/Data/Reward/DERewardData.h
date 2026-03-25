@@ -82,7 +82,7 @@ public:
 	float SparseRewardScale = 0.2f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMin = -10.0f;
+	float StepRewardClampMin = -20.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
 	float StepRewardClampMax = 10.0f;

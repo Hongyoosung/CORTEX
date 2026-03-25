@@ -9,6 +9,7 @@
 #include "Types/DEEQSTypes.h"
 #include "Types/DEObservationTypes.h"
 #include "Types/DEClassTypes.h"
+#include "Types/DEGameStateTypes.h"
 #include "Team/DETeamWorldState.h"
 #include "DETrainer.generated.h"
 
@@ -33,8 +34,9 @@ class ADEScholaEnvironment;
  * Action Space: Box(7) - Continuous EQS weights [-1, 1]
  * Observation Space: Box(167) - Entity-centric V2 (handled by DETacticalObserver)
  *
- * Inherits MaxEpisodeSteps, bLogTransitions, TransitionLogPath, RewardData
- * from ADynamicEQSTrainerBase.
+ * Episode termination is driven by DEMatchManager::OnMatchConditionMet.
+ * MaxEpisodeSteps (inherited from ADynamicEQSTrainerBase) acts as a safety
+ * net only — set it to 9999 in the editor; do not use it to configure match length.
  */
 UCLASS(Blueprintable)
 class DE_API ADETrainer : public ADynamicEQSTrainerBase
@@ -76,6 +78,10 @@ public:
 
     /** Checks if the current episode should terminate */
     bool IsEpisodeDone();
+
+    /** Bound to DEMatchManager::OnMatchConditionMet — signals episode end */
+    UFUNCTION()
+    void OnMatchEnded(EDEMatchState WinnerState, int32 WinningTeamID);
 
 
     //=========================================
@@ -205,6 +211,9 @@ protected:
     /** True once ComputeStatus() has returned a terminal status for this episode.
      *  Prevents repeated Truncated signals that confuse the Python env wrapper. */
     bool bEpisodeCompleted = false;
+
+    /** Set by OnMatchEnded — DEMatchManager fired OnMatchConditionMet this episode. */
+    bool bMatchEnded = false;
 
     /** Diagnostics for post-respawn state */
     bool bWasDeadLastTick = false;

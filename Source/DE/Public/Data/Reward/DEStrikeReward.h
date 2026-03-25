@@ -29,9 +29,9 @@ struct FDEStrikeRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthPenalty = 0.0f;
 
-	/** Strike: -10 per death (base DeathPenaltyReward=100 × 0.1) — kept within StepRewardClampMin to avoid impulse spikes. */
+	/** Strike: -20 per death (base DeathPenaltyReward=100 × 0.2) */
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float DeathScale = 0.1f;
+	float DeathScale = 0.2f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float IdlePenalty = 1.5f;

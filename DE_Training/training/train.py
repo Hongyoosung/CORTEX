@@ -949,7 +949,7 @@ if __name__ == '__main__':
     parser.add_argument("--resume",              type=str,
                         default=os.environ.get("RESUME_CHECKPOINT") or None,
                         help="RLlib checkpoint to resume from")
-    parser.add_argument("--scripted-ai-tier",    type=int, default=0,
+    parser.add_argument("--scripted-ai-tier",    type=int, default=1,
                         help="Initial ScriptedAI difficulty tier (0=Passive … 3=Aggressive)")
     parser.add_argument("--curriculum-window",   type=int, default=5,
                         help="Iterations of sustained reward required for tier promotion")
