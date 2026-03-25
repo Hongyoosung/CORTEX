@@ -3,6 +3,7 @@
 #include "Components/DEScriptedAIComponent.h"
 #include "Characters/DEAgent.h"
 #include "Team/DETeamInterface.h"
+#include "Team/DEMatchManager.h"
 #include "Engine/OverlapResult.h"
 #include "AIController.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -50,6 +51,14 @@ void UDEScriptedAIComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	// State machine runs every tick interval (0.5s)
 	UpdateAIState();
 	ApplyWeightsToAgent();
+
+	// Support-specific: override EQS movement with direct ally following (Tier 1+)
+	if (CurrentTier >= 1 && OwnerAgent->GetCommandedClass() == EDEClassType::Support)
+	{
+		SupportFollowRepickTimer -= DeltaTime;
+		UpdateSupportFollowTarget();
+		UpdateSupportMovement();
+	}
 }
 
 
@@ -212,11 +221,11 @@ FDEEQSWeightParameters UDEScriptedAIComponent::GetBaseWeights(EDEClassType Class
 
 	case EDEClassType::Support:
 		W.EnemyObjectiveProximity = 0.0f;
-		W.AllyObjectiveProximity  = 0.3f;
+		W.AllyObjectiveProximity  = 0.0f;   // No direct objective capture — follow allies instead
 		W.CoverDensity            = 0.7f;   // Stay in cover while supporting
 		W.EnemyVisibility         = -0.3f;  // Avoid enemy line of sight
 		W.AllyProximity           = 0.9f;   // Follow teammates forward
-		W.CombatRange             = -0.3f;
+		W.CombatRange             = 0.3f;   // Maintain some separation (backline positioning)
 		W.AssignedBaseProximity   = -0.1f;  // Push out of spawn
 		break;
 	}
@@ -266,12 +275,16 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 			W.AssignedBaseProximity   = -0.4f;
 			break;
 		case EDEClassType::Support:
-			W.EnemyObjectiveProximity = -0.2f;
-			W.AllyObjectiveProximity  = 0.5f;
-			W.CoverDensity            = 0.7f;
+			// Tier 1: Follow a random non-Support ally at a safe distance.
+			// Objective weights are zeroed — Support indirectly supports capture
+			// by shadowing allies rather than directly contesting points.
+			// Movement is overridden by UpdateSupportMovement() (MoveToActor).
+			W.EnemyObjectiveProximity = 0.0f;
+			W.AllyObjectiveProximity  = 0.0f;
+			W.CoverDensity            = 0.5f;
 			W.EnemyVisibility         = -0.4f;
-			W.AllyProximity           = 1.0f;
-			W.CombatRange             = -0.3f;
+			W.AllyProximity           = 1.0f;   // Strong ally pull for EQS fallback
+			W.CombatRange             = 0.3f;   // Prefer staying behind combat line
 			W.AssignedBaseProximity   = -0.1f;
 			break;
 		}
@@ -305,16 +318,17 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 			W.AssignedBaseProximity   = -0.5f;
 			break;
 		case EDEClassType::Support:
+			// Tier 3: Maximum competence — strict backline, heal-first targeting.
+			// AllyObjectiveProximity zeroed; capture support induced via ally following.
+			// Movement overridden by UpdateSupportMovement() toward most injured ally.
 			W.EnemyObjectiveProximity = -0.5f;  // Stay away from enemy objectives
-			W.AllyObjectiveProximity  = 0.4f;
+			W.AllyObjectiveProximity  = 0.0f;   // No direct objective capture
 			W.CoverDensity            = 0.9f;   // Maximum cover usage
 			W.EnemyVisibility         = -0.5f;  // Avoid all enemy sight
-			// 0.5 (not 1.0) — moderate pull keeps Support within healing range
-			// without two Support agents converging to the exact same point.
-			// For hard minimum-distance enforcement the EQS AllyProximity test
-			// would need a donut scoring curve; this is the weight-layer cap.
-			W.AllyProximity           = 0.5f;
-			W.CombatRange             = -0.4f;
+			// 0.7 pulls toward most injured ally (overrides old 0.5 cap).
+			// UpdateSupportMovement() provides fine-grained per-target tracking.
+			W.AllyProximity           = 0.7f;
+			W.CombatRange             = 0.3f;   // Stay behind the combat line
 			W.AssignedBaseProximity   = -0.2f;
 			break;
 		}
@@ -356,7 +370,9 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWe
 			// Support follows allies even in Patrol — keep AllyProximity positive
 			// so it trails Strike/Vanguard as they advance. Cap to avoid pinning
 			// to spawn if teammates haven't moved yet.
-			W.AllyProximity = FMath::Min(W.AllyProximity, 0.5f);
+			W.AllyProximity           = FMath::Min(W.AllyProximity, 0.5f);
+			W.AllyObjectiveProximity  = 0.0f; // No direct objective capture
+			W.EnemyObjectiveProximity = 0.0f; // Don't push on enemy objective
 		}
 		else
 		{
@@ -367,19 +383,28 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWe
 		break;
 
 	case EScriptedAIState::Approach:
-		// Enemy spotted, closing in — use base weights as-is
+		// Enemy spotted, closing in — Support stays back, others use base weights
+		if (Class == EDEClassType::Support)
+		{
+			W.AllyObjectiveProximity  = 0.0f; // No direct objective capture
+			W.EnemyObjectiveProximity = 0.0f; // Don't chase enemy objective
+			W.CombatRange             = 0.3f; // Stay behind combat line
+		}
 		break;
 
 	case EScriptedAIState::Engage:
 		// In fight — maximize visibility, close distance slightly
 		W.EnemyVisibility = FMath::Min(W.EnemyVisibility + 0.2f, 1.0f);
 		W.CombatRange     = FMath::Max(W.CombatRange - 0.1f, -1.0f);
-		// Support: cap AllyProximity so two Support agents don't converge
-		// to the same position while trying to heal the same target.
-		// 0.4 provides enough pull to stay in healing range without stacking.
 		if (Class == EDEClassType::Support)
 		{
-			W.AllyProximity = FMath::Min(W.AllyProximity, 0.4f);
+			// Support: stay back to heal safely. UpdateSupportMovement() drives
+			// positioning toward the most injured ally; cap EQS ally pull so two
+			// Support agents don't converge to the same point.
+			W.AllyObjectiveProximity  = 0.0f;
+			W.EnemyObjectiveProximity = 0.0f;
+			W.AllyProximity           = FMath::Min(W.AllyProximity, 0.4f);
+			W.CombatRange             = 0.3f; // Maintain backline distance
 		}
 		break;
 
@@ -391,6 +416,10 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyStateBehavior(const FDEEQSWe
 		W.AssignedBaseProximity   =  0.6f;
 		W.EnemyVisibility         = -0.5f;
 		W.CombatRange             = -0.8f;
+		if (Class == EDEClassType::Support)
+		{
+			W.AllyObjectiveProximity = 0.0f;
+		}
 		break;
 	}
 
@@ -412,6 +441,105 @@ void UDEScriptedAIComponent::ResampleNoise(const FRandomStream& Stream)
 	for (int32 i = 0; i < NoiseOffsets.Num(); ++i)
 	{
 		NoiseOffsets[i] = Stream.FRandRange(-NoiseMagnitude, NoiseMagnitude);
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Support Follow Behavior
+// ─────────────────────────────────────────────────────────────────────────────
+
+ADEAgent* UDEScriptedAIComponent::PickRandomNonSupportAlly() const
+{
+	if (!OwnerAgent.IsValid()) return nullptr;
+
+	ADEMatchManager* MM = OwnerAgent->GetMatchManager();
+	if (!MM) return nullptr;
+
+	const int32 MyTeam = OwnerAgent->GetTeamID_Implementation();
+	const TArray<ADEAgent*>& TeamAgents = MM->GetTeamAgents(MyTeam);
+
+	TArray<ADEAgent*> Candidates;
+	for (ADEAgent* A : TeamAgents)
+	{
+		if (A && A != OwnerAgent.Get() && A->IsAlive()
+			&& A->GetCommandedClass() != EDEClassType::Support)
+		{
+			Candidates.Add(A);
+		}
+	}
+
+	if (Candidates.IsEmpty()) return nullptr;
+	return Candidates[FMath::RandRange(0, Candidates.Num() - 1)];
+}
+
+ADEAgent* UDEScriptedAIComponent::FindMostInjuredAlly() const
+{
+	if (!OwnerAgent.IsValid()) return nullptr;
+
+	ADEMatchManager* MM = OwnerAgent->GetMatchManager();
+	if (!MM) return nullptr;
+
+	const int32 MyTeam = OwnerAgent->GetTeamID_Implementation();
+	const TArray<ADEAgent*>& TeamAgents = MM->GetTeamAgents(MyTeam);
+
+	ADEAgent* MostInjured = nullptr;
+	float     LowestHP    = 1.0f;
+
+	for (ADEAgent* A : TeamAgents)
+	{
+		if (A && A != OwnerAgent.Get() && A->IsAlive())
+		{
+			const float HP = A->GetHealthPercentage();
+			if (HP < LowestHP)
+			{
+				LowestHP    = HP;
+				MostInjured = A;
+			}
+		}
+	}
+
+	return MostInjured;
+}
+
+void UDEScriptedAIComponent::UpdateSupportFollowTarget()
+{
+	if (CurrentTier == 1)
+	{
+		// Tier 1: follow a random non-Support ally; repick on timer or if target died
+		const bool bTargetGone = !SupportFollowTarget.IsValid()
+			|| !SupportFollowTarget->IsAlive();
+
+		if (bTargetGone || SupportFollowRepickTimer <= 0.0f)
+		{
+			SupportFollowTarget     = PickRandomNonSupportAlly();
+			SupportFollowRepickTimer = SupportFollowRepickInterval;
+		}
+	}
+	else
+	{
+		// Tier 2+: always track the most injured ally for positioning / heal support
+		SupportFollowTarget = FindMostInjuredAlly();
+	}
+}
+
+void UDEScriptedAIComponent::UpdateSupportMovement()
+{
+	if (!SupportFollowTarget.IsValid()) return;
+
+	AAIController* AIC = Cast<AAIController>(OwnerAgent->GetController());
+	if (!AIC) return;
+
+	const float Dist = FVector::Dist(
+		OwnerAgent->GetActorLocation(),
+		SupportFollowTarget->GetActorLocation());
+
+	// Only re-issue MoveToActor when outside the desired follow band to avoid
+	// constant navigation re-requests that stall the nav system.
+	if (Dist > SupportFollowDistance)
+	{
+		// Stop at 80 % of SupportFollowDistance so the agent doesn't oscillate
+		// at the threshold boundary.
+		AIC->MoveToActor(SupportFollowTarget.Get(), SupportFollowDistance * 0.8f);
 	}
 }
 

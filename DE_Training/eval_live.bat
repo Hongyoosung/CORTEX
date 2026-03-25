@@ -121,14 +121,14 @@ if "%HAS_LATEST%"=="false" (
 )
 
 REM ── Build container-side paths (volume mounted at /app/training_results) ──────
-SET "CHECKPOINT_BEST=/app/training_results/%SELECTED_RUN%/best"
-SET "CHECKPOINT_LATEST=/app/training_results/%SELECTED_RUN%/%LATEST_SUBDIR%"
+SET "CHECKPOINT_BEST=/app/training_results/%SELECTED_RUN%/%LATEST_SUBDIR%"
+SET "CHECKPOINT_LATEST=/app/training_results/%SELECTED_RUN%/best"
 
 echo.
 echo ----------------------------------------
 echo  Checkpoints to evaluate:
-echo    best   : %CHECKPOINT_BEST%
-echo    latest : %CHECKPOINT_LATEST%
+echo    latest (env 0) : %CHECKPOINT_BEST%
+echo    best   (env 1) : %CHECKPOINT_LATEST%
 echo ----------------------------------------
 
 REM ── Optional: allow user to override either checkpoint ───────────────────────
@@ -159,8 +159,8 @@ if /i "%CUSTOM_CHOICE%"=="c" (
     )
     echo(
     REM 
-    set /p "A_CHOICE=Select checkpoint A ^(env 0 / 'best' slot^) [1-!CKP_COUNT!]: "
-    set /p "B_CHOICE=Select checkpoint B ^(env 1 / 'latest' slot^) [1-!CKP_COUNT!]: "
+    set /p "A_CHOICE=Select checkpoint A ^(env 0 / 'latest' slot^) [1-!CKP_COUNT!]: "
+    set /p "B_CHOICE=Select checkpoint B ^(env 1 / 'best' slot^) [1-!CKP_COUNT!]: "
 
     SET "CKP_A=" & SET "CKP_B="
     REM 

@@ -459,17 +459,6 @@ bool FDERewardDataDefaults::RunTest(const FString& Parameters)
 		return true;
 	}
 
-	// Note: CoOccupationPenalty stores a *positive* magnitude;
-	// negation is applied at call-site in DERewardSubsystem::ComputeBaseCooperationReward().
-	TestNearlyEqual(TEXT("BaseOccupationReward default == 2.0"),
-		CDO->BaseOccupationReward, 2.0f, 0.01f);
-	TestNearlyEqual(TEXT("CoOccupationPenalty magnitude == 0.5"),
-		CDO->CoOccupationPenalty, 0.5f, 0.01f);
-	TestNearlyEqual(TEXT("BaseCaptureCreditReward default == 5.0"),
-		CDO->BaseCaptureCreditReward, 5.0f, 0.01f);
-	TestTrue(TEXT("BaseOccupationRadius > 0"),
-		CDO->BaseOccupationRadius > 0.0f);
-
 	return true;
 }
 

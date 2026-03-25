@@ -110,6 +110,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI|StateMachine")
 	float RecoverHealthThreshold = 0.60f;
 
+	//========================================
+	// Support Follow Configuration
+	//========================================
+
+	/** Desired follow distance for Support agents — stops issuing MoveToActor within this range */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI|Support")
+	float SupportFollowDistance = 400.0f;
+
+	/** How often (seconds) Support re-picks a random follow ally at Tier 1 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI|Support")
+	float SupportFollowRepickInterval = 5.0f;
+
 private:
 	/** Cached owning agent */
 	TWeakObjectPtr<ADEAgent> OwnerAgent;
@@ -140,4 +152,29 @@ private:
 
 	/** Returns true if any enemy pawn is within Radius of the owning agent */
 	bool IsEnemyWithinRange(float Radius) const;
+
+	//========================================
+	// Support Follow Behavior (Tier 1+)
+	//========================================
+
+	/** Find a random alive non-Support ally on the same team (Tier 1: initial follow target) */
+	ADEAgent* PickRandomNonSupportAlly() const;
+
+	/** Find the alive ally with the lowest health percentage (Tier 2+: heal follow target) */
+	ADEAgent* FindMostInjuredAlly() const;
+
+	/** Re-evaluate SupportFollowTarget based on current tier */
+	void UpdateSupportFollowTarget();
+
+	/**
+	 * For Support agents at Tier 1+: override EQS movement with a direct MoveToActor
+	 * toward SupportFollowTarget, stopping at SupportFollowDistance.
+	 */
+	void UpdateSupportMovement();
+
+	/** Tracked follow target for Support (Tier 1: random ally, Tier 2+: most injured ally) */
+	TWeakObjectPtr<ADEAgent> SupportFollowTarget;
+
+	/** Countdown until Support re-picks a new random follow ally (Tier 1) */
+	float SupportFollowRepickTimer = 0.0f;
 };

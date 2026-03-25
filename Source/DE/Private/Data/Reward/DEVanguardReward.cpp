@@ -54,24 +54,6 @@ float DEComputeVanguardStepReward(
 			}
 		}
 
-		// Capture event: start post-capture momentum
-		const int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
-		if (NewCaptures > 0)
-		{
-			InOutState.PostCaptureMomentumStepsRemaining = Settings->VanguardReward.PostCaptureMomentumDuration;
-			float NearestFriendlyDistSq = FLT_MAX;
-			for (ADECapturePoint* CP : EnvCapturePoints)
-			{
-				if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
-				const float DSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
-				if (DSq < NearestFriendlyDistSq)
-				{
-					NearestFriendlyDistSq = DSq;
-					InOutState.LastCapturedPointLocation = CP->GetActorLocation();
-				}
-			}
-		}
-
 		// Approach shaping toward nearest non-friendly base
 		if (PrevNearestDistSq < FLT_MAX && CurrNearestDistSq < FLT_MAX)
 		{
@@ -94,16 +76,6 @@ float DEComputeVanguardStepReward(
 			Reward -= IdlePenalty;
 		}
 
-		// Post-capture momentum: move to next enemy base after capping
-		if (InOutState.PostCaptureMomentumStepsRemaining > 0)
-		{
-			InOutState.PostCaptureMomentumStepsRemaining--;
-			if (PositionChange >= Settings->VanguardReward.PostCaptureMomentumMinMove &&
-				FVector::DistSquared(Current.Position, InOutState.LastCapturedPointLocation) > CaptureRadiusSq)
-			{
-				Reward += Settings->VanguardReward.PostCaptureMomentumBonus;
-			}
-		}
 	}
 
 	// ---- Melee Range Bonus + Enemy Approach Shaping ----

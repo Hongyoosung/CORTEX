@@ -65,13 +65,9 @@ except ImportError:
 # and for any Python-side shaping/scaling applied in process_reward().
 
 REWARD_CONFIG = {
-    # Cooperative base occupation (applied by DERewardSubsystem C++)
-    "BaseOccupationReward":    2.0,   # +2.0/step: sole ally within 2000cm of uncontrolled base
-    "CoOccupationPenalty":    -0.5,   # -0.5/step: 2+ allies stacking same base
-    "BaseCaptureCreditReward": 5.0,   # +5.0 sparse: agent that flipped base ownership
-    "AssignedBaseReachReward": 1.0,   # +1.0 sparse: first time reaching assigned base
-
-    # Python-side scaling applied to the received step reward before PPO update
+    # Python-side scaling applied to the received step reward before PPO update.
+    # All per-class and cooperative rewards are computed C++-side (DERewardSubsystem);
+    # this config only normalises magnitude for PPO stability.
     "reward_scale":  0.01,
     "reward_clip":   5.0,
 }
@@ -563,15 +559,12 @@ def train_with_rllib(args):
             if key_sum in custom:
                 tb.add_scalar(f"{strat}/custom_reward/step_sum",  float(custom[key_sum]),  cumul_steps)
 
-        # 4. 세부 보상 컴포넌트 기록 (기존 유지)
-        REWARD_COMPONENTS = [
-            "BaseOccupationReward", "CoOccupationPenalty",
-            "BaseCaptureCreditReward",
-            "AssignedBaseReachReward",
-        ]
-        for comp in REWARD_COMPONENTS:
-            ckey = f"reward_component_{comp}_mean"
-            if ckey in custom:
+        # 4. 세부 보상 컴포넌트 기록
+        # Reward components are computed C++-side; log any custom component
+        # metrics forwarded by the env wrapper.
+        for ckey in custom:
+            if ckey.startswith("reward_component_") and ckey.endswith("_mean"):
+                comp = ckey[len("reward_component_"):-len("_mean")]
                 tb.add_scalar(f"global/reward_components/{comp}", float(custom[ckey]), cumul_steps)
 
         # ── Per-role PPO learner metrics ──────────────────────────────────────

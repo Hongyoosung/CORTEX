@@ -23,18 +23,11 @@ struct FDESupportRewardSettings
 	float SurvivalRewardScale = 1.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float PositionReward = 0.0f;  // disabled: movement thresholds unverified; re-enable after tuning SupportMinMoveThreshold
-
-	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthBonus = 0.3f;
 
 	/** Support: 0 per kill — kills are irrelevant to role */
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float KillRewardScale = 0.0f;
-
-	/** Penalty applied when support agent gets a kill while any ally is below 50% HP. */
-	UPROPERTY(EditAnywhere, Category = "Combat")
-	float RoleBreakPenalty = 3.0f;
 
 	/** Support: -10 per death (base DeathPenaltyReward=100 × 0.10) */
 	UPROPERTY(EditAnywhere, Category = "Combat")
@@ -83,7 +76,7 @@ struct FDESupportRewardSettings
 
 	/** Support: +2 per capture (base CaptureReward=100 × 0.02) — low to discourage solo capping */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float CaptureRewardScale = 0.02f;
+	float CaptureRewardScale = 0.005f;
 
 	/** Support: -15 per loss (base LossCaptureReward=-100 × 0.15) */
 	UPROPERTY(EditAnywhere, Category = "Capture")
@@ -133,10 +126,6 @@ struct FDESupportRewardSettings
 	 *  Discourages frontline positioning — Support should stay behind teammates. */
 	UPROPERTY(EditAnywhere, Category = "Positioning")
 	float FrontlinePenalty = 2.0f;
-
-	/** Per-step bonus when at least one alive ally is between Support and the nearest visible enemy. */
-	UPROPERTY(EditAnywhere, Category = "Positioning")
-	float AllyShieldBonus = 0.3f;
 
 	/** Hard minimum distance (cm) Support must maintain from any visible enemy.
 	 *  Fires regardless of ally positions — prevents Support from charging into melee range

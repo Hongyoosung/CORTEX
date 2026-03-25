@@ -59,7 +59,7 @@ struct FDEVanguardRewardSettings
 	/** Per-cm shaping reward for approaching a visible enemy. Provides gradient toward melee range.
 	 *  Calibrated at ~200 cm/step typical movement → ~0.4 reward/step at full approach. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
-	float EnemyApproachReward = 0.002f;
+	float EnemyApproachReward = 0.004f;
 
 	/** Maximum distance (cm) at which EnemyApproachReward activates. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
@@ -86,15 +86,6 @@ struct FDEVanguardRewardSettings
 	/** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float ActiveCappingBonus = 4.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Capture")
-	float PostCaptureMomentumBonus = 3.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Capture")
-	int32 PostCaptureMomentumDuration = 90;
-
-	UPROPERTY(EditAnywhere, Category = "Capture")
-	float PostCaptureMomentumMinMove = 100.0f;
 
 	//========== Movement Properties =============
 

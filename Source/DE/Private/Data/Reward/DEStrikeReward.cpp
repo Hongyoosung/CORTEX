@@ -27,9 +27,9 @@ float DEComputeStrikeStepReward(
 	if (HealthLoss > Settings->StrikeHealthLossThreshold)
 		Reward -= Settings->StrikeReward.HealthPenalty * HealthLoss;
 
-	// Early zone check: TooCloseEnemyPenalty is suppressed while actively capping.
-	// A Strike standing on a non-friendly point must tolerate close enemies — the
-	// ZonePresenceBonus already provides the correct incentive there.
+	// Early zone check: TooCloseEnemyPenalty is reduced (not suppressed) while actively capping.
+	// Strike should still prefer range even on-point, but at 30% penalty to avoid
+	// over-penalising agents holding a capture zone under pressure.
 	bool bInNonFriendlyZoneEarly = false;
 	if (!bIsRespawnStep && EnvCapturePoints.Num() > 0)
 	{
@@ -69,9 +69,10 @@ float DEComputeStrikeStepReward(
 		if (bTooClose)
 		{
 			bEnemyTooClose = true;
-			// Only penalise range violation outside capture zones
-			if (!bInNonFriendlyZoneEarly)
-				Reward -= Settings->StrikeReward.TooCloseEnemyPenalty;
+			// Reduce (not suppress) penalty while capping — Strike should still prefer range,
+			// but not be punished as harshly for holding a point under pressure.
+			const float RangePenaltyScale = bInNonFriendlyZoneEarly ? 0.3f : 1.0f;
+			Reward -= Settings->StrikeReward.TooCloseEnemyPenalty * RangePenaltyScale;
 			InOutState.bWasTooCloseAtKill = true;
 		}
 		else if (bAtOptimalRange)
@@ -96,7 +97,7 @@ float DEComputeStrikeStepReward(
 		}
 
 		float PrevNearestDistSq = FLT_MAX, CurrNearestDistSq = FLT_MAX;
-		bool bInNonFriendlyZone = false, bInFriendlyZoneStrike = false;
+		bool bInNonFriendlyZone = false;
 		float ActiveCappingProgress = 0.0f;
 
 		for (ADECapturePoint* CP : EnvCapturePoints)
@@ -115,27 +116,6 @@ float DEComputeStrikeStepReward(
 					ActiveCappingProgress = FMath::Max(ActiveCappingProgress, CP->GetCaptureProgress());
 				}
 			}
-			else if (CurrDistSq <= CaptureRadiusSq)
-			{
-				bInFriendlyZoneStrike = true;
-			}
-		}
-
-		const int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
-		if (NewCaptures > 0)
-		{
-			InOutState.PostCaptureMomentumStepsRemaining = Settings->StrikeReward.PostCaptureMomentumDuration;
-			float NearestFriendlyDistSq = FLT_MAX;
-			for (ADECapturePoint* CP : EnvCapturePoints)
-			{
-				if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
-				const float DSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
-				if (DSq < NearestFriendlyDistSq)
-				{
-					NearestFriendlyDistSq = DSq;
-					InOutState.LastCapturedPointLocation = CP->GetActorLocation();
-				}
-			}
 		}
 
 		if (PrevNearestDistSq < FLT_MAX && CurrNearestDistSq < FLT_MAX)
@@ -148,26 +128,8 @@ float DEComputeStrikeStepReward(
 
 		if (bInNonFriendlyZone)
 		{
-			InOutState.StrikeZoneStepsAfterCapture = 0;
-			// Range discipline is enforced by TooCloseEnemyPenalty — zone bonus stays full
 			Reward += Settings->StrikeReward.ZonePresenceBonus;
 			Reward += Settings->StrikeReward.ActiveCappingBonus * ActiveCappingProgress;
-		}
-		else if (bInFriendlyZoneStrike && Settings->StrikeCapturedZoneDecaySteps > 0.0f)
-		{
-			InOutState.StrikeZoneStepsAfterCapture++;
-			const float DecayFactor = FMath::Max(0.0f, 1.0f - (float)InOutState.StrikeZoneStepsAfterCapture / Settings->StrikeCapturedZoneDecaySteps);
-			Reward += Settings->StrikeReward.ZonePresenceBonus * DecayFactor;
-		}
-
-		if (InOutState.PostCaptureMomentumStepsRemaining > 0)
-		{
-			InOutState.PostCaptureMomentumStepsRemaining--;
-			if (PositionChange >= Settings->StrikeReward.PostCaptureMomentumMinMove &&
-				FVector::DistSquared(Current.Position, InOutState.LastCapturedPointLocation) > CaptureRadiusSq)
-			{
-				Reward += Settings->StrikeReward.PostCaptureMomentumBonus;
-			}
 		}
 
 		if (PositionChange < Settings->StrikeIdleMovementThreshold && !bInNonFriendlyZone)

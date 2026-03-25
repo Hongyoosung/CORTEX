@@ -87,11 +87,6 @@ void UBTTask_DEAttackAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8*
 
 	if (!Target || !Ability || !Ability->IsTargetValid(Target))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BTTask_Attack] %s — FAIL: Target=%s Ability=%s IsTargetValid=%s"),
-			*Character->GetName(),
-			Target   ? TEXT("OK")    : TEXT("NULL"),
-			Ability  ? TEXT("OK")    : TEXT("NULL"),
-			(Target && Ability) ? (Ability->IsTargetValid(Target) ? TEXT("true") : TEXT("false")) : TEXT("N/A"));
 		bIsFiring = false;
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;

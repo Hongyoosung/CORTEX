@@ -613,7 +613,7 @@ void ADEAgent::ResetCharacter()
 	// Defensive: re-ensure training ability timer is running.
 	// BeginPlay may have missed it if AgentMode was set after initial BeginPlay,
 	// or the timer handle may have been invalidated during episode transition.
-	if (ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training)
+	if ((ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training) || bIsScriptedAI)
 	{
 		if (!GetWorld()->GetTimerManager().IsTimerActive(TrainingAbilityTimerHandle))
 		{
@@ -908,7 +908,7 @@ void ADEAgent::ProcessTrainingAbilities()
 	AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
 
 	// Activate heal ability only for Support class
-	if (ScholaAgent->GetCommandedClass() == EDEClassType::Support)
+	if (GetCommandedClass() == EDEClassType::Support)
 	{
 		FGameplayTagContainer HealTag;
 		HealTag.AddTag(DEGameplayTags::Ability_Heal);
