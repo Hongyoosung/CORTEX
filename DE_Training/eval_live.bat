@@ -121,14 +121,14 @@ if "%HAS_LATEST%"=="false" (
 )
 
 REM ── Build container-side paths (volume mounted at /app/training_results) ──────
-SET "CHECKPOINT_BEST=/app/training_results/%SELECTED_RUN%/%LATEST_SUBDIR%"
-SET "CHECKPOINT_LATEST=/app/training_results/%SELECTED_RUN%/best"
+SET "CHECKPOINT_LATEST=/app/training_results/%SELECTED_RUN%/%LATEST_SUBDIR%"
+SET "CHECKPOINT_BEST=/app/training_results/%SELECTED_RUN%/best"
 
 echo.
 echo ----------------------------------------
 echo  Checkpoints to evaluate:
-echo    latest (env 0) : %CHECKPOINT_BEST%
-echo    best   (env 1) : %CHECKPOINT_LATEST%
+echo    latest (env 0) : %CHECKPOINT_LATEST%
+echo    best   (env 1) : %CHECKPOINT_BEST%
 echo ----------------------------------------
 
 REM ── Optional: allow user to override either checkpoint ───────────────────────
@@ -172,11 +172,11 @@ if /i "%CUSTOM_CHOICE%"=="c" (
     if "!CKP_A!"=="" ( echo Invalid selection A. & pause & exit /b 1 )
     if "!CKP_B!"=="" ( echo Invalid selection B. & pause & exit /b 1 )
 
-    SET "CHECKPOINT_BEST=/app/training_results/%SELECTED_RUN%/!CKP_A!"
-    SET "CHECKPOINT_LATEST=/app/training_results/%SELECTED_RUN%/!CKP_B!"
+    SET "CHECKPOINT_LATEST=/app/training_results/%SELECTED_RUN%/!CKP_A!"
+    SET "CHECKPOINT_BEST=/app/training_results/%SELECTED_RUN%/!CKP_B!"
     echo(
-    echo  A ^(env 0^) : !CHECKPOINT_BEST!
-    echo  B ^(env 1^) : !CHECKPOINT_LATEST!
+    echo  A ^(env 0^) : !CHECKPOINT_LATEST!
+    echo  B ^(env 1^) : !CHECKPOINT_BEST!
 )
 
 REM ── Launch UE5 ────────────────────────────────────────────────────────────────

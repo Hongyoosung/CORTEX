@@ -440,6 +440,7 @@ void ADEMatchManager::ResetTeams()
 		FDETeamState& State = TeamStates[Conf.TeamID];
 		State.RespawnQueue.Empty();
 		State.ActiveAgents.Empty();
+		State.CapturePointCount = 0;
 	}
 
 	// 2. Reactivate all agents and redistribute them into ActiveAgents

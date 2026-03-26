@@ -58,16 +58,24 @@ struct FDESupportRewardSettings
 
 	/** Per-step penalty when Support is farther than this distance from the nearest alive ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyIsolationPenalty = 3.0f;
+	float AllyIsolationPenalty = 1.5f;
 
 	/** Distance (cm) beyond which AllyIsolationPenalty fires.
-	 *  Tightened from 2000 to force Support to follow the most forward alive ally. */
+	 *  Relaxed from 1500 to give Support more slack when following a dynamic frontline. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyIsolationDistance = 1500.0f;
+	float AllyIsolationDistance = 2000.0f;
+
+	/** Per-step penalty when Support is near other Supports but the nearest non-Support
+	 *  alive ally is beyond AllyIsolationDistance. Prevents two Supports from satisfying
+	 *  each other's isolation check while ignoring the frontline.
+	 *  Only fires when at least one non-Support ally is alive (suppressed during bFallbackToSupportTarget). */
+	UPROPERTY(EditAnywhere, Category = "AllyProximity")
+	float FrontlinerIsolationPenalty = 1.0f;
 
 	/** Per-step penalty when 2+ Support agents are within SupportAllyProximityThreshold
 	 *  of each other. Breaks the Support-Support deadlock where two supports satisfy
-	 *  each other's formation requirements and stop following frontline agents. */
+	 *  each other's formation requirements and stop following frontline agents.
+	 *  Increased from 0.8 to clearly dominate AllyFormationBonus (0.8). */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
 	float SupportCoStackPenalty = 1.5f;
 
@@ -133,9 +141,10 @@ struct FDESupportRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Positioning")
 	float MinEnemyDistancePenaltyThreshold = 1000.0f;
 
-	/** Per-step penalty when Support is closer than MinEnemyDistancePenaltyThreshold to any visible enemy. */
+	/** Per-step penalty when Support is closer than MinEnemyDistancePenaltyThreshold to any visible enemy.
+	 *  Reduced from 4.0: already stacks with FrontlinePenalty (2.0), combined -4.5 is sufficient. */
 	UPROPERTY(EditAnywhere, Category = "Positioning")
-	float TooCloseEnemyPenalty = 4.0f;
+	float TooCloseEnemyPenalty = 2.5f;
 
 
 	//========== Movement Properties =============

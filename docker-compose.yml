@@ -23,6 +23,7 @@ services:
       - PORT=50051
       - IS_DOCKER=true                            # Enable Docker-specific gRPC settings
       - RESUME_CHECKPOINT=${RESUME_CHECKPOINT:-}  # Optional: path to checkpoint to resume from
+      - STEP_CHECKPOINT_FREQ=${STEP_CHECKPOINT_FREQ:-20}  # Save a checkpoint every N agent steps
       - USE_SELF_ATTN=${USE_SELF_ATTN:-1}          # Ablation: 0=disable Self-Attention
       # Individual-respawn guard: seconds to wait after send_reset_msg() before
       # sending the first action.  Prevents GymConnector timeout when agents
@@ -39,7 +40,8 @@ services:
       --mode rllib
       --iterations $$NUM_ITERATIONS
       --host host.docker.internal
-      --port 50051"
+      --port 50051
+      --step-checkpoint-freq $$STEP_CHECKPOINT_FREQ"
     profiles:
       - policy
 

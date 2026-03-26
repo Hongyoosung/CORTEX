@@ -215,17 +215,37 @@ float DEComputeSupportStepReward(
 	}
 
 	// ---- Isolation penalty ----
+	// Two tiers: (1) total isolation — far from ALL allies.
+	//            (2) frontliner isolation — near other Supports but far from non-Support allies.
+	// Tier 2 prevents two Supports from satisfying each other's proximity checks
+	// and stagnating at a base while the frontline fights elsewhere.
 	if (!bIsRespawnStep && Current.AllyPositions.Num() > 0)
 	{
-		float NearestAllyDist = FLT_MAX;
+		float NearestAnyAllyDist = FLT_MAX;
+		float NearestNonSupportAllyDist = FLT_MAX;
 		for (int32 a = 0; a < Current.AllyPositions.Num(); ++a)
 		{
 			if (Current.AllyPositions[a].IsZero()) continue;
 			if (a < Current.AllyHealths.Num() && Current.AllyHealths[a] <= 0.0f) continue;
-			NearestAllyDist = FMath::Min(NearestAllyDist, FVector::Dist(Current.Position, Current.AllyPositions[a]));
+			const float D = FVector::Dist(Current.Position, Current.AllyPositions[a]);
+			NearestAnyAllyDist = FMath::Min(NearestAnyAllyDist, D);
+			if (a < AllyChars.Num() && AllyChars[a] &&
+				AllyChars[a]->GetCommandedClass() == EDEClassType::Support)
+				continue;
+			NearestNonSupportAllyDist = FMath::Min(NearestNonSupportAllyDist, D);
 		}
-		if (NearestAllyDist > Settings->SupportReward.AllyIsolationDistance)
+
+		if (NearestAnyAllyDist > Settings->SupportReward.AllyIsolationDistance)
+		{
+			// Tier 1: totally isolated from all allies
 			Reward -= Settings->SupportReward.AllyIsolationPenalty;
+		}
+		else if (!InOutState.bFallbackToSupportTarget &&
+				 NearestNonSupportAllyDist > Settings->SupportReward.AllyIsolationDistance)
+		{
+			// Tier 2: near other Supports but far from frontliners
+			Reward -= Settings->SupportReward.FrontlinerIsolationPenalty;
+		}
 	}
 
 	// ---- Support co-stack penalty ----
