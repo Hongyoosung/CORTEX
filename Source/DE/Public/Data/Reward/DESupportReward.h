@@ -38,7 +38,7 @@ struct FDESupportRewardSettings
 
 	/** Flat bonus per step for being within SupportAllyProximityThreshold of the most-injured ally. */
 	UPROPERTY(EditAnywhere, Category = "AllyProximity")
-	float AllyProximityBonus = 1.0f;
+	float AllyProximityBonus = 0.6f;
 
 	/** HP fraction (0-1) below which the most-injured ally is considered to need support.
 	 *  0.70 = fires when ally has taken ~30% damage (common in active combat).

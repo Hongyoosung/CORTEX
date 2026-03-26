@@ -64,7 +64,7 @@ services:
       - CHECKPOINT_LATEST=${CHECKPOINT_LATEST}
       - EVAL_EPISODES=${EVAL_EPISODES:-50}
       - HOST=host.docker.internal
-      - PORT=50051
+      - PORT=${SCHOLA_BASE_PORT:-50051}
       - POST_RESET_DELAY=${POST_RESET_DELAY:-4.0}
       - PYTHONUNBUFFERED=1
     extra_hosts:
@@ -75,7 +75,7 @@ services:
       --checkpoint-latest $$CHECKPOINT_LATEST
       --episodes $$EVAL_EPISODES
       --host host.docker.internal
-      --port 50051"
+      --port $${PORT}"
     profiles:
       - eval
 

@@ -277,19 +277,6 @@ class EvalStats:
 
 # ── Main evaluation loop ──────────────────────────────────────────────────────
 
-def _write_scripted_ai_tier(tier: int, output_dir: str):
-    """
-    Write ScriptedAI difficulty tier config so UE5's LoadTierFromConfig() picks
-    it up at the next episode reset.  Mirrors CurriculumScheduler._write_config().
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    config_path = os.path.join(output_dir, "scripted_ai_config.json")
-    payload = json.dumps({"difficulty_tier": tier}, indent=2)
-    with open(config_path, "w") as f:
-        f.write(payload)
-    print(f"  [Tier] ScriptedAI difficulty_tier={tier} written → {config_path}")
-
-
 def run_live_eval(args) -> dict:
     print("=" * 70)
     print("DE Live Evaluation — Checkpoint Head-to-Head")
@@ -297,18 +284,7 @@ def run_live_eval(args) -> dict:
     print(f"  env 1  →  latest : {args.checkpoint_latest}")
     print(f"  target episodes  : {args.episodes} per checkpoint")
     print(f"  UE5 host         : {args.host}:{args.port}")
-    print(f"  ScriptedAI tier  : {args.scripted_ai_tier}")
     print("=" * 70 + "\n")
-
-    # ── Step 0: Write ScriptedAI tier config ──────────────────────────────
-    # Must happen before UE5 connects so LoadTierFromConfig() reads tier 3
-    # (Aggressive) on the first episode reset.  Without this file, UE5 defaults
-    # to Tier 0 (Passive) and the ScriptedAI will not attack.
-    eval_output_dir = args.output_dir or os.path.dirname(
-        os.path.abspath(args.checkpoint_best)
-    )
-    _write_scripted_ai_tier(args.scripted_ai_tier, eval_output_dir)
-    print()
 
     # ── Step 1: Load policies ─────────────────────────────────────────────
     print("[1/3] Loading checkpoint policies...")
@@ -511,13 +487,6 @@ if __name__ == "__main__":
         default=None,
         help="Directory for eval_results_*.json (default: parent of --checkpoint-best)",
     )
-    parser.add_argument(
-        "--scripted-ai-tier",
-        type=int,
-        default=int(os.environ.get("SCRIPTED_AI_TIER", "3")),
-        help="ScriptedAI difficulty tier: 0=Passive, 1=Basic, 2=Standard, 3=Aggressive (default: 3)",
-    )
-
     args = parser.parse_args()
 
     if not args.checkpoint_best:

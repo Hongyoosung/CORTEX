@@ -146,6 +146,9 @@ float DEComputeSupportStepReward(
 				if (AllyHP < 0.3f)
 					ProximityReward += Settings->SupportReward.AllyProximityBonus * 0.5f;
 			}
+			const bool bTargetIsSupport = TargetIdx < AllyChars.Num() && AllyChars[TargetIdx] &&
+			AllyChars[TargetIdx]->GetCommandedClass() == EDEClassType::Support;
+		if (!bTargetIsSupport)
 			ProximityReward += Settings->SupportReward.AllyFormationBonus;
 		}
 

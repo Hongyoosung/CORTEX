@@ -15,10 +15,11 @@ SET "POST_RESET_DELAY=4.0"
 REM ── Argument parsing ──────────────────────────────────────────────────────────
 :parse_args
 if "%~1"=="" goto :end_parse
-if "%~1"=="--episodes"  set "EVAL_EPISODES=%~2"  & shift & shift & goto :parse_args
-if "%~1"=="--detach"    set "DETACH=true"         & shift           & goto :parse_args
-if "%~1"=="--no-build"  set "NO_BUILD=true"       & shift           & goto :parse_args
-if "%~1"=="--no-ue5"    set "LAUNCH_UE5=false"    & shift           & goto :parse_args
+if "%~1"=="--episodes"  set "EVAL_EPISODES=%~2"       & shift & shift & goto :parse_args
+if "%~1"=="--port"      set "SCHOLA_BASE_PORT=%~2"    & shift & shift & goto :parse_args
+if "%~1"=="--detach"    set "DETACH=true"              & shift           & goto :parse_args
+if "%~1"=="--no-build"  set "NO_BUILD=true"            & shift           & goto :parse_args
+if "%~1"=="--no-ue5"    set "LAUNCH_UE5=false"         & shift           & goto :parse_args
 shift & goto :parse_args
 :end_parse
 
@@ -31,6 +32,12 @@ echo ========================================
 echo  Episodes per checkpoint : %EVAL_EPISODES%
 echo  UE5 environments        : %NUM_SCHOLA_ENVS% (fixed: best + latest)
 echo ========================================
+
+REM ── Port input ────────────────────────────────────────────────────────────────
+echo.
+set /p "PORT_INPUT=Schola port [default: %SCHOLA_BASE_PORT%]: "
+if not "%PORT_INPUT%"=="" set "SCHOLA_BASE_PORT=%PORT_INPUT%"
+echo  Using port: %SCHOLA_BASE_PORT%
 
 REM ── Docker sanity check ───────────────────────────────────────────────────────
 docker info >nul 2>&1

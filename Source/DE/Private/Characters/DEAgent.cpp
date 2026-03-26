@@ -136,11 +136,16 @@ void ADEAgent::BeginPlay()
 
 	if (bIsTraining)
 	{
+		// Timer interval must match the attack fire rate so RL agents shoot
+		// at the same speed as BT (Script AI) agents that check every tick.
+		const float AttackCooldown = (AbilityData && AbilityData->AttackConfig.Speed > 0.0f)
+			? 1.0f / AbilityData->AttackConfig.Speed
+			: 0.15f;
 		GetWorld()->GetTimerManager().SetTimer(
 			TrainingAbilityTimerHandle,
 			this,
 			&ADEAgent::ProcessTrainingAbilities,
-			0.2f,
+			AttackCooldown,
 			true
 		);
 		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: TrainingAbilityTimer started (active=%s)"),
@@ -617,11 +622,14 @@ void ADEAgent::ResetCharacter()
 	{
 		if (!GetWorld()->GetTimerManager().IsTimerActive(TrainingAbilityTimerHandle))
 		{
+			const float AttackCooldown = (AbilityData && AbilityData->AttackConfig.Speed > 0.0f)
+				? 1.0f / AbilityData->AttackConfig.Speed
+				: 0.15f;
 			GetWorld()->GetTimerManager().SetTimer(
 				TrainingAbilityTimerHandle,
 				this,
 				&ADEAgent::ProcessTrainingAbilities,
-				0.2f,
+				AttackCooldown,
 				true
 			);
 			UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: Re-started ProcessTrainingAbilities timer in ResetCharacter"), *GetName());

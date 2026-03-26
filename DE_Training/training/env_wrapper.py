@@ -706,10 +706,6 @@ class DEEntityCentricEnv(MultiAgentEnv):
                           f"term={n_term}/{n_total} trunc={n_trunc}/{n_total} "
                           f"(suppressed — individual agent death)")
 
-        # Log when Schola signals full sub-env termination
-        if self._schola_env_done:
-            print(f"[SCHOLA] Sub-env terminations detected: {self._schola_env_done} "
-                  f"at step {self._total_step_count}")
 
         # Now suppress all — step() will re-apply based on _schola_env_done / timeout
         for fid in list(term_d.keys()):

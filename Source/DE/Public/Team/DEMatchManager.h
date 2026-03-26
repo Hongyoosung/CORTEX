@@ -221,7 +221,7 @@ public:
 	// Environment Context (injected by ADEScholaEnvironment)
 	//========================================
 
-	FORCEINLINE void SetEnvID(int32 InEnvID)             { EnvID = InEnvID; }
+	void SetEnvID(int32 InEnvID);
 	FORCEINLINE int32 GetEnvID() const                   { return EnvID; }
 
 	FORCEINLINE void SetEnvRandomStream(const FRandomStream& InStream) { EnvRandomStream = InStream; }

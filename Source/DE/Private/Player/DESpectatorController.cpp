@@ -64,7 +64,8 @@ void ADESpectatorController::SetupInputComponent()
 
 	InputComponent->BindKey(EKeys::One, IE_Pressed,  this, &ADESpectatorController::OnCameraKeyPressed);
 	InputComponent->BindKey(EKeys::One, IE_Released, this, &ADESpectatorController::OnCameraKeyReleased);
-	InputComponent->BindKey(EKeys::Two, IE_Pressed,  this, &ADESpectatorController::OnDisableCameraPressed);
+	InputComponent->BindKey(EKeys::Two,   IE_Pressed, this, &ADESpectatorController::OnDisableCameraPressed);
+	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ADESpectatorController::OnSameClassKeyPressed);
 
 	// Mouse wheel — adjust spectator movement speed
 	InputComponent->BindKey(EKeys::MouseScrollUp,   IE_Pressed, this, &ADESpectatorController::OnSpeedUp);
@@ -115,6 +116,53 @@ void ADESpectatorController::OnCameraKeyReleased()
 void ADESpectatorController::OnDisableCameraPressed()
 {
 	DisableCamera();
+}
+
+void ADESpectatorController::OnSameClassKeyPressed()
+{
+	// Requires an active target to establish the class/team/env context
+	if (!bCameraActive || !IsValid(CurrentTarget)) return;
+
+	CollectAgents();
+
+	const EDEClassType TargetClass = CurrentTarget->GetCommandedClass();
+	const int32        TargetTeam  = CurrentTarget->GetTeamID_Implementation();
+	const int32        TargetEnv   = CurrentTarget->Execute_GetEnvID(CurrentTarget);
+
+	// Collect all candidates: same class, same team, same env, alive, not the current one
+	TArray<ADEAgent*> Candidates;
+	for (ADEAgent* Agent : AllAgents)
+	{
+		if (!IsValid(Agent) || !Agent->IsAlive())                    continue;
+		if (Agent == CurrentTarget)                                  continue;
+		if (Agent->GetCommandedClass()            != TargetClass)    continue;
+		if (Agent->GetTeamID_Implementation()	  != TargetTeam)     continue;
+		if (Agent->Execute_GetEnvID(Agent)        != TargetEnv)      continue;
+		Candidates.Add(Agent);
+	}
+
+	if (Candidates.IsEmpty()) return;  // No other agent of the same class found
+
+	// Pick the candidate that comes right after the current one in AllAgents order,
+	// wrapping around so repeated presses cycle through all matches.
+	const int32 CurrentIdx = AllAgents.IndexOfByKey(CurrentTarget);
+	ADEAgent* Next = nullptr;
+
+	// Search forward from the position after CurrentTarget
+	for (int32 i = 1; i <= AllAgents.Num(); ++i)
+	{
+		ADEAgent* Candidate = AllAgents[(CurrentIdx + i) % AllAgents.Num()];
+		if (Candidates.Contains(Candidate))
+		{
+			Next = Candidate;
+			break;
+		}
+	}
+
+	if (Next)
+	{
+		SwitchToAgent(Next);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +245,33 @@ void ADESpectatorController::SwitchToNextClassAgent()
 {
 	if (AllAgents.IsEmpty()) return;
 
-	// Search all agents (both teams) for the first alive agent matching the current class phase.
+	// On the very first press (camera not yet active), determine the EnvID to lock onto
+	// by finding the alive agent closest to the spectator pawn.
+	if (!bCameraActive || LockedEnvID == -1)
+	{
+		FVector SpectatorLocation = FVector::ZeroVector;
+		if (APawn* MyPawn = GetPawn())
+		{
+			SpectatorLocation = MyPawn->GetActorLocation();
+		}
+
+		float BestDistSq = MAX_FLT;
+		for (ADEAgent* Agent : AllAgents)
+		{
+			if (!IsValid(Agent) || !Agent->IsAlive()) continue;
+			const float DistSq = FVector::DistSquared(SpectatorLocation, Agent->GetActorLocation());
+			if (DistSq < BestDistSq)
+			{
+				BestDistSq = DistSq;
+				LockedEnvID = Agent->Execute_GetEnvID(Agent);
+			}
+		}
+
+		// Reset class phase so the new env always starts at Strike
+		CurrentClassPhase = 0;
+	}
+
+	// Search agents in the locked env for the next class in phase order.
 	// Cycles through all three phases before giving up.
 	ADEAgent* Found = nullptr;
 	for (int32 i = 0; i < 3 && !Found; ++i)
@@ -207,7 +281,9 @@ void ADESpectatorController::SwitchToNextClassAgent()
 
 		for (ADEAgent* Agent : AllAgents)
 		{
-			if (IsValid(Agent) && Agent->IsAlive() && Agent->GetCommandedClass() == TargetClass)
+			if (IsValid(Agent) && Agent->IsAlive()
+				&& Agent->Execute_GetEnvID(Agent) == LockedEnvID
+				&& Agent->GetCommandedClass() == TargetClass)
 			{
 				Found = Agent;
 				break;
@@ -221,8 +297,16 @@ void ADESpectatorController::SwitchToNextClassAgent()
 	}
 	else
 	{
-		// Fallback: all agents are dead or unclassified — pick first alive agent
-		SwitchToAgent(AllAgents[0]);
+		// Fallback: pick the first alive agent in the locked env
+		for (ADEAgent* Agent : AllAgents)
+		{
+			if (IsValid(Agent) && Agent->IsAlive()
+				&& Agent->Execute_GetEnvID(Agent) == LockedEnvID)
+			{
+				SwitchToAgent(Agent);
+				return;
+			}
+		}
 	}
 }
 
@@ -353,7 +437,8 @@ void ADESpectatorController::DisableCamera()
 
 	CurrentTarget        = nullptr;
 	CurrentAgentIndex    = -1;
-	CurrentClassPhase = 0;
+	CurrentClassPhase    = 0;
+	LockedEnvID          = -1;
 	bCameraActive        = false;
 	bIsCycling         = false;
 

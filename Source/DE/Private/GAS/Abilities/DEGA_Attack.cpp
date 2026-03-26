@@ -135,11 +135,15 @@ bool UDEGA_Attack::CanFire() const
 
 	if (bIsReloading) return false;
 
-	// Manual cooldown check (complements GAS tag-based cooldown)
-	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	if (AvatarActor && AvatarActor->GetWorld())
+	// Manual cooldown check (complements GAS tag-based cooldown).
+	// GetAvatarActorFromActorInfo() returns null when called outside an active
+	// ActivateAbility context (e.g. BTTask_DEAttackAbility::TickTask calling
+	// CanFire() directly). Fall back to GetWorld() via the UObject outer so the
+	// cooldown is never skipped for Script AI agents.
+	const UWorld* World = GetWorld();
+	if (World)
 	{
-		float GameTime = AvatarActor->GetWorld()->GetTimeSeconds();
+		float GameTime = World->GetTimeSeconds();
 		float BaseCooldown = Config.Speed > 0.0f ? 1.0f / Config.Speed : 1.0f;
 		if (GameTime < (LastFireTime + BaseCooldown)) return false;
 	}
@@ -418,9 +422,9 @@ float UDEGA_Attack::GetCooldownProgress() const
 
 float UDEGA_Attack::GetRemainingCooldown() const
 {
-	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
-	if (!AvatarActor || !AvatarActor->GetWorld()) return 0.0f;
-	float GameTime = AvatarActor->GetWorld()->GetTimeSeconds();
+	const UWorld* World = GetWorld();
+	if (!World) return 0.0f;
+	float GameTime = World->GetTimeSeconds();
 	float BaseCooldown = Config.Speed > 0.0f ? 1.0f / Config.Speed : 1.0f;
 	return FMath::Max(0.0f, (LastFireTime + BaseCooldown) - GameTime);
 }

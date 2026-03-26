@@ -9,7 +9,7 @@ SET "NO_BUILD=false"
 SET "RESUME_CHECKPOINT="
 SET "STEP_CHECKPOINT_FREQ=20"
 SET "UE5_EXE=C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.exe"
-SET "UPROJECT=C:\Users\PC\Documents\GitHub\DE\DE.uproject"
+SET "UPROJECT=%~dp0..\DE.uproject"
 SET "SCHOLA_BASE_PORT=50051"
 SET "LAUNCH_UE5=true"
 

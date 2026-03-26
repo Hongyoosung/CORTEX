@@ -166,11 +166,6 @@ void ADEMatchManager::MatchConditionTimerTick()
 
 				FinalWinnerTeamID = TeamID;
 
-				if (RewardCalculator)
-				{
-					RewardCalculator->ApplyMatchEndReward(TeamID, AllAgents);
-				}
-
 				StopMatchTimer();
 				OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
 				return;
@@ -187,11 +182,6 @@ void ADEMatchManager::MatchConditionTimerTick()
 			: EDEMatchState::TimeExpired;
 
 		FinalWinnerTeamID = LeadTeam;
-
-		if (RewardCalculator)
-		{
-			RewardCalculator->ApplyMatchEndReward(LeadTeam, AllAgents);
-		}
 
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DEMatchManager] Env %d: Timeout — Scores [%d, %d], winner=%d"),
@@ -252,7 +242,6 @@ FDESquadConfig ADEMatchManager::MakeSquadConfig() const
 
 void ADEMatchManager::SpawnTeams()
 {
-	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Spawning teams..."));
 
 	SpawnTeam(0, AgentsPerTeam);
 	SpawnTeam(1, AgentsPerTeam);
@@ -705,6 +694,21 @@ void ADEMatchManager::RegisterKill(const FDEDeathEventData& DeathEvent)
 // ─────────────────────────────────────────────────────────────────────────────
 // DECapturePoint Integration
 // ─────────────────────────────────────────────────────────────────────────────
+
+void ADEMatchManager::SetEnvID(int32 InEnvID)
+{
+	EnvID = InEnvID;
+
+	// If agents were already spawned before SetEnvID was called (BeginPlay ordering race),
+	// retroactively fix their EnvID now.
+	for (ADEAgent* Agent : AllAgents)
+	{
+		if (Agent)
+		{
+			Agent->SetEnvID_Implementation(InEnvID);
+		}
+	}
+}
 
 void ADEMatchManager::CapturePointInitialize()
 {
