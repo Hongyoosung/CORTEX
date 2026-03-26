@@ -180,6 +180,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager|Score")
 	int32 GetWinnerTeamID() const;
 
+	/** Returns the latched winner from match end, or live leader if match still in progress */
+	UFUNCTION(BlueprintPure, Category = "DEMatchManager|Score")
+	int32 GetFinalWinnerTeamID() const { return FinalWinnerTeamID != -2 ? FinalWinnerTeamID : GetWinnerTeamID(); }
+
 	/** Reset both team scores to 0 */
 	void ResetScores();
 
@@ -439,6 +443,9 @@ protected:
 
 	/** Per-team cumulative scores (index = TeamID) */
 	int32 TeamScores[2] = {0, 0};
+
+	/** Latched winner at match end (-2 = not ended, -1 = tie, 0/1 = team) */
+	int32 FinalWinnerTeamID = -2;
 
 	/** Timer handles replacing per-frame Tick */
 	FTimerHandle GameplayTimerHandle;

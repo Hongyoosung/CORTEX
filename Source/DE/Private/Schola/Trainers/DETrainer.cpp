@@ -902,7 +902,7 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
     {
         Info.Add(TEXT("TeamScore0"), FString::FromInt(CachedMatchManager->GetTeamScore(0)));
         Info.Add(TEXT("TeamScore1"), FString::FromInt(CachedMatchManager->GetTeamScore(1)));
-        Info.Add(TEXT("WinnerTeamID"), FString::FromInt(CachedMatchManager->GetWinnerTeamID()));
+        Info.Add(TEXT("WinnerTeamID"), FString::FromInt(CachedMatchManager->GetFinalWinnerTeamID()));
     }
 
     // ── MAPPO: global state for centralized critic ──────────────────────

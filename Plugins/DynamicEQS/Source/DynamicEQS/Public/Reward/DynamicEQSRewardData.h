@@ -33,9 +33,9 @@ public:
 
 	/** Terminal reward given when the episode ends with a win. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DynamicEQS|Reward")
-	float TerminalWinReward = 1.0f;
+	float TerminalWinReward = 200.0f;
 
 	/** Terminal reward given when the episode ends with a loss. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DynamicEQS|Reward")
-	float TerminalLossReward = -1.0f;
+	float TerminalLossReward = -200.0f;
 };

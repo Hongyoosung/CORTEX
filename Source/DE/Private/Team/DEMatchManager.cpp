@@ -164,6 +164,8 @@ void ADEMatchManager::MatchConditionTimerTick()
 					TEXT("[DEMatchManager] Env %d: Team %d reached score %d (threshold %d). Ending episode."),
 					EnvID, TeamID, TeamScores[TeamID], WinScoreThreshold);
 
+				FinalWinnerTeamID = TeamID;
+
 				if (RewardCalculator)
 				{
 					RewardCalculator->ApplyMatchEndReward(TeamID, AllAgents);
@@ -183,6 +185,13 @@ void ADEMatchManager::MatchConditionTimerTick()
 		const EDEMatchState TimeoutState = (LeadTeam >= 0)
 			? EDEMatchState::TeamWon
 			: EDEMatchState::TimeExpired;
+
+		FinalWinnerTeamID = LeadTeam;
+
+		if (RewardCalculator)
+		{
+			RewardCalculator->ApplyMatchEndReward(LeadTeam, AllAgents);
+		}
 
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DEMatchManager] Env %d: Timeout — Scores [%d, %d], winner=%d"),
@@ -402,6 +411,7 @@ void ADEMatchManager::ResetScores()
 {
 	TeamScores[0] = 0;
 	TeamScores[1] = 0;
+	FinalWinnerTeamID = -2;
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Team scores reset"), EnvID);
 }
 
