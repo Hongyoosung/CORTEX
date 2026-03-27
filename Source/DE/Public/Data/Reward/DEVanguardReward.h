@@ -35,9 +35,9 @@ struct FDEVanguardRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float ZoneDurabilityBonus = 3.0f;
 
-	/** Vanguard: -20 per death (base DeathPenaltyReward=100 × 0.20) */
+	/** Vanguard: -12 per death (base DeathPenaltyReward=100 × 0.12) — reduced to soften risk-aversion */
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float DeathScale = 0.20f;
+	float DeathScale = 0.12f;
 
 	/** Small per-step bonus when health is above VanguardHealthThreshold (stay healthy to keep fighting). */
 	UPROPERTY(EditAnywhere, Category = "Combat")

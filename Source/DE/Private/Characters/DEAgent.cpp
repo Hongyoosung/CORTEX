@@ -908,19 +908,87 @@ void ADEAgent::ResetStepDamage() { if (CombatStats) CombatStats->ResetStepDamage
 
 void ADEAgent::ProcessTrainingAbilities()
 {
-	if (!bIsAlive || !AbilitySystemComponent) return;
+	if (!bIsAlive)
+	{
+		return;
+	}
+	if (!AbilitySystemComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DEAgent:%s] ProcessTrainingAbilities skipped: no ASC"), *GetName());
+		return;
+	}
 
-	// Activate attack ability via GAS tag
-	FGameplayTagContainer AttackTag;
-	AttackTag.AddTag(DEGameplayTags::Ability_Attack);
-	AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
+	const EDEClassType CurrentClass = GetCommandedClass();
 
-	// Activate heal ability only for Support class
-	if (GetCommandedClass() == EDEClassType::Support)
+	// ---- Attack ability ----
+	if (CurrentClass == EDEClassType::Support)
+	{
+		// Support class is blocked from attacking in CanActivateAbility — skip silently
+	}
+	else
+	{
+		FGameplayTagContainer AttackTag;
+		AttackTag.AddTag(DEGameplayTags::Ability_Attack);
+		const bool bAttackActivated = AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
+
+		if (!bAttackActivated)
+		{
+			// Diagnose why attack failed
+			FString Reason;
+			if (!AttackAbility)
+			{
+				Reason = TEXT("AttackAbility not granted");
+			}
+			else if (AbilitySystemComponent->HasMatchingGameplayTag(DEGameplayTags::State_Dead))
+			{
+				Reason = TEXT("State.Dead tag active");
+			}
+			else if (!AttackAbility->CanFire())
+			{
+				if (AttackAbility->GetCurrentAmmo() <= 0)
+					Reason = FString::Printf(TEXT("reloading (ammo=0, cooldown=%.2f)"), AttackAbility->GetRemainingCooldown());
+				else
+					Reason = FString::Printf(TEXT("on cooldown (remaining=%.2fs)"), AttackAbility->GetRemainingCooldown());
+			}
+			else
+			{
+				Reason = TEXT("no valid target (none in range or no LOS)");
+			}
+		}
+	}
+
+	// ---- Heal ability (Support only) ----
+	if (CurrentClass == EDEClassType::Support)
 	{
 		FGameplayTagContainer HealTag;
 		HealTag.AddTag(DEGameplayTags::Ability_Heal);
-		AbilitySystemComponent->TryActivateAbilitiesByTag(HealTag);
+		const bool bHealActivated = AbilitySystemComponent->TryActivateAbilitiesByTag(HealTag);
+
+		if (!bHealActivated)
+		{
+			// Diagnose why heal failed
+			FString Reason;
+			if (!HealAbility)
+			{
+				Reason = TEXT("HealAbility not granted");
+			}
+			else if (AbilitySystemComponent->HasMatchingGameplayTag(DEGameplayTags::State_Dead))
+			{
+				Reason = TEXT("State.Dead tag active");
+			}
+			else if (AttributeSet && AttributeSet->GetMana() <= 0.0f)
+			{
+				Reason = TEXT("mana depleted (0)");
+			}
+			else if (!HealAbility->HasInjuredAllyInRange())
+			{
+				Reason = TEXT("no injured ally in range");
+			}
+			else
+			{
+				Reason = TEXT("heal tick interval not elapsed or GAS blocked");
+			}
+		}
 	}
 	else if (HealAbility)
 	{

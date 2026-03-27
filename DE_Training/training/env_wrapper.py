@@ -250,21 +250,64 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 return base
         return kwargs.get("port", 50051)
 
+    def _parse_ue5_env_id(self, agent_id_str: str) -> Optional[int]:
+        """Extract UE5 EnvironmentId from agent ID string like 'env3_agent0' → 3."""
+        import re
+        m = re.match(r'env(\d+)_', agent_id_str)
+        return int(m.group(1)) if m else None
+
     def _update_agent_map(self):
         self.agent_map.clear()
         self.reverse_map.clear()
         self._agent_ids.clear()
-        # In Schola 2.0.1, _ids[env_idx] is a list of string agent IDs from C++
-        # e.g., ["env0_agent0", "env0_agent1", ...]
-        for env_idx, agent_list in enumerate(self._ids):
+        # Build slot ↔ UE5 env ID mapping.
+        # _ids[slot] is a list of agent ID strings from C++ (e.g., ["env3_agent0", ...]).
+        # The protocol slot order may differ from UE5 EnvironmentId order.
+        self._slot_to_ue5: Dict[int, int] = {}
+        self._ue5_to_slot: Dict[int, int] = {}
+        for slot, agent_list in enumerate(self._ids):
+            ue5_id = None
             for agent_id_str in agent_list:
-                self.agent_map[agent_id_str] = (env_idx, agent_id_str)
-                self.reverse_map[(env_idx, agent_id_str)] = agent_id_str
+                parsed = self._parse_ue5_env_id(agent_id_str)
+                if parsed is not None:
+                    ue5_id = parsed
+                    break
+            if ue5_id is None:
+                ue5_id = slot  # fallback: assume slot == env ID
+            self._slot_to_ue5[slot] = ue5_id
+            self._ue5_to_slot[ue5_id] = slot
+            for agent_id_str in agent_list:
+                self.agent_map[agent_id_str] = (ue5_id, agent_id_str)
+                self.reverse_map[(ue5_id, agent_id_str)] = agent_id_str
                 self._agent_ids.add(agent_id_str)
         print(f"[DEEntityCentricEnv] Agent map: {len(self._agent_ids)} agents")
+        if self._slot_to_ue5 != {i: i for i in range(len(self._ids))}:
+            print(f"[DEEntityCentricEnv] WARNING: Protocol slot ≠ UE5 env ID! "
+                  f"slot→ue5={self._slot_to_ue5}")
 
     def _agents_for_env(self, env_idx: int):
         return [a for a, (eidx, _) in self.agent_map.items() if eidx == env_idx]
+
+    def _reindex_step_lists(self, *lists):
+        """
+        Convert slot-indexed lists (from protobuf repeated fields) to
+        UE5-env-ID-indexed lists. Step data from Schola uses protocol slot
+        order which may differ from UE5 EnvironmentId order.
+        """
+        result = []
+        for lst in lists:
+            if not isinstance(lst, list):
+                result.append(lst)
+                continue
+            reindexed = [None] * self.num_envs
+            for slot, data in enumerate(lst):
+                ue5_id = self._slot_to_ue5.get(slot, slot)
+                if ue5_id < self.num_envs:
+                    reindexed[ue5_id] = data
+            # Fill any None slots with empty dicts
+            reindexed = [d if d is not None else {} for d in reindexed]
+            result.append(reindexed)
+        return result if len(result) > 1 else result[0]
 
     # ── MAPPO global state ────────────────────────────────────────────────
 
@@ -381,16 +424,18 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
     def _format_actions(self, actiondict: dict) -> dict:
         """
-        Convert {flat_id: action_array} → {env_id: {agent_id_str: action}} for
-        send_action_msg. Handles both Box and Dict action spaces.
+        Convert {flat_id: action_array} → {slot_id: {agent_id_str: action}} for
+        send_action_msg. Uses protocol slot indices (not UE5 env IDs) since
+        send_action_msg adds environments positionally to protobuf repeated fields.
         """
-        fmt = {}
+        # Build actions keyed by UE5 env ID first
+        by_ue5 = {}
         for fid, action in actiondict.items():
             if fid not in self.agent_map:
                 continue
-            ei, ai = self.agent_map[fid]
-            if ei not in fmt:
-                fmt[ei] = {}
+            ue5_ei, ai = self.agent_map[fid]
+            if ue5_ei not in by_ue5:
+                by_ue5[ue5_ei] = {}
 
             if isinstance(action, np.ndarray) and len(action) == ACTION_DIM:
                 a = np.clip(action, -1.0, 1.0).astype(np.float32)
@@ -403,29 +448,35 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 # Dict action space — wrap in {key: array}
                 keys = list(space.spaces.keys())
                 if keys:
-                    fmt[ei][ai] = {k: a for k in keys}
+                    by_ue5[ue5_ei][ai] = {k: a for k in keys}
                 else:
-                    fmt[ei][ai] = a
+                    by_ue5[ue5_ei][ai] = a
             else:
                 # Box or unknown — pass array directly
-                fmt[ei][ai] = a
+                by_ue5[ue5_ei][ai] = a
 
-        # Pad completed sub-envs with dummy actions so the protocol
-        # message always contains entries for every environment.
-        for ei in range(self.num_envs):
-            if ei not in fmt:
-                fmt[ei] = {}
-                for aid in self._agents_for_env(ei):
+        # Pad completed sub-envs with dummy actions
+        for ue5_ei in range(self.num_envs):
+            if ue5_ei not in by_ue5:
+                by_ue5[ue5_ei] = {}
+                for aid in self._agents_for_env(ue5_ei):
                     _, agent_id_str = self.agent_map[aid]
                     zeros = np.zeros(ACTION_DIM, dtype=np.float32)
                     space = self._single_action_spaces.get(agent_id_str)
                     if space is not None and hasattr(space, 'spaces'):
                         keys = list(space.spaces.keys())
-                        fmt[ei][agent_id_str] = {k: zeros for k in keys} if keys else zeros
+                        by_ue5[ue5_ei][agent_id_str] = {k: zeros for k in keys} if keys else zeros
                     else:
-                        fmt[ei][agent_id_str] = zeros
+                        by_ue5[ue5_ei][agent_id_str] = zeros
 
-        # Sort by env_id so protobuf repeated field positions match UE5 env indices.
+        # Convert UE5 env IDs → protocol slot indices for send_action_msg.
+        # The protobuf repeated field is ordered by slot, not by UE5 env ID.
+        fmt = {}
+        for ue5_ei, agents_actions in by_ue5.items():
+            slot = self._ue5_to_slot.get(ue5_ei, ue5_ei)
+            fmt[slot] = agents_actions
+
+        # Sort by slot so protobuf repeated field positions are correct.
         return {k: fmt[k] for k in sorted(fmt.keys())}
 
     # ── Core interface ────────────────────────────────────────────────────
@@ -534,7 +585,8 @@ class DEEntityCentricEnv(MultiAgentEnv):
             obs_d, rew_d, term_d, trunc_d, info_d = self._parse_full(result)
 
             # Extract per-env global state from info channel (MAPPO)
-            info_n = result[4]
+            # Reindex from slot order to UE5 env ID order
+            info_n = self._reindex_step_lists(result[4])
             for ei in range(self.num_envs):
                 self._global_state[ei] = self._extract_global_state(info_n, ei)
 
@@ -647,8 +699,8 @@ class DEEntityCentricEnv(MultiAgentEnv):
     def _parse_obs_and_info(self, result) -> Tuple[dict, dict]:
         """Minimal parse for soft reset — result is 7-tuple from send_action_msg."""
         # result: (obs, rew, term, trunc, infos, initial_obs, initial_info)
-        obs_n   = result[0]
-        info_n  = result[4]
+        # Reindex from slot order to UE5 env ID order
+        obs_n, info_n = self._reindex_step_lists(result[0], result[4])
         obs_d = {}
         info_d = {}
         for fid in self._agent_ids:
@@ -666,7 +718,10 @@ class DEEntityCentricEnv(MultiAgentEnv):
     def _parse_full(self, result) -> Tuple[dict, dict, dict, dict, dict]:
         """Full step result parse from send_action_msg() 7-tuple."""
         # result: (obs, rew, term, trunc, infos, initial_obs, initial_info)
-        obs_n, rew_n, term_n, trunc_n, info_n = result[0], result[1], result[2], result[3], result[4]
+        # Step data comes as slot-indexed lists — reindex to UE5 env IDs
+        obs_n, rew_n, term_n, trunc_n, info_n = self._reindex_step_lists(
+            result[0], result[1], result[2], result[3], result[4]
+        )
 
         obs_d = {}; rew_d = {}; term_d = {}; trunc_d = {}; info_d = {}
 

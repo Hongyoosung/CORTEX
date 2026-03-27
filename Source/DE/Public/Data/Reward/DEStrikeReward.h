@@ -29,9 +29,9 @@ struct FDEStrikeRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthPenalty = 0.0f;
 
-	/** Strike: -20 per death (base DeathPenaltyReward=100 × 0.2) */
+	/** Strike: -12 per death (base DeathPenaltyReward=100 × 0.12) — reduced to soften risk-aversion */
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float DeathScale = 0.2f;
+	float DeathScale = 0.12f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float IdlePenalty = 1.5f;

@@ -81,6 +81,15 @@ struct FDERewardState
     /** True when no non-Support allies are alive; Support falls back to following other Supports. */
     bool bFallbackToSupportTarget = false;
 
+    /** Consecutive steps the agent has failed to approach any non-friendly objective. */
+    int32 StagnationSteps = 0;
+
+    /** Consecutive steps the agent has spent loitering on a friendly (already-captured) point. */
+    int32 FriendlyZoneLoiterSteps = 0;
+
+    /** Consecutive steps the agent has spent loitering inside their own spawn base. */
+    int32 BaseLoiterSteps = 0;
+
     void Reset()
     {
         CumulativeReward = 0.0f;
@@ -95,6 +104,9 @@ struct FDERewardState
         IsolatedConsecutiveSteps = 0;
         AllyAccumulatedDamage.Init(0.0f, 4);
         bFallbackToSupportTarget = false;
+        StagnationSteps = 0;
+        FriendlyZoneLoiterSteps = 0;
+        BaseLoiterSteps = 0;
     }
 };
 

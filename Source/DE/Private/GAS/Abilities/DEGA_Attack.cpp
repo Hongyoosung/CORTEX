@@ -309,7 +309,6 @@ AActor* UDEGA_Attack::FindBestEnemy() const
 	const int32 MyEnvID = OwnerChar->GetEnvID_Implementation();
 	const bool bLogDiag = (MyEnvID == 0);
 
-
 	if (!CachedMatchManager) return nullptr;
 
 	const FVector MyLocation = OwnerChar->GetActorLocation();

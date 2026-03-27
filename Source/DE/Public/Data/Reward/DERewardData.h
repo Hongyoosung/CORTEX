@@ -85,7 +85,7 @@ public:
 	float StepRewardClampMin = -20.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMax = 10.0f;
+	float StepRewardClampMax = 15.0f;
 
 	// ==================== Capture Loss Cooldown ====================
 
@@ -110,6 +110,42 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Isolation")
 	int32 IsolationDebounceSteps = 30;
+
+	// ==================== Stagnation & Loitering ====================
+
+	/** Steps without objective approach before stagnation penalty begins escalating. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	int32 StagnationThresholdSteps = 20;
+
+	/** Per-step penalty once stagnation threshold is exceeded. Escalates linearly. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	float StagnationPenaltyPerStep = 0.15f;
+
+	/** Maximum stagnation penalty per step (caps the linear escalation). */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	float StagnationPenaltyMax = 3.0f;
+
+	/** Per-step penalty for loitering on an already-captured (friendly) point
+	 *  when at least one non-friendly point remains. Pushes agents to advance. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	float FriendlyZoneLoiterPenalty = 1.5f;
+
+	/** Steps on friendly zone before loiter penalty activates (brief grace for regrouping). */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	int32 FriendlyZoneLoiterGraceSteps = 10;
+
+	/** Radius (cm) from the team's spawn area center within which an agent is considered loitering at base. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	float BaseLoiterRadius = 1500.0f;
+
+	/** Per-step penalty for loitering inside the team's own spawn base.
+	 *  Unlike FriendlyZoneLoiterPenalty, this fires regardless of enemy proximity. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	float BaseLoiterPenalty = 1.5f;
+
+	/** Steps inside the spawn base before BaseLoiterPenalty activates. */
+	UPROPERTY(EditAnywhere, Category = "Rewards|Stagnation")
+	int32 BaseLoiterGraceSteps = 10;
 
 	// ==================== Per-Class Settings ====================
 	UPROPERTY(EditAnywhere, Category = "Rewards|Class")

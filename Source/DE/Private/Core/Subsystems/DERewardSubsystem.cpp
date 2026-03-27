@@ -223,6 +223,16 @@ float UDERewardSubsystem::ComputeStepReward(
 	// ---- Reset per-step damage accumulator (consumed by Strike reward above) ----
 	Agent->ResetStepDamage();
 
+	// ---- Stagnation penalty: escalating penalty for not making objective progress ----
+	if (InOutState.StagnationSteps > Settings->StagnationThresholdSteps)
+	{
+		const int32 ExcessSteps = InOutState.StagnationSteps - Settings->StagnationThresholdSteps;
+		const float StagnationPenalty = FMath::Min(
+			Settings->StagnationPenaltyPerStep * static_cast<float>(ExcessSteps),
+			Settings->StagnationPenaltyMax);
+		Reward -= StagnationPenalty;
+	}
+
 	// ---- Common: Survival reward ----
 	if (!bIsRespawnStep && Current.bIsAlive)
 		CalculateSurvivalReward(InOutState, Class, Current.Health, 1.0f, Agent->AgentID);

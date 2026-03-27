@@ -8,6 +8,7 @@
 #include "Actors/DECapturePoint.h"
 #include "Team/DEMatchManager.h"
 #include "GAS/Abilities/DEGA_Heal.h"
+#include "Actors/DESpawnArea.h"
 
 float DEComputeSupportStepReward(
 	ADEAgent* Agent,
@@ -315,5 +316,30 @@ float DEComputeSupportStepReward(
 
 	Reward += ProximityReward;
 	Reward += HealReward;
+
+	// Base loiter penalty: always applies when the agent is inside their own spawn base,
+	// regardless of enemy proximity — agents should leave the base and push forward.
+	if (!bIsRespawnStep && Agent)
+	{
+		if (ADEMatchManager* MatchMgr = Agent->GetMatchManager())
+		{
+			const FDETeamConfiguration TeamCfg = MatchMgr->GetTeamConfiguration(MyTeamID);
+			if (TeamCfg.DESpawnArea)
+			{
+				const float BaseRadiusSq = FMath::Square(Settings->BaseLoiterRadius);
+				if (FVector::DistSquared(Current.Position, TeamCfg.DESpawnArea->GetActorLocation()) <= BaseRadiusSq)
+				{
+					InOutState.BaseLoiterSteps++;
+					if (InOutState.BaseLoiterSteps > Settings->BaseLoiterGraceSteps)
+						Reward -= Settings->BaseLoiterPenalty;
+				}
+				else
+				{
+					InOutState.BaseLoiterSteps = 0;
+				}
+			}
+		}
+	}
+
 	return Reward;
 }
