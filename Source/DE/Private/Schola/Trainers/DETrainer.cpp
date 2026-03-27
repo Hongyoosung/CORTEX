@@ -103,6 +103,15 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
         }
     }
 
+    // ── DIAGNOSTIC: log cached env references so mis-wiring is immediately visible ──
+    UE_LOG(LogTemp, Warning,
+        TEXT("[DETrainer][INIT] Agent=%s  CharEnvID=%d  CachedMM_EnvID=%d  ScholaEnv_EnvironmentId=%d"),
+        *ControlledCharacter->GetName(),
+        ControlledCharacter->GetEnvID_Implementation(),
+        CachedMatchManager ? CachedMatchManager->GetEnvID() : -999,
+        CachedScholaEnvironment ? CachedScholaEnvironment->EnvironmentId : -999
+    );
+
     // Cache capture point references filtered by EnvID (static actors — populated once)
     const int32 MyEnvID = ControlledCharacter->GetEnvID_Implementation();
     TArray<AActor*> FoundPoints;
@@ -895,6 +904,17 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
     if (bMatchOver)
     {
         Info.Add(TEXT("MatchResult"), FString::FromInt(static_cast<int32>(CachedScholaEnvironment->GetMatchState())));
+        // DIAGNOSTIC: log which trainer is reporting match-over, and what env it thinks it belongs to
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DETrainer][MATCH_OVER] Agent=%s  CharEnvID=%d  ScholaEnv_EnvironmentId=%d  MM_EnvID=%d  Score=[%d,%d]  Winner=%d"),
+            ControlledCharacter ? *ControlledCharacter->GetName() : TEXT("NULL"),
+            ControlledCharacter ? ControlledCharacter->GetEnvID_Implementation() : -999,
+            CachedScholaEnvironment->EnvironmentId,
+            CachedMatchManager ? CachedMatchManager->GetEnvID() : -999,
+            CachedMatchManager ? CachedMatchManager->GetTeamScore(0) : -1,
+            CachedMatchManager ? CachedMatchManager->GetTeamScore(1) : -1,
+            CachedMatchManager ? CachedMatchManager->GetFinalWinnerTeamID() : -999
+        );
     }
 
     // Team scores and winner (for win rate tracking in Python)

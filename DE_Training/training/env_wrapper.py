@@ -619,21 +619,38 @@ class DEEntityCentricEnv(MultiAgentEnv):
                         self._agent_ep_rewards.get(aid, 0.0) + rew_d.get(aid, 0.0)
                     )
 
-                # Check for match end: Schola env-level termination OR MatchEnded info
+                # Check for match end: Schola env-level termination OR MatchEnded info.
+                # Schola termination alone is NOT sufficient — when multiple envs
+                # end in the same step, Schola can spuriously fire term=True for
+                # envs whose matches haven't actually finished in UE5.
+                # We require at least one explicit UE5 match-end signal:
+                #   • MatchEnded=true  (explicit bool flag from Step_Implementation)
+                #   • WinnerTeamID present (only set when a match genuinely ends)
+                # If neither is present, reject the Schola term as spurious.
                 schola_ended = ei in self._schola_env_done
                 match_ended_info = any(
                     str(info_d.get(aid, {}).get('MatchEnded', 'false')).lower() == 'true'
                     for aid in agents
                 )
-                ue5_end = schola_ended or match_ended_info
+                winner_in_info = any(
+                    info_d.get(aid, {}).get('WinnerTeamID') is not None
+                    for aid in agents
+                )
+                ue5_confirmed = match_ended_info or winner_in_info
+                if schola_ended and not ue5_confirmed:
+                    print(f"[WARN] env={ei} Schola term=True but NO UE5 match-end "
+                          f"evidence (MatchEnded={match_ended_info}, "
+                          f"WinnerTeamID={winner_in_info}) — treating as spurious, "
+                          f"step={self._env_episode_steps[ei]}")
+                ue5_end = match_ended_info or (schola_ended and ue5_confirmed)
                 timed_out = (self._force_timeout and
                              self._env_episode_steps[ei] >= self._max_episode_steps)
 
                 if ue5_end or timed_out:
-                    if schola_ended:
-                        reason = f"Schola {self._schola_env_done[ei]} (all agents in sub-env)"
-                    elif match_ended_info:
+                    if match_ended_info:
                         reason = "MatchEnded info from UE5"
+                    elif schola_ended and ue5_confirmed:
+                        reason = f"Schola {self._schola_env_done[ei]} + WinnerTeamID confirmed"
                     else:
                         reason = f"timeout({self._max_episode_steps})"
                     print(f"[STEP] Episode end: env={ei} step={self._env_episode_steps[ei]} — {reason}")
@@ -742,8 +759,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
         # If ALL agents in a sub-env are terminated/truncated simultaneously,
         # that signals a match-level end (not individual agent death).
         # Individual agent deaths (subset terminated) are suppressed.
+        # Already-completed envs are skipped: they keep returning term=True
+        # every step (because they haven't been reset), and including them
+        # can cause Schola to batch-terminate other envs spuriously.
         self._schola_env_done: Dict[int, str] = {}  # env_idx → "term"/"trunc"
         for ei in range(self.num_envs):
+            if ei in self._completed_envs:
+                continue  # already done — ignore repeated Schola term signals
             agents = self._agents_for_env(ei)
             if not agents:
                 continue

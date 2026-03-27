@@ -28,6 +28,10 @@ void ADEScholaEnvironment::BeginPlay()
 {
 	Super::BeginPlay();
 
+	UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] %s BeginPlay — EnvironmentId=%d OwnedMatchManager=%s"),
+		*GetName(), EnvironmentId,
+		OwnedMatchManager ? *OwnedMatchManager->GetName() : TEXT("NULL"));
+
 	bAgentsRegistered = false;
 	bEnvironmentInitialized = false;
 
@@ -139,6 +143,21 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 {
 	if (bEnvironmentInitialized) return;
 
+	// GymConnectorManager::BeginPlay() calls InitializeEnvironment for ALL environments
+	// synchronously, which may run before this env's own BeginPlay() has executed.
+	// Ensure the MatchManager has the correct EnvID before any agent discovery or spawning.
+	if (OwnedMatchManager && OwnedMatchManager->GetEnvID() != EnvironmentId)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] %s: MatchManager EnvID mismatch (%d vs %d) — applying SetEnvID now (BeginPlay ordering race)"),
+			*GetName(), OwnedMatchManager->GetEnvID(), EnvironmentId);
+		OwnedMatchManager->SetEnvID(EnvironmentId);
+		OwnedMatchManager->CapturePointInitialize();
+		if (!OwnedMatchManager->OnMatchConditionMet.IsAlreadyBound(this, &ADEScholaEnvironment::OnMatchConditionReceived))
+		{
+			OwnedMatchManager->OnMatchConditionMet.AddDynamic(this, &ADEScholaEnvironment::OnMatchConditionReceived);
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] InitializeEnvironment on %s (EnvID: %d)"), *GetName(), EnvironmentId);
 
 	// ── Step 1: Discover agents ──
@@ -220,6 +239,12 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 
 			APawn* ControlledPawn = Cast<APawn>(DEChar);
 			if (!ControlledPawn) continue;
+
+			// Force-assign the correct EnvID before trainer initialization.
+			// Duplicated/pre-placed agents keep EnvID=0 (default) because SpawnAgent()
+			// was never called for them. Setting it here ensures the trainer caches
+			// the right ADEMatchManager and ADEScholaEnvironment.
+			DEChar->SetEnvID_Implementation(EnvironmentId);
 
 			FString AgentId = FString::Printf(TEXT("env%d_agent%d"), EnvironmentId, i);
 
