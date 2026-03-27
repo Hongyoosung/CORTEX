@@ -51,15 +51,15 @@ struct FDEStrikeRewardSettings
 	float LossCaptureRewardScale = 0.25f;
 
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ObjectiveProgressReward = 0.15f;
+	float ObjectiveProgressReward = 0.25f;
 
-	/** Strike: reduced capture bonuses — range discipline takes priority over capping. */
+	/** Strike: moderate capture bonuses — objective momentum comparable to Vanguard while maintaining range discipline. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZonePresenceBonus = 1.5f;
+	float ZonePresenceBonus = 2.5f;
 
 	/** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ActiveCappingBonus = 2.0f;
+	float ActiveCappingBonus = 3.0f;
 
 
 

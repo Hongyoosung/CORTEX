@@ -136,26 +136,26 @@ float DEComputeSupportStepReward(
 	if (TargetIdx >= 0 && TargetIdx < Current.AllyPositions.Num())
 	{
 		const float CurrTargetDist = FVector::Dist(Current.Position, Current.AllyPositions[TargetIdx]);
+		const bool bTargetIsSupport = TargetIdx < AllyChars.Num() && AllyChars[TargetIdx] &&
+			AllyChars[TargetIdx]->GetCommandedClass() == EDEClassType::Support;
 
 		if (CurrTargetDist <= Settings->SupportAllyProximityThreshold)
 		{
 			const float AllyHP = Current.AllyHealths[TargetIdx];
-			if (AllyHP > 0.0f && AllyHP < Settings->SupportReward.AllyInjuryThreshold)
+			if (!bTargetIsSupport && AllyHP > 0.0f && AllyHP < Settings->SupportReward.AllyInjuryThreshold)
 			{
 				ProximityReward += Settings->SupportReward.AllyProximityBonus;
 				if (AllyHP < 0.3f)
 					ProximityReward += Settings->SupportReward.AllyProximityBonus * 0.5f;
 			}
-			const bool bTargetIsSupport = TargetIdx < AllyChars.Num() && AllyChars[TargetIdx] &&
-			AllyChars[TargetIdx]->GetCommandedClass() == EDEClassType::Support;
-		if (!bTargetIsSupport)
-			ProximityReward += Settings->SupportReward.AllyFormationBonus;
+			if (!bTargetIsSupport)
+				ProximityReward += Settings->SupportReward.AllyFormationBonus;
 		}
 
 		if (Current.Health > Settings->SupportHealthThreshold)
 			ProximityReward += Settings->SupportReward.HealthBonus;
 
-		if (!bIsRespawnStep && TargetIdx < Prev.AllyPositions.Num())
+		if (!bTargetIsSupport && !bIsRespawnStep && TargetIdx < Prev.AllyPositions.Num())
 		{
 			const float PrevTargetDist = FVector::Dist(Prev.Position, Prev.AllyPositions[TargetIdx]);
 			const float ApproachScale  = bEnemiesNearby ? 1.0f : 2.0f;

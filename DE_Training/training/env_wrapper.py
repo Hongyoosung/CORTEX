@@ -884,14 +884,33 @@ class DEEntityCentricEnv(MultiAgentEnv):
         # RL team = Blue (TeamID 1), Script AI team = Red (TeamID 0), -1 = draw.
         # Timeout episodes (TRUNCATED) do not count toward win/loss/draw.
         winner_team_id = None
+        team_score0 = None
+        team_score1 = None
         if info_d is not None:
             for aid in agents:
-                raw = info_d.get(aid, {}).get("WinnerTeamID")
-                if raw is not None:
-                    try:
-                        winner_team_id = int(raw)
-                    except (ValueError, TypeError):
-                        pass
+                agent_info = info_d.get(aid, {})
+                if winner_team_id is None:
+                    raw = agent_info.get("WinnerTeamID")
+                    if raw is not None:
+                        try:
+                            winner_team_id = int(raw)
+                        except (ValueError, TypeError):
+                            pass
+                if team_score0 is None:
+                    raw = agent_info.get("TeamScore0")
+                    if raw is not None:
+                        try:
+                            team_score0 = int(raw)
+                        except (ValueError, TypeError):
+                            pass
+                if team_score1 is None:
+                    raw = agent_info.get("TeamScore1")
+                    if raw is not None:
+                        try:
+                            team_score1 = int(raw)
+                        except (ValueError, TypeError):
+                            pass
+                if winner_team_id is not None and team_score0 is not None and team_score1 is not None:
                     break
 
         if not truncated:
@@ -908,9 +927,12 @@ class DEEntityCentricEnv(MultiAgentEnv):
         else:
             result_str = "TIMEOUT"
 
+        score0_str = str(team_score0) if team_score0 is not None else "?"
+        score1_str = str(team_score1) if team_score1 is not None else "?"
         print("=" * 70)
         print(f"[EP END] env={ei}  ep={self._env_episodes_done[ei]}  {end_t}  result={result_str}")
         print(f"  steps={self._env_episode_steps[ei]}  dur={dur:.1f}s  total_r={total_r:.2f}")
+        print(f"  score: Script(Red/Team0)={score0_str}  RL(Blue/Team1)={score1_str}")
         for a in sorted(agents):
             print(f"    {a}: {self._agent_ep_rewards.get(a, 0.0):.2f}")
         print("=" * 70)
