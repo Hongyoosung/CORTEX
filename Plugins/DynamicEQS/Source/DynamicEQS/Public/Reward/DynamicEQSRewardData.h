@@ -31,11 +31,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DynamicEQS|Reward")
 	float StepPenalty = -0.001f;
 
-	/** Terminal reward given when the episode ends with a win. */
+	/** Terminal reward given when the episode ends with a win.
+	 *  Raised to dominate over dense shaping — winning the game must be the strongest signal. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DynamicEQS|Reward")
-	float TerminalWinReward = 200.0f;
+	float TerminalWinReward = 500.0f;
 
 	/** Terminal reward given when the episode ends with a loss. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DynamicEQS|Reward")
-	float TerminalLossReward = -200.0f;
+	float TerminalLossReward = -500.0f;
 };

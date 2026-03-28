@@ -30,9 +30,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
 	float DeathPenaltyReward = 100.0f;
 
-	/** Fraction of team average reward mixed into individual reward. */
+	/** Fraction of team average reward mixed into individual reward.
+	 *  Raised to strengthen cooperative signal — agents need to care about teammates winning. */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
-	float TeamRewardMixingRatio = 0.2f;
+	float TeamRewardMixingRatio = 0.3f;
 
 	/** Fraction of KillReward awarded for an assist (scaled by normalized damage contribution) */
 	UPROPERTY(EditAnywhere, Category = "Rewards|Common")
@@ -79,10 +80,10 @@ public:
 	// Note: RewardScale (global reward scale) is inherited from UDynamicEQSRewardData.
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float SparseRewardScale = 0.2f;
+	float SparseRewardScale = 0.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
-	float StepRewardClampMin = -20.0f;
+	float StepRewardClampMin = -15.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Rewards|Clamp")
 	float StepRewardClampMax = 15.0f;

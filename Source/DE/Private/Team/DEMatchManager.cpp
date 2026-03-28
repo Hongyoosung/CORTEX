@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Team/DEMatchManager.h"
+#include "UI/DEMatchScoreWidget.h"
+#include "Components/WidgetComponent.h"
 #include "Team/DESquadManager.h"
 #include "Components/DEScriptedAIComponent.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
@@ -20,7 +22,6 @@
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
-#include "Player/DESpectatorController.h"
 
 
 
@@ -31,6 +32,11 @@
 ADEMatchManager::ADEMatchManager()
 {
 	PrimaryActorTick.bCanEverTick = false;
+
+	ScoreWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("ScoreWidgetComponent"));
+	ScoreWidgetComponent->SetupAttachment(RootComponent);
+	ScoreWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
+	ScoreWidgetComponent->SetDrawSize(FVector2D(400.0f, 120.0f));
 }
 
 void ADEMatchManager::BeginPlay()
@@ -60,6 +66,26 @@ void ADEMatchManager::BeginPlay()
 		Commander->Configure(MakeSquadConfig());
 		// Configuration is pushed later by ADEScholaEnvironment via MakeSquadConfig().
 		SquadCommanders.Add(ID, Commander);
+	}
+
+	// Initialise score widget if a class was assigned in the editor
+	if (ScoreWidgetClass && ScoreWidgetComponent)
+	{
+		ScoreWidgetComponent->SetWidgetClass(ScoreWidgetClass);
+		ScoreWidgetComponent->InitWidget();
+
+		if (UDEMatchScoreWidget* ScoreWidget = Cast<UDEMatchScoreWidget>(ScoreWidgetComponent->GetWidget()))
+		{
+			for (const FDETeamConfiguration& Cfg : TeamConfigs)
+			{
+				const FString Name  = Cfg.TeamData ? Cfg.TeamData->TeamName  : FString::Printf(TEXT("Team %d"), Cfg.TeamID);
+				const FLinearColor Color = Cfg.TeamData ? Cfg.TeamData->TeamColor : FLinearColor::White;
+				ScoreWidget->SetTeamInfo(Cfg.TeamID, Name, Color);
+				ScoreWidget->UpdateScore(Cfg.TeamID, 0);
+			}
+		}
+
+		OnTeamScoreChanged.AddDynamic(this, &ADEMatchManager::OnScoreChanged_Widget);
 	}
 
 	// Start timer-based gameplay loop (replaces Tick)
@@ -191,34 +217,6 @@ void ADEMatchManager::MatchConditionTimerTick()
 		return;
 	}
 
-	// ── Debug score display — only for the environment currently observed by the spectator ──
-	{
-		int32 ObservedEnvID = -1;
-		if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
-		{
-			if (const ADESpectatorController* SC = Cast<ADESpectatorController>(PC))
-			{
-				ObservedEnvID = SC->GetObservedEnvID();
-			}
-		}
-
-		// -1 means no agent is being watched — show all environments' scores.
-		// Otherwise only draw for the environment that is currently being observed.
-		if (ObservedEnvID == -1 || ObservedEnvID == EnvID)
-		{
-			for (const FDETeamConfiguration& Config : TeamConfigs)
-			{
-				if (!Config.DESpawnArea) continue;
-				const FVector Loc  = Config.DESpawnArea->GetActorLocation() + FVector(0.0f, 0.0f, 300.0f);
-				const FColor  Col  = Config.GetTeamColor().ToFColor(true);
-				const FString Text = FString::Printf(TEXT("Team %d Score: %d  [%.0fs]"),
-					Config.TeamID, TeamScores[Config.TeamID], GetTimeRemaining());
-				// Duration matches the 1-second timer interval so the string stays
-				// visible continuously instead of flashing once per second.
-				DrawDebugString(GetWorld(), Loc, Text, nullptr, Col, 1.0f, true, 1.5f);
-			}
-		}
-	}
 }
 
 
@@ -318,6 +316,7 @@ ADEAgent* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	// Identity
 	Agent->SetTeamID_Implementation(TeamID);
 	Agent->SetEnvID_Implementation(EnvID);
+	Agent->SetCachedMatchManager(this);   // direct injection — no world scan needed
 	Agent->AssignedCapturePoints = EnvCapturePoints;
 
 	// Store TeamData on the agent so ApplyClassAppearance() can reference it later.
@@ -402,6 +401,17 @@ void ADEMatchManager::ResetScores()
 	TeamScores[1] = 0;
 	FinalWinnerTeamID = -2;
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Team scores reset"), EnvID);
+}
+
+void ADEMatchManager::OnScoreChanged_Widget(int32 TeamID, int32 NewScore)
+{
+	if (ScoreWidgetComponent)
+	{
+		if (UDEMatchScoreWidget* W = Cast<UDEMatchScoreWidget>(ScoreWidgetComponent->GetWidget()))
+		{
+			W->UpdateScore(TeamID, NewScore);
+		}
+	}
 }
 
 void ADEMatchManager::AddTeamScore(int32 TeamID, int32 Points)

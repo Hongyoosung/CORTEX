@@ -24,6 +24,19 @@ ADEScholaEnvironment::ADEScholaEnvironment()
 	EpisodeManager = CreateDefaultSubobject<UDEEpisodeManagerComponent>(TEXT("EpisodeManager"));
 }
 
+void ADEScholaEnvironment::EnsureMatchManagerReady()
+{
+	if (bMatchManagerReady || !OwnedMatchManager) return;
+
+	OwnedMatchManager->SetEnvID(EnvironmentId);
+	OwnedMatchManager->CapturePointInitialize();
+	if (!OwnedMatchManager->OnMatchConditionMet.IsAlreadyBound(this, &ADEScholaEnvironment::OnMatchConditionReceived))
+	{
+		OwnedMatchManager->OnMatchConditionMet.AddDynamic(this, &ADEScholaEnvironment::OnMatchConditionReceived);
+	}
+	bMatchManagerReady = true;
+}
+
 void ADEScholaEnvironment::BeginPlay()
 {
 	Super::BeginPlay();
@@ -35,12 +48,7 @@ void ADEScholaEnvironment::BeginPlay()
 	bAgentsRegistered = false;
 	bEnvironmentInitialized = false;
 
-	if (OwnedMatchManager)
-	{
-		OwnedMatchManager->SetEnvID(EnvironmentId);
-		OwnedMatchManager->CapturePointInitialize();
-		OwnedMatchManager->OnMatchConditionMet.AddDynamic(this, &ADEScholaEnvironment::OnMatchConditionReceived);
-	}
+	EnsureMatchManagerReady();
 
 	if (bAutoStartMatch)
 	{
@@ -143,20 +151,9 @@ void ADEScholaEnvironment::InitializeEnvironment_Implementation(
 {
 	if (bEnvironmentInitialized) return;
 
-	// GymConnectorManager::BeginPlay() calls InitializeEnvironment for ALL environments
-	// synchronously, which may run before this env's own BeginPlay() has executed.
-	// Ensure the MatchManager has the correct EnvID before any agent discovery or spawning.
-	if (OwnedMatchManager && OwnedMatchManager->GetEnvID() != EnvironmentId)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[ScholaEnv] %s: MatchManager EnvID mismatch (%d vs %d) — applying SetEnvID now (BeginPlay ordering race)"),
-			*GetName(), OwnedMatchManager->GetEnvID(), EnvironmentId);
-		OwnedMatchManager->SetEnvID(EnvironmentId);
-		OwnedMatchManager->CapturePointInitialize();
-		if (!OwnedMatchManager->OnMatchConditionMet.IsAlreadyBound(this, &ADEScholaEnvironment::OnMatchConditionReceived))
-		{
-			OwnedMatchManager->OnMatchConditionMet.AddDynamic(this, &ADEScholaEnvironment::OnMatchConditionReceived);
-		}
-	}
+	// GymConnectorManager may call InitializeEnvironment before this actor's own BeginPlay.
+	// EnsureMatchManagerReady() is idempotent — safe to call here and in BeginPlay.
+	EnsureMatchManagerReady();
 
 	UE_LOG(LogTemp, Log, TEXT("[ScholaEnv] InitializeEnvironment on %s (EnvID: %d)"), *GetName(), EnvironmentId);
 

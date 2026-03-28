@@ -130,6 +130,10 @@ protected:
 		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
 		bool bFromSweep, const FHitResult& SweepResult);
 
+	/** Handle blocking hit (wall/floor) — fires impact VFX and deactivates */
+	UFUNCTION()
+	void OnProjectileStopped(const FHitResult& ImpactResult);
+
 	/** Handle lifetime expiration */
 	UFUNCTION()
 	void OnLifetimeExpired();

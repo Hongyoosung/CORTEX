@@ -164,10 +164,19 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Schola|Match|State")
 	EDEMatchState CurrentMatchState = EDEMatchState::WaitingToStart;
 
-	bool bMatchEnded = false;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Schola|Random")
 	FRandomStream EnvRandomStream;
+
+	bool bMatchEnded = false;
+
+private:
+	/**
+	 * Idempotent: sets EnvID on OwnedMatchManager, initialises capture points,
+	 * and binds OnMatchConditionMet. Safe to call from both BeginPlay and
+	 * InitializeEnvironment regardless of ordering.
+	 */
+	void EnsureMatchManagerReady();
+	bool bMatchManagerReady = false;
 
 
 public:

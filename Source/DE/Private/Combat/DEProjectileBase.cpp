@@ -67,6 +67,12 @@ void ADEProjectileBase::BeginPlay()
 		CollisionComponent->SetSphereRadius(CollisionRadius);
 	}
 
+	// Bind blocking hit (walls/floors) to also trigger impact effects
+	if (ProjectileMovement)
+	{
+		ProjectileMovement->OnProjectileStop.AddDynamic(this, &ADEProjectileBase::OnProjectileStopped);
+	}
+
 	// Set projectile max speed
 	if (ProjectileMovement)
 	{
@@ -252,6 +258,22 @@ void ADEProjectileBase::OnProjectileOverlap(UPrimitiveComponent* OverlappedCompo
 	}
 
 	SpawnImpactEffects(SweepResult.ImpactPoint, SweepResult.ImpactNormal);
+
+	if (bDestroyOnHit)
+	{
+		DeactivateProjectile();
+	}
+}
+
+void ADEProjectileBase::OnProjectileStopped(const FHitResult& ImpactResult)
+{
+	if (!bIsActive) return;
+
+	SpawnImpactEffects(ImpactResult.ImpactPoint, ImpactResult.ImpactNormal);
+
+	FDEProjectileHitData HitData(ImpactResult.GetActor(), ImpactResult.ImpactPoint, ImpactResult.ImpactNormal,
+		DistanceTraveled, 0.0f, false);
+	OnProjectileHit_Delegate.Broadcast(HitData);
 
 	if (bDestroyOnHit)
 	{

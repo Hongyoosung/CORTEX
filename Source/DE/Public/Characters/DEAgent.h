@@ -496,6 +496,10 @@ private:
 	/** One-time world scan to find the MatchManager matching this agent's EnvID */
 	ADEMatchManager* FindMatchManagerForEnv() const;
 
+public:
+	/** Direct injection called by DEMatchManager::SpawnAgent() — avoids world scan */
+	void SetCachedMatchManager(ADEMatchManager* MM) { CachedMatchManager = MM; }
+
 
 public:
 	//============= Event Delegates ===================

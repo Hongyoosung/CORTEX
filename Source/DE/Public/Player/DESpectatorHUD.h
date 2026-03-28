@@ -4,25 +4,22 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/HUD.h"
-#include "Types/DEEQSTypes.h"
 #include "DESpectatorHUD.generated.h"
 
 class ADESpectatorController;
-
 class ADEAgent;
+class UDESpectatorOverlayWidget;
 
 /**
  * ADESpectatorHUD
  *
- * Canvas-based HUD drawn while a spectator observes an agent via ADESpectatorController.
+ * Widget-based HUD displayed while a spectator observes an agent via ADESpectatorController.
+ * All display is delegated to UDESpectatorOverlayWidget — no Canvas primitives are drawn.
  *
- * Layout:
- *   Top-left    : Team name in team color, then class name in white (large bold font)
- *   Bottom-left : Real-time EQS weight readout (6 named values)
- *   Top-left    : Health bar + percentage (below class text)
- *   Top-left    : Ammo bar + count (below health bar)
- *
- * No editor assets (Widget Blueprints) are required — everything is drawn with Canvas primitives.
+ * Setup:
+ *  1. Create a Widget Blueprint subclass of UDESpectatorOverlayWidget.
+ *  2. Assign it to OverlayWidgetClass (on this HUD's Blueprint subclass or in the editor).
+ *  3. The widget is created and added to the viewport automatically in BeginPlay.
  */
 UCLASS()
 class DE_API ADESpectatorHUD : public AHUD
@@ -30,24 +27,17 @@ class DE_API ADESpectatorHUD : public AHUD
 	GENERATED_BODY()
 
 public:
+	virtual void BeginPlay() override;
 	virtual void DrawHUD() override;
 
+	/** Widget Blueprint class to instantiate as the spectator overlay */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DESpectatorHUD|UI")
+	TSubclassOf<UDESpectatorOverlayWidget> OverlayWidgetClass;
+
 private:
-	/** Draw the team name (in team color) and class name (in white) at the top-left */
-	void DrawClassLabel(const FString& TeamName, const FLinearColor& TeamColor,
-	                       const FString& ClassName, float& OutBottomY);
-
-	/** Draw health, ammo, and mana bars below the class label */
-	void DrawStatusBars(float HealthPct, int32 CurrentAmmo, int32 MaxAmmo, float ManaPct, float TopY);
-
-	/** Draw EQS weight values in the bottom-left corner */
-	void DrawEQSWeights(const FDEEQSWeightParameters& Weights);
-
-	/** Helper: draw a labelled progress bar */
-	void DrawBar(const FString& Label, float Fraction, const FLinearColor& BarColor, float X, float Y, float Width, float Height);
-
-	/** Helper: draw a labelled float row (used for EQS) */
-	void DrawWeightRow(const FString& Label, float Value, float X, float Y);
+	/** Live widget instance added to the viewport in BeginPlay */
+	UPROPERTY()
+	TObjectPtr<UDESpectatorOverlayWidget> OverlayWidget;
 
 	/** Get the currently observed DEAgent from the owning controller (null if none) */
 	ADEAgent* GetObservedCharacter() const;

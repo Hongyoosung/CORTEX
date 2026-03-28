@@ -200,7 +200,7 @@ class DETrainingConfig:
     LEARNING_RATE    = 3e-4
     TRAIN_BATCH_SIZE = 8000
     MINIBATCH_SIZE   = 512
-    NUM_SGD_ITER     = 6     # reverted: 8 epochs × VF_CLIP_PARAM=20 caused critic oscillation
+    NUM_SGD_ITER     = 4     # reduced: 6 epochs was squeezing entropy out too fast on strike/vanguard
     GAMMA            = 0.99
     GAE_LAMBDA       = 0.95
     CLIP_PARAM       = 0.2
@@ -215,12 +215,11 @@ class DETrainingConfig:
         [3_000_000,  5e-5],
     ]
     ENTROPY_SCHEDULE = [
-        [0,          0.01],
-        [300_000,    0.005],
-        [800_000,    0.003],
-        [1_500_000,  0.002],  # was 0.001 — keep higher to prevent Strike entropy collapse
-        [2_500_000,  0.001],  # floor: Strike needs exploration budget past 1M steps
-        [5_000_000,  0.001],  # hold floor; do not decay further
+        [0,          0.015],  # start high — prevent early collapse before policies differentiate
+        [500_000,    0.01],
+        [1_500_000,  0.007],
+        [3_000_000,  0.005],  # floor: strike/vanguard need sustained exploration pressure
+        [5_000_000,  0.005],  # hold floor; do not decay further
     ]
 
     OUTPUT_DIR = "/app/training_results"
@@ -392,8 +391,8 @@ if RLLIB_AVAILABLE:
             use_gae=True,
             use_critic=True,
             use_kl_loss=True,
-            kl_coeff=0.2,
-            kl_target=0.01,
+            kl_coeff=0.1,     # was 0.2 — softer KL penalty to allow more exploration
+            kl_target=0.015,  # was 0.01 — relax target to give entropy room to work
         )
         return config
 

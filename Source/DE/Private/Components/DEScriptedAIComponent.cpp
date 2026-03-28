@@ -200,31 +200,31 @@ FDEEQSWeightParameters UDEScriptedAIComponent::GetBaseWeights(EDEClassType Class
 	switch (Class)
 	{
 	case EDEClassType::Strike:
-		W.EnemyObjectiveProximity = 0.8f;   // Push toward enemy objective
+		W.EnemyObjectiveProximity = 0.6f;   // Push toward enemy objective
 		W.AllyObjectiveProximity  = 0.1f;
-		W.CoverDensity            = 0.5f;   // Use cover: ranged DPS benefits from concealment
-		W.EnemyVisibility         = 0.7f;
+		W.CoverDensity            = 0.4f;   // Use cover: ranged DPS benefits from concealment
+		W.EnemyVisibility         = 0.55f;
 		W.AllyProximity           = 0.2f;
-		W.CombatRange             = 0.5f;   // Maintain engagement distance
-		W.AssignedBaseProximity   = -0.2f;  // Actively leave spawn
+		W.CombatRange             = 0.4f;   // Maintain engagement distance
+		W.AssignedBaseProximity   = -0.15f; // Actively leave spawn
 		break;
 
 	case EDEClassType::Vanguard:
-		W.EnemyObjectiveProximity = 0.9f;   // Strongest forward push (melee tank)
+		W.EnemyObjectiveProximity = 0.7f;   // Strongest forward push (melee tank)
 		W.AllyObjectiveProximity  = 0.0f;
 		W.CoverDensity            = 0.1f;   // Melee doesn't need cover
-		W.EnemyVisibility         = 0.7f;   // Seek out enemies actively
+		W.EnemyVisibility         = 0.55f;  // Seek out enemies actively
 		W.AllyProximity           = 0.2f;
-		W.CombatRange             = -0.7f;  // Close distance aggressively
-		W.AssignedBaseProximity   = -0.3f;  // Push out of base
+		W.CombatRange             = -0.5f;  // Close distance aggressively
+		W.AssignedBaseProximity   = -0.2f;  // Push out of base
 		break;
 
 	case EDEClassType::Support:
 		W.EnemyObjectiveProximity = 0.0f;
 		W.AllyObjectiveProximity  = 0.0f;   // No direct objective capture — follow allies instead
-		W.CoverDensity            = 0.7f;   // Stay in cover while supporting
-		W.EnemyVisibility         = -0.3f;  // Avoid enemy line of sight
-		W.AllyProximity           = 0.9f;   // Follow teammates forward
+		W.CoverDensity            = 0.5f;   // Stay in cover while supporting
+		W.EnemyVisibility         = -0.2f;  // Avoid enemy line of sight
+		W.AllyProximity           = 0.7f;   // Follow teammates forward
 		W.CombatRange             = 0.3f;   // Maintain some separation (backline positioning)
 		W.AssignedBaseProximity   = -0.1f;  // Push out of spawn
 		break;
@@ -257,22 +257,22 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 		switch (OwnerAgent.IsValid() ? OwnerAgent->GetCommandedClass() : EDEClassType::Strike)
 		{
 		case EDEClassType::Strike:
-			W.EnemyObjectiveProximity = 0.7f;
+			W.EnemyObjectiveProximity = 0.5f;
 			W.AllyObjectiveProximity  = 0.0f;
-			W.CoverDensity            = 0.4f;
-			W.EnemyVisibility         = 0.8f;
+			W.CoverDensity            = 0.3f;
+			W.EnemyVisibility         = 0.6f;
 			W.AllyProximity           = 0.0f;
-			W.CombatRange             = 0.5f;
-			W.AssignedBaseProximity   = -0.3f;
+			W.CombatRange             = 0.4f;
+			W.AssignedBaseProximity   = -0.2f;
 			break;
 		case EDEClassType::Vanguard:
-			W.EnemyObjectiveProximity = 1.0f;
+			W.EnemyObjectiveProximity = 0.75f;
 			W.AllyObjectiveProximity  = 0.0f;
 			W.CoverDensity            = 0.0f;
-			W.EnemyVisibility         = 0.5f;
+			W.EnemyVisibility         = 0.4f;
 			W.AllyProximity           = 0.0f;
-			W.CombatRange             = -0.8f;
-			W.AssignedBaseProximity   = -0.4f;
+			W.CombatRange             = -0.6f;
+			W.AssignedBaseProximity   = -0.3f;
 			break;
 		case EDEClassType::Support:
 			// Tier 1: Follow a random non-Support ally at a safe distance.
@@ -281,10 +281,10 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 			// Movement is overridden by UpdateSupportMovement() (MoveToActor).
 			W.EnemyObjectiveProximity = 0.0f;
 			W.AllyObjectiveProximity  = 0.0f;
-			W.CoverDensity            = 0.5f;
-			W.EnemyVisibility         = -0.4f;
-			W.AllyProximity           = 1.0f;   // Strong ally pull for EQS fallback
-			W.CombatRange             = 0.3f;   // Prefer staying behind combat line
+			W.CoverDensity            = 0.4f;
+			W.EnemyVisibility         = -0.3f;
+			W.AllyProximity           = 0.75f;  // Strong ally pull for EQS fallback
+			W.CombatRange             = 0.2f;   // Prefer staying behind combat line
 			W.AssignedBaseProximity   = -0.1f;
 			break;
 		}
@@ -300,36 +300,35 @@ FDEEQSWeightParameters UDEScriptedAIComponent::ApplyTierModifiers(const FDEEQSWe
 		switch (OwnerAgent.IsValid() ? OwnerAgent->GetCommandedClass() : EDEClassType::Strike)
 		{
 		case EDEClassType::Strike:
-			W.EnemyObjectiveProximity = 0.8f;
+			W.EnemyObjectiveProximity = 0.65f;
 			W.AllyObjectiveProximity  = 0.0f;
-			W.CoverDensity            = 0.7f;   // Prefer flanking/cover positions
-			W.EnemyVisibility         = 0.9f;   // Always maintain sight
+			W.CoverDensity            = 0.55f;  // Prefer flanking/cover positions
+			W.EnemyVisibility         = 0.75f;  // Always maintain sight
 			W.AllyProximity           = 0.2f;   // Loose team cohesion — advance with squad
-			W.CombatRange             = 0.8f;   // Strong range discipline
-			W.AssignedBaseProximity   = -0.3f;
+			W.CombatRange             = 0.6f;   // Strong range discipline
+			W.AssignedBaseProximity   = -0.25f;
 			break;
 		case EDEClassType::Vanguard:
-			W.EnemyObjectiveProximity = 1.0f;
+			W.EnemyObjectiveProximity = 0.85f;
 			W.AllyObjectiveProximity  = 0.0f;
 			W.CoverDensity            = 0.0f;
-			W.EnemyVisibility         = 0.8f;
+			W.EnemyVisibility         = 0.65f;
 			W.AllyProximity           = 0.2f;   // Flank with squad rather than fully solo
-			W.CombatRange             = -1.0f;  // Always close to melee
-			W.AssignedBaseProximity   = -0.5f;
+			W.CombatRange             = -0.8f;  // Always close to melee
+			W.AssignedBaseProximity   = -0.4f;
 			break;
 		case EDEClassType::Support:
 			// Tier 3: Maximum competence — strict backline, heal-first targeting.
 			// AllyObjectiveProximity zeroed; capture support induced via ally following.
 			// Movement overridden by UpdateSupportMovement() toward most injured ally.
-			W.EnemyObjectiveProximity = -0.5f;  // Stay away from enemy objectives
+			W.EnemyObjectiveProximity = -0.35f; // Stay away from enemy objectives
 			W.AllyObjectiveProximity  = 0.0f;   // No direct objective capture
-			W.CoverDensity            = 0.9f;   // Maximum cover usage
-			W.EnemyVisibility         = -0.5f;  // Avoid all enemy sight
-			// 0.7 pulls toward most injured ally (overrides old 0.5 cap).
+			W.CoverDensity            = 0.7f;   // Maximum cover usage
+			W.EnemyVisibility         = -0.35f; // Avoid all enemy sight
 			// UpdateSupportMovement() provides fine-grained per-target tracking.
-			W.AllyProximity           = 0.7f;
-			W.CombatRange             = 0.3f;   // Stay behind the combat line
-			W.AssignedBaseProximity   = -0.2f;
+			W.AllyProximity           = 0.6f;
+			W.CombatRange             = 0.25f;  // Stay behind the combat line
+			W.AssignedBaseProximity   = -0.15f;
 			break;
 		}
 		break;

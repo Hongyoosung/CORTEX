@@ -34,7 +34,7 @@ struct FDEStrikeRewardSettings
 	float DeathScale = 0.12f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float IdlePenalty = 1.5f;
+	float IdlePenalty = 0.8f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float TimePenalty = 0.01f;
@@ -55,11 +55,11 @@ struct FDEStrikeRewardSettings
 
 	/** Strike: moderate capture bonuses — objective momentum comparable to Vanguard while maintaining range discipline. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZonePresenceBonus = 2.5f;
+	float ZonePresenceBonus = 1.0f;
 
 	/** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ActiveCappingBonus = 3.0f;
+	float ActiveCappingBonus = 1.5f;
 
 
 
@@ -73,12 +73,12 @@ struct FDEStrikeRewardSettings
 	 *  Suppressed while actively capping a non-friendly zone (range discipline
 	 *  is irrelevant when the agent must stand on the point). */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
-	float TooCloseEnemyPenalty = 6.0f;
+	float TooCloseEnemyPenalty = 2.0f;
 
 	/** Per-step bonus when a visible enemy is between MinCombatRange and MaxEngagementRange.
 	 *  Encourages maintaining optimal attack distance. */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
-	float OptimalRangeBonus = 7.0f;
+	float OptimalRangeBonus = 2.0f;
 
 	/** Maximum distance (cm) for OptimalRangeBonus to fire. */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
@@ -86,7 +86,7 @@ struct FDEStrikeRewardSettings
 
 	/** Per-hit reward when Strike deals damage while at optimal range (beyond melee, within max range). */
 	UPROPERTY(EditAnywhere, Category = "RangedCombat")
-	float InRangeHitReward = 3.0f;
+	float InRangeHitReward = 1.5f;
 
 
 	//========== Movement Properties =============

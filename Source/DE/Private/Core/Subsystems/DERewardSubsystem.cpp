@@ -238,7 +238,7 @@ float UDERewardSubsystem::ComputeStepReward(
 		CalculateSurvivalReward(InOutState, Class, Current.Health, 1.0f, Agent->AgentID);
 
 	// ---- Step (time) penalty ----
-	Reward -= -Settings->StepPenalty;
+	Reward += Settings->StepPenalty;
 
 	// ---- Drain and scale sparse rewards ----
 	Reward += DrainSparseReward(InOutState, Agent->AgentID);

@@ -121,8 +121,13 @@ void ADEAgent::BeginPlay()
 		StimuliSource->RegisterForSense(TSubclassOf<UAISense_Sight>());
 	}
 
-	// Cache MatchManager reference (avoids per-step GetAllActorsOfClass world scan)
-	CachedMatchManager = FindMatchManagerForEnv();
+	// Cache MatchManager reference.
+	// SpawnAgent() injects it directly via SetCachedMatchManager(); only fall back
+	// to a world scan for pre-placed or standalone agents where no injection occurred.
+	if (!CachedMatchManager)
+	{
+		CachedMatchManager = FindMatchManagerForEnv();
+	}
 
 	// Initialize GAS abilities from data asset
 	InitializeGASAbilities();
@@ -286,7 +291,12 @@ void ADEAgent::SetTeamID_Implementation(int32 NewTeamID) { TeamID = NewTeamID; }
 void ADEAgent::SetEnvID_Implementation(int32 NewEnvID)
 {
 	EnvID = NewEnvID;
-	CachedMatchManager = FindMatchManagerForEnv();
+	// Only scan if the injected MM doesn't match (or no MM was injected).
+	// SpawnAgent() injects the correct reference; pre-placed agents still need the scan.
+	if (!CachedMatchManager || CachedMatchManager->GetEnvID() != EnvID)
+	{
+		CachedMatchManager = FindMatchManagerForEnv();
+	}
 }
 
 

@@ -44,7 +44,7 @@ struct FDEVanguardRewardSettings
 	float HealthBonus = 0.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float IdlePenalty = 2.5f;
+	float IdlePenalty = 1.0f;
 
 	//========== Melee Engagement =============
 
@@ -79,13 +79,13 @@ struct FDEVanguardRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Capture")
 	float ObjectiveProgressReward = 0.3f;
 
-	/** Vanguard: moderate capture bonuses — reduced from 8/12 to prevent clamp saturation. */
+	/** Vanguard: moderate capture bonuses — reduced to prevent dense reward farming over actual winning. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZonePresenceBonus = 3.0f;
+	float ZonePresenceBonus = 1.5f;
 
 	/** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ActiveCappingBonus = 4.0f;
+	float ActiveCappingBonus = 2.0f;
 
 	//========== Movement Properties =============
 

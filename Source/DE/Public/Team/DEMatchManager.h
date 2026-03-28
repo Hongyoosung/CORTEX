@@ -19,6 +19,8 @@ class ADESpawnArea;
 class UDERewardData;
 class UDERewardSubsystem;
 class UDEScriptedAIComponent;
+class UWidgetComponent;
+class UDEMatchScoreWidget;
 
 
 /**
@@ -244,6 +246,10 @@ public:
 	UFUNCTION()
 	void OnAgentDied(ADEAgent* DeadAgent, ADEAgent* Killer);
 
+	/** Forwards score changes to the ScoreWidgetComponent */
+	UFUNCTION()
+	void OnScoreChanged_Widget(int32 TeamID, int32 NewScore);
+
 
 	//========================================
 	// Events
@@ -349,6 +355,14 @@ public:
 	/** Draw role labels above agents */
 	UPROPERTY(EditAnywhere, Category = "DEMatchManager|Squad|Debug")
 	bool bDrawRoleAssignments = true;
+
+	/** Widget Blueprint class to use for the score overlay (screen space) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|UI")
+	TSubclassOf<UDEMatchScoreWidget> ScoreWidgetClass;
+
+	/** Widget component that hosts the score overlay */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "DEMatchManager|UI")
+	TObjectPtr<UWidgetComponent> ScoreWidgetComponent;
 
 	/**
 	 * Phase 1 RL Training Mode — class fixed for entire episode.
