@@ -31,7 +31,7 @@ provider "aws" {
 variable "aws_region" {
   description = "AWS region to deploy into"
   type        = string
-  default     = "us-east-1"
+  default     = "ap-northeast-2"
 }
 
 variable "project" {
@@ -351,6 +351,27 @@ resource "aws_iam_role_policy" "ray_s3" {
           aws_s3_bucket.training.arn,
           "${aws_s3_bucket.training.arn}/*"
         ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "ray_ecr" {
+  name = "${local.name_prefix}-ray-ecr-policy"
+  role = aws_iam_role.ray_node.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ]
+        Resource = "*"
       }
     ]
   })

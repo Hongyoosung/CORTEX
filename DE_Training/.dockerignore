@@ -31,3 +31,8 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+
+!DE_Training/
+!DE_Training/aws/
+!DE_Training/aws/scripts/
+!DE_Training/aws/scripts/mount_s3.sh

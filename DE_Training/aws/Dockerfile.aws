@@ -14,7 +14,7 @@
 #       <account>.dkr.ecr.us-east-1.amazonaws.com
 #   docker push <account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest
 
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu20.04
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 ###############################################################################
 # System dependencies
@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Process utilities
     procps \
     htop \
+    rsync \
     # X11 / virtual display (required by some UE5 plugins that probe $DISPLAY)
     libglib2.0-0 \
     libsm6 \
@@ -60,7 +61,7 @@ ARG GID=1001
 
 RUN groupadd -g ${GID} de && \
     useradd -u ${UID} -g de -m -s /bin/bash de && \
-    # Allow de user to mount FUSE filesystems (needed for s3fs)
+    (getent group fuse || groupadd fuse) && \
     usermod -aG fuse de
 
 ###############################################################################
@@ -68,7 +69,7 @@ RUN groupadd -g ${GID} de && \
 ###############################################################################
 WORKDIR /app
 
-COPY DE_Training/requirements.txt ./requirements.txt
+COPY ./DE_Training/requirements.txt ./requirements.txt
 
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
@@ -80,17 +81,26 @@ RUN pip install --no-cache-dir --upgrade pip && \
         --extra-index-url https://download.pytorch.org/whl/cu121
 
 # Schola UE5 gRPC bridge
-COPY Plugins/Schola-1.3.0/Resources/python /tmp/schola
+COPY Plugins/Schola-2.0.1/Resources/python /tmp/schola
 RUN pip install --no-cache-dir /tmp/schola[rllib] && \
     rm -rf /tmp/schola
 
 ###############################################################################
-# Copy application code
+# Copy application code & Scripts
 ###############################################################################
-COPY DE_Training/ .
+WORKDIR /app
 
-# Transfer ownership to non-root user
-RUN chown -R de:de /app
+# 1. 전체 소스 코드 복사 (./DE_Training 폴더 내부가 /app으로 들어감)
+COPY ./DE_Training/ .
+
+# 2. S3 헬퍼 스크립트를 시스템 경로로 직접 복사
+# 빌드 컨텍스트(CORTEX) 기준으로 경로를 명시하여 안전하게 복사합니다.
+COPY ./DE_Training/aws/scripts/mount_s3.sh /usr/local/bin/mount_s3.sh
+
+# 3. 권한 설정 (한 번의 RUN 레이어로 합쳐서 효율화)
+RUN chown -R de:de /app && \
+    chown de:de /usr/local/bin/mount_s3.sh && \
+    chmod +x /usr/local/bin/mount_s3.sh
 
 ###############################################################################
 # Environment variables
@@ -113,31 +123,16 @@ ENV PORT=50051
 # W&B — set WANDB_API_KEY at runtime; do NOT bake credentials into the image
 ENV WANDB_PROJECT=de-v10-2
 
-###############################################################################
-# S3 mount helper script
-###############################################################################
-COPY --chown=de:de aws/scripts/mount_s3.sh /usr/local/bin/mount_s3.sh
-RUN chmod +x /usr/local/bin/mount_s3.sh
+
 
 ###############################################################################
-# Ports
+# Ports / Healthcheck / User / Entrypoint
 ###############################################################################
-EXPOSE 6006   # TensorBoard
-EXPOSE 8265   # Ray dashboard
-EXPOSE 50051 50052 50053 50054  # Schola gRPC
+EXPOSE 6006 8265 50051 50052 50053 50054
 
-###############################################################################
-# Health check
-###############################################################################
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import ray; import torch; import schola; print('ok')" || exit 1
 
-###############################################################################
-# Switch to non-root user
-###############################################################################
 USER de
 
-###############################################################################
-# Entrypoint
-###############################################################################
 CMD ["python", "train_rllib.py"]

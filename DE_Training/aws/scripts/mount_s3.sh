@@ -17,7 +17,7 @@ s3fs "${BUCKET}" "${MOUNT_POINT}" \
     -o iam_role=auto \
     -o allow_other \
     -o umask=0022 \
-    -o endpoint=us-east-1 \
+    -o endpoint=ap-northeast-2 \
     -o connect_timeout=10 \
     -o retries=5
 

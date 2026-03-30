@@ -71,7 +71,7 @@ docker-compose -f DE_Training/docker-compose.yml build training-single
  => [2/10] RUN apt-get update && apt-get install -y build-essential git curl
  => [3/10] COPY DE_Training/requirements.txt .
  => [4/10] RUN pip install --no-cache-dir -r requirements.txt
- => [5/10] COPY Plugins/Schola-1.3.0/Resources/python /tmp/schola
+ => [5/10] COPY Plugins/Schola-2.0.1/Resources/python /tmp/schola
  => [6/10] RUN pip install --no-cache-dir /tmp/schola[rllib]
  => [7/10] COPY DE_Training/ .
  => [8/10] RUN python patch_schola_insecure.py
@@ -262,7 +262,7 @@ ray.init(object_store_memory=4 * 1024**3)  # 4GB
 
 ---
 
-### Issue: Build fails on "COPY Plugins/Schola-1.3.0/Resources/python"
+### Issue: Build fails on "COPY Plugins/Schola-2.0.1/Resources/python"
 
 **Cause:** Docker build context doesn't include Plugins directory.
 

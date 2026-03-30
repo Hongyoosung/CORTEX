@@ -174,7 +174,7 @@ def build_config(
     max_steps: int             = 100_000,
     wandb_project: str         = "de-v10-2",
     wandb_api_key: str         = "",
-    num_rollout_workers: int   = 4,
+    num_rollout_workers: int   = 10,
     train_batch_size: int      = 4096,
     sgd_minibatch_size: int    = 512,
     num_sgd_iter: int          = 10,
@@ -203,7 +203,7 @@ def build_config(
         .framework("torch")
         .rollouts(
             num_rollout_workers    = num_rollout_workers,
-            num_envs_per_worker   = 1,
+            num_envs_per_worker   = 8,
             rollout_fragment_length = "auto",
         )
         .training(
@@ -300,10 +300,12 @@ def build_wandb_callback(
 def build_stop_criteria(
     reward_threshold: float = 0.40,
     max_steps: int          = 100_000,
+    max_runtime_seconds: int = 1800,  # 30-minute hard wall-clock limit
 ) -> dict:
     return {
         "custom_metrics/win_rate_mean": reward_threshold,
         "num_env_steps_sampled_lifetime": max_steps,
+        "time_total_s": max_runtime_seconds,
     }
 
 
@@ -318,7 +320,7 @@ def run_tune(
     max_steps:        int   = 100_000,
     wandb_project:    str   = "de-v10-2",
     wandb_api_key:    str   = "",
-    num_workers:      int   = 4,
+    num_workers:      int   = 10,
     local_dir:        str   = "./training_results",
     restore:          Optional[str] = None,
 ) -> tune.ExperimentAnalysis:
@@ -339,7 +341,7 @@ def run_tune(
         "PPO",
         name             = "de",
         config           = config.to_dict(),
-        stop             = build_stop_criteria(reward_threshold, max_steps),
+        stop             = build_stop_criteria(reward_threshold, max_steps, max_runtime_seconds=1800),
         checkpoint_freq  = 10,
         checkpoint_at_end= True,
         keep_checkpoints_num = 3,
@@ -365,7 +367,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-steps",        type=int,   default=100_000)
     parser.add_argument("--wandb-project",    default="de-v10-2")
     parser.add_argument("--wandb-api-key",    default=os.environ.get("WANDB_API_KEY", ""))
-    parser.add_argument("--num-workers",      type=int, default=4)
+    parser.add_argument("--num-workers",      type=int, default=10)
     parser.add_argument("--local-dir",        default="./training_results")
     parser.add_argument("--restore",          default=None)
     args = parser.parse_args()
