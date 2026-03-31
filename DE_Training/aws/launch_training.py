@@ -34,13 +34,13 @@ import boto3
 ###############################################################################
 
 # Paths (relative to repo root)
-CLUSTER_YAML = "aws/cluster.yaml"
+CLUSTER_YAML = str(Path(__file__).parent / "cluster.yaml")
 TRAIN_SCRIPT  = "training/train.py"
 
 # Termination criteria
 DEFAULT_REWARD_THRESHOLD  = 0.40    # >40% win rate — from v10.2 target spec
 DEFAULT_MAX_STEPS         = 100_000
-DEFAULT_MAX_RUNTIME       = 1800    # 30-minute wall-clock hard limit
+DEFAULT_MAX_RUNTIME       = 600    # 30-minute wall-clock hard limit
 
 # Polling interval (seconds) while waiting for training to finish
 POLL_INTERVAL_SECONDS = 30
@@ -61,20 +61,45 @@ def run(cmd: list[str], check: bool = True, capture: bool = False) -> subprocess
     )
 
 
-def cluster_up(cluster_yaml: str, yes: bool = True, max_retries: int = 3) -> None:
-    cmd = ["ray", "up", cluster_yaml, "--no-config-cache"]
+def cluster_up(cluster_yaml: str, yes: bool = True) -> None:
+    cmd = ["ray", "up", cluster_yaml, "--no-config-cache", "-vvv"]
     if yes:
         cmd.append("-y")
-    for attempt in range(1, max_retries + 1):
-        try:
-            run(cmd)
-            return
-        except subprocess.CalledProcessError as e:
-            if attempt < max_retries:
-                print(f"[launch] ray up failed (attempt {attempt}/{max_retries}), retrying in 30s...", flush=True)
-                time.sleep(30)
-            else:
-                raise
+
+    try:
+        print(f"[launch] Bringing up cluster (verbose)...", flush=True)
+        run(cmd)
+    except subprocess.CalledProcessError as e:
+        print(f"\n[ERROR] ray up failed with exit code {e.returncode}")
+        print(f"[ERROR] Check SSH and AWS Security Group settings above.")
+        raise
+
+    # ray up exits before initialization_commands finish (ECR pull, apt, S3 sync, UE5 binary).
+    # Poll until the head node reports as running before we attempt ray submit.
+    print("[launch] Waiting for head node to finish initialization...", flush=True)
+    deadline = time.time() + 600  # 10 min max
+    while time.time() < deadline:
+        result = subprocess.run(
+            ["ray", "get-head-ip", cluster_yaml],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # Head IP is available — do a quick SSH health check
+            head_ip = result.stdout.strip()
+            ssh_check = subprocess.run(
+                ["ssh", "-i", "~/.ssh/de-v10-2-dev-key.pem",
+                 "-o", "StrictHostKeyChecking=no",
+                 "-o", "ConnectTimeout=10",
+                 f"ubuntu@{head_ip}", "ray status"],
+                capture_output=True, text=True
+            )
+            if ssh_check.returncode == 0:
+                print(f"[launch] Head node {head_ip} is ready.", flush=True)
+                return
+        print("[launch]   Still initializing, retrying in 30s...", flush=True)
+        time.sleep(30)
+
+    raise RuntimeError("Head node did not become ready within 10 minutes.")
 
 
 def cluster_down(cluster_yaml: str, yes: bool = True) -> None:

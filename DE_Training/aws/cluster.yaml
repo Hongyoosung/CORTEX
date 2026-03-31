@@ -22,7 +22,7 @@ docker:
   container_name: "ray_container"
   pull_before_run: true
   run_options:
-    - "--shm-size=4g"      # Large shared memory for Ray object store
+    - "--shm-size=6g"      # Large shared memory for Ray object store (>30% of 16GB RAM)
     - "--ulimit nofile=65536:65536"
 
 provider:
@@ -52,10 +52,13 @@ available_node_types:
       InstanceType: g4dn.xlarge
       ImageId: ami-06de8403979cc515c   # Deep Learning AMI GPU PyTorch (Ubuntu 20.04) ap-northeast-2
       KeyName: de-v10-2-dev-key
+      AssociatePublicIpAddress: true 
+      SecurityGroupIds:
+        - sg-07ff92e7b4a628c37
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
-            VolumeSize: 100
+            VolumeSize: 200
             VolumeType: gp3
             DeleteOnTermination: true
       TagSpecifications:
@@ -124,6 +127,7 @@ rsync_exclude:
   - "**/*.pyc"
   - "**/training_results"
   - "**/.git"
+  - "**/.vs"
 
 ###############################################################################
 # Initialisation Commands (run once on first boot)
@@ -161,10 +165,10 @@ initialization_commands:
 
 ###############################################################################
 # Setup Commands (run on every restart, inside Docker container)
+# NOTE: Heavy pip installs (torch/ray) belong in the Docker image, not here.
+#       Only sync code from S3 on restart to avoid filling disk.
 ###############################################################################
 setup_commands:
-  - pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-  - pip install ray[rllib] boto3 numpy
   - |
     aws s3 sync s3://$(aws s3api list-buckets \
       --query "Buckets[?starts_with(Name,'de-v10-2')].Name | [0]" \
