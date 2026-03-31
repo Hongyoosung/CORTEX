@@ -26,7 +26,7 @@ Configure your AWS credentials:
 aws configure
 # AWS Access Key ID: ...
 # AWS Secret Access Key: ...
-# Default region: us-east-1
+# Default region: ap-northeast-2
 ```
 
 ---
@@ -94,7 +94,7 @@ Also update the `docker.image` field with your ECR account ID (see Step 3).
 
 ## Step 3 — Build and Push the Docker Image
 
-`aws/Dockerfile.aws` is based on `nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu20.04` and includes:
+`aws/Dockerfile.aws` is based on `nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04` and includes:
 
 - Python 3.10, Ray, RLlib, PyTorch (CUDA 12.1)
 - `s3fs` + `awscli` for checkpoint syncing
@@ -103,33 +103,32 @@ Also update the `docker.image` field with your ECR account ID (see Step 3).
 - `aws/scripts/mount_s3.sh` for S3 mounting
 
 Replace `<account>` with your 12-digit AWS account ID:
+account: 725948482484
 
 ```bash
 # Authenticate to ECR
-aws ecr get-login-password --region us-east-1 \
+aws ecr get-login-password --region ap-northeast-2 \
   | docker login --username AWS --password-stdin \
-      <account>.dkr.ecr.us-east-1.amazonaws.com
+      725948482484.dkr.ecr.ap-northeast-2.amazonaws.com
 
 # Create the ECR repository (first time only)
-aws ecr create-repository --repository-name de --region us-east-1
+aws ecr create-repository --repository-name de --region ap-northeast-2
 
 # Build from repo root
-docker build -f aws/Dockerfile.aws \
-  -t de:v10-2-latest \
-  .
+docker build -f DE_Training/aws/Dockerfile.aws -t de:v10-2-latest .
 
 # Tag and push
 docker tag de:v10-2-latest \
-  <account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest
+  725948482484.dkr.ecr.ap-northeast-2.amazonaws.com/de:v10-2-latest
 
-docker push <account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest
+docker push 725948482484.dkr.ecr.ap-northeast-2.amazonaws.com/de:v10-2-latest
 ```
 
 Update `cluster.yaml` with the full image URI:
 
 ```yaml
 docker:
-  image: "<account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest"
+  image: "725948482484.dkr.ecr.ap-northeast-2.amazonaws.com/de:v10-2-latest"
 ```
 
 ---
