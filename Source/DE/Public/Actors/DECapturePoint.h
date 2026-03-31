@@ -9,7 +9,6 @@
 
 class USphereComponent;
 class UStaticMeshComponent;
-class UTextRenderComponent;
 class UNiagaraComponent;
 class ADEMatchManager;
 
@@ -119,6 +118,7 @@ protected:
 	void CompleteCaptureSequence();
 	void UpdateVisuals();
 	void UpdateNiagaraColor();
+	void UpdateDonutVFX();
 	int32 GetAgentTeamID(AActor* Agent) const;
 	FLinearColor GetTeamColor(int32 TeamID) const;
 
@@ -135,11 +135,13 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USphereComponent* CaptureZone;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UTextRenderComponent* DebugText;
-
+	/** Sky laser Niagara effect — center beam connecting to sky */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UNiagaraComponent* TeamColorVFX;
+
+	/** Donut ring Niagara effect — surrounds capture zone, shows progress */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UNiagaraComponent* DonutProgressVFX;
 
 	//========================================
 	// Configuration
@@ -169,11 +171,21 @@ public:
 	UPROPERTY(EditAnywhere, Category = "DECapturePoint|Debug")
 	bool bShowDebugInfo = true;
 
+	/** Niagara system for the sky laser beam in the center */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DECapturePoint|VFX")
 	class UNiagaraSystem* TeamColorVFXAsset;
 
+	/** Niagara system for the donut ring progress indicator surrounding the zone */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DECapturePoint|VFX")
+	class UNiagaraSystem* DonutProgressVFXAsset;
+
+	/** Niagara color parameter name (used by both VFX systems) */
 	UPROPERTY(EditAnywhere, Category = "DECapturePoint|VFX")
 	FName VFXColorParameterName = FName("TeamColor");
+
+	/** Niagara progress parameter name (used by DonutProgressVFX) */
+	UPROPERTY(EditAnywhere, Category = "DECapturePoint|VFX")
+	FName VFXProgressParameterName = FName("CaptureProgress");
 
 	//========================================
 	// Events

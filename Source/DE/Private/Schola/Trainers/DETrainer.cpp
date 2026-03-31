@@ -77,6 +77,10 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
     {
         UE_LOG(LogTemp, Warning, TEXT("[DETrainer] DEMatchManager not yet available — GatherStateSnapshot will fall back to world scan"));
     }
+    else
+    {
+        CachedMatchManager->OnMatchConditionMet.AddDynamic(this, &ADETrainer::OnMatchEnded);
+    }
 
     // Cache DEScholaEnvironment — find the one whose OwnedMatchManager matches ours
     {
@@ -98,6 +102,15 @@ void ADETrainer::InitializeDETrainer(UDEScholaAgent* InAgent)
             UE_LOG(LogTemp, Warning, TEXT("[DETrainer] Could not find owning ADEScholaEnvironment — match termination signal unavailable"));
         }
     }
+
+    // ── DIAGNOSTIC: log cached env references so mis-wiring is immediately visible ──
+    UE_LOG(LogTemp, Warning,
+        TEXT("[DETrainer][INIT] Agent=%s  CharEnvID=%d  CachedMM_EnvID=%d  ScholaEnv_EnvironmentId=%d"),
+        *ControlledCharacter->GetName(),
+        ControlledCharacter->GetEnvID_Implementation(),
+        CachedMatchManager ? CachedMatchManager->GetEnvID() : -999,
+        CachedScholaEnvironment ? CachedScholaEnvironment->EnvironmentId : -999
+    );
 
     // Cache capture point references filtered by EnvID (static actors — populated once)
     const int32 MyEnvID = ControlledCharacter->GetEnvID_Implementation();
@@ -176,9 +189,8 @@ void ADETrainer::Tick(float DeltaTime)
             // That blocks AllAgentsThink()'s AllDone=true check, preventing the SAME_STEP
             // auto-reset from firing and leaving alive agents permanently stuck in Truncated.
             CurrentEpisodeSteps++;
-            UE_LOG(LogTemp, Log, TEXT("[DETrainer] %s (DEAD): action drained (step %d/%d)"),
-                *ControlledCharacter->GetName(), CurrentEpisodeSteps,
-                MaxEpisodeSteps);
+            UE_LOG(LogTemp, Log, TEXT("[DETrainer] %s (DEAD): action drained (step %d)"),
+                *ControlledCharacter->GetName(), CurrentEpisodeSteps);
         }
         bWasDeadLastTick = true;
         return;
@@ -336,15 +348,25 @@ float ADETrainer::ComputeReward()
 
 bool ADETrainer::IsEpisodeDone()
 {
-    // 종료 조건
-    const int32 MaxSteps = MaxEpisodeSteps;
-    if (CurrentEpisodeSteps >= MaxSteps)
+    // Primary: DEMatchManager fired OnMatchConditionMet (score threshold / timeout)
+    if (bMatchEnded)
+        return true;
+
+    // Safety net: should never fire in normal play (set MaxEpisodeSteps=9999 in editor)
+    if (CurrentEpisodeSteps >= MaxEpisodeSteps)
     {
-        UE_LOG(LogTemp, Log, TEXT("Episode ended: Max steps reached"));
+        UE_LOG(LogTemp, Warning, TEXT("[DETrainer] Safety-net step limit reached (%d) — "
+            "DEMatchManager did not end the episode. Check MaxMatchDuration / WinScoreThreshold."),
+            MaxEpisodeSteps);
         return true;
     }
-    
+
     return false;
+}
+
+void ADETrainer::OnMatchEnded(EDEMatchState WinnerState, int32 WinningTeamID)
+{
+    bMatchEnded = true;
 }
 
 void ADETrainer::ResetEpisode()
@@ -358,6 +380,7 @@ void ADETrainer::ResetEpisode()
     // 통계 초기화
     CurrentEpisodeSteps = 0;
     EpisodeReward = 0.0f;
+    bMatchEnded = false;
 
     // v10.2: Squad Commander가 새로운 전략을 할당
     if (ControlledCharacter)
@@ -766,15 +789,109 @@ EAgentTrainingStatus ADETrainer::ComputeStatus()
                                  MatchState != EDEMatchState::WaitingToStart);
         if (bMatchOver && !bHasNewReward)
         {
-            UE_LOG(LogTemp, Warning,
-                TEXT("[DETrainer] Episode TRUNCATED — Match ended (State=%d) after %d steps — Agent: %s"),
-                static_cast<int32>(MatchState), CurrentEpisodeSteps, *GetName());
             bEpisodeCompleted = true;
-            return EAgentTrainingStatus::Truncated;
+            if (MatchState == EDEMatchState::TeamWon)
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DETrainer] Episode TERMINATED — Team won after %d steps — Agent: %s"),
+                    CurrentEpisodeSteps, *GetName());
+                return EAgentTrainingStatus::Completed;
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[DETrainer] Episode TRUNCATED — Match ended (State=%d) after %d steps — Agent: %s"),
+                    static_cast<int32>(MatchState), CurrentEpisodeSteps, *GetName());
+                return EAgentTrainingStatus::Truncated;
+            }
         }
     }
 
     return EAgentTrainingStatus::Running;
+}
+
+FDETeamWorldState ADETrainer::BuildTeamWorldState() const
+{
+    FDETeamWorldState State;
+
+    if (!CachedMatchManager || !ControlledCharacter)
+    {
+        return State; // Return default-initialized (zeros/defaults)
+    }
+
+    const int32 InTeamID = ControlledCharacter->GetTeamID_Implementation();
+    const int32 EnemyTeamID = (InTeamID == 0) ? 1 : 0;
+
+    // ── Friendly units ──────────────────────────────────────────────────
+    const TArray<ADEAgent*>& Friendlies = CachedMatchManager->GetTeamAgents(InTeamID);
+    for (int32 i = 0; i < 5; ++i)
+    {
+        if (i < Friendlies.Num() && Friendlies[i] && IsValid(Friendlies[i]))
+        {
+            State.FriendlyPositions[i] = Friendlies[i]->GetActorLocation();
+            State.FriendlyHealths[i]   = Friendlies[i]->GetHealthPercentage();
+            State.FriendlyClasses[i]   = Friendlies[i]->GetCommandedClass();
+            State.FriendlyCooldowns[i] = Friendlies[i]->GetWeaponCooldown();
+            State.FriendlyAlive[i]     = Friendlies[i]->IsAlive();
+        }
+        else
+        {
+            State.FriendlyPositions[i] = FVector::ZeroVector;
+            State.FriendlyHealths[i]   = 0.0f;
+            State.FriendlyClasses[i]   = EDEClassType::Strike;
+            State.FriendlyCooldowns[i] = 0.0f;
+            State.FriendlyAlive[i]     = false;
+        }
+    }
+
+    // ── Enemy estimates ─────────────────────────────────────────────────
+    const TArray<ADEAgent*> Enemies = CachedMatchManager->GetEnemyAgents(InTeamID);
+    for (int32 i = 0; i < 5; ++i)
+    {
+        if (i < Enemies.Num() && Enemies[i] && IsValid(Enemies[i]))
+        {
+            State.EnemyPositions[i]   = Enemies[i]->GetActorLocation();
+            State.EnemyConfidences[i] = 1.0f; // Direct observation — full confidence
+            State.EnemyHealths[i]     = Enemies[i]->GetHealthPercentage();
+            State.EnemyAlive[i]       = Enemies[i]->IsAlive();
+        }
+        else
+        {
+            State.EnemyPositions[i]   = FVector::ZeroVector;
+            State.EnemyConfidences[i] = 0.0f;
+            State.EnemyHealths[i]     = 0.0f;
+            State.EnemyAlive[i]       = false;
+        }
+    }
+
+    // ── Map state ───────────────────────────────────────────────────────
+    const TArray<ADECapturePoint*>& CPs = CachedMatchManager->GetCapturePoints();
+    for (int32 i = 0; i < 5; ++i)
+    {
+        if (i < CPs.Num() && CPs[i] && IsValid(CPs[i]))
+        {
+            // Map ownership relative to this agent's team:
+            // +1 = friendly, -1 = enemy, 0 = neutral
+            const int32 InOwner = CPs[i]->GetOwnership();
+            if (InOwner == InTeamID)
+                State.CapturePointOwnership[i] = 1;
+            else if (InOwner == EnemyTeamID)
+                State.CapturePointOwnership[i] = -1;
+            else
+                State.CapturePointOwnership[i] = 0;
+        }
+    }
+
+    // Time remaining — read from match manager if available
+    if (CachedScholaEnvironment)
+    {
+        const float MaxTime = static_cast<float>(MaxEpisodeSteps);
+        State.TimeRemaining = MaxTime > 0.0f
+            ? FMath::Clamp(1.0f - static_cast<float>(CurrentEpisodeSteps) / MaxTime, 0.0f, 1.0f)
+            : 1.0f;
+    }
+
+    return State;
 }
 
 void ADETrainer::GetInfo(TMap<FString, FString>& Info)
@@ -787,6 +904,17 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
     if (bMatchOver)
     {
         Info.Add(TEXT("MatchResult"), FString::FromInt(static_cast<int32>(CachedScholaEnvironment->GetMatchState())));
+        // DIAGNOSTIC: log which trainer is reporting match-over, and what env it thinks it belongs to
+        UE_LOG(LogTemp, Warning,
+            TEXT("[DETrainer][MATCH_OVER] Agent=%s  CharEnvID=%d  ScholaEnv_EnvironmentId=%d  MM_EnvID=%d  Score=[%d,%d]  Winner=%d"),
+            ControlledCharacter ? *ControlledCharacter->GetName() : TEXT("NULL"),
+            ControlledCharacter ? ControlledCharacter->GetEnvID_Implementation() : -999,
+            CachedScholaEnvironment->EnvironmentId,
+            CachedMatchManager ? CachedMatchManager->GetEnvID() : -999,
+            CachedMatchManager ? CachedMatchManager->GetTeamScore(0) : -1,
+            CachedMatchManager ? CachedMatchManager->GetTeamScore(1) : -1,
+            CachedMatchManager ? CachedMatchManager->GetFinalWinnerTeamID() : -999
+        );
     }
 
     // Team scores and winner (for win rate tracking in Python)
@@ -794,7 +922,25 @@ void ADETrainer::GetInfo(TMap<FString, FString>& Info)
     {
         Info.Add(TEXT("TeamScore0"), FString::FromInt(CachedMatchManager->GetTeamScore(0)));
         Info.Add(TEXT("TeamScore1"), FString::FromInt(CachedMatchManager->GetTeamScore(1)));
-        Info.Add(TEXT("WinnerTeamID"), FString::FromInt(CachedMatchManager->GetWinnerTeamID()));
+        Info.Add(TEXT("WinnerTeamID"), FString::FromInt(CachedMatchManager->GetFinalWinnerTeamID()));
+    }
+
+    // ── MAPPO: global state for centralized critic ──────────────────────
+    // Serialize FDETeamWorldState::ToTensor() as comma-separated floats.
+    // Python env_wrapper reads this under key "global_state" and appends
+    // the 71-dim vector to each agent's 226-dim obs → 297-dim MAPPO obs.
+    {
+        FDETeamWorldState TeamState = BuildTeamWorldState();
+        TArray<float> Tensor = TeamState.ToTensor();
+
+        FString GlobalStateStr;
+        GlobalStateStr.Reserve(Tensor.Num() * 8); // ~8 chars per float
+        for (int32 i = 0; i < Tensor.Num(); ++i)
+        {
+            if (i > 0) GlobalStateStr.AppendChar(TEXT(','));
+            GlobalStateStr.Append(FString::Printf(TEXT("%.6f"), Tensor[i]));
+        }
+        Info.Add(TEXT("global_state"), GlobalStateStr);
     }
 
     // Provide comprehensive debug/training information

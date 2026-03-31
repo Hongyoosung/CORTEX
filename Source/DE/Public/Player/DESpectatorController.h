@@ -24,6 +24,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnObservedEnvChanged, int32, NewEnv
  *     - Hold → cycle to the next agent every CycleInterval seconds while held
  *   Button 2 (key "2"):
  *     - Disable camera mode, return to default spectator view
+ *   Button 3 (key "3"):
+ *     - Cycle to the next alive agent of the same class and team in the same environment
  *
  * Integration:
  *   Set ADESpectatorController as the PlayerControllerClass in the GameMode.
@@ -108,6 +110,7 @@ private:
 	void OnCameraKeyPressed();
 	void OnCameraKeyReleased();
 	void OnDisableCameraPressed();
+	void OnSameClassKeyPressed();
 	void OnSpeedUp();
 	void OnSpeedDown();
 
@@ -139,6 +142,7 @@ private:
 
 	int32 CurrentAgentIndex      = -1;
 	int32 CurrentClassPhase   = 0;   // 0=Strike, 1=Vanguard, 2=Support (tap cycle order)
+	int32 LockedEnvID         = -1;  // EnvID locked on first Key 1 press; -1 = not yet locked
 	bool bCameraActive    = false;
 	bool bIsKeyHeld       = false;
 	bool bIsCycling       = false;

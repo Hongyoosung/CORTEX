@@ -100,4 +100,9 @@ void UBTTask_DEAttackAbility::TickTask(UBehaviorTreeComponent& OwnerComp, uint8*
 		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(
 			Character, DEGameplayTags::Ability_Attack, Payload);
 	}
+	else
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[BTTask_Attack] %s — CanFire=false (reloading or on cooldown)"),
+			*Character->GetName());
+	}
 }

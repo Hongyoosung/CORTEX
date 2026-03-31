@@ -6,6 +6,8 @@
 #include "Types/DEObservationTypes.h"
 #include "Characters/DEAgent.h"
 #include "Actors/DECapturePoint.h"
+#include "Team/DEMatchManager.h"
+#include "Actors/DESpawnArea.h"
 
 float DEComputeStrikeStepReward(
 	ADEAgent* Agent,
@@ -26,6 +28,23 @@ float DEComputeStrikeStepReward(
 	const float HealthLoss = Prev.Health - Current.Health;
 	if (HealthLoss > Settings->StrikeHealthLossThreshold)
 		Reward -= Settings->StrikeReward.HealthPenalty * HealthLoss;
+
+	// Early zone check: TooCloseEnemyPenalty is reduced (not suppressed) while actively capping.
+	// Strike should still prefer range even on-point, but at 30% penalty to avoid
+	// over-penalising agents holding a capture zone under pressure.
+	bool bInNonFriendlyZoneEarly = false;
+	if (!bIsRespawnStep && EnvCapturePoints.Num() > 0)
+	{
+		for (const ADECapturePoint* CP : EnvCapturePoints)
+		{
+			if (!CP || CP->GetTeamID_Implementation() == MyTeamID) continue;
+			if (FVector::DistSquared(Current.Position, CP->GetActorLocation()) <= CaptureRadiusSq)
+			{
+				bInNonFriendlyZoneEarly = true;
+				break;
+			}
+		}
+	}
 
 	// Ranged combat: penalise too close, reward optimal range
 	bool bEnemyTooClose = false;
@@ -52,7 +71,10 @@ float DEComputeStrikeStepReward(
 		if (bTooClose)
 		{
 			bEnemyTooClose = true;
-			Reward -= Settings->StrikeReward.TooCloseEnemyPenalty;
+			// Reduce (not suppress) penalty while capping — Strike should still prefer range,
+			// but not be punished as harshly for holding a point under pressure.
+			const float RangePenaltyScale = bInNonFriendlyZoneEarly ? 0.3f : 1.0f;
+			Reward -= Settings->StrikeReward.TooCloseEnemyPenalty * RangePenaltyScale;
 			InOutState.bWasTooCloseAtKill = true;
 		}
 		else if (bAtOptimalRange)
@@ -77,7 +99,9 @@ float DEComputeStrikeStepReward(
 		}
 
 		float PrevNearestDistSq = FLT_MAX, CurrNearestDistSq = FLT_MAX;
-		bool bInNonFriendlyZone = false, bInFriendlyZoneStrike = false;
+		bool bInNonFriendlyZone = false;
+		bool bInFriendlyZone = false;
+		bool bAnyNonFriendlyPointExists = false;
 		float ActiveCappingProgress = 0.0f;
 
 		for (ADECapturePoint* CP : EnvCapturePoints)
@@ -88,6 +112,7 @@ float DEComputeStrikeStepReward(
 
 			if (CP->GetTeamID_Implementation() != MyTeamID)
 			{
+				bAnyNonFriendlyPointExists = true;
 				PrevNearestDistSq = FMath::Min(PrevNearestDistSq, PrevDistSq);
 				CurrNearestDistSq = FMath::Min(CurrNearestDistSq, CurrDistSq);
 				if (CurrDistSq <= CaptureRadiusSq)
@@ -98,24 +123,7 @@ float DEComputeStrikeStepReward(
 			}
 			else if (CurrDistSq <= CaptureRadiusSq)
 			{
-				bInFriendlyZoneStrike = true;
-			}
-		}
-
-		const int32 NewCaptures = CurrFriendlyPoints - PrevFriendlyPoints;
-		if (NewCaptures > 0)
-		{
-			InOutState.PostCaptureMomentumStepsRemaining = Settings->StrikeReward.PostCaptureMomentumDuration;
-			float NearestFriendlyDistSq = FLT_MAX;
-			for (ADECapturePoint* CP : EnvCapturePoints)
-			{
-				if (!CP || CP->GetTeamID_Implementation() != MyTeamID) continue;
-				const float DSq = FVector::DistSquared(Current.Position, CP->GetActorLocation());
-				if (DSq < NearestFriendlyDistSq)
-				{
-					NearestFriendlyDistSq = DSq;
-					InOutState.LastCapturedPointLocation = CP->GetActorLocation();
-				}
+				bInFriendlyZone = true;
 			}
 		}
 
@@ -125,30 +133,35 @@ float DEComputeStrikeStepReward(
 			const float ApproachDelta = FMath::Sqrt(PrevNearestDistSq) - FMath::Sqrt(CurrNearestDistSq);
 			const float EffectiveDelta = ApproachDelta >= 0.0f ? ApproachDelta : ApproachDelta * 0.5f;
 			Reward += Settings->StrikeReward.ObjectiveProgressReward * ApproachScale * EffectiveDelta;
+
+			// Stagnation tracking: reset if making meaningful approach, increment otherwise
+			if (ApproachDelta > 10.0f)
+				InOutState.StagnationSteps = 0;
+			else
+				InOutState.StagnationSteps++;
 		}
 
 		if (bInNonFriendlyZone)
 		{
-			InOutState.StrikeZoneStepsAfterCapture = 0;
-			// Range discipline is enforced by TooCloseEnemyPenalty — zone bonus stays full
 			Reward += Settings->StrikeReward.ZonePresenceBonus;
 			Reward += Settings->StrikeReward.ActiveCappingBonus * ActiveCappingProgress;
-		}
-		else if (bInFriendlyZoneStrike && Settings->StrikeCapturedZoneDecaySteps > 0.0f)
-		{
-			InOutState.StrikeZoneStepsAfterCapture++;
-			const float DecayFactor = FMath::Max(0.0f, 1.0f - (float)InOutState.StrikeZoneStepsAfterCapture / Settings->StrikeCapturedZoneDecaySteps);
-			Reward += Settings->StrikeReward.ZonePresenceBonus * DecayFactor;
+			InOutState.FriendlyZoneLoiterSteps = 0;
 		}
 
-		if (InOutState.PostCaptureMomentumStepsRemaining > 0)
+		// Friendly-zone loitering penalty: discourage camping on already-captured points.
+		// Suppressed when enemies are nearby — the agent may be defending.
+		const bool bAnyEnemyVisible = Current.EnemyVisible.ContainsByPredicate([](bool b){ return b; });
+		if (bInFriendlyZone && !bInNonFriendlyZone && bAnyNonFriendlyPointExists && !bAnyEnemyVisible)
 		{
-			InOutState.PostCaptureMomentumStepsRemaining--;
-			if (PositionChange >= Settings->StrikeReward.PostCaptureMomentumMinMove &&
-				FVector::DistSquared(Current.Position, InOutState.LastCapturedPointLocation) > CaptureRadiusSq)
+			InOutState.FriendlyZoneLoiterSteps++;
+			if (InOutState.FriendlyZoneLoiterSteps > Settings->FriendlyZoneLoiterGraceSteps)
 			{
-				Reward += Settings->StrikeReward.PostCaptureMomentumBonus;
+				Reward -= Settings->FriendlyZoneLoiterPenalty;
 			}
+		}
+		else if (!bInFriendlyZone)
+		{
+			InOutState.FriendlyZoneLoiterSteps = 0;
 		}
 
 		if (PositionChange < Settings->StrikeIdleMovementThreshold && !bInNonFriendlyZone)
@@ -157,6 +170,30 @@ float DEComputeStrikeStepReward(
 				? Settings->StrikeReward.IdlePenalty
 				: Settings->StrikeReward.IdlePenalty * 0.5f;
 			Reward -= IdlePenalty;
+		}
+	}
+
+	// Base loiter penalty: always applies when the agent is inside their own spawn base,
+	// regardless of enemy proximity — agents should leave the base and push forward.
+	if (!bIsRespawnStep && Agent)
+	{
+		if (ADEMatchManager* MatchMgr = Agent->GetMatchManager())
+		{
+			const FDETeamConfiguration TeamCfg = MatchMgr->GetTeamConfiguration(MyTeamID);
+			if (TeamCfg.DESpawnArea)
+			{
+				const float BaseRadiusSq = FMath::Square(Settings->BaseLoiterRadius);
+				if (FVector::DistSquared(Current.Position, TeamCfg.DESpawnArea->GetActorLocation()) <= BaseRadiusSq)
+				{
+					InOutState.BaseLoiterSteps++;
+					if (InOutState.BaseLoiterSteps > Settings->BaseLoiterGraceSteps)
+						Reward -= Settings->BaseLoiterPenalty;
+				}
+				else
+				{
+					InOutState.BaseLoiterSteps = 0;
+				}
+			}
 		}
 	}
 

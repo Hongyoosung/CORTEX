@@ -35,11 +35,12 @@ import boto3
 
 # Paths (relative to repo root)
 CLUSTER_YAML = "aws/cluster.yaml"
-TRAIN_SCRIPT  = "train_rllib.py"
+TRAIN_SCRIPT  = "training/train.py"
 
 # Termination criteria
-DEFAULT_REWARD_THRESHOLD = 0.40   # >40% win rate — from v10.2 target spec
-DEFAULT_MAX_STEPS        = 100_000
+DEFAULT_REWARD_THRESHOLD  = 0.40    # >40% win rate — from v10.2 target spec
+DEFAULT_MAX_STEPS         = 100_000
+DEFAULT_MAX_RUNTIME       = 1800    # 30-minute wall-clock hard limit
 
 # Polling interval (seconds) while waiting for training to finish
 POLL_INTERVAL_SECONDS = 30
@@ -60,11 +61,20 @@ def run(cmd: list[str], check: bool = True, capture: bool = False) -> subprocess
     )
 
 
-def cluster_up(cluster_yaml: str, yes: bool = True) -> None:
+def cluster_up(cluster_yaml: str, yes: bool = True, max_retries: int = 3) -> None:
     cmd = ["ray", "up", cluster_yaml, "--no-config-cache"]
     if yes:
         cmd.append("-y")
-    run(cmd)
+    for attempt in range(1, max_retries + 1):
+        try:
+            run(cmd)
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt < max_retries:
+                print(f"[launch] ray up failed (attempt {attempt}/{max_retries}), retrying in 30s...", flush=True)
+                time.sleep(30)
+            else:
+                raise
 
 
 def cluster_down(cluster_yaml: str, yes: bool = True) -> None:
@@ -174,6 +184,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--wandb-project",      default="de-v10-2", help="W&B project name")
     p.add_argument("--poll-interval",      type=int, default=POLL_INTERVAL_SECONDS,
                    help="Seconds between S3 metric polls")
+    p.add_argument("--max-runtime",         type=int, default=DEFAULT_MAX_RUNTIME,
+                   help="Wall-clock seconds before the cluster is force-terminated (default: 1800)")
     p.add_argument("--skip-cluster-up",    action="store_true",
                    help="Assume cluster is already running, skip `ray up`")
     p.add_argument("--skip-cluster-down",  action="store_true",
@@ -210,12 +222,25 @@ def main() -> int:
 
     # ── 3. Monitor until done ────────────────────────────────────────────────
     terminate_reason = "training process exited"
+    deadline = time.time() + args.max_runtime
     try:
         print(f"\n[launch] Monitoring S3 metrics every {args.poll_interval}s …")
         print(f"         Threshold: win_rate ≥ {args.reward_threshold}  |  "
-              f"max_steps = {args.max_steps:,}\n")
+              f"max_steps = {args.max_steps:,}  |  "
+              f"max_runtime = {args.max_runtime}s\n")
 
         while True:
+            # Hard wall-clock timeout — kills cluster even if Ray hangs
+            if time.time() >= deadline:
+                terminate_reason = f"wall-clock limit reached ({args.max_runtime}s)"
+                print(f"\n[launch] {terminate_reason}")
+                proc.terminate()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                break
+
             # Check if `ray submit` itself has finished
             retcode = proc.poll()
             if retcode is not None:
@@ -228,9 +253,11 @@ def main() -> int:
             if metrics:
                 steps    = metrics.get("total_steps", 0)
                 win_rate = metrics.get("win_rate", 0.0)
+                remaining = max(0, int(deadline - time.time()))
                 print(
                     f"[monitor] steps={steps:>8,}  win_rate={win_rate:.3f}  "
-                    f"threshold={args.reward_threshold:.3f}",
+                    f"threshold={args.reward_threshold:.3f}  "
+                    f"remaining={remaining}s",
                     flush=True,
                 )
 

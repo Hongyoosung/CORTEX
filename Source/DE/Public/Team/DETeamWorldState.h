@@ -126,14 +126,21 @@ struct DE_API FDETeamWorldState
 	// Utility Methods
 	//========================================
 
+	/** Total dimension of ToTensor() output (5-agent teams, fixed layout). */
+	static constexpr int32 TENSOR_DIM = 71;
+	// Friendly: Pos(15) + Health(5) + Cooldown(5) + Alive(5) + Class(5) = 35
+	// Enemy:    Pos(15) + Confidence(5) + Health(5) + Alive(5)           = 30
+	// Map:      CaptureOwnership(5) + TimeRemaining(1)                   =  6
+	// Total:    35 + 30 + 6                                              = 71
+
 	/**
-	 * Serialize to flat float array for neural network input
-	 * Total: ~60-dim
+	 * Serialize to flat float array for neural network input.
+	 * Total: 71-dim (TENSOR_DIM)
 	 */
 	TArray<float> ToTensor() const
 	{
 		TArray<float> Tensor;
-		Tensor.Reserve(70); // Pre-allocate for efficiency
+		Tensor.Reserve(TENSOR_DIM);
 
 		// Friendly positions (15-dim)
 		for (const FVector& Pos : FriendlyPositions)

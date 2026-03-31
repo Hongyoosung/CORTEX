@@ -2,7 +2,7 @@
 from itertools import chain
 from setuptools import setup, find_packages
 import sys
-
+import os
 
 def get_ray_deps():
     """
@@ -58,10 +58,18 @@ def get_all_deps():
 
 if __name__ == "__main__":
     # load readme
-    desc = None
-    with open("../../README.md", "rt") as readme:
-        desc = readme.read()
-    assert desc != None, "failed to load readme"
+    desc = "Schola toolkit"  # 기본값 설정
+    readme_path = "../../README.md"
+    
+    # 파일이 실제로 존재할 때만 읽어오기
+    if os.path.exists(readme_path):
+        with open(readme_path, "rt", encoding="utf-8") as readme:
+            desc = readme.read()
+    else:
+        # 파일이 없으면 현재 폴더의 README라도 시도
+        if os.path.exists("README.md"):
+            with open("README.md", "rt", encoding="utf-8") as readme:
+                desc = readme.read()
 
     setup(
         name="schola",

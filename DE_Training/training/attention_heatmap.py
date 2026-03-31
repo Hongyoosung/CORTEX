@@ -330,42 +330,44 @@ def plot_scenario_comparison(
 # ── 체크포인트 로드 ───────────────────────────────────────────────────────────
 
 def load_policies_from_rllib(checkpoint_dir: str) -> dict:
-    """
-    RLlib 체크포인트에서 역할별 EntityCentricPolicy를 추출합니다.
-    Returns: {"assault": model, "defend": model, "support": model}
-    """
-    import ray
-    from ray.tune.registry import register_env
-    from ray.rllib.models import ModelCatalog
+    """UE5 환경 연결 없이 체크포인트 pkl에서 직접 모델 가중치 로드."""
+    import pickle
+    from train import EntityCentricRLlibModel, STRATEGY_POLICY_NAMES
 
-    # train.py의 RLlib wrapper 재사용
-    from train import (
-        EntityCentricRLlibModel, create_ppo_config,
-        STRATEGY_POLICY_NAMES,
-    )
-    try:
-        from env_wrapper import DEEntityCentricEnv
-    except ImportError:
-        from training.env_wrapper import DEEntityCentricEnv
-
-    ray.init(ignore_reinit_error=True, include_dashboard=False, logging_level="ERROR")
-    register_env("de_entity_centric", lambda cfg: DEEntityCentricEnv(**cfg))
-    ModelCatalog.register_custom_model("entity_centric_model", EntityCentricRLlibModel)
-
-    algo = create_ppo_config().build()
-    algo.restore(os.path.abspath(checkpoint_dir))
-
+    checkpoint_dir = os.path.abspath(checkpoint_dir)
     models = {}
+
     for policy_name in STRATEGY_POLICY_NAMES.values():
         role = policy_name.replace("_policy", "")
-        rllib_policy = algo.get_policy(policy_name)
-        if rllib_policy:
-            model = rllib_policy.model.policy
-            model.eval()
-            models[role] = model
 
-    algo.stop()
-    ray.shutdown()
+        # RLlib 체크포인트 구조: policies/<policy_name>/policy_state.pkl
+        pkl_path = os.path.join(checkpoint_dir, "policies", policy_name, "policy_state.pkl")
+        if not os.path.exists(pkl_path):
+            print(f"  [SKIP] {pkl_path} not found")
+            continue
+
+        with open(pkl_path, "rb") as f:
+            policy_state = pickle.load(f)
+
+        # policy_state["weights"] 에 OrderedDict 형태로 저장됨
+        weights = policy_state.get("weights", {})
+
+        # EntityCentricRLlibModel 내부의 EntityCentricPolicy 인스턴스 생성
+        rllib_model = EntityCentricRLlibModel.__new__(EntityCentricRLlibModel)
+        from policy import EntityCentricPolicy
+        inner = EntityCentricPolicy()
+
+        # weights 키 접두사 제거 (예: "policy." → "")
+        stripped = {}
+        for k, v in weights.items():
+            new_key = k[len("policy."):] if k.startswith("policy.") else k
+            stripped[new_key] = torch.tensor(v) if not isinstance(v, torch.Tensor) else v
+
+        inner.load_state_dict(stripped, strict=False)
+        inner.eval()
+        models[role] = inner
+        print(f"  Loaded {role} from {pkl_path}")
+
     return models
 
 

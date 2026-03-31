@@ -2,6 +2,9 @@
 # Context root: CORTEX/  (docker-compose.yml lives here)
 # Only DE_Training/ scripts and Plugins/Schola-2.0.1/Resources/python/ are needed.
 
+# ── UE5 Linux packaged build (large, mounted at runtime via S3/volume) ────────
+Linux/
+
 # ── UE5 build artifacts (large, not needed in container) ──────────────────────
 Binaries/
 Intermediate/
@@ -53,5 +56,6 @@ nul
 
 # ── AWS / secrets (never in image) ───────────────────────────────────────────
 DE_Training/aws/
+!DE_Training/aws/scripts/
 DE_Training/aws_setup.sh
 DE_Training/*.bat

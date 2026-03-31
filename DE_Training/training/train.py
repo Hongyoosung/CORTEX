@@ -28,12 +28,18 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from policy import (
     EntityCentricPolicy, EntityCentricPolicy_NoSelfAttn,
+    CentralizedCritic,
     PPOTrainer, ReplayBuffer, Transition,
     collate_fn, OBS_DIM, EQS_DIM, EQS_LABELS,
+    GLOBAL_STATE_DIM, MAPPO_OBS_DIM,
 )
 
 # Ablation toggle: set USE_SELF_ATTN=0 to train without Self-Attention
 USE_SELF_ATTN = os.environ.get('USE_SELF_ATTN', '1') == '1'
+
+
+
+
 
 def _create_policy_network(hidden=64, heads=4):
     """Create policy based on USE_SELF_ATTN toggle."""
@@ -51,19 +57,17 @@ except ImportError:
     print("Warning: RLlib not available. Install with: pip install ray[rllib]")
 
 
+
+
 # ── Reward configuration ──────────────────────────────────────────────────────
 # These values mirror the C++ DERewardData cooperative defaults (plan §3).
 # Python-side reward is already computed by C++; this config is for reference
 # and for any Python-side shaping/scaling applied in process_reward().
 
 REWARD_CONFIG = {
-    # Cooperative base occupation (applied by DERewardSubsystem C++)
-    "BaseOccupationReward":    2.0,   # +2.0/step: sole ally within 2000cm of uncontrolled base
-    "CoOccupationPenalty":    -0.5,   # -0.5/step: 2+ allies stacking same base
-    "BaseCaptureCreditReward": 5.0,   # +5.0 sparse: agent that flipped base ownership
-    "AssignedBaseReachReward": 1.0,   # +1.0 sparse: first time reaching assigned base
-
-    # Python-side scaling applied to the received step reward before PPO update
+    # Python-side scaling applied to the received step reward before PPO update.
+    # All per-class and cooperative rewards are computed C++-side (DERewardSubsystem);
+    # this config only normalises magnitude for PPO stability.
     "reward_scale":  0.01,
     "reward_clip":   5.0,
 }
@@ -78,6 +82,24 @@ def process_reward(raw_reward: float) -> float:
     r = raw_reward * REWARD_CONFIG["reward_scale"]
     r = float(np.clip(r, -REWARD_CONFIG["reward_clip"], REWARD_CONFIG["reward_clip"]))
     return r
+
+
+
+
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
+
+class DECustomCallbacks(DefaultCallbacks):
+    def on_episode_end(self, *, worker, base_env, policies, episode, **kwargs):
+        # custom_metrics are injected into each agent's info dict by env_wrapper.
+        # They sit under info["custom_metrics"], not at the top level of info.
+        for agent_id in episode.get_agents():
+            info = episode.last_info_for(agent_id)
+            cm = (info or {}).get("custom_metrics", {})
+            if cm:
+                for key in ("rl_win_rate", "script_win_rate", "draw_rate"):
+                    if key in cm:
+                        episode.custom_metrics[key] = cm[key]
+                break  # 팀 전체의 지표이므로 한 번만 기록하면 충분함
 
 
 # ── Curriculum Scheduler ──────────────────────────────────────────────────────
@@ -101,6 +123,7 @@ class CurriculumScheduler:
     # Win-rate thresholds: fraction of early-terminated episodes won by RL team.
     # Timeout episodes are excluded (no clear winner).
     PROMOTION_THRESHOLDS = {
+        0: 0.50,  # Passive  → Basic:      RL wins >50% of decided episodes
         1: 0.55,  # Basic    → Standard:   RL wins >55% of decided episodes
         2: 0.65,  # Standard → Aggressive: RL wins >65% of decided episodes
         3: 1.01,  # Aggressive — no further promotion (unreachable sentinel)
@@ -177,7 +200,7 @@ class DETrainingConfig:
     LEARNING_RATE    = 3e-4
     TRAIN_BATCH_SIZE = 8000
     MINIBATCH_SIZE   = 512
-    NUM_SGD_ITER     = 6     # reverted: 8 epochs × VF_CLIP_PARAM=20 caused critic oscillation
+    NUM_SGD_ITER     = 4     # reduced: 6 epochs was squeezing entropy out too fast on strike/vanguard
     GAMMA            = 0.99
     GAE_LAMBDA       = 0.95
     CLIP_PARAM       = 0.2
@@ -192,12 +215,11 @@ class DETrainingConfig:
         [3_000_000,  5e-5],
     ]
     ENTROPY_SCHEDULE = [
-        [0,          0.01],
-        [300_000,    0.005],
-        [800_000,    0.003],
-        [1_500_000,  0.002],  # was 0.001 — keep higher to prevent Strike entropy collapse
-        [2_500_000,  0.001],  # floor: Strike needs exploration budget past 1M steps
-        [5_000_000,  0.001],  # hold floor; do not decay further
+        [0,          0.015],  # start high — prevent early collapse before policies differentiate
+        [500_000,    0.01],
+        [1_500_000,  0.007],
+        [3_000_000,  0.005],  # floor: strike/vanguard need sustained exploration pressure
+        [5_000_000,  0.005],  # hold floor; do not decay further
     ]
 
     OUTPUT_DIR = "/app/training_results"
@@ -213,12 +235,28 @@ if RLLIB_AVAILABLE:
 
     class EntityCentricRLlibModel(TorchModelV2, nn.Module):
         """
-        RLlib TorchModelV2 wrapper for EntityCentricPolicy.
+        RLlib TorchModelV2 wrapper for EntityCentricPolicy with MAPPO dual critics.
 
         Three separate instances are registered — one per role (strike / vanguard / support).
         Each only receives observations for its assigned role.
+
+        Observation layout (297-dim):
+            [0:226]   agent obs  → actor input + local critic input
+            [226:297]  global state (FDETeamWorldState, 71-dim) → centralized critic input
+
+        Value estimation (dual):
+            V = α · V_local(agent_obs) + (1-α) · V_central(global_state)
+            α is a learnable mixing coefficient (initialized to 0.5).
+
         forward() returns (B, 14) = [means(7), log_stds(7)].
         """
+
+        # Shared centralized critic across all three role policies (within same worker).
+        # RLlib instantiates all three policies in the same process for num_workers=0.
+        # Each policy gets its own EntityCentricRLlibModel instance but they share
+        # the centralized critic via this class-level reference. For multi-worker
+        # setups, each worker gets its own copy (gradients are synced by RLlib).
+        _shared_centralized_critic = None
 
         def __init__(self, obs_space, action_space, num_outputs, model_config, name):
             TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
@@ -226,24 +264,53 @@ if RLLIB_AVAILABLE:
             cfg = model_config.get("custom_model_config", {})
             hidden = cfg.get("hidden", 64)
             heads  = cfg.get("heads", 4)
+
+            # Per-role actor + local critic (unchanged)
             self.policy = _create_policy_network(hidden=hidden, heads=heads)
-            self._last_features = None
+
+            # Shared centralized critic (MAPPO)
+            if EntityCentricRLlibModel._shared_centralized_critic is None:
+                EntityCentricRLlibModel._shared_centralized_critic = CentralizedCritic(
+                    state_dim=GLOBAL_STATE_DIM, hidden=256,
+                )
+            self.centralized_critic = EntityCentricRLlibModel._shared_centralized_critic
+
+            # Learnable mixing coefficient for dual value estimation
+            # sigmoid(0.0) = 0.5 → equal weight initially
+            self._value_mix_logit = nn.Parameter(torch.tensor(0.0))
+
+            self._last_agent_obs = None
+            self._last_global_state = None
 
         @override(TorchModelV2)
         def forward(self, input_dict, state, seq_lens):
-            obs = input_dict["obs"].float()            # (B, 226)
-            self._last_features = obs
-            means = self.policy(obs)                   # (B, 7)
+            obs = input_dict["obs"].float()                       # (B, 297)
+
+            # Slice: actor uses agent obs [0:226], critic uses global state [226:297]
+            self._last_agent_obs    = obs[:, :OBS_DIM]                     # (B, 226)
+            self._last_global_state = obs[:, OBS_DIM:]                     # (B, 71)
+
+            means = self.policy(self._last_agent_obs)             # (B, 7)
             log_stds = torch.clamp(
                 self.policy.log_std,
                 EntityCentricPolicy.LOG_STD_MIN,
                 EntityCentricPolicy.LOG_STD_MAX,
-            ).unsqueeze(0).expand_as(means)            # (B, 7)
-            return torch.cat([means, log_stds], dim=-1), state   # (B, 14)
+            ).unsqueeze(0).expand_as(means)                       # (B, 7)
+            return torch.cat([means, log_stds], dim=-1), state    # (B, 14)
 
         @override(TorchModelV2)
         def value_function(self):
-            return self.policy.get_value(self._last_features)
+            """
+            Dual value estimation: α · V_local + (1-α) · V_central
+
+            V_local:   entity-centric attention critic on 226-dim agent obs
+            V_central: MLP critic on 71-dim global team state
+            α:         learned mixing coefficient (sigmoid of _value_mix_logit)
+            """
+            alpha = torch.sigmoid(self._value_mix_logit)
+            v_local   = self.policy.get_value(self._last_agent_obs)           # (B,)
+            v_central = self.centralized_critic(self._last_global_state)      # (B,)
+            return alpha * v_local + (1.0 - alpha) * v_central
 
 
     def create_ppo_config():
@@ -304,6 +371,9 @@ if RLLIB_AVAILABLE:
             metrics_num_episodes_for_smoothing=10,
             min_sample_timesteps_per_iteration=DETrainingConfig.TRAIN_BATCH_SIZE,
         )
+
+        config = config.callbacks(DECustomCallbacks)
+        
         config = config.training(
             lr=DETrainingConfig.LEARNING_RATE,
             lr_schedule=DETrainingConfig.LR_SCHEDULE,
@@ -321,8 +391,8 @@ if RLLIB_AVAILABLE:
             use_gae=True,
             use_critic=True,
             use_kl_loss=True,
-            kl_coeff=0.2,
-            kl_target=0.01,
+            kl_coeff=0.1,     # was 0.2 — softer KL penalty to allow more exploration
+            kl_target=0.015,  # was 0.01 — relax target to give entropy room to work
         )
         return config
 
@@ -405,6 +475,7 @@ def train_with_rllib(args):
     best_reward    = float("-inf")
     cumul_episodes = 0
     cumul_steps    = 0
+    last_step_ckp  = 0
 
     print(f"{'Iter':<6} {'Reward':>10} {'EpLen':>8} {'Steps':>12} {'Time':>8} {'Tier':>5}")
     print("-" * 58)
@@ -456,7 +527,7 @@ def train_with_rllib(args):
         tb.add_scalar("global/performance/steps_per_sec", steps_per_sec, cumul_steps)
 
         # ── Per-role reward & component metrics ───────────────────────────────
-        custom = env_r.get("custom_metrics", {})
+        custom = _get("custom_metrics", {})
         
         # 1. RLlib Native Policy Rewards (가장 확실한 전략별 보상 지표)
         policy_reward_mean = _get("policy_reward_mean", {})
@@ -487,15 +558,12 @@ def train_with_rllib(args):
             if key_sum in custom:
                 tb.add_scalar(f"{strat}/custom_reward/step_sum",  float(custom[key_sum]),  cumul_steps)
 
-        # 4. 세부 보상 컴포넌트 기록 (기존 유지)
-        REWARD_COMPONENTS = [
-            "BaseOccupationReward", "CoOccupationPenalty",
-            "BaseCaptureCreditReward",
-            "AssignedBaseReachReward",
-        ]
-        for comp in REWARD_COMPONENTS:
-            ckey = f"reward_component_{comp}_mean"
-            if ckey in custom:
+        # 4. 세부 보상 컴포넌트 기록
+        # Reward components are computed C++-side; log any custom component
+        # metrics forwarded by the env wrapper.
+        for ckey in custom:
+            if ckey.startswith("reward_component_") and ckey.endswith("_mean"):
+                comp = ckey[len("reward_component_"):-len("_mean")]
                 tb.add_scalar(f"global/reward_components/{comp}", float(custom[ckey]), cumul_steps)
 
         # ── Per-role PPO learner metrics ──────────────────────────────────────
@@ -529,6 +597,15 @@ def train_with_rllib(args):
                         except (ValueError, TypeError):
                             pass
 
+        # ── MAPPO dual-critic metrics ──────────────────────────────────────────
+        # Log the learned mixing coefficient α = sigmoid(logit) for each role
+        for policy_name in STRATEGY_POLICY_NAMES.values():
+            role = policy_name.replace("_policy", "")
+            rllib_policy = algo.get_policy(policy_name)
+            if rllib_policy and hasattr(rllib_policy.model, '_value_mix_logit'):
+                alpha = torch.sigmoid(rllib_policy.model._value_mix_logit).item()
+                tb.add_scalar(f"{role}/mappo/value_mix_alpha", alpha, cumul_steps)
+
         # ── Curriculum tier update ────────────────────────────────────────────
         rl_win_rate = custom.get("rl_win_rate_mean", custom.get("rl_win_rate"))
         if rl_win_rate is not None and not np.isnan(float(rl_win_rate)):
@@ -538,6 +615,14 @@ def train_with_rllib(args):
         else:
             # No decided episodes this iteration — skip promotion check
             tier_promoted = False
+
+        for rate_key, tb_tag in (
+            ("script_win_rate_mean", "curriculum/script_win_rate"),
+            ("draw_rate_mean",       "curriculum/draw_rate"),
+        ):
+            v = custom.get(rate_key, custom.get(rate_key.replace("_mean", "")))
+            if v is not None and not np.isnan(float(v)):
+                tb.add_scalar(tb_tag, float(v), cumul_steps)
         tb.add_scalar("curriculum/scripted_ai_tier", curriculum.get_tier(), cumul_steps)
         if tier_promoted:
             tb.add_scalar("curriculum/tier_promotion_step", cumul_steps, curriculum.get_tier())
@@ -546,6 +631,12 @@ def train_with_rllib(args):
 
         print(f"{i+1:>3}/{args.iterations:<3}  {reward:>10.2f}  "
               f"{ep_len:>8.1f}  {cumul_steps:>12}  {dt:>7.1f}s  {curriculum.get_tier():>5}")
+
+        # Step-based periodic checkpoint (every --step-checkpoint-freq agent steps)
+        if args.step_checkpoint_freq > 0 and cumul_steps - last_step_ckp >= args.step_checkpoint_freq:
+            ckp_path = algo.save(output_dir)
+            last_step_ckp = cumul_steps
+            print(f"  >> Step Checkpoint @ {cumul_steps:,} steps  ({ckp_path})")
 
         if (i + 1) % args.checkpoint_freq == 0:
             algo.save(output_dir)
@@ -712,6 +803,54 @@ def run_validation() -> bool:
     batch    = collate_fn(obs_list)
     check("collate_fn shape (4, 226)", batch.shape == (4, OBS_DIM), f"got {batch.shape}")
 
+    # -- Test 11: CentralizedCritic --
+    print("[Test 11] CentralizedCritic shape and output")
+    cc = CentralizedCritic(state_dim=GLOBAL_STATE_DIM)
+    dummy_gs = torch.randn(B, GLOBAL_STATE_DIM)
+    with torch.no_grad():
+        cc_val = cc(dummy_gs)
+    check("CentralizedCritic output shape (B,)", cc_val.shape == (B,), f"got {cc_val.shape}")
+    check("CentralizedCritic output finite", torch.isfinite(cc_val).all().item())
+
+    # -- Test 12: MAPPO obs slicing (297 = 226 + 71) --
+    print("[Test 12] MAPPO obs dimension arithmetic")
+    check("MAPPO_OBS_DIM == 297", MAPPO_OBS_DIM == 297, f"got {MAPPO_OBS_DIM}")
+    check("GLOBAL_STATE_DIM == 71", GLOBAL_STATE_DIM == 71, f"got {GLOBAL_STATE_DIM}")
+    check("OBS_DIM + GLOBAL_STATE_DIM == MAPPO_OBS_DIM",
+          OBS_DIM + GLOBAL_STATE_DIM == MAPPO_OBS_DIM,
+          f"{OBS_DIM} + {GLOBAL_STATE_DIM} != {MAPPO_OBS_DIM}")
+
+    # -- Test 13: Dual value estimation (EntityCentricRLlibModel) --
+    print("[Test 13] Dual value estimation")
+    if RLLIB_AVAILABLE:
+        from gymnasium import spaces as gym_spaces
+        mappo_obs_space = gym_spaces.Box(-np.inf, np.inf, shape=(MAPPO_OBS_DIM,), dtype=np.float32)
+        mappo_act_space = gym_spaces.Box(-1.0, 1.0, shape=(EQS_DIM,), dtype=np.float32)
+        model_cfg = {"custom_model_config": {"hidden": 64, "heads": 4}}
+        # Reset shared critic for clean test
+        EntityCentricRLlibModel._shared_centralized_critic = None
+        rllib_model = EntityCentricRLlibModel(
+            mappo_obs_space, mappo_act_space, 14, model_cfg, "test_model"
+        )
+        dummy_mappo = torch.randn(B, MAPPO_OBS_DIM)
+        with torch.no_grad():
+            out, _ = rllib_model.forward({"obs": dummy_mappo}, [], None)
+            val = rllib_model.value_function()
+        check("RLlib model output shape (B, 14)", out.shape == (B, 14), f"got {out.shape}")
+        check("Dual value output shape (B,)", val.shape == (B,), f"got {val.shape}")
+        check("Dual value finite", torch.isfinite(val).all().item())
+
+        # Verify shared critic across instances
+        EntityCentricRLlibModel._shared_centralized_critic = None
+        m1 = EntityCentricRLlibModel(mappo_obs_space, mappo_act_space, 14, model_cfg, "m1")
+        m2 = EntityCentricRLlibModel(mappo_obs_space, mappo_act_space, 14, model_cfg, "m2")
+        check("Shared centralized critic (same object)",
+              m1.centralized_critic is m2.centralized_critic)
+        # Clean up
+        EntityCentricRLlibModel._shared_centralized_critic = None
+    else:
+        print("  SKIP: RLlib not available")
+
     print("\n" + "=" * 70)
     print(f"Results: {passed} passed, {failed} failed / {passed+failed} total")
     print("=" * 70 + "\n")
@@ -798,8 +937,10 @@ if __name__ == '__main__':
                         choices=["rllib", "validate", "eval"],
                         default="rllib")
     parser.add_argument("--iterations",     type=int,  default=DETrainingConfig.NUM_ITERATIONS)
-    parser.add_argument("--checkpoint-freq",type=int,  default=10)
-    parser.add_argument("--latest-freq",    type=int,  default=1)
+    parser.add_argument("--checkpoint-freq",     type=int,  default=10)
+    parser.add_argument("--latest-freq",         type=int,  default=1)
+    parser.add_argument("--step-checkpoint-freq",type=int,  default=100_000,
+                        help="Save a periodic checkpoint every N agent steps (default: 100000)")
     parser.add_argument("--host",           type=str,  default=DETrainingConfig.HOST)
     parser.add_argument("--port",           type=int,  default=DETrainingConfig.PORT)
     parser.add_argument("--checkpoint",     type=str,  default=None,
@@ -807,7 +948,7 @@ if __name__ == '__main__':
     parser.add_argument("--resume",              type=str,
                         default=os.environ.get("RESUME_CHECKPOINT") or None,
                         help="RLlib checkpoint to resume from")
-    parser.add_argument("--scripted-ai-tier",    type=int, default=0,
+    parser.add_argument("--scripted-ai-tier",    type=int, default=1,
                         help="Initial ScriptedAI difficulty tier (0=Passive … 3=Aggressive)")
     parser.add_argument("--curriculum-window",   type=int, default=5,
                         help="Iterations of sustained reward required for tier promotion")

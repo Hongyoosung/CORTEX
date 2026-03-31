@@ -19,6 +19,8 @@ class ADESpawnArea;
 class UDERewardData;
 class UDERewardSubsystem;
 class UDEScriptedAIComponent;
+class UWidgetComponent;
+class UDEMatchScoreWidget;
 
 
 /**
@@ -180,6 +182,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DEMatchManager|Score")
 	int32 GetWinnerTeamID() const;
 
+	/** Returns the latched winner from match end, or live leader if match still in progress */
+	UFUNCTION(BlueprintPure, Category = "DEMatchManager|Score")
+	int32 GetFinalWinnerTeamID() const { return FinalWinnerTeamID != -2 ? FinalWinnerTeamID : GetWinnerTeamID(); }
+
 	/** Reset both team scores to 0 */
 	void ResetScores();
 
@@ -217,7 +223,7 @@ public:
 	// Environment Context (injected by ADEScholaEnvironment)
 	//========================================
 
-	FORCEINLINE void SetEnvID(int32 InEnvID)             { EnvID = InEnvID; }
+	void SetEnvID(int32 InEnvID);
 	FORCEINLINE int32 GetEnvID() const                   { return EnvID; }
 
 	FORCEINLINE void SetEnvRandomStream(const FRandomStream& InStream) { EnvRandomStream = InStream; }
@@ -239,6 +245,10 @@ public:
 
 	UFUNCTION()
 	void OnAgentDied(ADEAgent* DeadAgent, ADEAgent* Killer);
+
+	/** Forwards score changes to the ScoreWidgetComponent */
+	UFUNCTION()
+	void OnScoreChanged_Widget(int32 TeamID, int32 NewScore);
 
 
 	//========================================
@@ -289,7 +299,7 @@ public:
 
 	/** Score points awarded to the capturing team per capture */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|Score")
-	int32 CaptureScorePoints = 30;
+	int32 CaptureScorePoints = 20;
 
 	/** Maximum match duration in seconds before timeout (fixed-length episodes).
 	 *  Winner at timeout = team with higher score (passive income from held capture points). */
@@ -345,6 +355,14 @@ public:
 	/** Draw role labels above agents */
 	UPROPERTY(EditAnywhere, Category = "DEMatchManager|Squad|Debug")
 	bool bDrawRoleAssignments = true;
+
+	/** Widget Blueprint class to use for the score overlay (screen space) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DEMatchManager|UI")
+	TSubclassOf<UDEMatchScoreWidget> ScoreWidgetClass;
+
+	/** Widget component that hosts the score overlay */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "DEMatchManager|UI")
+	TObjectPtr<UWidgetComponent> ScoreWidgetComponent;
 
 	/**
 	 * Phase 1 RL Training Mode — class fixed for entire episode.
@@ -439,6 +457,9 @@ protected:
 
 	/** Per-team cumulative scores (index = TeamID) */
 	int32 TeamScores[2] = {0, 0};
+
+	/** Latched winner at match end (-2 = not ended, -1 = tie, 0/1 = team) */
+	int32 FinalWinnerTeamID = -2;
 
 	/** Timer handles replacing per-frame Tick */
 	FTimerHandle GameplayTimerHandle;

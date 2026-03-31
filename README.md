@@ -1,233 +1,124 @@
-# Dynamic EQS
+# Dynamic EQS — RL-Based EQS Weight Optimization for UE5
 
-**Engine:** UE5.6 | **Language:** C++17 | **Platform:** Windows | **Schola:** 2.0.1
+**Engine:** UE5.6 | **Language:** C++17 / Python | **Platform:** Windows / Linux (AWS) | **Schola:** 2.0.1
 
-Dynamic EQS is a plugin + game environment that connects a Python-trained RL policy to Unreal Engine 5's native **Environment Query System (EQS)**. Instead of hand-coded heuristics, agents learn to output **7 continuous EQS weights** that control where they move on the map.
+## Overview
 
----
+Dynamic EQS replaces hand-tuned UE5 EQS scoring weights with values inferred by reinforcement learning policies at runtime. Agents learn optimal spatial positioning in a 5v5 capture-point game through dynamically tuned EQS parameters.
 
-## What is Dynamic EQS?
+The system connects UE5 to Ray RLlib via the Schola plugin (gRPC bridge), trains role-specific policies using **MAPPO (Multi-Agent PPO)**, and supports cloud-scale parallel training on AWS.
 
-Standard EQS evaluates candidate positions using fixed, designer-authored scoring weights. Dynamic EQS replaces those fixed weights with values inferred by a neural network at runtime.
-
-**Core loop:**
-1. Agent observes a 170-dim entity-centric state (positions, health, visibility, strategy)
-2. `EntityCentricPolicy` (217K params, Python/ONNX) infers 7 EQS weight values in `[-1, 1]`
-3. Weights are injected as named float parameters into a UE5 EQS query
-4. EQS scores 48 candidate locations using 8 weighted tests → best location selected
-5. Agent pathfinds to that location via UE5 NavMesh
-
-The policy is trained with PPO (RLlib) against a 5v5 capture-point game environment. During inference, the trained ONNX model runs inside UE5 via NNE.
-
----
-
-## Plugin Architecture
-
-Dynamic EQS extends the **Schola** plugin (gRPC bridge between UE5 and Python):
+## Architecture
 
 ```
-Schola (base)                    Dynamic EQS (plugin)          Game (this project)
-─────────────────────────────────────────────────────────────────────────────────
-UInferenceComponent          →   UDynamicEQSAgentComponent  →  UDEScholaAgent
-UBoxObserver                 →   UDynamicEQSObserverBase    →  UDETacticalObserver
-UBoxActuator                 →   UDynamicEQSActuatorBase    →  UDETacticalParameterActuator
+┌──────────────────────────────────────────────────────┐
+│  Ray RLlib (MAPPO)                                   │
+│  3 Actor policies: Strike / Vanguard / Support       │
+│  Centralized Critic (71-dim global team state)       │
+└───────────────────┬──────────────────────────────────┘
+                    │ gRPC (Schola)
+┌───────────────────▼──────────────────────────────────┐
+│  Dynamic EQS Plugin (reusable middleware)             │
+│  Policy output (7-dim) → EQS weight injection        │
+└───────────────────┬──────────────────────────────────┘
+                    │
+┌───────────────────▼──────────────────────────────────┐
+│  UE5 EQS (48 samples, 8 weighted tests)              │
+│  → Best tactical position → NavMesh navigation       │
+└──────────────────────────────────────────────────────┘
 ```
 
-**Two execution modes:**
-
-| Mode | EQS Execution | Policy Source |
-| :--- | :--- | :--- |
-| Training | `ExecuteSynchronousQuery()` (blocking) | Python RLlib via gRPC |
-| Inference | Async BT task callback | Local ONNX via UE5 NNE |
-
----
-
-## Game Environment (5v5 Capture-Point Arena)
-
-The test environment is a 5v5 team deathmatch / capture-point game:
-
-- **Teams:** Red vs Blue, 5 agents each (`ADECharacter` pawns)
-- **Objectives:** 5 capture points (A–E) distributed across the map
-- **Scoring:** Points for captures (+25) and passive income per owned point. First to 300 or highest at 600 seconds wins.
-- **Respawn:** Individual death has a timer; full team wipe triggers a 5-second group respawn.
-- **Abilities (GAS):** `DEGA_Attack` (projectile + ammo + cooldown), `DEGA_Heal` (range-based ally heal with Niagara beam)
-
-### Agent Components
-
-Each `ADECharacter` pawn has:
-- `UDEScholaAgent` — Schola RL interface; holds `CommandedStrategy` (Assault/Defend/Support)
-- `UDEEQSExecutor` — Wraps UE5 EQS; applies weights from policy
-- `UAbilitySystemComponent` — GAS for abilities
-
-Each `ADEAIController` runs:
-- AI Perception (sight, hearing, damage) → combat target selection
-- `BT_DEAgent` behavior tree → movement (EQS), attack, heal tasks
-
----
-
-## Observation Space (170-dim, entity-centric)
-
-Built by `UDETacticalObserver` → `FDEObservationV2::ToFlatArray()`:
+**Plugin layer** extends Schola with EQS-specific abstractions:
 
 ```
-[  0:  7]  Self token        pos/7500×3, health, vel/600×3
-[  7: 47]  Ally tokens       8×5 — rel_pos/8000×3, health, alive        (padded)
-[ 47: 87]  Enemy tokens      8×5 — rel_pos/8000×3, visible, confidence  (padded)
-[ 87:143]  Base tokens       8×7 — rel_pos/15000×2, rel_z/1000, ownership,
-                                   cap_progress, is_assigned, strategic_val (padded)
-[143:151]  Ally mask         8   — 0=present, 1=padding
-[151:159]  Enemy mask        8
-[159:167]  Base mask         8
-[167:170]  Strategy one-hot  3   — [assault, defend, support]
+Schola (base)                  Dynamic EQS (plugin)            Game (this project)
+───────────────────────────────────────────────────────────────────────────────────
+UInferenceComponent         →  UDynamicEQSAgentComponent    →  UDEScholaAgent
+UBoxObserver                →  UDynamicEQSObserverBase      →  UDETacticalObserver
+UBoxActuator                →  UDynamicEQSActuatorBase      →  UDETacticalParameterActuator
 ```
 
----
+Uses `FInstancedStruct` for game-logic decoupling — zero compile-time dependency on game modules.
 
-## Action Space (7-dim EQS weights)
+## Observation & Action
 
-Policy output → `UDETacticalParameterActuator` → injected as named EQS float params:
+**Observation (218-dim entity-centric):**
 
-| Index | Weight | Effect |
-| :--- | :--- | :--- |
-| 0 | EnemyObjectiveProximity | Approach vs. avoid enemy base |
-| 1 | AllyObjectiveProximity | Stay near vs. abandon friendly base |
-| 2 | CoverDensity | Seek vs. avoid cover |
-| 3 | EnemyVisibility | Expose vs. hide from enemies |
-| 4 | AllyProximity | Group up vs. solo play |
-| 5 | CombatRange | Preferred engagement distance |
-| 6 | AssignedBaseProximity | Move toward vs. ignore assigned capture point |
+| Range | Dim | Content |
+|---|---|---|
+| `[0:7]` | 7 | Self token — pos, velocity, health |
+| `[7:71]` | 64 | Ally tokens (8x8) — rel pos, health, alive, class one-hot |
+| `[71:135]` | 64 | Enemy tokens (8x8) — rel pos, health, visibility, class one-hot |
+| `[135:191]` | 56 | Capture point tokens (8x7) — rel pos, ownership, progress, assignment, value |
+| `[191:215]` | 24 | Padding masks (ally/enemy/base, 8 each) |
+| `[215:218]` | 3 | Class one-hot (strike, vanguard, support) |
 
----
+**Action (7-dim continuous):** EQS weights in [-1, 1] — enemy/ally base proximity, cover density, enemy visibility, ally proximity, combat range, assigned base proximity.
 
-## Reward System
+## MAPPO Training
 
-Computed C++-side by `UDERewardSubsystem`, sent to Python via Schola:
+- **3 independent Actor policies** (`strike_policy`, `vanguard_policy`, `support_policy`) with per-entity-type Self-Attention + Cross-Attention encoders
+- **Centralized Critic** on 71-dim global team state (all agent positions/health/strategies + map state)
+- **Dual Value Estimation:** learnable mix coefficient blends local value (agent obs) and central value (global state)
+- **Curriculum:** auto-promotes ScriptedAI opponent tier (Basic → Standard → Aggressive) based on rolling win rate thresholds (55%, 65%)
+- **Evaluation:** `eval_live.py` runs best vs. latest checkpoints in parallel against ScriptedAI Tier 3
 
-| Signal | Value | Trigger |
-| :--- | :--- | :--- |
-| BaseOccupationReward | +2.0/step | Sole ally within 2000cm of uncontrolled base |
-| CoOccupationPenalty | −0.5/step | 2+ allies stacking same base |
-| BaseCaptureCreditReward | +5.0 sparse | Agent that flipped base ownership |
-| UndefendedBasePenalty | −1.0/step | Friendly base with no nearby ally (shared) |
-| AssignedBaseReachReward | +1.0 sparse | First time reaching assigned base |
+## Agent Roles & Rewards
 
-Python-side scaling: `reward × 0.01`, clipped to `[−5, 5]`.
+| Role | Archetype | Key Reward Signals |
+|---|---|---|
+| **Strike** | Ranged DPS | Base approach, zone presence, capture bonus, too-close penalty |
+| **Vanguard** | Melee Tank | Base approach, zone presence, melee engagement bonus |
+| **Support** | Rear Healer | Ally-chase (5-step target cache), heal reward, rear-positioning bonus |
 
----
+Combat abilities use priority scoring: Attack targets weakest/highest-priority enemies (Support-class first), Heal targets lowest-health allies.
 
-## Policy Network (`EntityCentricPolicy`)
+## AWS Parallel Training
 
-Located at `DE_Training/training/policy.py`. Permutation-invariant via per-entity-type attention:
+| Component | Role |
+|---|---|
+| **Docker** | UE5 headless Linux + CUDA 12.1 base + Xvfb virtual display |
+| **Ray Cluster** | Head (g4dn.xlarge GPU, on-demand) + Workers (c5.2xlarge CPU, Spot x0-4) |
+| **S3** | Checkpoint sync via s3fs FUSE mount |
+| **Terraform** | VPC, subnets, IAM, security groups provisioning |
+| **Monitoring** | TensorBoard / W&B |
 
-```
-Input: (B, 170) flat observation
+## Tech Stack
 
-Self encoder     : Linear(7 → 64)
-Ally encoder     : Linear(5 → 64) + MultiheadAttention(64, heads=4)
-Enemy encoder    : Linear(5 → 64) + MultiheadAttention(64, heads=4)
-Base encoder     : Linear(7 → 64) + MultiheadAttention(64, heads=4)
-Strategy encoder : Embedding(3 → 64)  [via argmax of one-hot at [167:170]]
+| Category | Technologies |
+|---|---|
+| Game Engine | UE5.6 (C++17) |
+| RL Framework | Ray RLlib 2.7, PyTorch, MAPPO |
+| UE5-Python Bridge | Schola Plugin (gRPC) |
+| NN Inference | ONNX Runtime via UE5 NNE |
+| Ability System | UE5 GAS (GameplayAbility, GameplayEffect, GameplayTag) |
+| Cloud | AWS (EC2, EKS), Docker, Terraform |
 
-Combined: concat(self, ally_ctx, enemy_ctx, base_ctx, strategy) → (B, 320)
-
-Action head : Linear(320→256) → ReLU → Linear(256→128) → ReLU → Linear(128→7) → Tanh
-Value head  : Linear(320→256) → ReLU → Linear(256→1)
-log_std     : learnable (7,), clamped to [−2.5, −0.7]
-
-Output: (B, 7) EQS weights in [−1, 1]
-Parameters: ~217K
-```
-
-ONNX export: fixed shape `(B, 170) → (B, 7)` for UE5 NNE inference.
-
----
-
-## Training
-
-```bash
-cd DE_Training/training
-
-# RLlib PPO (requires UE5 in PIE mode)
-python train.py --mode rllib --iterations 100
-
-# Validate shapes + ONNX export
-python train.py --mode validate
-
-# Evaluate checkpoint
-python train.py --mode eval --checkpoint de_policy.pt
-```
-
-### Key Hyperparameters (`DETrainingConfig`)
-
-```python
-LEARNING_RATE    = 3e-4   # anneals to 5e-5 over 4M steps
-TRAIN_BATCH_SIZE = 8000
-MINIBATCH_SIZE   = 512
-NUM_SGD_ITER     = 6
-GAMMA            = 0.99
-GAE_LAMBDA       = 0.95
-CLIP_PARAM       = 0.2
-ENTROPY_COEFF    = 0.01   # anneals to 0.0005 over 2.5M steps
-VF_LOSS_COEFF    = 0.5
-GRAD_CLIP        = 0.5
-```
-
-### Output
-
-Results saved to `DE_Training/training_results/YYYYMMDD_HHMMSS/`:
-- `de_policy_entity_centric.onnx` — policy for UE5 NNE
-- `best/` — best reward checkpoint
-- `latest/` — most recent checkpoint
-- `tb/` — TensorBoard logs
-
-```bash
-tensorboard --logdir DE_Training/training_results
-```
-
----
-
-## File Structure
+## Project Structure
 
 ```
 CORTEX/
-├── Source/GameAI_Project/
-│   ├── Public/
-│   │   ├── Characters/             # DECharacter (agent pawn)
-│   │   ├── AI/AIController/        # DEAIController (perception + BT)
-│   │   ├── AI/EQS/                 # DEEQSExecutor
-│   │   ├── Schola/
-│   │   │   ├── Components/         # DEScholaAgent
-│   │   │   ├── Observers/          # DETacticalObserver
-│   │   │   └── Actuators/          # DETacticalParameterActuator
-│   │   ├── GAS/                    # DEAttributeSet, DEGA_Attack, DEGA_Heal
-│   │   ├── Team/                   # DEMatchManager, DESquadManager
-│   │   ├── Actors/                 # DECapturePoint
-│   │   └── Types/                  # DEEQSTypes, DEObservationTypes, DERewardTypes
-│   └── CLAUDE.md
-│
-└── DE_Training/
-    └── training/
-        ├── policy.py               # EntityCentricPolicy (217K params)
-        ├── env_wrapper.py          # DEEntityCentricEnv (Schola 2.0.1)
-        └── train.py                # Entry point (rllib / validate / eval)
+├── Source/DE/                    # UE5 C++ game module
+│   ├── Public/Characters/        # ADECharacter (agent pawn)
+│   ├── Public/Schola/            # DEScholaAgent, Observer, Actuator
+│   ├── Public/Actors/            # DECapturePoint
+│   ├── Public/Team/              # DEMatchManager
+│   └── Docs/                     # Detailed technical documentation
+├── Source/DynamicEQS/            # Reusable EQS plugin
+├── DE_Training/training/         # Python training scripts (Ray RLlib)
+│   ├── train.py                  # Training entry point
+│   ├── eval_live.py              # Live evaluation pipeline
+│   └── policy.py                 # EntityCentricPolicy (attention-based)
+└── aws/                          # Dockerfile, cluster.yaml, Terraform
 ```
-
----
 
 ## Prerequisites
 
-- Unreal Engine 5.6
-- C++17 (MSVC 2019+)
+- Unreal Engine 5.6, C++17 (MSVC 2019+)
 - Schola 2.0.1 plugin
 - Python 3.8+, PyTorch 2.0+, `ray[rllib]`
+- (Optional) AWS CLI, Docker, Terraform for cloud training
 
 ---
 
-## Documentation
-
-- **`Source/GameAI_Project/CLAUDE.md`** — Full technical specification
-- **`DE_Training/training/README.md`** — Training setup and troubleshooting
-
----
-
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-28

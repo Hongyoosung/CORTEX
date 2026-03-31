@@ -35,16 +35,16 @@ struct FDEVanguardRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float ZoneDurabilityBonus = 3.0f;
 
-	/** Vanguard: -20 per death (base DeathPenaltyReward=100 × 0.20) */
+	/** Vanguard: -12 per death (base DeathPenaltyReward=100 × 0.12) — reduced to soften risk-aversion */
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float DeathScale = 0.20f;
+	float DeathScale = 0.12f;
 
 	/** Small per-step bonus when health is above VanguardHealthThreshold (stay healthy to keep fighting). */
 	UPROPERTY(EditAnywhere, Category = "Combat")
 	float HealthBonus = 0.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Combat")
-	float IdlePenalty = 1.5f;
+	float IdlePenalty = 1.0f;
 
 	//========== Melee Engagement =============
 
@@ -56,18 +56,14 @@ struct FDEVanguardRewardSettings
 	UPROPERTY(EditAnywhere, Category = "Melee")
 	float MeleeRangeDistance = 1000.0f;
 
-	/** Per-cm shaping reward for approaching a visible enemy. Provides gradient toward melee range. */
+	/** Per-cm shaping reward for approaching a visible enemy. Provides gradient toward melee range.
+	 *  Calibrated at ~200 cm/step typical movement → ~0.4 reward/step at full approach. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
-	float EnemyApproachReward = 0.06f;
+	float EnemyApproachReward = 0.004f;
 
 	/** Maximum distance (cm) at which EnemyApproachReward activates. */
 	UPROPERTY(EditAnywhere, Category = "Melee")
 	float EnemyApproachMaxRange = 2500.0f;
-
-	/** Per-step penalty when taking damage but not moving toward the attacker.
-	 *  Prevents standing still under fire. */
-	UPROPERTY(EditAnywhere, Category = "Melee")
-	float DamageTakenIdlePenalty = 3.0f;
 
 	//========== Capture Properties (same tendency as Strike) =============
 
@@ -81,24 +77,15 @@ struct FDEVanguardRewardSettings
 
 	/** Per-cm shaping toward nearest enemy/neutral base. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ObjectiveProgressReward = 0.15f;
+	float ObjectiveProgressReward = 0.3f;
 
-	/** Vanguard: moderate capture bonuses — reduced from 8/12 to prevent clamp saturation. */
+	/** Vanguard: moderate capture bonuses — reduced to prevent dense reward farming over actual winning. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ZonePresenceBonus = 3.0f;
+	float ZonePresenceBonus = 1.5f;
 
 	/** Per-step bonus scaled by capture progress [0,1] while actively capping a non-friendly point. */
 	UPROPERTY(EditAnywhere, Category = "Capture")
-	float ActiveCappingBonus = 4.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Capture")
-	float PostCaptureMomentumBonus = 3.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Capture")
-	int32 PostCaptureMomentumDuration = 30;
-
-	UPROPERTY(EditAnywhere, Category = "Capture")
-	float PostCaptureMomentumMinMove = 100.0f;
+	float ActiveCappingBonus = 2.0f;
 
 	//========== Movement Properties =============
 

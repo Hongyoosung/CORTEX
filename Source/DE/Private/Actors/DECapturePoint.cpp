@@ -3,7 +3,6 @@
 #include "Actors/DECapturePoint.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "Components/TextRenderComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/Character.h"
@@ -12,6 +11,7 @@
 #include "Data/DETeamData.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
+#include "Player/DESpectatorController.h"
 
 ADECapturePoint::ADECapturePoint()
 {
@@ -32,17 +32,17 @@ ADECapturePoint::ADECapturePoint()
 	PointMesh->SetupAttachment(RootComponent);
 	PointMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	DebugText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("DebugText"));
-	DebugText->SetupAttachment(RootComponent);
-	DebugText->SetRelativeLocation(FVector(0.0f, 0.0f, 200.0f));
-	DebugText->SetWorldSize(50.0f);
-	DebugText->SetHorizontalAlignment(EHTA_Center);
-	DebugText->SetVerticalAlignment(EVRTA_TextCenter);
-
+	// Sky laser — sits at zone center, points upward
 	TeamColorVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TeamColorVFX"));
 	TeamColorVFX->SetupAttachment(RootComponent);
-	TeamColorVFX->SetRelativeLocation(FVector(0.0f, 0.0f, 100.0f));
+	TeamColorVFX->SetRelativeLocation(FVector(0.0f, 0.0f, 0.0f));
 	TeamColorVFX->bAutoActivate = true;
+
+	// Donut ring — centered at origin, driven by CaptureProgress / TeamColor params
+	DonutProgressVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("DonutProgressVFX"));
+	DonutProgressVFX->SetupAttachment(RootComponent);
+	DonutProgressVFX->SetRelativeLocation(FVector(0.0f, 0.0f, 0.0f));
+	DonutProgressVFX->bAutoActivate = true;
 }
 
 void ADECapturePoint::BeginPlay()
@@ -65,8 +65,15 @@ void ADECapturePoint::BeginPlay()
 		TeamColorVFX->Activate();
 	}
 
+	if (DonutProgressVFX && DonutProgressVFXAsset)
+	{
+		DonutProgressVFX->SetAsset(DonutProgressVFXAsset);
+		DonutProgressVFX->Activate();
+	}
+
 	UpdateVisuals();
 	UpdateNiagaraColor();
+	UpdateDonutVFX();
 
 	// Start timer-based capture update at 10Hz (replaces per-frame Tick)
 	constexpr float CaptureUpdateInterval = 0.1f;
@@ -82,25 +89,10 @@ void ADECapturePoint::CaptureUpdateTick()
 	bJustCaptured = false;
 	UpdateCaptureProgress(DeltaTime);
 	UpdateVisuals();
+	UpdateDonutVFX();
 
 	if (bShowDebugInfo)
 	{
-		FString OwnerStr = CurrentOwner == -1 ? TEXT("NEUTRAL") : FString::Printf(TEXT("TEAM %d"), CurrentOwner);
-
-		FString DebugStr = FString::Printf(
-			TEXT("%s\nProgress: %.1f%%\n%s\n"),
-			*UEnum::GetValueAsString(PointID),
-			CaptureProgress * 100.0f,
-			*OwnerStr
-		);
-
-		for (const auto& Pair : AgentsInZoneByTeam)
-		{
-			DebugStr += FString::Printf(TEXT("T%d: %d | "), Pair.Key, Pair.Value.Agents.Num());
-		}
-
-		DebugText->SetText(FText::FromString(DebugStr));
-
 		FColor CylinderColor = FColor::White;
 		if (IsContested()) CylinderColor = FColor::Yellow;
 		else if (CapturingTeam != -1) CylinderColor = GetTeamColor(CapturingTeam).ToFColor(true);
@@ -108,10 +100,11 @@ void ADECapturePoint::CaptureUpdateTick()
 
 		// Lifetime slightly exceeds the 0.1s tick interval so the cylinder
 		// stays visible continuously rather than blinking every tick.
+		// Height halved, shifted down by 90 units.
 		DrawDebugCylinder(
 			GetWorld(),
-			GetActorLocation() - FVector(0, 0, CaptureHeight / 2),
-			GetActorLocation() + FVector(0, 0, CaptureHeight / 2),
+			GetActorLocation() + FVector(0, 0, (-CaptureHeight / 8.0f) - 140.0f),
+			GetActorLocation() + FVector(0, 0, (CaptureHeight / 4.0f) - 90.0f),
 			CaptureRadius, 32, CylinderColor, false, 0.12f, 0, 2.0f
 		);
 	}
@@ -220,6 +213,7 @@ void ADECapturePoint::CompleteCaptureSequence()
 
 	OnPointCaptured_Delegate.Broadcast(PreviousOwner, CurrentOwner);
 	UpdateNiagaraColor();
+	UpdateDonutVFX();
 
 	UE_LOG(LogTemp, Log, TEXT("DECapturePoint %s captured! %d -> %d"),
 		*UEnum::GetValueAsString(PointID), PreviousOwner, CurrentOwner);
@@ -242,9 +236,27 @@ void ADECapturePoint::UpdateVisuals()
 
 void ADECapturePoint::UpdateNiagaraColor()
 {
-	if (!TeamColorVFX) return;
+	const FLinearColor Color = GetTeamColor(CurrentOwner);
 
-	TeamColorVFX->SetVariableLinearColor(VFXColorParameterName, GetTeamColor(CurrentOwner));
+	if (TeamColorVFX)
+	{
+		TeamColorVFX->SetVariableLinearColor(VFXColorParameterName, Color);
+	}
+
+	if (DonutProgressVFX)
+	{
+		DonutProgressVFX->SetVariableLinearColor(VFXColorParameterName, Color);
+	}
+}
+
+void ADECapturePoint::UpdateDonutVFX()
+{
+	if (!DonutProgressVFX) return;
+
+	// Use capturing team color when actively being captured, otherwise owner color
+	const int32 DisplayTeam = (CapturingTeam != -1) ? CapturingTeam : CurrentOwner;
+	DonutProgressVFX->SetVariableLinearColor(VFXColorParameterName, GetTeamColor(DisplayTeam));
+	DonutProgressVFX->SetVariableFloat(VFXProgressParameterName, CaptureProgress);
 }
 
 bool ADECapturePoint::IsContested() const
@@ -261,6 +273,7 @@ void ADECapturePoint::ResetPoint()
 	AgentsInZoneByTeam.Empty();
 	UpdateVisuals();
 	UpdateNiagaraColor();
+	UpdateDonutVFX();
 }
 
 void ADECapturePoint::SetOwnership(int32 NewOwnerTeamID)
@@ -271,6 +284,7 @@ void ADECapturePoint::SetOwnership(int32 NewOwnerTeamID)
 	OnPointCaptured_Delegate.Broadcast(PreviousOwner, CurrentOwner);
 	UpdateVisuals();
 	UpdateNiagaraColor();
+	UpdateDonutVFX();
 }
 
 void ADECapturePoint::SetMatchManager(ADEMatchManager* InMatchManager)
@@ -348,3 +362,4 @@ int32 ADECapturePoint::GetAgentTeamID(AActor* Agent) const
 	}
 	return -1;
 }
+

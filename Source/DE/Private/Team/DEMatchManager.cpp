@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Team/DEMatchManager.h"
+#include "UI/DEMatchScoreWidget.h"
+#include "Components/WidgetComponent.h"
 #include "Team/DESquadManager.h"
 #include "Components/DEScriptedAIComponent.h"
 #include "Core/Subsystems/DERewardSubsystem.h"
@@ -20,7 +22,6 @@
 #include "DrawDebugHelpers.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
-#include "Player/DESpectatorController.h"
 
 
 
@@ -31,6 +32,11 @@
 ADEMatchManager::ADEMatchManager()
 {
 	PrimaryActorTick.bCanEverTick = false;
+
+	ScoreWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("ScoreWidgetComponent"));
+	ScoreWidgetComponent->SetupAttachment(RootComponent);
+	ScoreWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
+	ScoreWidgetComponent->SetDrawSize(FVector2D(400.0f, 120.0f));
 }
 
 void ADEMatchManager::BeginPlay()
@@ -60,6 +66,26 @@ void ADEMatchManager::BeginPlay()
 		Commander->Configure(MakeSquadConfig());
 		// Configuration is pushed later by ADEScholaEnvironment via MakeSquadConfig().
 		SquadCommanders.Add(ID, Commander);
+	}
+
+	// Initialise score widget if a class was assigned in the editor
+	if (ScoreWidgetClass && ScoreWidgetComponent)
+	{
+		ScoreWidgetComponent->SetWidgetClass(ScoreWidgetClass);
+		ScoreWidgetComponent->InitWidget();
+
+		if (UDEMatchScoreWidget* ScoreWidget = Cast<UDEMatchScoreWidget>(ScoreWidgetComponent->GetWidget()))
+		{
+			for (const FDETeamConfiguration& Cfg : TeamConfigs)
+			{
+				const FString Name  = Cfg.TeamData ? Cfg.TeamData->TeamName  : FString::Printf(TEXT("Team %d"), Cfg.TeamID);
+				const FLinearColor Color = Cfg.TeamData ? Cfg.TeamData->TeamColor : FLinearColor::White;
+				ScoreWidget->SetTeamInfo(Cfg.TeamID, Name, Color);
+				ScoreWidget->UpdateScore(Cfg.TeamID, 0);
+			}
+		}
+
+		OnTeamScoreChanged.AddDynamic(this, &ADEMatchManager::OnScoreChanged_Widget);
 	}
 
 	// Start timer-based gameplay loop (replaces Tick)
@@ -138,16 +164,17 @@ void ADEMatchManager::MatchConditionTimerTick()
 
 	MatchTimer += DeltaTime;
 
-	// ── Passive income (score tracking for winner determination at timeout) ──
-	if (PassiveIncomeRate > 0.0f)
+	// ── Passive income (1 pt/s per owned capture point) ──
+	for (auto& Pair : TeamStates)
 	{
-		for (const ADECapturePoint* CP : EnvCapturePoints)
+		const int32 TeamID = Pair.Key;
+		const int32 OwnedPoints = Pair.Value.CapturePointCount;
+		if (OwnedPoints > 0 && PassiveIncomeRate > 0.0f)
 		{
-			if (!CP) continue;
-			const int32 OwnerTeam = CP->GetTeamID_Implementation();
-			if (OwnerTeam >= 0)
+			const int32 Earned = FMath::RoundToInt(OwnedPoints * PassiveIncomeRate * DeltaTime);
+			if (Earned > 0)
 			{
-				AddTeamScore(OwnerTeam, FMath::RoundToInt(PassiveIncomeRate));
+				AddTeamScore(TeamID, Earned);
 			}
 		}
 	}
@@ -163,10 +190,7 @@ void ADEMatchManager::MatchConditionTimerTick()
 					TEXT("[DEMatchManager] Env %d: Team %d reached score %d (threshold %d). Ending episode."),
 					EnvID, TeamID, TeamScores[TeamID], WinScoreThreshold);
 
-				if (RewardCalculator)
-				{
-					RewardCalculator->ApplyMatchEndReward(TeamID, AllAgents);
-				}
+				FinalWinnerTeamID = TeamID;
 
 				StopMatchTimer();
 				OnMatchConditionMet.Broadcast(EDEMatchState::TeamWon, TeamID);
@@ -183,6 +207,8 @@ void ADEMatchManager::MatchConditionTimerTick()
 			? EDEMatchState::TeamWon
 			: EDEMatchState::TimeExpired;
 
+		FinalWinnerTeamID = LeadTeam;
+
 		UE_LOG(LogTemp, Warning,
 			TEXT("[DEMatchManager] Env %d: Timeout — Scores [%d, %d], winner=%d"),
 			EnvID, TeamScores[0], TeamScores[1], LeadTeam);
@@ -191,34 +217,6 @@ void ADEMatchManager::MatchConditionTimerTick()
 		return;
 	}
 
-	// ── Debug score display — only for the environment currently observed by the spectator ──
-	{
-		int32 ObservedEnvID = -1;
-		if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
-		{
-			if (const ADESpectatorController* SC = Cast<ADESpectatorController>(PC))
-			{
-				ObservedEnvID = SC->GetObservedEnvID();
-			}
-		}
-
-		// -1 means no agent is being watched — show all environments' scores.
-		// Otherwise only draw for the environment that is currently being observed.
-		if (ObservedEnvID == -1 || ObservedEnvID == EnvID)
-		{
-			for (const FDETeamConfiguration& Config : TeamConfigs)
-			{
-				if (!Config.DESpawnArea) continue;
-				const FVector Loc  = Config.DESpawnArea->GetActorLocation() + FVector(0.0f, 0.0f, 300.0f);
-				const FColor  Col  = Config.GetTeamColor().ToFColor(true);
-				const FString Text = FString::Printf(TEXT("Team %d Score: %d  [%.0fs]"),
-					Config.TeamID, TeamScores[Config.TeamID], GetTimeRemaining());
-				// Duration matches the 1-second timer interval so the string stays
-				// visible continuously instead of flashing once per second.
-				DrawDebugString(GetWorld(), Loc, Text, nullptr, Col, 1.0f, true, 1.5f);
-			}
-		}
-	}
 }
 
 
@@ -242,7 +240,6 @@ FDESquadConfig ADEMatchManager::MakeSquadConfig() const
 
 void ADEMatchManager::SpawnTeams()
 {
-	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Spawning teams..."));
 
 	SpawnTeam(0, AgentsPerTeam);
 	SpawnTeam(1, AgentsPerTeam);
@@ -319,6 +316,7 @@ ADEAgent* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	// Identity
 	Agent->SetTeamID_Implementation(TeamID);
 	Agent->SetEnvID_Implementation(EnvID);
+	Agent->SetCachedMatchManager(this);   // direct injection — no world scan needed
 	Agent->AssignedCapturePoints = EnvCapturePoints;
 
 	// Store TeamData on the agent so ApplyClassAppearance() can reference it later.
@@ -339,16 +337,22 @@ ADEAgent* ADEMatchManager::SpawnAgent(int32 TeamID, int32 AgentIndex)
 	Agent->OnAgentDeathEvent_Delegate.AddDynamic(this, &ADEMatchManager::RegisterKill);
 	Agent->OnAgentDied_Delegate.AddDynamic(this, &ADEMatchManager::OnAgentDied);
 
-	// Fixed-opponent mode: attach scripted AI component to opponent team
+	// Fixed-opponent mode: use existing scripted AI component (from BP_ScriptAgent)
+	// or create one dynamically as fallback. Tier is configured in the editor.
 	if (bUseScriptedOpponent && TeamID == ScriptedOpponentTeamID)
 	{
 		Agent->bIsScriptedAI = true;
 
-		UDEScriptedAIComponent* ScriptedComp = NewObject<UDEScriptedAIComponent>(Agent);
-		ScriptedComp->RegisterComponent();
+		UDEScriptedAIComponent* ScriptedComp = Agent->FindComponentByClass<UDEScriptedAIComponent>();
+		if (!ScriptedComp)
+		{
+			ScriptedComp = NewObject<UDEScriptedAIComponent>(Agent);
+			ScriptedComp->RegisterComponent();
+		}
+
 		ScriptedComp->ResampleNoise(EnvRandomStream);
 
-		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Scripted AI attached to %s (Team %d, Tier %d)"),
+		UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Scripted AI on %s (Team %d, Tier %d)"),
 			*Agent->GetName(), TeamID, ScriptedComp->GetDifficultyTier());
 	}
 
@@ -377,7 +381,8 @@ void ADEMatchManager::StartMatchTimer()
 	MatchTimer = 0.0f;
 	PassiveIncomeAccumulator = 0.0f;
 	bMatchActive = true;
-	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Match timer started"), EnvID);
+	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Match timer started (MaxMatchDuration=%.1f, WinScoreThreshold=%d)"),
+		EnvID, MaxMatchDuration, WinScoreThreshold);
 }
 
 void ADEMatchManager::StopMatchTimer()
@@ -394,7 +399,19 @@ void ADEMatchManager::ResetScores()
 {
 	TeamScores[0] = 0;
 	TeamScores[1] = 0;
+	FinalWinnerTeamID = -2;
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Team scores reset"), EnvID);
+}
+
+void ADEMatchManager::OnScoreChanged_Widget(int32 TeamID, int32 NewScore)
+{
+	if (ScoreWidgetComponent)
+	{
+		if (UDEMatchScoreWidget* W = Cast<UDEMatchScoreWidget>(ScoreWidgetComponent->GetWidget()))
+		{
+			W->UpdateScore(TeamID, NewScore);
+		}
+	}
 }
 
 void ADEMatchManager::AddTeamScore(int32 TeamID, int32 Points)
@@ -432,6 +449,7 @@ void ADEMatchManager::ResetTeams()
 		FDETeamState& State = TeamStates[Conf.TeamID];
 		State.RespawnQueue.Empty();
 		State.ActiveAgents.Empty();
+		State.CapturePointCount = 0;
 	}
 
 	// 2. Reactivate all agents and redistribute them into ActiveAgents
@@ -687,6 +705,21 @@ void ADEMatchManager::RegisterKill(const FDEDeathEventData& DeathEvent)
 // DECapturePoint Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
+void ADEMatchManager::SetEnvID(int32 InEnvID)
+{
+	EnvID = InEnvID;
+
+	// If agents were already spawned before SetEnvID was called (BeginPlay ordering race),
+	// retroactively fix their EnvID now.
+	for (ADEAgent* Agent : AllAgents)
+	{
+		if (Agent)
+		{
+			Agent->SetEnvID_Implementation(InEnvID);
+		}
+	}
+}
+
 void ADEMatchManager::CapturePointInitialize()
 {
 	for (ADECapturePoint* CP : EnvCapturePoints)
@@ -718,6 +751,21 @@ void ADEMatchManager::OnPointCaptured(int32 PreviousTeam, int32 NewTeam)
 {
 	UE_LOG(LogTemp, Log, TEXT("[DEMatchManager] Env %d: Capture point transferred Team %d → Team %d | Scores: [%d, %d]"),
 		EnvID, PreviousTeam, NewTeam, TeamScores[0], TeamScores[1]);
+
+	// Update CapturePointCount for both teams
+	for (auto& Pair : TeamStates)
+	{
+		Pair.Value.CapturePointCount = 0;
+	}
+	for (const ADECapturePoint* CP : EnvCapturePoints)
+	{
+		if (!CP) continue;
+		const int32 InOwner = CP->GetOwnership();
+		if (FDETeamState* State = TeamStates.Find(InOwner))
+		{
+			State->CapturePointCount++;
+		}
+	}
 
 	// Award match score to the capturing team
 	if (NewTeam >= 0 && CaptureScorePoints > 0)

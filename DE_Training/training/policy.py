@@ -79,17 +79,60 @@ EQS_LABELS = [
     "AssignedBaseProximity",
 ]
 
+# ── MAPPO constants ──────────────────────────────────────────────────────────
+# FDETeamWorldState::ToTensor() produces 71-dim (see DETeamWorldState.h)
+GLOBAL_STATE_DIM = 71
+MAPPO_OBS_DIM    = OBS_DIM + GLOBAL_STATE_DIM   # 226 + 71 = 297
+
 
 # ── Transition dataclass ─────────────────────────────────────────────────────
 
 @dataclass
 class Transition:
-    state:      np.ndarray   # (226,) padded flat observation
+    state:      np.ndarray   # (297,) padded flat obs (226 agent + 71 global) or (226,) legacy
     action:     np.ndarray   # (7,)  EQS weights in [-1, 1]
     reward:     float
-    next_state: np.ndarray   # (226,)
+    next_state: np.ndarray   # (297,) or (226,) legacy
     done:       bool
     log_prob:   float = 0.0
+
+
+# ── MAPPO Centralized Critic ──────────────────────────────────────────────────
+
+class CentralizedCritic(nn.Module):
+    """
+    MAPPO centralized value function.
+
+    Input:  71-dim FDETeamWorldState (all 10 agents + map state)
+    Output: scalar value estimate
+
+    Used alongside the per-agent local value head (dual value estimation).
+    The local critic (EntityCentricPolicy.value_head) captures agent-level nuance
+    via attention; this centralized critic captures team-level credit assignment.
+    """
+
+    def __init__(self, state_dim: int = GLOBAL_STATE_DIM, hidden: int = 256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden),
+            nn.LayerNorm(hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+        total = sum(p.numel() for p in self.parameters())
+        print(f"[CentralizedCritic] params={total:,}  state_dim={state_dim}  hidden={hidden}")
+
+    def forward(self, global_state: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            global_state: (B, 71) FDETeamWorldState tensor
+
+        Returns:
+            value: (B,) scalar value estimates
+        """
+        return self.net(global_state).squeeze(-1)
 
 
 # ── Ablation: Cross-Attention Only (no Self-Attention) ───────────────────────
@@ -558,7 +601,8 @@ class PPOTrainer:
 
 def collate_fn(obs_list: List[np.ndarray]) -> torch.Tensor:
     """
-    Stack a list of 226-dim flat observations into a (B, 226) tensor.
+    Stack a list of flat observations into a (B, D) tensor.
+    Supports both 226-dim (legacy) and 297-dim (MAPPO) observations.
     All observations are already fixed-shape (padded by C++), so this is
     a straightforward stack. The function exists as a named hook so callers
     can replace it if the serialization changes.

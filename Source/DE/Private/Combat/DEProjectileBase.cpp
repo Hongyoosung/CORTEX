@@ -24,10 +24,11 @@ ADEProjectileBase::ADEProjectileBase()
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	CollisionComponent->SetCollisionObjectType(ECC_WorldDynamic);
 	CollisionComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
-	CollisionComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	CollisionComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	CollisionComponent->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
 	CollisionComponent->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Ignore);
-	CollisionComponent->SetNotifyRigidBodyCollision(true);
+	CollisionComponent->SetCollisionResponseToChannel(ECC_GameTraceChannel2, ECR_Ignore);
+	CollisionComponent->SetGenerateOverlapEvents(true);
 	RootComponent = CollisionComponent;
 
 	// Create projectile movement
@@ -59,11 +60,17 @@ void ADEProjectileBase::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Bind hit event
+	// Bind overlap event
 	if (CollisionComponent)
 	{
-		CollisionComponent->OnComponentHit.AddDynamic(this, &ADEProjectileBase::OnProjectileHit);
+		CollisionComponent->OnComponentBeginOverlap.AddDynamic(this, &ADEProjectileBase::OnProjectileOverlap);
 		CollisionComponent->SetSphereRadius(CollisionRadius);
+	}
+
+	// Bind blocking hit (walls/floors) to also trigger impact effects
+	if (ProjectileMovement)
+	{
+		ProjectileMovement->OnProjectileStop.AddDynamic(this, &ADEProjectileBase::OnProjectileStopped);
 	}
 
 	// Set projectile max speed
@@ -141,6 +148,7 @@ void ADEProjectileBase::InitializeProjectile(AActor* InOwner, AActor* InInstigat
 	if (ADEAgent* OwnerChar = Cast<ADEAgent>(InOwner))
 	{
 		EnvID = OwnerChar->GetEnvID_Implementation();
+		OwnerTeamID = OwnerChar->GetTeamID_Implementation();
 	}
 
 	if (CollisionComponent)
@@ -215,55 +223,57 @@ float ADEProjectileBase::GetRemainingLifetime() const
 // COLLISION & DAMAGE
 //------------------------------------------------------------------------------
 
-void ADEProjectileBase::OnProjectileHit(UPrimitiveComponent* HitComponent, AActor* OtherActor,
-	UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+void ADEProjectileBase::OnProjectileOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+	bool bFromSweep, const FHitResult& SweepResult)
 {
-	if (!bIsActive || !OtherActor)
-	{
-		return;
-	}
+	if (!bIsActive || !OtherActor) return;
+	if (OtherActor == this || OtherActor == OwnerActor || OtherActor == InstigatorActor) return;
 
-	if (OtherActor == this || OtherActor == OwnerActor || OtherActor == InstigatorActor)
-	{
-		return;
-	}
-
-
-	// Check if the hit actor is a damageable character
 	ADEAgent* TargetChar = Cast<ADEAgent>(OtherActor);
 	if (TargetChar)
 	{
-		if (!ValidateHit(OtherActor))
-		{
-			return;
-		}
-	}
+		// EnvID isolation
+		if (TargetChar->GetEnvID_Implementation() != EnvID) return;
 
-	SpawnImpactEffects(Hit.ImpactPoint, Hit.ImpactNormal);
+		// Friendly — pass through silently
+		if (!bAllowFriendlyFire && TargetChar->GetTeamID_Implementation() == OwnerTeamID) return;
 
-	if (TargetChar)
-	{
+		if (!ValidateHit(OtherActor)) return;
+		if (HitActors.Contains(OtherActor)) return;
 
-		if (HitActors.Contains(OtherActor))
-		{
-			return;
-		}
-
-		ApplyDamageToActor(OtherActor, Hit.ImpactPoint, Hit.ImpactNormal);
-
+		ApplyDamageToActor(OtherActor, SweepResult.ImpactPoint, SweepResult.ImpactNormal);
 		HitActors.Add(OtherActor);
 		HitCount++;
 
 		float FinalDamage = CalculateDamageWithFalloff(DistanceTraveled);
-		FDEProjectileHitData HitData(OtherActor, Hit.ImpactPoint, Hit.ImpactNormal, DistanceTraveled, FinalDamage, true);
+		FDEProjectileHitData HitData(OtherActor, SweepResult.ImpactPoint, SweepResult.ImpactNormal,
+			DistanceTraveled, FinalDamage, true);
 		OnProjectileHit_Delegate.Broadcast(HitData);
 
 		if (bPenetrateActors && (MaxPenetrations == 0 || HitCount < MaxPenetrations))
 		{
-			UE_LOG(LogTemp, Log, TEXT("Projectile penetrated %s"), *OtherActor->GetName());
 			return;
 		}
 	}
+
+	SpawnImpactEffects(SweepResult.ImpactPoint, SweepResult.ImpactNormal);
+
+	if (bDestroyOnHit)
+	{
+		DeactivateProjectile();
+	}
+}
+
+void ADEProjectileBase::OnProjectileStopped(const FHitResult& ImpactResult)
+{
+	if (!bIsActive) return;
+
+	SpawnImpactEffects(ImpactResult.ImpactPoint, ImpactResult.ImpactNormal);
+
+	FDEProjectileHitData HitData(ImpactResult.GetActor(), ImpactResult.ImpactPoint, ImpactResult.ImpactNormal,
+		DistanceTraveled, 0.0f, false);
+	OnProjectileHit_Delegate.Broadcast(HitData);
 
 	if (bDestroyOnHit)
 	{

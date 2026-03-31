@@ -69,7 +69,14 @@ float UDERewardSubsystem::CalculateKillReward(FDERewardState& InOutState, EDECla
 	if (!Settings) return 0.0f;
 	InOutState.bSparseKillFiredThisStep = true;
 	float Scale = GetClassScale(ActiveClass, Settings->StrikeReward.KillRewardScale, Settings->VanguardReward.KillRewardScale, Settings->SupportReward.KillRewardScale);
-	return ApplyAndLogReward(InOutState, EDERewardEventType::Kill, ActiveClass, Settings->KillReward * Scale, AgentID);
+	float KillValue = Settings->KillReward * Scale;
+
+	// Halve Strike kill reward when the kill happened at too-close range,
+	// discouraging melee-range kill-farming for a ranged class.
+	if (ActiveClass == EDEClassType::Strike && InOutState.bWasTooCloseAtKill)
+		KillValue *= 0.5f;
+
+	return ApplyAndLogReward(InOutState, EDERewardEventType::Kill, ActiveClass, KillValue, AgentID);
 }
 
 float UDERewardSubsystem::CalculateAssistReward(FDERewardState& InOutState, EDEClassType ActiveClass, float DamageDealt, int32 AgentID)
@@ -216,115 +223,62 @@ float UDERewardSubsystem::ComputeStepReward(
 	// ---- Reset per-step damage accumulator (consumed by Strike reward above) ----
 	Agent->ResetStepDamage();
 
+	// ---- Stagnation penalty: escalating penalty for not making objective progress ----
+	if (InOutState.StagnationSteps > Settings->StagnationThresholdSteps)
+	{
+		const int32 ExcessSteps = InOutState.StagnationSteps - Settings->StagnationThresholdSteps;
+		const float StagnationPenalty = FMath::Min(
+			Settings->StagnationPenaltyPerStep * static_cast<float>(ExcessSteps),
+			Settings->StagnationPenaltyMax);
+		Reward -= StagnationPenalty;
+	}
+
 	// ---- Common: Survival reward ----
 	if (!bIsRespawnStep && Current.bIsAlive)
 		CalculateSurvivalReward(InOutState, Class, Current.Health, 1.0f, Agent->AgentID);
 
-	// ---- Zone Control Reward ----
-	if (MyTeamID >= 0 && EnvCapturePoints.Num() > 0)
-	{
-		int32 FriendlyBases = 0, EnemyBases = 0, NeutralBases = 0;
-		for (const ADECapturePoint* CP : EnvCapturePoints)
-		{
-			if (!CP) continue;
-			const int32 OwnerTeam = CP->GetTeamID_Implementation();
-			if (OwnerTeam == MyTeamID) FriendlyBases++;
-			else if (OwnerTeam >= 0)   EnemyBases++;
-			else                       NeutralBases++;
-		}
-		const float NetControl = static_cast<float>(FriendlyBases - EnemyBases) - NeutralBases * 0.5f;
-		const float ZoneControlScale = GetClassScale(Class,
-			Settings->ZoneControlStrikeScale, Settings->ZoneControlVanguardScale, Settings->ZoneControlSupportScale);
-		Reward += Settings->ZoneControlRewardPerBase * ZoneControlScale * NetControl;
-	}
-
-	// ---- Cooperative base occupation shaping ----
-	Reward += ComputeBaseCooperationReward(Agent, InOutState, Class);
-
 	// ---- Step (time) penalty ----
-	const float EffectiveStepPenalty = (Class == EDEClassType::Strike)
-		? Settings->StrikeReward.TimePenalty
-		: -Settings->StepPenalty;
-	Reward -= EffectiveStepPenalty;
+	Reward += Settings->StepPenalty;
 
 	// ---- Drain and scale sparse rewards ----
-	float DrainedSparse = DrainSparseReward(InOutState, Agent->AgentID);
-	// For Strike only: penalise kills made at melee range (ranged DPS should stay back)
-	if (Class == EDEClassType::Strike &&
-		InOutState.bWasTooCloseAtKill && InOutState.bSparseKillFiredThisStep)
-	{
-		DrainedSparse *= Settings->CloseRangeKillPenaltyScale;
-	}
-	Reward += DrainedSparse;
+	Reward += DrainSparseReward(InOutState, Agent->AgentID);
 
 	Reward *= Settings->RewardScale;
 	Reward = FMath::Clamp(Reward, Settings->StepRewardClampMin, Settings->StepRewardClampMax);
 
 	InOutState.bSparseKillFiredThisStep = false;
-	InOutState.bWasTooCloseAtKill       = false;
-
+	InOutState.bWasTooCloseAtKill = false;
 	InOutState.LastIndividualStepReward = Reward;
 
-	return Reward;
-}
-
-float UDERewardSubsystem::ComputeBaseCooperationReward(ADEAgent* Agent, FDERewardState& InOutState, EDEClassType Class)
-{
-	const UDERewardData* Settings = GetSettings();
-	if (!Settings || !Agent) return 0.0f;
-
-	ADEMatchManager* MatchMgr = Agent->GetMatchManager();
-	if (!MatchMgr) return 0.0f;
-
-	const TArray<ADECapturePoint*>& CPs = MatchMgr->GetCapturePoints();
-	if (CPs.Num() == 0) return 0.0f;
-
-	const int32 MyTeamID = Agent->GetTeamID_Implementation();
-	const FVector MyPos  = Agent->GetActorLocation();
-	const float Radius   = Settings->BaseOccupationRadius;
-	const float RadiusSq = Radius * Radius;
-
-	TArray<ADEAgent*> Teammates = MatchMgr->GetTeamAgents(MyTeamID);
-
-	// ---- Per-base cooperation reward ----
-	float Reward = 0.0f;
-	for (int32 i = 0; i < CPs.Num(); ++i)
+	// ---- Team reward mixing (MAPPO cooperative signal) ----
+	// Blend individual reward with team average to strengthen cooperative behavior.
+	// TeamRewardMixingRatio=0.2 means 80% individual + 20% team average.
+	if (Settings->TeamRewardMixingRatio > 0.0f && MatchManager)
 	{
-		ADECapturePoint* CP = CPs[i];
-		if (!CP) continue;
-
-		const FVector CPPos  = CP->GetActorLocation();
-		const int32   Owner  = CP->GetTeamID_Implementation();
-		const float   DistSq = FVector::DistSquared(MyPos, CPPos);
-		const bool    bNearMe = (DistSq <= RadiusSq);
-
-		int32 AlliesNear = 0;
-		for (ADEAgent* Mate : Teammates)
+		const TArray<ADEAgent*>& TeamAgents = MatchManager->GetTeamAgents(MyTeamID);
+		if (TeamAgents.Num() > 1)
 		{
-			if (!Mate || Mate == Agent || !Mate->IsAlive()) continue;
-			if (FVector::DistSquared(Mate->GetActorLocation(), CPPos) <= RadiusSq)
-				++AlliesNear;
-		}
-
-		if (bNearMe)
-		{
-			// Support should never be incentivized toward capture points — skip all base rewards
-			if (Class != EDEClassType::Support)
+			float TeamRewardSum = 0.0f;
+			int32 TeamCount = 0;
+			for (const ADEAgent* Ally : TeamAgents)
 			{
-				// Strike and Vanguard get BaseOccupationReward when alone in enemy/neutral zone
-				if (Owner != MyTeamID && AlliesNear == 0)
-					Reward += Settings->BaseOccupationReward;
-
-				// Stacking penalty: Strike/Vanguard should spread across bases
-				if (AlliesNear >= 1)
-					Reward -= Settings->CoOccupationPenalty;
+				if (Ally && Ally != Agent)
+				{
+					TeamRewardSum += Ally->RewardState.LastIndividualStepReward;
+					++TeamCount;
+				}
+			}
+			if (TeamCount > 0)
+			{
+				const float TeamAvg = TeamRewardSum / TeamCount;
+				const float Alpha = Settings->TeamRewardMixingRatio;
+				Reward = (1.0f - Alpha) * Reward + Alpha * TeamAvg;
 			}
 		}
 	}
 
 	return Reward;
 }
-
 
 float UDERewardSubsystem::ApplyAndLogReward(FDERewardState& InOutAgentState, EDERewardEventType EventType, EDEClassType Class, float RewardValue, int32 AgentID)
 {

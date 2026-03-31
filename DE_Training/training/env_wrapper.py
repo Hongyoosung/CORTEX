@@ -55,8 +55,13 @@ except ImportError:
 # Layout: Self(7) + Allies(8×9=72) + Enemies(8×8=64) + Bases(8×7=56) +
 #         AllyMask(8) + EnemyMask(8) + BaseMask(8) + Strategy(3)
 # Strategy one-hot starts at: 7+72+64+56+24 = 223
-OBS_DIM    = 226
-ACTION_DIM = 7
+AGENT_OBS_DIM = 226
+ACTION_DIM    = 7
+
+# MAPPO: global state from FDETeamWorldState::ToTensor() = 71-dim
+# Appended after agent obs → total 297-dim
+GLOBAL_STATE_DIM = 71
+OBS_DIM          = AGENT_OBS_DIM + GLOBAL_STATE_DIM   # 297
 
 # ── Strategy registry ─────────────────────────────────────────────────────────
 # Maps agent_id_str → strategy index (0=Strike, 1=Vanguard, 2=Support).
@@ -104,7 +109,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
         print(f"[DEEntityCentricEnv] Connecting to {host}:{port}  "
               f"num_envs={self.num_envs}")
-        print(f"[DEEntityCentricEnv] Obs={OBS_DIM}-dim, Action={ACTION_DIM}-dim EQS")
+        print(f"[DEEntityCentricEnv] Obs={OBS_DIM}-dim (agent={AGENT_OBS_DIM} + global={GLOBAL_STATE_DIM}), Action={ACTION_DIM}-dim EQS")
 
         try:
             self._protocol = gRPCProtocol(url=host, port=port)
@@ -113,7 +118,22 @@ class DEEntityCentricEnv(MultiAgentEnv):
             self._simulator.start(self._protocol.properties)
             self._protocol.send_startup_msg(auto_reset_type=AutoresetMode.DISABLED)
 
-            self._ids, _, obs_defns, self._action_defns = self._protocol.get_definition()
+            agents_per_env = kwargs.get("agents_per_env", 5)
+            expected_agents = self.num_envs * agents_per_env
+            _retry_delay    = float(kwargs.get("definition_retry_delay", 3.0))
+            _max_retries    = int(kwargs.get("definition_max_retries", 10))
+
+            for _attempt in range(_max_retries):
+                self._ids, _, obs_defns, self._action_defns = self._protocol.get_definition()
+                total = sum(len(a) for a in self._ids)
+                if total >= expected_agents:
+                    break
+                print(f"[DEEntityCentricEnv] get_definition attempt {_attempt+1}: "
+                      f"{total}/{expected_agents} agents — retrying in {_retry_delay}s...")
+                time.sleep(_retry_delay)
+            else:
+                print(f"[DEEntityCentricEnv] WARNING: only {total}/{expected_agents} agents "
+                      f"registered after {_max_retries} retries. Proceeding anyway.")
 
             self._single_action_spaces = {}
             _defns_iterable = self._action_defns.values() if isinstance(self._action_defns, dict) else self._action_defns
@@ -166,8 +186,10 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._reward_debug_count  = 0
 
         # Win rate tracking (for curriculum scheduler)
-        self._rl_episode_wins:  int = 0
-        self._rl_episodes_total: int = 0
+        self._rl_episode_wins:     int = 0
+        self._script_episode_wins: int = 0
+        self._draw_episodes:       int = 0
+        self._rl_episodes_total:   int = 0
 
         # Per-strategy reward tracking
         # Keys: 0=Strike, 1=Vanguard, 2=Support  (StrategyType from UE5 info)
@@ -185,6 +207,11 @@ class DEEntityCentricEnv(MultiAgentEnv):
         ]
         self._reward_components = REWARD_COMPONENTS
         self._component_ep_sums: Dict[str, list] = {c: [] for c in REWARD_COMPONENTS}
+
+        # MAPPO: per-env global state cache (71-dim FDETeamWorldState)
+        self._global_state: Dict[int, np.ndarray] = {
+            i: np.zeros(GLOBAL_STATE_DIM, dtype=np.float32) for i in range(self.num_envs)
+        }
 
         self._completed_envs: set       = set()   # sub-envs whose match has ended
         self._schola_env_done: Dict[int, str] = {}  # per-step: sub-envs Schola terminated
@@ -223,21 +250,126 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 return base
         return kwargs.get("port", 50051)
 
+    def _parse_ue5_env_id(self, agent_id_str: str) -> Optional[int]:
+        """Extract UE5 EnvironmentId from agent ID string like 'env3_agent0' → 3."""
+        import re
+        m = re.match(r'env(\d+)_', agent_id_str)
+        return int(m.group(1)) if m else None
+
     def _update_agent_map(self):
         self.agent_map.clear()
         self.reverse_map.clear()
         self._agent_ids.clear()
-        # In Schola 2.0.1, _ids[env_idx] is a list of string agent IDs from C++
-        # e.g., ["env0_agent0", "env0_agent1", ...]
-        for env_idx, agent_list in enumerate(self._ids):
+        # Build slot ↔ UE5 env ID mapping.
+        # _ids[slot] is a list of agent ID strings from C++ (e.g., ["env3_agent0", ...]).
+        # The protocol slot order may differ from UE5 EnvironmentId order.
+        self._slot_to_ue5: Dict[int, int] = {}
+        self._ue5_to_slot: Dict[int, int] = {}
+        for slot, agent_list in enumerate(self._ids):
+            ue5_id = None
             for agent_id_str in agent_list:
-                self.agent_map[agent_id_str] = (env_idx, agent_id_str)
-                self.reverse_map[(env_idx, agent_id_str)] = agent_id_str
+                parsed = self._parse_ue5_env_id(agent_id_str)
+                if parsed is not None:
+                    ue5_id = parsed
+                    break
+            if ue5_id is None:
+                ue5_id = slot  # fallback: assume slot == env ID
+            self._slot_to_ue5[slot] = ue5_id
+            self._ue5_to_slot[ue5_id] = slot
+            for agent_id_str in agent_list:
+                self.agent_map[agent_id_str] = (ue5_id, agent_id_str)
+                self.reverse_map[(ue5_id, agent_id_str)] = agent_id_str
                 self._agent_ids.add(agent_id_str)
         print(f"[DEEntityCentricEnv] Agent map: {len(self._agent_ids)} agents")
+        if self._slot_to_ue5 != {i: i for i in range(len(self._ids))}:
+            print(f"[DEEntityCentricEnv] WARNING: Protocol slot ≠ UE5 env ID! "
+                  f"slot→ue5={self._slot_to_ue5}")
 
     def _agents_for_env(self, env_idx: int):
         return [a for a, (eidx, _) in self.agent_map.items() if eidx == env_idx]
+
+    def _reindex_step_lists(self, *lists):
+        """
+        Convert slot-indexed lists (from protobuf repeated fields) to
+        UE5-env-ID-indexed lists. Step data from Schola uses protocol slot
+        order which may differ from UE5 EnvironmentId order.
+        """
+        result = []
+        for lst in lists:
+            if not isinstance(lst, list):
+                result.append(lst)
+                continue
+            reindexed = [None] * self.num_envs
+            for slot, data in enumerate(lst):
+                ue5_id = self._slot_to_ue5.get(slot, slot)
+                if ue5_id < self.num_envs:
+                    reindexed[ue5_id] = data
+            # Fill any None slots with empty dicts
+            reindexed = [d if d is not None else {} for d in reindexed]
+            result.append(reindexed)
+        return result if len(result) > 1 else result[0]
+
+    # ── MAPPO global state ────────────────────────────────────────────────
+
+    def _extract_global_state(self, info_nested, env_idx: int) -> np.ndarray:
+        """
+        Extract FDETeamWorldState tensor from Schola info channel.
+
+        The C++ side broadcasts the 71-dim global state under key "global_state"
+        in each agent's info dict as a comma-separated float string.
+        All agents in the same team share the same global state, so we read
+        from the first agent that has the key.
+
+        Falls back to zeros if unavailable (e.g., before UE5 build is updated).
+
+        Returns: (GLOBAL_STATE_DIM,) float32
+        """
+        if isinstance(info_nested, list):
+            env_info = info_nested[env_idx] if env_idx < len(info_nested) else {}
+        else:
+            env_info = info_nested.get(env_idx, {})
+
+        # global_state is in each agent's info dict as a comma-separated string
+        gs_raw = None
+        if isinstance(env_info, dict):
+            # Check each agent's info for the key
+            for agent_info in env_info.values():
+                if isinstance(agent_info, dict):
+                    gs_raw = agent_info.get("global_state")
+                    if gs_raw is not None:
+                        break
+
+        if gs_raw is not None:
+            try:
+                if isinstance(gs_raw, str):
+                    # C++ sends comma-separated floats: "0.123,0.456,..."
+                    arr = np.fromstring(gs_raw, sep=',', dtype=np.float32)
+                else:
+                    # May already be a list/array if Schola parses it
+                    arr = np.asarray(gs_raw, dtype=np.float32).flatten()
+
+                if len(arr) >= GLOBAL_STATE_DIM:
+                    return arr[:GLOBAL_STATE_DIM]
+                elif len(arr) > 0:
+                    return np.pad(arr, (0, GLOBAL_STATE_DIM - len(arr)))
+            except (ValueError, TypeError):
+                pass
+
+        return self._global_state.get(env_idx, np.zeros(GLOBAL_STATE_DIM, dtype=np.float32))
+
+    def _append_global_state(self, obs_d: dict) -> dict:
+        """
+        Append per-env global state (71-dim) to each agent's 226-dim obs,
+        producing 297-dim MAPPO observations.
+
+        All agents in the same sub-env share the same global state suffix.
+        """
+        mappo_obs = {}
+        for fid, agent_obs in obs_d.items():
+            env_idx = self.agent_map[fid][0]
+            gs = self._global_state.get(env_idx, np.zeros(GLOBAL_STATE_DIM, dtype=np.float32))
+            mappo_obs[fid] = np.concatenate([agent_obs, gs])
+        return mappo_obs
 
     # ── Observation extraction ────────────────────────────────────────────
 
@@ -248,14 +380,15 @@ class DEEntityCentricEnv(MultiAgentEnv):
         info_nested,
     ) -> Tuple[np.ndarray, dict]:
         """
-        Extract a single agent's OBS_DIM-dim flat observation and info dict
-        from Schola 2.0.1 nested data.
+        Extract a single agent's observation and info dict from Schola 2.0.1
+        nested data. Returns AGENT_OBS_DIM (226) obs — global state is
+        appended later by _append_global_state().
 
         obs_nested: List[Dict[agent_id_str, obs]] or Dict[env_id, Dict[agent_id_str, obs]]
         info_nested: same structure, values are Dict[str,str]
 
         Returns:
-            obs  : (OBS_DIM,) float32
+            obs  : (AGENT_OBS_DIM,) float32  (226-dim, without global state)
             info : dict
         """
         env_idx, agent_id_str = self.agent_map[flat_id]
@@ -272,13 +405,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 raw = list(raw.values())[0]
             obs = np.asarray(raw, dtype=np.float32).flatten()
         else:
-            obs = np.zeros(OBS_DIM, dtype=np.float32)
+            obs = np.zeros(AGENT_OBS_DIM, dtype=np.float32)
 
-        # Pad or truncate to exactly OBS_DIM
-        if len(obs) < OBS_DIM:
-            obs = np.pad(obs, (0, OBS_DIM - len(obs)))
+        # Pad or truncate to exactly AGENT_OBS_DIM (226)
+        if len(obs) < AGENT_OBS_DIM:
+            obs = np.pad(obs, (0, AGENT_OBS_DIM - len(obs)))
         else:
-            obs = obs[:OBS_DIM]
+            obs = obs[:AGENT_OBS_DIM]
 
         if isinstance(info_nested, list):
             info_env = info_nested[env_idx] if env_idx < len(info_nested) else {}
@@ -291,16 +424,18 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
     def _format_actions(self, actiondict: dict) -> dict:
         """
-        Convert {flat_id: action_array} → {env_id: {agent_id_str: action}} for
-        send_action_msg. Handles both Box and Dict action spaces.
+        Convert {flat_id: action_array} → {slot_id: {agent_id_str: action}} for
+        send_action_msg. Uses protocol slot indices (not UE5 env IDs) since
+        send_action_msg adds environments positionally to protobuf repeated fields.
         """
-        fmt = {}
+        # Build actions keyed by UE5 env ID first
+        by_ue5 = {}
         for fid, action in actiondict.items():
             if fid not in self.agent_map:
                 continue
-            ei, ai = self.agent_map[fid]
-            if ei not in fmt:
-                fmt[ei] = {}
+            ue5_ei, ai = self.agent_map[fid]
+            if ue5_ei not in by_ue5:
+                by_ue5[ue5_ei] = {}
 
             if isinstance(action, np.ndarray) and len(action) == ACTION_DIM:
                 a = np.clip(action, -1.0, 1.0).astype(np.float32)
@@ -313,29 +448,35 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 # Dict action space — wrap in {key: array}
                 keys = list(space.spaces.keys())
                 if keys:
-                    fmt[ei][ai] = {k: a for k in keys}
+                    by_ue5[ue5_ei][ai] = {k: a for k in keys}
                 else:
-                    fmt[ei][ai] = a
+                    by_ue5[ue5_ei][ai] = a
             else:
                 # Box or unknown — pass array directly
-                fmt[ei][ai] = a
+                by_ue5[ue5_ei][ai] = a
 
-        # Pad completed sub-envs with dummy actions so the protocol
-        # message always contains entries for every environment.
-        for ei in range(self.num_envs):
-            if ei not in fmt:
-                fmt[ei] = {}
-                for aid in self._agents_for_env(ei):
+        # Pad completed sub-envs with dummy actions
+        for ue5_ei in range(self.num_envs):
+            if ue5_ei not in by_ue5:
+                by_ue5[ue5_ei] = {}
+                for aid in self._agents_for_env(ue5_ei):
                     _, agent_id_str = self.agent_map[aid]
                     zeros = np.zeros(ACTION_DIM, dtype=np.float32)
                     space = self._single_action_spaces.get(agent_id_str)
                     if space is not None and hasattr(space, 'spaces'):
                         keys = list(space.spaces.keys())
-                        fmt[ei][agent_id_str] = {k: zeros for k in keys} if keys else zeros
+                        by_ue5[ue5_ei][agent_id_str] = {k: zeros for k in keys} if keys else zeros
                     else:
-                        fmt[ei][agent_id_str] = zeros
+                        by_ue5[ue5_ei][agent_id_str] = zeros
 
-        # Sort by env_id so protobuf repeated field positions match UE5 env indices.
+        # Convert UE5 env IDs → protocol slot indices for send_action_msg.
+        # The protobuf repeated field is ordered by slot, not by UE5 env ID.
+        fmt = {}
+        for ue5_ei, agents_actions in by_ue5.items():
+            slot = self._ue5_to_slot.get(ue5_ei, ue5_ei)
+            fmt[slot] = agents_actions
+
+        # Sort by slot so protobuf repeated field positions are correct.
         return {k: fmt[k] for k in sorted(fmt.keys())}
 
     # ── Core interface ────────────────────────────────────────────────────
@@ -377,6 +518,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 self._agent_ep_rewards[fid] = 0.0
 
         obs_d, info_d = self._process_obs(obs_list, infos_list)
+
+        # Extract per-env global state from info channel (MAPPO)
+        for ei in range(self.num_envs):
+            self._global_state[ei] = self._extract_global_state(infos_list, ei)
+
+        # Append global state to each agent obs (226 → 297)
+        obs_d = self._append_global_state(obs_d)
 
         # Populate strategy registry from reset obs so policy_mapping_fn
         # can route agents to the correct per-role policy immediately.
@@ -436,6 +584,15 @@ class DEEntityCentricEnv(MultiAgentEnv):
 
             obs_d, rew_d, term_d, trunc_d, info_d = self._parse_full(result)
 
+            # Extract per-env global state from info channel (MAPPO)
+            # Reindex from slot order to UE5 env ID order
+            info_n = self._reindex_step_lists(result[4])
+            for ei in range(self.num_envs):
+                self._global_state[ei] = self._extract_global_state(info_n, ei)
+
+            # Append global state to each agent obs (226 → 297)
+            obs_d = self._append_global_state(obs_d)
+
             if not self._max_episode_steps_synced:
                 self._sync_max_steps(info_d)
 
@@ -462,21 +619,38 @@ class DEEntityCentricEnv(MultiAgentEnv):
                         self._agent_ep_rewards.get(aid, 0.0) + rew_d.get(aid, 0.0)
                     )
 
-                # Check for match end: Schola env-level termination OR MatchEnded info
+                # Check for match end: Schola env-level termination OR MatchEnded info.
+                # Schola termination alone is NOT sufficient — when multiple envs
+                # end in the same step, Schola can spuriously fire term=True for
+                # envs whose matches haven't actually finished in UE5.
+                # We require at least one explicit UE5 match-end signal:
+                #   • MatchEnded=true  (explicit bool flag from Step_Implementation)
+                #   • WinnerTeamID present (only set when a match genuinely ends)
+                # If neither is present, reject the Schola term as spurious.
                 schola_ended = ei in self._schola_env_done
                 match_ended_info = any(
                     str(info_d.get(aid, {}).get('MatchEnded', 'false')).lower() == 'true'
                     for aid in agents
                 )
-                ue5_end = schola_ended or match_ended_info
+                winner_in_info = any(
+                    info_d.get(aid, {}).get('WinnerTeamID') is not None
+                    for aid in agents
+                )
+                ue5_confirmed = match_ended_info or winner_in_info
+                if schola_ended and not ue5_confirmed:
+                    print(f"[WARN] env={ei} Schola term=True but NO UE5 match-end "
+                          f"evidence (MatchEnded={match_ended_info}, "
+                          f"WinnerTeamID={winner_in_info}) — treating as spurious, "
+                          f"step={self._env_episode_steps[ei]}")
+                ue5_end = match_ended_info or (schola_ended and ue5_confirmed)
                 timed_out = (self._force_timeout and
                              self._env_episode_steps[ei] >= self._max_episode_steps)
 
                 if ue5_end or timed_out:
-                    if schola_ended:
-                        reason = f"Schola {self._schola_env_done[ei]} (all agents in sub-env)"
-                    elif match_ended_info:
+                    if match_ended_info:
                         reason = "MatchEnded info from UE5"
+                    elif schola_ended and ue5_confirmed:
+                        reason = f"Schola {self._schola_env_done[ei]} + WinnerTeamID confirmed"
                     else:
                         reason = f"timeout({self._max_episode_steps})"
                     print(f"[STEP] Episode end: env={ei} step={self._env_episode_steps[ei]} — {reason}")
@@ -485,7 +659,7 @@ class DEEntityCentricEnv(MultiAgentEnv):
                             term_d[aid] = True
                         else:
                             trunc_d[aid] = True
-                    self._log_episode(ei, agents, term_d, trunc_d)
+                    self._log_episode(ei, agents, term_d, trunc_d, info_d)
                     self._completed_envs.add(ei)
                     self._env_episodes_done[ei] += 1
 
@@ -542,8 +716,8 @@ class DEEntityCentricEnv(MultiAgentEnv):
     def _parse_obs_and_info(self, result) -> Tuple[dict, dict]:
         """Minimal parse for soft reset — result is 7-tuple from send_action_msg."""
         # result: (obs, rew, term, trunc, infos, initial_obs, initial_info)
-        obs_n   = result[0]
-        info_n  = result[4]
+        # Reindex from slot order to UE5 env ID order
+        obs_n, info_n = self._reindex_step_lists(result[0], result[4])
         obs_d = {}
         info_d = {}
         for fid in self._agent_ids:
@@ -561,7 +735,10 @@ class DEEntityCentricEnv(MultiAgentEnv):
     def _parse_full(self, result) -> Tuple[dict, dict, dict, dict, dict]:
         """Full step result parse from send_action_msg() 7-tuple."""
         # result: (obs, rew, term, trunc, infos, initial_obs, initial_info)
-        obs_n, rew_n, term_n, trunc_n, info_n = result[0], result[1], result[2], result[3], result[4]
+        # Step data comes as slot-indexed lists — reindex to UE5 env IDs
+        obs_n, rew_n, term_n, trunc_n, info_n = self._reindex_step_lists(
+            result[0], result[1], result[2], result[3], result[4]
+        )
 
         obs_d = {}; rew_d = {}; term_d = {}; trunc_d = {}; info_d = {}
 
@@ -582,8 +759,13 @@ class DEEntityCentricEnv(MultiAgentEnv):
         # If ALL agents in a sub-env are terminated/truncated simultaneously,
         # that signals a match-level end (not individual agent death).
         # Individual agent deaths (subset terminated) are suppressed.
+        # Already-completed envs are skipped: they keep returning term=True
+        # every step (because they haven't been reset), and including them
+        # can cause Schola to batch-terminate other envs spuriously.
         self._schola_env_done: Dict[int, str] = {}  # env_idx → "term"/"trunc"
         for ei in range(self.num_envs):
+            if ei in self._completed_envs:
+                continue  # already done — ignore repeated Schola term signals
             agents = self._agents_for_env(ei)
             if not agents:
                 continue
@@ -601,10 +783,6 @@ class DEEntityCentricEnv(MultiAgentEnv):
                           f"term={n_term}/{n_total} trunc={n_trunc}/{n_total} "
                           f"(suppressed — individual agent death)")
 
-        # Log when Schola signals full sub-env termination
-        if self._schola_env_done:
-            print(f"[SCHOLA] Sub-env terminations detected: {self._schola_env_done} "
-                  f"at step {self._total_step_count}")
 
         # Now suppress all — step() will re-apply based on _schola_env_done / timeout
         for fid in list(term_d.keys()):
@@ -732,11 +910,16 @@ class DEEntityCentricEnv(MultiAgentEnv):
                 metrics[f"reward_component_{comp}"] = float(np.mean(buf))
                 self._component_ep_sums[comp] = []
 
-        # Win rate (only non-timeout episodes count)
+        # Win/loss/draw rates (only non-timeout episodes count)
         if self._rl_episodes_total > 0:
-            metrics["rl_win_rate"] = self._rl_episode_wins / self._rl_episodes_total
-        self._rl_episode_wins   = 0
-        self._rl_episodes_total = 0
+            total = self._rl_episodes_total
+            metrics["rl_win_rate"]     = self._rl_episode_wins     / total
+            metrics["script_win_rate"] = self._script_episode_wins / total
+            metrics["draw_rate"]       = self._draw_episodes        / total
+        self._rl_episode_wins     = 0
+        self._script_episode_wins = 0
+        self._draw_episodes       = 0
+        self._rl_episodes_total   = 0
 
         # Debug: log strategy buffer state periodically to diagnose routing issues
         if self._total_step_count <= 5 or self._total_step_count % 200 == 0:
@@ -768,24 +951,65 @@ class DEEntityCentricEnv(MultiAgentEnv):
         self._max_episode_steps_synced = True
         print(f"[DEEntityCentricEnv] max_episode_steps={self._max_episode_steps} (default)")
 
-    def _log_episode(self, ei, agents, term_d, trunc_d):
+    def _log_episode(self, ei, agents, term_d, trunc_d, info_d=None):
         dur     = time.time() - (self._env_episode_start.get(ei) or time.time())
         total_r = sum(self._agent_ep_rewards.get(a, 0.0) for a in agents)
         truncated = any(trunc_d.get(a) for a in agents)
         end_t   = "TRUNCATED" if truncated else "TERMINATED"
 
-        # Win rate tracking: early termination (TERMINATED, not TRUNCATED) with
-        # positive mean episode reward indicates RL team captured all points (win).
-        # Timeout episodes (TRUNCATED) do not count toward win rate.
+        # Win/loss/draw tracking from explicit UE5 WinnerTeamID.
+        # RL team = Blue (TeamID 1), Script AI team = Red (TeamID 0), -1 = draw.
+        # Timeout episodes (TRUNCATED) do not count toward win/loss/draw.
+        winner_team_id = None
+        team_score0 = None
+        team_score1 = None
+        if info_d is not None:
+            for aid in agents:
+                agent_info = info_d.get(aid, {})
+                if winner_team_id is None:
+                    raw = agent_info.get("WinnerTeamID")
+                    if raw is not None:
+                        try:
+                            winner_team_id = int(raw)
+                        except (ValueError, TypeError):
+                            pass
+                if team_score0 is None:
+                    raw = agent_info.get("TeamScore0")
+                    if raw is not None:
+                        try:
+                            team_score0 = int(raw)
+                        except (ValueError, TypeError):
+                            pass
+                if team_score1 is None:
+                    raw = agent_info.get("TeamScore1")
+                    if raw is not None:
+                        try:
+                            team_score1 = int(raw)
+                        except (ValueError, TypeError):
+                            pass
+                if winner_team_id is not None and team_score0 is not None and team_score1 is not None:
+                    break
+
         if not truncated:
             self._rl_episodes_total += 1
-            mean_r = total_r / max(1, len(agents))
-            if mean_r > 0.0:
+            if winner_team_id == 1:        # Blue / RL team wins
                 self._rl_episode_wins += 1
+                result_str = "RL_WIN"
+            elif winner_team_id == 0:      # Red / Script AI team wins
+                self._script_episode_wins += 1
+                result_str = "SCRIPT_WIN"
+            else:                          # -1 or missing → draw / unknown
+                self._draw_episodes += 1
+                result_str = "DRAW"
+        else:
+            result_str = "TIMEOUT"
 
+        score0_str = str(team_score0) if team_score0 is not None else "?"
+        score1_str = str(team_score1) if team_score1 is not None else "?"
         print("=" * 70)
-        print(f"[EP END] env={ei}  ep={self._env_episodes_done[ei]}  {end_t}")
+        print(f"[EP END] env={ei}  ep={self._env_episodes_done[ei]}  {end_t}  result={result_str}")
         print(f"  steps={self._env_episode_steps[ei]}  dur={dur:.1f}s  total_r={total_r:.2f}")
+        print(f"  score: Script(Red/Team0)={score0_str}  RL(Blue/Team1)={score1_str}")
         for a in sorted(agents):
             print(f"    {a}: {self._agent_ep_rewards.get(a, 0.0):.2f}")
         print("=" * 70)

@@ -15,10 +15,13 @@ math: true
 
 ## 개요 (Overview)
 
-본 프로젝트는 Unreal Engine 5 환경에서 강화학습 모델을 활용한 EQS(Environment Query system) 가중치
- 업데이트를 지원하는 플러그인의 개발을 목표로 합니다.
+본 프로젝트는 UE5 NPC의 전술적 포지셔닝을 하드코딩 없이 강화학습으로 자동 최적화하는 Dynamic EQS 플러그인을 설계·구현하고, 5v5 팀 기반 거점 점령전 환경에서 MAPPO 학습을 통해 검증했습니다.
 
-본 프로젝트에서는 팀 기반 거점 점령전에서의 전략적 포지셔닝 최적화 환경을 대상으로 해당 플러그인을 활용하였습니다.
+Schola(gRPC) 위에 RL-EQS 통합 미들 레이어를 플러그인으로 추상화하여 다른 UE5 프로젝트에서도 재사용 가능한 구조로 설계했으며, AWS EC2 + Ray Autoscaler 기반의 병렬 학습 파이프라인까지 1인으로 전 과정을 구축했습니다.
+
+<div style="margin-top: 40px;"></div>
+
+{{< gif-grid urls="/gifs/project1/project1_title.gif, /gifs/project1/project1_battle.gif" widths="50%, 50%" >}}
 
 
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
@@ -31,29 +34,6 @@ math: true
         class="max-w-full"
         caption="Fig 1. 시스템 아키텍처 및 계층적 포지셔닝 워크플로우" >}}
 
-
-<hr style="border: 0; height: 1px; background: #b3b3b3;">
-
-## 학습 환경 (Training Environment)
-
-**5 vs 5 팀 기반 거점 점령전**으로, 맵 상에 5개의 거점(Capture Point)이 배치됩니다.
-
-- **승리 조건:** 더 많은 거점을 점령하고 유지하여 목표 점수를 먼저 달성하는 팀이 승리합니다.
-- **부활 규칙:** 개별 사망이 아닌 **팀 전멸(Team Wipe)** 시 해당 팀 전체가 리스폰됩니다. 부활 대기 시간(`RespawnDelay`) 동안 대기 후 팀 스폰 지점 근처에 동시 재배치됩니다.
-- **클래스 역할:** 각 에이전트는 매 에피소드마다 **Strike / Vanguard / Support** 클래스를 부여받으며, 해당 클래스에 최적화된 포지셔닝 행동을 학습합니다.
-- **에피소드 길이:** 고정 스텝 수 기반으로 종료됩니다.
-- **셀프플레이:** 양 팀이 동일한 정책을 공유하며 서로의 전략에 반응하는 Self-Play 방식으로 학습합니다.
-
-각 에이전트는 강화학습 정책 네트워크를 통해 실시간 상황에 따라 공간 이동 파라미터를 추론하여 현재 상황에서의 최적 위치를 결정할 수 있습니다.
-
-공격(Attack)과 치유(Heal) 어빌리티는 **우선순위 점수(Priority Scoring)** 기반 타겟 선정 정책을 사용합니다. Attack은 `거리 × 0.3 + 낮은 체력 × 0.4 + 클래스 우선순위 × 0.3` 점수로 가장 위협적이거나 취약한 적을 공격하고(Support 클래스 우선), Heal은 `낮은 체력 × 0.7 + 거리 × 0.3` 점수로 가장 위급한 아군을 치유합니다. 이를 통해 어빌리티 행동이 RL 포지셔닝 정책과 자연스럽게 연계됩니다.
-
-Schola 플러그인을 통해 Unreal Engine 5의 강화학습 환경과 외부 스크립트(Ray Rllib)와의 gRPC 기반 브릿지를 구성하였으며 Schola Layer 위에 EQS 가중치를 설정하고 정책 네트워크 출력과 연결하는 Dynamic EQS를 플러그인 형태로 구현하였습니다.
-
-훈련은 초기 하나의 UE 인스턴스에 4개의 병렬 환경으로 수행하였으며 이후 AWS 클라우드 기반의 대규모 병렬 학습 환경을 구축했습니다. 이를 통해 수십 개의 언리얼 엔진 인스턴스로부터 데이터를 동시 수집하고 정책을 업데이트하는 고성능 학습 파이프라인을 구현했습니다.
-
-
-{{< gif-grid urls="/gifs/project1/1.gif, /gifs/project1/3.gif" widths="50%, 50%" >}}
 
 
 
@@ -73,8 +53,213 @@ Schola 플러그인을 통해 Unreal Engine 5의 강화학습 환경과 외부 �
 | **Monitoring** | TensorBoard |
 
 
+
+
+
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
 
+## 훈련 환경 (Training Environment)
+
+**5 vs 5 팀 기반 거점 점령전**으로, 맵 상에 5개의 거점(Capture Point)이 배치됩니다.
+더 많은 거점을 점령·유지하여 목표 점수를 먼저 달성하는 팀이 승리합니다.
+
+---
+
+
+### 클래스 역할 설계
+
+각 에이전트는 매 에피소드마다 **Strike / Vanguard / Support** 클래스를 부여받습니다.
+클래스마다 요구되는 포지셔닝 전략이 근본적으로 다르므로, 각 클래스에
+**독립된 정책 네트워크**를 할당하고, 역할에 특화된 보상 함수를 적용했습니다.
+
+
+{{< gif-grid urls="/gifs/project1/project1_strike.gif, /gifs/project1/project1_vanguard.gif, /gifs/project1/project1_support.gif" >}}
+
+| 클래스 | 역할 | 핵심 포지셔닝 목표 |
+|---|---|---|
+| **Strike** | 원거리 딜러 | 적 거점 접근 + 사거리 유지 |
+| **Vanguard** | 근접 탱커 | 전열 유지 + 근접 교전 |
+| **Support** | 후방 힐러 | 부상 아군 추적 + 후방 포지션 |
+
+
+---
+
+
+### ScriptedAI 상대 학습
+
+Blue 팀(RL)은 하드코딩 EQS 가중치 + 상태 머신으로 구동되는 **Red 팀(ScriptedAI)** 을
+상대로 학습합니다.
+
+현재 환경은 3가지 클래스의 에이전트들이 복합적으로 섞여있어 Self-Play를 사용하기에 적합하지 않아, ScriptedAI를 선택했습니다. ScriptedAI를 통해 고정된 난이도 기준점을 제공하여 RL 에이전트가 안정적으로
+기초 전략을 학습할 수 있었습니다.
+
+---
+
+### 커리큘럼 티어 시스템
+
+ScriptedAI는 **3단계 난이도 티어**(1=Basic, 2=Standard, 3=Aggressive)로 구분됩니다.
+RL 팀의 에피소드 승률이 일정 기간 동안 승격 임계값을 초과하면 자동으로 다음 티어로
+전환됩니다.
+
+| 티어 전환 | 승격 임계값 |
+|---|---|
+| Tier 1 → 2 | 55% 이상 |
+| Tier 2 → 3 | 65% 이상 |
+
+낮은 난이도 과적합(overfitting)을 방지하고 점진적으로 더 강한 상대에 노출시키기 위해
+도입했습니다. 티어 정보는 `scripted_ai_config.json`에 기록되며, UE5의
+`LoadTierFromConfig()`가 다음 에피소드 리셋 시 자동으로 적용합니다.
+
+<div style="margin-top: 40px;"></div>
+
+<hr style="border: 0; height: 1px; background: #b3b3b3;">
+
+
+### 관측 공간
+
+
+`FDEObservationV2::ToFlatArray()`가 생성하는 218-dim 엔티티 중심(Entity-Centric) 벡터입니다. 아군·적·거점을 고정 크기 슬롯 토큰으로 인코딩하고, 패딩 마스크를 별도로 제공해 Python MultiheadAttention이 유효 엔티티만 처리하도록 합니다.
+
+<div style="margin-top: 40px;"></div>
+
+#### **에이전트 입력 상태(State) 구성표**
+
+| Index | Dim | 토큰 내용 | 정규화 및 상세 설명 |
+| --- | --- | --- | --- |
+| **[0 : 7]** | 7 | 자신 토큰 | 위치/7500(3) + 속도/600(3) + 체력(1) |
+| **[7 : 71]** | 64 | 아군 토큰 (8×8) | 상대 위치/8000(3) + 체력(1) + 생존 여부(1) + 클래스 원-핫(3) |
+| **[71 : 135]** | 64 | 적 토큰 (8×8) | 상대 위치/8000(3) + 체력(1) + 가시성(1) + 클래스 원-핫(3) |
+| **[135 : 191]** | 56 | 거점 토큰 (8×7) | 상대 위치/15000(2) + 높이/1000(1) + 점유(1) + 점령 진행도(1) + 할당 여부(1) + 전략적 가치(1) |
+| **[191 : 199]** | 8 | 아군 마스크 | 0=유효, 1=패딩 |
+| **[199 : 207]** | 8 | 적 마스크 | 0=유효, 1=패딩 |
+| **[207 : 215]** | 8 | 거점 마스크 | 0=유효, 1=패딩 |
+| **[215 : 218]** | 3 | 클래스 원-핫 | [strike, vanguard, support] |
+| **TOTAL** | **218** |  |  |
+
+
+> **마스크 처리:** Python 정책의 `_safe_mask()`는 모든 슬롯이 패딩일 때 슬롯 0을 강제 언마스크하여 MultiheadAttention의 NaN을 방지합니다. 마스크 임계값은 `> 0.5` (float 비교)로, `0.0=유효 / 1.0=패딩` 의미론을 보존합니다.
+
+---
+
+
+### 보상 구조
+
+<div style="margin-top: 40px;"></div>
+
+<font size="4">**S T R I K E**</font>
+
+목표는 원거리에서 높은 데미지를 유지하며 거점을 점령하는 것입니다. 적 거점까지의 거리 감소분에 비례한 접근 보상을 매 스텝 부여하고, 거점 반경 내 진입 시 추가 존재 보너스를 부여합니다. 적과 너무 가까운 경우 원거리 역할 이탈 페널티가 부과됩니다.
+
+{{< code lang="cpp" label="Strike reward (per step)" width="100%" height="250px" align="right" >}}
+reward = 0
+if distance_to_target_base decreased:
+    reward += approach_reward * delta_distance
+if agent inside target_base radius:
+    reward += zone_presence_bonus
+if base just captured:
+    activate momentum_bonus for PostCaptureMomentumDuration steps
+    reward += capture_bonus
+if momentum active:
+    reward += momentum_bonus  # encourages moving to next base
+if distance_to_enemy < MinCombatRange:
+    reward -= too_close_enemy_penalty  # ranged: maintain combat distance
+{{< /code >}}
+
+---
+
+<font size="4">**V A N G U A R D**</font>
+
+목표는 전열에서 근접 전투를 수행하며 거점을 점령하는 것입니다. 적 거점 접근 및 점령 방식은 Strike와 동일하게 적용됩니다. 거점 내에서 근접 사거리에 적이 있을 때 추가 근접 보너스가 지급되어, 전선을 유지하며 적과 밀착하는 행동을 강화합니다.
+
+{{< code lang="cpp" label="Vanguard reward (per step)" width="100%" height="250px" align="right" >}}
+reward = 0
+if distance_to_target_base decreased:
+    reward += approach_reward * delta_distance
+if agent inside target_base radius:
+    reward += zone_presence_bonus
+    if enemy within melee range:
+        reward += melee_range_bonus  # frontline tank: reward close engagement
+if base just captured:
+    activate momentum_bonus for PostCaptureMomentumDuration steps
+    reward += capture_bonus
+if momentum active:
+    reward += momentum_bonus
+{{< /code >}}
+
+---
+
+<font size="4">**S U P P O R T**</font>
+
+
+목표는 데미지가 심한 아군을 추적하고 치유하며 후방 포지션을 유지하는 것입니다. 매 스텝 부상 아군 탐색을 수행하되, 잦은 타겟 전환으로 인한 진동 행동을 막기 위해 5스텝 캐시를 적용합니다. Support를 제외한 아군 뒤편에 위치하면 후방 포지셔닝 보너스를 받습니다.
+
+
+{{< code lang="cpp" label="Support reward (per step)" width="100%" height="250px" align="right" >}}
+reward = 0
+if staleness_counter >= 5 or no cached_target:
+    cached_target = ally with lowest health
+    staleness_counter = 0
+else:
+    staleness_counter++
+
+if distance_to_cached_target decreased:
+    reward += approach_reward * delta_distance
+if heal applied to ally:
+    reward += heal_reward * heal_amount
+if agent positioned behind cached_target (rear arc):
+    reward += rear_positioning_bonus
+if cached_target.health < threshold and agent attempted kill:
+    reward -= role_deviation_penalty
+{{< /code >}}
+
+---
+
+### 팀 보상 믹싱 (Team Reward Mixing — MAPPO Cooperative Signal)
+
+개별 에이전트 보상은 팀 평균 보상과 혼합되어 협동 행동을 강화합니다. `DERewardSubsystem`에서 매 스텝 계산되며, 혼합 비율은 `TeamRewardMixingRatio`로 제어됩니다.
+
+```
+final_reward = (1 - α) × individual_reward + α × team_average_reward
+```
+
+| 파라미터 | 값 | 의미 |
+| :--- | :--- | :--- |
+| `TeamRewardMixingRatio` (α) | **0.2** | 80% 개별 + 20% 팀 평균 |
+
+팀 평균은 자신을 제외한 같은 팀 에이전트들의 `LastIndividualStepReward` 평균입니다. 팀 에이전트가 1명일 때는 믹싱이 적용되지 않습니다. 이 구조는 MAPPO(Multi-Agent PPO)의 cooperative reward shaping으로, 개별 역할 최적화와 팀 단위 승리 목표 사이의 균형을 유지합니다.
+
+> **구현 위치:** `DERewardSubsystem.cpp` — `CalculateStepReward()` 함수 하단, 개별 보상 계산 후 팀 믹싱 적용
+
+---
+
+### UE5 → Python 보상 파이프라인 (Reward Pipeline)
+
+보상은 **C++ (UE5)** 에서 계산되고 **Python (RLlib)** 에서 정규화된 후 PPO 업데이트에 사용됩니다.
+
+```
+[UE5 C++]                              [Python RLlib]
+DERewardSubsystem                      process_reward()
+  ├─ 역할별 보상 계산                      ├─ reward_scale (×0.01)
+  │  (Strike/Vanguard/Support)            └─ reward_clip (±5.0)
+  ├─ 팀 보상 믹싱 (α=0.2)                       │
+  └─ RewardScale/Clamp                         ▼
+       │                                 PPO Policy Update
+       ▼                                   ├─ Actor: EntityCentricPolicy
+  gRPC → Python env_wrapper                │    (Self-Attention on entity tokens)
+                                           └─ Critic: Dual Value Estimation
+                                                V = α·V_local + (1-α)·V_central
+```
+
+**단계별 흐름:**
+
+1. **C++ 보상 계산:** `DERewardSubsystem`이 매 스텝 역할별 보상(접근, 거점, 전투 등)을 계산하고, 팀 보상 믹싱(80:20)을 적용한 뒤 `RewardScale`/`Clamp`으로 1차 정규화합니다.
+2. **gRPC 전송:** Schola 플러그인이 보상을 gRPC를 통해 Python 환경(`DEEntityCentricEnv`)으로 전달합니다.
+3. **Python 정규화:** `process_reward()`가 `reward_scale=0.01`로 스케일링하고 `±5.0`으로 클리핑하여 PPO 학습 안정성을 확보합니다.
+4. **Dual Critic 평가:** `EntityCentricRLlibModel`의 value function이 학습 가능한 혼합 계수(α, sigmoid 초기값 0.5)를 사용하여 V_local(226-dim 에이전트 관찰 기반 attention critic)과 V_central(71-dim 글로벌 팀 상태 기반 MLP critic)을 결합합니다. 세 역할 정책이 centralized critic을 공유합니다.
+
+
+
+<hr style="border: 0; height: 1px; background: #b3b3b3;">
 
 ## 주요 기능 (Key Features)
 
@@ -91,7 +276,7 @@ DynamicEQS의 주요 클래스는 4가지로, **환경**, **에이전트**, **�
         class="max-w-full"
         caption="Fig 2. 플러그인 계층 구조" >}}
 
-{{< img src="/images/project1/flow2.png"
+{{< img src="/images/project1/flow3.png"
         alt=""
         class="max-w-full"
         caption="Fig 3. 학습/추론 런타임 데이터 플로우" >}}
@@ -122,9 +307,7 @@ DynamicEQS의 주요 클래스는 4가지로, **환경**, **에이전트**, **�
 >}}
 
 
-
-
-```cpp
+{{< code lang="cpp" label="EQS Parameter Injection" width="100%" height="250px" align="right" >}}
 // DynamicEQSExecutor.cpp — EQS 파라미터 주입
 void UDynamicEQSExecutor::ApplyWeightsToRequest(FEnvQueryRequest& Request) const
 {
@@ -136,7 +319,9 @@ void UDynamicEQSExecutor::ApplyWeightsToRequest(FEnvQueryRequest& Request) const
         Request.SetFloatParam(ParamName, Weights[i]);
     }
 }
-```
+{{< /code >}}
+
+
 
 ---
 
@@ -148,8 +333,7 @@ void UDynamicEQSExecutor::ApplyWeightsToRequest(FEnvQueryRequest& Request) const
 
 플러그인이 게임 모듈에 대한 **컴파일 타임 의존성**을 가지면 다른 프로젝트에서 재사용이 불가능해지므로, 런타임 타입 정보를 보존하면서 모듈 간 의존성을 끊는 방법이 필요했습니다. `void*`는 타입 안전성이 없고, 인터페이스 패턴(`IExternalContext`)은 게임 측에 구현을 강제하여 플러그인 자체의 독립성을 훼손합니다. UE5의 `FInstancedStruct`는 USTRUCT 메타데이터를 보존하면서 불투명 저장이 가능해 이 요구사항에 부합했습니다.
 
-```cpp
-// DynamicEQSAgentComponent.h — 플러그인은 FInstancedStruct만 알고 있음
+{{< code lang="cpp" label="DynamicEQSAgentComponent.h" width="100%" height="250px" align="right" >}}
 UPROPERTY(BlueprintReadWrite)
 FInstancedStruct ExternalParams;  // 어떤 USTRUCT도 저장 가능
 
@@ -158,131 +342,51 @@ const FDEAgentExternalContext* Ctx =
     AgentComponent->ExternalParams.GetPtr<FDEAgentExternalContext>();
 if (Ctx)
     Weights.AssignedBaseProximity = ComputeBaseProximityWeight(Ctx->AssignedBaseIndex);
-```
+{{< /code >}}
 
 이 패턴 덕분에 플러그인은 게임 헤더를 전혀 포함하지 않으며, 다른 프로젝트에서 그대로 재사용할 수 있습니다.
 
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
 
 
-### 2. 관측 공간 및 클래스 조건부 보상 설계 (Class-Conditioned Reward Shaping)
+### 2. MAPPO (Multi-Agent PPO)
 
 
 <div style="margin-top: 40px;"></div>
 
-<font size="4">**관측 공간**</font>
 
+본 프로젝트는 **MAPPO(Multi-Agent PPO)** 를 채택하여 역할별 독립 정책(Actor) 3개(`strike_policy`, `vanguard_policy`, `support_policy`)와 공유 중앙집중식 Critic을 함께 학습합니다.
 
-`FDEObservationV2::ToFlatArray()`가 생성하는 218-dim 엔티티 중심(Entity-Centric) 벡터입니다. 아군·적·거점을 고정 크기 슬롯 토큰으로 인코딩하고, 패딩 마스크를 별도로 제공해 Python MultiheadAttention이 유효 엔티티만 처리하도록 합니다.
-
-<div style="margin-top: 40px;"></div>
-
-#### **에이전트 입력 상태(State) 구성표**
-
-| Index | Dim | 토큰 내용 | 정규화 및 상세 설명 |
-| --- | --- | --- | --- |
-| **[0 : 7]** | 7 | 자신 토큰 | 위치/7500(3) + 속도/600(3) + 체력(1) |
-| **[7 : 71]** | 64 | 아군 토큰 (8×8) | 상대 위치/8000(3) + 체력(1) + 생존 여부(1) + 클래스 원-핫(3) |
-| **[71 : 135]** | 64 | 적 토큰 (8×8) | 상대 위치/8000(3) + 체력(1) + 가시성(1) + 클래스 원-핫(3) |
-| **[135 : 191]** | 56 | 거점 토큰 (8×7) | 상대 위치/15000(2) + 높이/1000(1) + 점유(1) + 점령 진행도(1) + 할당 여부(1) + 전략적 가치(1) |
-| **[191 : 199]** | 8 | 아군 마스크 | 0=유효, 1=패딩 |
-| **[199 : 207]** | 8 | 적 마스크 | 0=유효, 1=패딩 |
-| **[207 : 215]** | 8 | 거점 마스크 | 0=유효, 1=패딩 |
-| **[215 : 218]** | 3 | 클래스 원-핫 | [strike, vanguard, support] |
-| **TOTAL** | **218** |  |  |
-
-
-> **마스크 처리:** Python 정책의 `_safe_mask()`는 모든 슬롯이 패딩일 때 슬롯 0을 강제 언마스크하여 MultiheadAttention의 NaN을 방지합니다. 마스크 임계값은 `> 0.5` (float 비교)로, `0.0=유효 / 1.0=패딩` 의미론을 보존합니다.
-
----
-
+**중앙집중식 Critic (Centralized Critic)** — `CentralizedCritic`은 71-dim 전역 팀 상태(`FDETeamWorldState`: 아군 5명 위치·체력·전략 + 적 5명 위치·신뢰도 + 맵 상태)를 입력받아 팀 전체의 가치를 추정합니다. 개별 에이전트 관측만으로는 알 수 없는 팀-레벨 정보(아군 분포, 전체 거점 점령 상황 등)를 Critic이 직접 참조하므로 Advantage 추정의 분산이 감소합니다.
 
 <div style="margin-top: 40px;"></div>
 
-<font size="4">**보상 구조 개요**</font>
+**Dual Value Estimation** 
+
+각 `EntityCentricRLlibModel`은 로컬 Critic(`V_local`, 226-dim 에이전트 관측)과 중앙 Critic(`V_central`, 71-dim 전역 상태)을 학습 가능한 혼합 계수 α로 결합합니다.
 
 
-> **스트라이크: 원거리 공격의 높은 데미지**
+$$V = \alpha \cdot V_{\text{local}}(\text{agent\_obs}[0:226]) + (1 - \alpha) \cdot V_{\text{central}}(\text{global\_state}[226:297])$$
 
-목표는 원거리에서 높은 데미지를 유지하며 거점을 점령하는 것입니다. 적 거점까지의 거리 감소분에 비례한 접근 보상을 매 스텝 부여하고, 거점 반경 내 진입 시 추가 존재 보너스를 부여합니다. 점령이 완료되면 즉시 `PostCaptureMomentumDuration` 스텝 동안 모멘텀 보너스가 활성화됩니다. 적과 너무 가까운 경우 원거리 역할 이탈 패널티가 부과됩니다.
 
-```cpp
-# Strike reward (per step)
-reward = 0
-if distance_to_target_base decreased:
-    reward += approach_reward * delta_distance
-if agent inside target_base radius:
-    reward += zone_presence_bonus
-if base just captured:
-    activate momentum_bonus for PostCaptureMomentumDuration steps
-    reward += capture_bonus
-if momentum active:
-    reward += momentum_bonus  # encourages moving to next base
-if distance_to_enemy < MinCombatRange:
-    reward -= too_close_enemy_penalty  # ranged: maintain combat distance
-```
+α는 `sigmoid(_value_mix_logit)`로 초기화되며(초기값 0.5), 학습을 통해 각 역할에 최적인 로컬/전역 비중을 자동으로 결정합니다.
 
----
+<div style="margin-top: 50px;"></div>
 
-> **뱅가드: 높은 체력, 근접 공격**
+**Self-Attention의 역할**
 
-목표는 전열에서 근접 전투를 수행하며 거점을 점령하는 것입니다. 적 거점 접근 및 점령 방식은 스트라이크와 동일하게 적용됩니다. 거점 내에서 근접 사거리에 적이 있을 때 추가 근접 보너스(`MeleeRangeBonus`)가 지급되어, 전선을 유지하며 적과 밀착하는 행동을 강화합니다.
+Actor의 인코더에서 아군·적·거점 각 엔티티 그룹에 Intra-Set Self-Attention을 적용합니다(Zambaldi et al., 2018). 엔티티 토큰들이 서로를 참조하여 **"슬롯 3과 슬롯 5가 같은 거점 근처에 집결"** 같은 집합 내 공간 관계를 학습합니다. 이 문맥화된 표현이 이후 Cross-Attention의 입력으로 사용됩니다.
 
-```cpp
-# Vanguard reward (per step)
-reward = 0
-if distance_to_target_base decreased:
-    reward += approach_reward * delta_distance
-if agent inside target_base radius:
-    reward += zone_presence_bonus
-    if enemy within melee range:
-        reward += melee_range_bonus  # frontline tank: reward close engagement
-if base just captured:
-    activate momentum_bonus for PostCaptureMomentumDuration steps
-    reward += capture_bonus
-if momentum active:
-    reward += momentum_bonus
-```
+<div style="margin-top: 50px;"></div>
 
----
+**Cross-Attention의 역할**
 
-> **지원: 후방 힐링**
+Self Token(자신 관측 7-dim의 임베딩)이 Query가 되고, Self-Attention을 거친 아군·적·거점 토큰이 Key/Value가 됩니다. Cross-Attention은 **"현재 나의 상태에서 각 엔티티가 얼마나 중요한가"** 를 가중합으로 집약하여 행동(EQS 가중치 7-dim)을 결정합니다.
 
-목표는 데미지를 많이 받은 아군을 추적하고 힐링하며 후방을 유지하는 것입니다. 매 스텝 부상 아군 탐색을 수행하되, 잦은 타겟 전환으로 인한 진동 행동을 막기 위해 5스텝 캐시를 적용합니다. 캐시된 아군이 현재 가장 낮은 체력이 아니더라도 5스텝이 지나기 전까지는 교체하지 않습니다. 아군 뒤편에 위치하면 후방 포지셔닝 보너스를 받으며, 아군이 부상 중인 상황에서 직접 킬을 시도하면 역할 이탈 패널티가 부과됩니다.
 
-```cpp
-# Support reward (per step)
-reward = 0
-if staleness_counter >= 5 or no cached_target:
-    cached_target = ally with lowest health
-    staleness_counter = 0
-else:
-    staleness_counter++
 
-if distance_to_cached_target decreased:
-    reward += approach_reward * delta_distance
-if heal applied to ally:
-    reward += heal_reward * heal_amount
-if agent positioned behind cached_target (rear arc):
-    reward += rear_positioning_bonus
-if cached_target.health < threshold and agent attempted kill:
-    reward -= role_deviation_penalty
-```
-
----
-
-<div style="margin-top: 40px;"></div>
-
-<font size="4">**PPO 알고리즘 선택 근거**</font>
-
-본 프로젝트는 PPO(Proximal Policy Optimization)를 사용하며, 역할별로 독립된 3개의 정책 인스턴스(`strike_policy`, `vanguard_policy`, `support_policy`)를 학습합니다. RLlib의 `policy_mapping_fn`이 에이전트의 클래스 인덱스에 따라 해당 정책으로 라우팅합니다.
-
-PPO를 선택한 핵심 이유는 **셀프플레이 환경에서의 정책 안정성**입니다. 상대 팀이 동일한 정책을 공유하므로 매 업데이트마다 환경의 분포 자체가 이동(non-stationarity)합니다. PPO의 클리핑 메커니즘(`clip_param=0.2`)과 KL 페널티(`kl_target=0.01`)가 이 분포 이동 하에서 정책의 급격한 붕괴를 방지합니다. SAC 등 off-policy 알고리즘은 리플레이 버퍼의 과거 데이터가 현재 상대 정책과 일치하지 않아 학습이 불안정해지는 문제가 있습니다.
-
-MAPPO(Multi-Agent PPO)는 모든 에이전트의 관측을 결합한 중앙집중식 Critic을 사용하는데, 본 프로젝트의 RLlib 기반 파이프라인은 역할별로 독립된 정책 인스턴스(`PolicySpec`)를 생성하고, 각 정책이 자체 Actor-Critic을 보유하는 구조입니다. MAPPO의 중앙집중식 Critic을 도입하려면 RLlib의 `TorchModelV2` 래퍼를 대폭 수정하여 모든 에이전트 관측을 Value Function에 전달하는 커스텀 파이프라인을 구축해야 합니다. 역할별 정책 분리가 주는 전략 특화 학습의 이점과 구현 복잡도를 고려하여 표준 PPO를 선택했습니다.
-
-```python
-# train.py — 역할별 독립 정책 라우팅
+{{< code lang="python" label="train.py" width="100%" height="250px" align="right" >}}
+# 역할별 독립 정책 라우팅
 STRATEGY_POLICY_NAMES = {0: "strike_policy", 1: "vanguard_policy", 2: "support_policy"}
 
 config = config.multi_agent(
@@ -293,128 +397,95 @@ config = config.multi_agent(
     policy_mapping_fn=_policy_mapping_fn,  # agent_id → class → policy
     count_steps_by="agent_steps",
 )
-```
+{{< /code >}}
 
 
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
 
 
 
-### 3. 듀얼 모드 아키텍처 (Dual-Mode Architecture)
 
-모든 주요 컴포넌트는 단일 UE5 바이너리 내에서 **학습 모드(Training)** 와 **추론 모드(Inference)** 를 동시에 지원하도록 설계했습니다. 학습이 끝난 ONNX 모델을 별도의 빌드 없이 동일한 UE5 환경에서 즉시 실행하고 검증할 수 있습니다.
+<font size="4">**평가 모드 (Evaluation Mode)**</font>
 
-<div style="margin-top: 40px;"></div>
-
-<font size="4">**핵심 설계: `UDynamicEQSAgentComponent`**</font>
-
-
-에이전트 컴포넌트 `UDynamicEQSAgentComponent`가 두 모드를 하나의 인터페이스로 추상화합니다. `AgentMode` 프로퍼티 하나로 행동 파이프라인 전체가 분기됩니다.
-
+학습 중 저장된 체크포인트의 성능을 ScriptedAI 대전을 통해 정량적으로 검증하는 **Live Evaluation** 파이프라인(`eval_live.py`)입니다.
 
 <div style="margin-top: 40px;"></div>
 
-<font size="4">**모드 비교**</font>
+<font size="4">**구조 개요**</font>
 
 
-| 항목 | Training Mode | Inference Mode |
-|---|---|---|
-| **정책 실행 주체** | Python RLlib (gRPC) | UE5 내장 ONNX (NNE) |
-| **스테퍼** | `GymConnector` (Schola 통신 루프) | `USimpleStepper` (TickComponent) |
-| **EQS 실행** | `EQS Executor` | `EQS Executor` |
-| **보상 계산** | `UDERewardSubsystem` 매 스텝 | 없음 |
-| **에피소드 관리** | Schola `AutoResetType::SAME_STEP` | 레벨 재시작 |
-| **ONNX 추론 레이턴시** | N/A (Python 측 실행) | < 2ms (60fps 프레임 버짓 16.6ms의 12%) |
+학습 중 저장된 체크포인트 성능을 ScriptedAI 대전으로 정량 검증하는
+`eval_live.py` 파이프라인입니다. 
 
+UE5에 2개의 서브 환경을 동시 연결하여 두 개의 체크포인트(`best`, `latest`)를 병렬로 평가합니다. 에피소드 결과를 `win / loss / draw / timeout`으로 분류하고, 50회 에피소드 기준 승률을 `eval_results_<timestamp>.json`으로 저장합니다.
 
-<div style="margin-top: 40px;"></div>
-
-<font size="4">**모드별 실행 분기: `BeginPlay` & `PerformTacticalAction()`**</font>
-
-
-```cpp
-// DynamicEQSAgentComponent.cpp — BeginPlay에서 모드 분기
-void UDynamicEQSAgentComponent::BeginPlay()
-{
-    Super::BeginPlay();
-    if (AgentMode == EDynamicEQSAgentMode::Inference)
-    {
-        // ONNX 정책 초기화 후 SimpleStepper 생성
-        Stepper = NewObject<USimpleStepper>(this);
-        Stepper->Init({this}, InferencePolicyObject);
-    }
-    // Training 모드: Schola GymConnector가 외부에서 Observe/Act 호출
-}
-
-// DynamicEQSAgentComponent.cpp — TickComponent (Inference only)
-void UDynamicEQSAgentComponent::TickComponent(...)
-{
-    Super::TickComponent(...);
-    if (AgentMode == EDynamicEQSAgentMode::Inference && Stepper)
-        Stepper->Step();  // Observe → ONNX Infer → Act
-}
-```
-
-```cpp
-// ADECharacter::PerformTacticalAction() — EQS 실행 방식 분기
-void ADECharacter::PerformTacticalAction()
-{
-    if (ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training)
-    {
-        // Training: 동기 EQS (Schola 스텝 버짓 내에서 즉시 완료)
-        FVector BestLoc;
-        EQSExecutor->ExecuteQuerySynchronous(CurrentEQSWeights, BestLoc);
-        AIController->MoveToLocation(BestLoc);
-    }
-    else
-    {
-        // Inference: Blackboard 경유 비동기 EQS → BTTask_DEMoveToEQSLocation
-        EQSExecutor->ExecuteQuery(CurrentEQSWeights,
-            [this](FVector BestLoc){ WriteWeightsToBB(BestLoc); });
-    }
-}
-```
-
-<div style="margin-top: 40px;"></div>
+Ray 런타임 없이 `policy_state.pkl`에서 Actor 가중치만 추출하여
+CPU 추론으로 즉시 실행 가능하도록 설계했습니다.
 
 
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
 
 
-### 4. 학습 결과 (Training Results)
 
-총 2.4M(240만) 타임스텝에 걸쳐 PPO 기반 셀프플레이 학습을 수행했습니다.
+### 3. AWS 병렬 학습 환경 (AWS Parallel Training Environment)
 
-{{< img src="/images/project1/reward.png"
+로컬 단일 UE5 인스턴스의 한계를 넘어 클라우드 병렬 환경으로 확장하기 위해
+AWS 기반 분산 학습 파이프라인을 구축했습니다. UE5와 학습 스크립트를 Linux
+컨테이너로 패키징하고, Ray Autoscaler로 EC2 클러스터를 동적으로 관리합니다.
+
+---
+
+<font size="4">**전체 인프라 구성**</font>
+
+{{< img src="/images/project1/aws_architecture.png"
         alt=""
-        class="max-w-3xl"
-        caption="Fig 7. reward" >}}
-
-{{< img src="/images/project1/value.png"
-        alt=""
-        class="max-w-3xl"
-        caption="Fig 8. vf explained, entropy, kl" >}}
-
-{{< img src="/images/project1/loss.png"
-        alt=""
-        class="max-w-3xl"
-        caption="Fig 9. loss" >}}
+        class="max-w-full"
+        caption="Fig 10. AWS 병렬 학습 인프라 전체 구성도" >}}
 
 
-<div style="margin-top: 40px;"></div>
+---
 
-<font size="4">**핵심 수치 요약**</font>
+<font size="4">**인프라 구성**</font>
 
-| 지표 | 값 | 의미 |
-|---|---|---|
-| **episode_reward_mean** | 0 → 60,000 수렴 | min 보상 동반 상승 — 최악 시나리오에서도 안정적 성능 |
-| **vf/explained_var** | 0.87 | Critic이 미래 보상의 87%를 설명 — 높은 상태 가치 예측력 |
-| **kl/value** | 낮고 안정 | 정책 업데이트가 신뢰 영역 내에서 제어됨 |
-| **entropy** | 0.01 → 0.0005 감소 | 탐험→활용 전환 확인 (스케줄 기반) |
-| **losses/vf_loss** | 우상향 | 보상 스케일 증가(0→60K)에 따른 타겟 범위 확대 효과. explained_var 0.87로 Critic 성능은 정상 |
+| 컴포넌트 | 역할 |
+|---|---|
+| **Amazon ECR** | 학습 Docker 이미지 레지스트리 — 모든 노드가 동일 이미지를 Pull하여 환경 일관성 보장 |
+| **EC2 Ray 클러스터** | Head(GPU, g4dn.xlarge) + Worker(CPU Spot, c5.2xlarge×4) 혼합 구성 |
+| **Amazon S3** | 체크포인트 영구 저장 — s3fs FUSE 마운트로 노드 간 공유 |
+| **W&B** | 이터레이션별 보상·승률·손실 지표 실시간 모니터링 |
 
-**조기 종료 판단:** lr 스케줄러가 0에 도달하고 reward가 평탄화(plateau)에 진입한 2.4M 스텝에서 학습을 종료했습니다.
+Terraform으로 VPC·IAM·보안 그룹을 프로비저닝하고, Ray Autoscaler가
+학습 부하에 따라 Worker 수를 자동 조절합니다.
 
+---
+
+<font size="4">**클러스터 설계 의도**</font>
+
+Head 노드(GPU)는 정책 gradient 업데이트를, Worker 노드(CPU Spot)는
+UE5 헤드리스 인스턴스 구동 및 롤아웃 수집을 전담합니다.
+Worker를 Spot 인스턴스로 구성한 이유는 롤아웃 수집은 중단·재시작이
+가능한 stateless 작업이기 때문입니다. Spot 중단 시 Ray Autoscaler가
+자동으로 새 Worker를 기동하여 학습이 중단되지 않으며,
+`idle_timeout_minutes: 10` 설정으로 유휴 Worker를 자동 종료해
+비용을 절감합니다.
+
+UE5는 기본적으로 디스플레이가 필요하므로, 클라우드 헤드리스 환경에서
+구동하기 위해 Dockerfile에 가상 프레임버퍼(Xvfb)를 설정했습니다.
+보안 강화를 위해 비루트 사용자(UID 1000)로 실행하고,
+S3 자격증명은 정적 키 대신 IAM Role 기반으로 처리했습니다.
+
+---
+
+<font size="4">**학습 사이클 요약**</font>
+
+1. Docker 이미지 빌드 → ECR Push
+2. Ray 클러스터 기동 (`ray up`) → 학습 스크립트 제출
+3. Worker 4개가 병렬로 UE5 롤아웃 수집 → `train_batch_size=4096` 배치 구성
+4. Head GPU에서 PPO gradient 업데이트 → 10 이터레이션마다 S3 체크포인트 동기화
+5. 신규 최고 승률 달성 시 `best/` 경로에 즉시 추가 동기화
+
+`ray down` 시 모든 인스턴스가 즉시 종료되며, S3 체크포인트는 유지되어
+재기동 시 이어서 학습할 수 있습니다.
 
 
 <hr style="border: 0; height: 1px; background: #b3b3b3;">
@@ -424,10 +495,10 @@ void ADECharacter::PerformTacticalAction()
 
 ### Problem 1: 멀티 에이전트 강화학습 환경(Schola + RLlib)에서의 에이전트 개별 사망 처리 결함
 
-{{< img src="/images/project1/problem2.png"
+{{< img src="/images/project1/problem1.png"
         alt=""
         class="max-w-full"
-        caption="Fig 5. 프리징 현상의 원인과 해결" >}}
+        caption="Fig 14. 프리징 현상의 원인과 해결" >}}
 
 **에피소드 멈춤(Episode Freeze)**: 특정 에이전트가 먼저 사망할 경우, RLlib은 해당 에이전트의 액션을 전송하지 않지만 Unreal Engine Schola는 모든 에이전트의 액션을 기다리며 대기 상태에 빠지는 통신 불일치 발생했습니다.
 
@@ -437,7 +508,9 @@ void ADECharacter::PerformTacticalAction()
 
 ---
 
-<font size="4">**원인 분석: 두 종료 시스템의 충돌**</font>
+<font size="4">**Cause**</font>
+
+**두 종료 시스템의 충돌**
 
 Schola 측(`AutoResetType::SAME_STEP`)과 Python 측(RLlib) 사이에 에피소드 종료 신호가 서로 모순되는 상태였습니다.
 
@@ -479,7 +552,7 @@ C++ (Unreal Plugin):
 
 * 데이터 무결성: 보상 체계에서의 NaN 발생 및 Trajectory 누수 차단 확인.
 
-* 관련 문제 Schola OpenSource에 PR 완료.
+* 관련 문제 Schola 오픈소스에 PR 제출.
 
 {{< img src="/images/project1/pr.png"
         alt=""
@@ -493,14 +566,22 @@ C++ (Unreal Plugin):
 
 ### Problem 2: 엔티티 간 관계 정보 손실
 
+{{< img src="/images/project1/problem2.png"
+        alt=""
+        class="max-w-full"
+        caption="Fig 15. 엔티티 관계 정보 손실과 어텐션 도입을 통한 해결" >}}
 
-학습된 정책이 "적 2명이 같은 거점에 집결" 같은 엔티티 간 공간 패턴을 인식하지 못하는 문제가 관찰되었습니다. 에이전트가 아군이 이미 점령 중인 거점에 중복 배치되는 비효율이 반복되었고, `CoOccupationPenalty`(-0.5/step)만으로는 이 행동이 충분히 억제되지 않았습니다.
 
+학습된 정책이 "적 2명이 같은 거점에 집결" 같은 엔티티 간 공간 패턴을 인식하지 못하는 문제가 관찰되었습니다. 에이전트가 아군이 이미 점령 중인 거점에 중복 배치되는 비효율이 반복되었고, 보상 구조만으로는 이 현상을 충분히 정의하기 어려웠습니다.
 
-<font size="4">**원인 분석: 두 종료 시스템의 충돌**</font>
+---
+
+<font size="4">**Cause**</font>
+
 
 218-dim 관측 벡터에서 각 엔티티 슬롯은 선형 인코더(`nn.Linear`)를 통해 독립적으로 임베딩됩니다. 이후 Self Token이 Cross-Attention으로 엔티티 집합을 조회하지만, Query가 Self Token 1개이므로 **엔티티 간 상대적 관계**(밀집도, 협공 패턴, 동일 거점 중복)는 Attention weight에 반영되지 않습니다. Cross-Attention의 출력은 "각 엔티티가 Self에게 얼마나 중요한가"의 가중합이지, "엔티티들이 서로 어떤 관계인가"의 정보는 아닙니다.
 
+---
 
 <font size="4">**Solution**</font>
 
@@ -508,9 +589,9 @@ C++ (Unreal Plugin):
 
 각 엔티티 그룹(아군 / 적 / 거점)에 대해, Cross-Attention 이전에 **Self-Attention 레이어**를 삽입하여 엔티티들이 서로를 참조하도록 했습니다. Self-Attention을 거친 엔티티 토큰은 "나와 같은 거점 근처에 있는 아군이 2명이다"와 같은 문맥 정보를 내포하게 되며, 이후 Cross-Attention에서 Self Token이 이 **문맥화된** 엔티티 정보를 집약합니다.
 
-```python
-# policy.py — Relational Self-Attention 파이프라인 (아군 그룹 예시)
 
+
+{{< code lang="python" label="policy.py — Relational Self-Attention pipeline" width="100%" height="250px" align="right" >}}
 # 1. 선형 인코딩: 원본 특성 → hidden 차원
 a_enc = self.ally_enc(allies)                  # (B, 8, 64)
 
@@ -525,16 +606,20 @@ a_enc = self.ally_ln(a_enc + a_rel)            # (B, 8, 64)
 # 4. Cross-Attention: Self Token이 문맥화된 아군 정보를 집약
 a_ctx, _ = self.ally_attn(q, a_enc, a_enc,
                           key_padding_mask=ally_mask)  # (B, 1, 64)
-```
+{{< /code >}}
+
+
 
 **패딩 마스크 처리**: C++ 관측 레이아웃의 `0=유효, 1=패딩` 마스크를 Self-Attention과 Cross-Attention 양쪽에 동일하게 적용합니다. `_safe_mask()`가 모든 슬롯이 패딩인 경우 슬롯 0을 강제 언마스크하여 NaN을 방지합니다. C++ 측 수정 없이 Python 정책만으로 완결됩니다.
 
-```python
-# policy.py — 안전한 마스크 처리
+
+
+{{< code lang="python" label="policy.py — safe mask" width="100%" height="150px" align="right" >}}
 def _safe_mask(m: torch.Tensor) -> torch.Tensor:
     all_masked = m.all(dim=1, keepdim=True)   # (B, 1)
     return m & ~all_masked                     # 모든 슬롯 패딩 시 슬롯 0 언마스크
-```
+{{< /code >}}
+
 
 **설계 제약과 Trade-off**
 
@@ -555,6 +640,11 @@ def _safe_mask(m: torch.Tensor) -> torch.Tensor:
 
 
 ### Problem 3: 스텝 속도와 에이전트 이동 간의 타이밍 불일치
+
+{{< img src="/images/project1/problem3.png"
+        alt=""
+        class="max-w-full"
+        caption="Fig 16. 스로틀링 제어" >}}
 
 학습 환경에서 `AGymConnectorManager`의 `Tick()`이 매 프레임(60Hz+) `Connector->Step()`을 호출하여, EQS 이동이 완료되기 전에 다음 스텝이 실행되는 문제가 발생했습니다. 에이전트가 목적지에 도달하기 전에 새로운 EQS 목표 위치가 덮어써지면서 이동이 취소되어 목표 지점에 도달하지 못한 채 관측이 수집되면서 학습 데이터의 품질이 저하되었습니다.
 
@@ -580,25 +670,28 @@ AGymConnectorManager::Tick()
            └─ SubmitState()                    ← 관측·보상 Python으로 전송
 ```
 
-`UAbstractGymConnector::Step()`은 Python과의 전체 한 사이클을 원자적으로 처리하며, 내부에서 `ResolveEnvironmentStateUpdate()`가 gRPC 응답을 블로킹 대기합니다. 따라서 **스텝 호출 빈도를 제어하는 유일한 지점**은 `Step()`을 직접 호출하는 `AGymConnectorManager::Tick()`입니다. 커넥터 내부 구현을 수정하지 않고 오직 `Tick()` 오버라이드만으로 스텝 속도를 외부에서 제어할 수 있다고 생각했습니다.
+`UAbstractGymConnector::Step()`은 Python과의 전체 한 사이클을 원자적으로 처리하며, 내부에서 `ResolveEnvironmentStateUpdate()`가 gRPC 응답을 블로킹 대기합니다. 따라서 **스텝 호출 빈도를 제어하는 유일한 지점**은 `Step()`을 직접 호출하는 `AGymConnectorManager::Tick()`입니다. 커넥터 내부 구현을 수정하지 않고 오직 `Tick()` 오버라이드만으로 스텝 속도를 외부에서 제어할 수 있다고 판단했습니다.
 
 ---
 
 **`ADEGymConnectorManager` 구현**
 
-`AGymConnectorManager`를 상속하는 커스텀 클래스 `ADEGymConnectorManager`를 작성하고, `AGymConnectorManager::Tick()` 대신 `AActor::Tick()`를 직접 호출하여 `Connector->Step()` 호출 빈도를 `StepInterval` 변수로 제어합니다.
+`AGymConnectorManager`를 상속하는 커스텀 클래스 `ADEGymConnectorManager`를 구현하고, `AGymConnectorManager::Tick()` 대신 `AActor::Tick()`를 직접 호출하여 `Connector->Step()` 호출 빈도를 `StepInterval` 변수로 제어합니다.
 
-```cpp
-// DEGymConnectorManager.h — 에디터에서 스텝 간격 조정 가능
+
+{{< code lang="cpp" label="ADEGymConnectorManager.h" width="100%" height="150px" align="right" >}}
+// 에디터에서 스텝 간격 조정 가능
 UPROPERTY(EditAnywhere, Category = "Schola|Throttling",
     meta = (ClampMin = "0.01", ClampMax = "10.0"))
 float StepInterval = 0.3f;  // 초 단위, 기본 2Hz
-```
+{{< /code >}}
+
+
 
 `StepInterval = 0.3s`는 EQS 48샘플 쿼리 소요 시간(~5ms) + NavMesh 경로 계산(~2ms) + 에이전트 이동 거리(최대 탐색 반경 600cm, 이동 속도 600cm/s 기준 ~1초)를 고려한 값입니다. 에이전트가 목적지까지 충분히 이동한 후 관측이 수집되는 최소 주기를 프로파일링하여 결정했습니다.
 
-```cpp
-// DEGymConnectorManager.cpp — Tick 스로틀링 구현
+
+{{< code lang="cpp" label="ADEGymConnectorManager.cpp — Implementation of Tick throttling" width="100%" height="250px" align="right" >}}
 void ADEGymConnectorManager::Tick(float DeltaTime)
 {
     // AGymConnectorManager::Tick 우회 — 직접 매 프레임 Step 호출 방지
@@ -626,7 +719,9 @@ void ADEGymConnectorManager::Tick(float DeltaTime)
         }
     }
 }
-```
+{{< /code >}}
+
+
 
 에디터 내 `BP_GymConnectorManager`의 부모 클래스를 `ADEGymConnectorManager`로 변경하는 것만으로 적용이 완료됩니다. `StepInterval`을 에디터 디테일 패널에서 값을 직접 조정할 수 있어 재빌드 없이 타이밍을 튜닝할 수 있습니다.
 
@@ -641,8 +736,39 @@ void ADEGymConnectorManager::Tick(float DeltaTime)
 
 
 
-
----
-
 ## 결과 (Results)
 
+<font size="4">**학습 결과**</font>
+
+
+총 2.5M(250만) 타임스텝에 걸쳐 MAPPO 기반 ScriptedAI 대전 학습을 수행했습니다.
+
+{{< img src="/images/project1/result_reward.png"
+        alt=""
+        class="max-w-3xl"
+        caption="Fig 7. reward" >}}
+
+{{< img src="/images/project1/result_vf.png"
+        alt=""
+        class="max-w-3xl"
+        caption="Fig 8. vf explained" >}}
+
+{{< img src="/images/project1/result_entropy.png"
+        alt=""
+        class="max-w-3xl"
+        caption="Fig 9. entropy" >}}
+
+
+<div style="margin-top: 40px;"></div>
+
+<font size="4">**핵심 수치 요약**</font>
+
+| 지표 | 값 | 의미 |
+|---|---|---|
+| **episode_mean** | 0 → 30, 14 수렴 |
+| **vf/explained_var** | 0.8 이상 | Critic이 미래 보상의 80% 이상을 설명 — 높은 상태 가치 예측력 |
+| **entropy** | 초기 상승 후 하락 중 | 탐험→활용 전환 확인 |
+
+**학습 종료 판단:** lr 스케줄러가 0에 도달하고 reward가 plateau에 진입한 2.5M 스텝에서 학습을 종료했습니다.
+
+<div style="margin-top: 40px;"></div>

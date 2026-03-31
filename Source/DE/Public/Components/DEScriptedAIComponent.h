@@ -37,10 +37,9 @@ enum class EScriptedAIState : uint8
  *
  * Features:
  *  - Per-class (Strike/Vanguard/Support) hardcoded weight profiles
- *  - 3 difficulty tiers (Random → Directed → Full)
+ *  - 4 difficulty tiers (0=Random, 1=Directed, 2=Full, 3=Expert)
  *  - Per-episode weight noise (±0.1) for robustness
  *  - Lightweight state machine (Patrol→Approach→Engage→Retreat)
- *  - Tier auto-progression via JSON config written by train.py
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class DE_API UDEScriptedAIComponent : public UActorComponent
@@ -57,17 +56,13 @@ public:
 	// Difficulty Tier System
 	//========================================
 
-	/** Set the difficulty tier (0=Random, 1=Directed, 2=Full) */
+	/** Set the difficulty tier (0=Random, 1=Directed, 2=Full, 3=Expert) */
 	UFUNCTION(BlueprintCallable, Category = "ScriptedAI")
 	void SetDifficultyTier(int32 Tier);
 
 	/** Get current difficulty tier */
 	UFUNCTION(BlueprintPure, Category = "ScriptedAI")
 	int32 GetDifficultyTier() const { return CurrentTier; }
-
-	/** Read difficulty_tier from <ProjectDir>/scripted_ai_config.json (written by train.py) */
-	UFUNCTION(BlueprintCallable, Category = "ScriptedAI")
-	void LoadTierFromConfig();
 
 	/** Get the scripted EQS weights for a given class at the current tier + state */
 	FDEEQSWeightParameters GetScriptedWeights(EDEClassType Class) const;
@@ -83,7 +78,7 @@ public:
 	EScriptedAIState GetAIState() const { return CurrentState; }
 
 protected:
-	/** Current difficulty tier */
+	/** Current difficulty tier (set in editor: 0=Random, 1=Directed, 2=Full, 3=Expert) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI")
 	int32 CurrentTier = 0;
 
@@ -115,6 +110,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI|StateMachine")
 	float RecoverHealthThreshold = 0.60f;
 
+	//========================================
+	// Support Follow Configuration
+	//========================================
+
+	/** Desired follow distance for Support agents — stops issuing MoveToActor within this range */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI|Support")
+	float SupportFollowDistance = 400.0f;
+
+	/** How often (seconds) Support re-picks a random follow ally at Tier 1 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ScriptedAI|Support")
+	float SupportFollowRepickInterval = 5.0f;
+
 private:
 	/** Cached owning agent */
 	TWeakObjectPtr<ADEAgent> OwnerAgent;
@@ -145,4 +152,29 @@ private:
 
 	/** Returns true if any enemy pawn is within Radius of the owning agent */
 	bool IsEnemyWithinRange(float Radius) const;
+
+	//========================================
+	// Support Follow Behavior (Tier 1+)
+	//========================================
+
+	/** Find a random alive non-Support ally on the same team (Tier 1: initial follow target) */
+	ADEAgent* PickRandomNonSupportAlly() const;
+
+	/** Find the alive ally with the lowest health percentage (Tier 2+: heal follow target) */
+	ADEAgent* FindMostInjuredAlly() const;
+
+	/** Re-evaluate SupportFollowTarget based on current tier */
+	void UpdateSupportFollowTarget();
+
+	/**
+	 * For Support agents at Tier 1+: override EQS movement with a direct MoveToActor
+	 * toward SupportFollowTarget, stopping at SupportFollowDistance.
+	 */
+	void UpdateSupportMovement();
+
+	/** Tracked follow target for Support (Tier 1: random ally, Tier 2+: most injured ally) */
+	TWeakObjectPtr<ADEAgent> SupportFollowTarget;
+
+	/** Countdown until Support re-picks a new random follow ally (Tier 1) */
+	float SupportFollowRepickTimer = 0.0f;
 };

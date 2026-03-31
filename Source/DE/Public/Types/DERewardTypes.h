@@ -62,9 +62,6 @@ struct FDERewardState
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TArray<FDERewardEvent> EventLog;
 
-    int32 PostCaptureMomentumStepsRemaining = 0;
-    FVector LastCapturedPointLocation = FVector::ZeroVector;
-    int32 StrikeZoneStepsAfterCapture = 0;
     int32 CachedInjuredAllyIdx = -1;
     int32 InjuredAllyStalenessCounter = 0;
 
@@ -72,24 +69,31 @@ struct FDERewardState
     float LastCaptureLossPenaltyTime;
 
     bool bSparseKillFiredThisStep = false;
+    /** Set by Strike range check; consumed by CalculateKillReward to halve close-range kills. */
     bool bWasTooCloseAtKill = false;
     bool bInFriendlyZone = false;
     float LastIndividualStepReward = 0.0f;
     int32 IsolatedConsecutiveSteps = 0;
 
-    /** Set to true the first time the agent reaches its AssignedBase (prevents repeat reward). */
-    bool bHasReachedAssignedBase = false;
-
     /** Per-ally accumulated recent damage tracker for Support targeting (decayed each step). */
     TArray<float> AllyAccumulatedDamage;
+
+    /** True when no non-Support allies are alive; Support falls back to following other Supports. */
+    bool bFallbackToSupportTarget = false;
+
+    /** Consecutive steps the agent has failed to approach any non-friendly objective. */
+    int32 StagnationSteps = 0;
+
+    /** Consecutive steps the agent has spent loitering on a friendly (already-captured) point. */
+    int32 FriendlyZoneLoiterSteps = 0;
+
+    /** Consecutive steps the agent has spent loitering inside their own spawn base. */
+    int32 BaseLoiterSteps = 0;
 
     void Reset()
     {
         CumulativeReward = 0.0f;
         EventLog.Empty();
-        PostCaptureMomentumStepsRemaining = 0;
-        LastCapturedPointLocation = FVector::ZeroVector;
-        StrikeZoneStepsAfterCapture = 0;
         CachedInjuredAllyIdx = -1;
         InjuredAllyStalenessCounter = 0;
         LastCaptureLossPenaltyTime = 0;
@@ -98,8 +102,11 @@ struct FDERewardState
         bInFriendlyZone = false;
         LastIndividualStepReward = 0.0f;
         IsolatedConsecutiveSteps = 0;
-        bHasReachedAssignedBase = false;
         AllyAccumulatedDamage.Init(0.0f, 4);
+        bFallbackToSupportTarget = false;
+        StagnationSteps = 0;
+        FriendlyZoneLoiterSteps = 0;
+        BaseLoiterSteps = 0;
     }
 };
 

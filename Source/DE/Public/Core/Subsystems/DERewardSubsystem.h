@@ -63,18 +63,6 @@ public:
         const FDEEQSWeightParameters& Action,
         ADEMatchManager* MatchManager = nullptr);
 
-    /**
-     * Compute cooperative base occupation shaping reward.
-     * Adds spread incentive and penalises stacking / unvanguarded bases.
-     * Must be called inside ComputeStepReward() before clamping.
-     *
-     * @param Agent       The agent being evaluated
-     * @param InOutState  Agent reward state (HasReachedAssignedBase flag stored here)
-     * @param Class    The current class of the agent (Strike, Vanguard, Support)
-     * @return            Shaped reward value (not yet scaled by GlobalRewardScale)
-     */
-    float ComputeBaseCooperationReward(ADEAgent* Agent, FDERewardState& InOutState, EDEClassType Class);
-
     float GetClassScale(EDEClassType Class, float StrikeScale, float VanguardScale, float SupportScale) const;
     float DrainSparseReward(FDERewardState& InOutState, int32 AgentID);
 

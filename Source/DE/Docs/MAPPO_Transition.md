@@ -193,19 +193,21 @@ Add a MAPPO-specific validation test to `run_validation()` in `train.py`:
 
 ---
 
-## 4. Summary of Changes by File
+## 4. Summary of Changes by File (Implemented)
 
 | File | Change | Scope |
 |---|---|---|
-| `AI/Training/TeamDataCollector` (C++) | Broadcast `FTeamWorldState` via Schola info channel | New feature |
-| `env_wrapper.py` | Extract global state from info, append to agent obs (226→296) | Moderate |
-| `policy.py` | Add `CentralizedCritic(state_dim=70)` | Small addition |
-| `train.py` | Share `CentralizedCritic` across policies; slice obs in `forward()` / `value_function()` | Moderate |
-| `train.py` (validate) | Add MAPPO critic shape + weight-sharing tests | Small |
+| `DETeamWorldState.h` (C++) | Fixed `Reserve(70)` → `Reserve(71)`, added `TENSOR_DIM = 71` constant | Bugfix |
+| `AI/Training/TeamDataCollector` (C++) | Broadcast `FDETeamWorldState` via Schola info channel (key: `"global_state"`) | **TODO** |
+| `env_wrapper.py` | Extract global state from info, append to agent obs (226→297); `AGENT_OBS_DIM=226`, `OBS_DIM=297` | Moderate |
+| `policy.py` | Add `CentralizedCritic(state_dim=71)`, `GLOBAL_STATE_DIM=71`, `MAPPO_OBS_DIM=297` | Small addition |
+| `train.py` | Dual value estimation: `V = α·V_local + (1-α)·V_central` with learnable α; shared critic across 3 policies; TensorBoard logging of α | Moderate |
+| `train.py` (validate) | Tests 11-13: CentralizedCritic shape, MAPPO dim arithmetic, dual value estimation, shared critic identity | Small |
 
-**Actor network (`EntityCentricPolicy`) — no changes required.**
-**RLlib PPO algorithm config — no changes required.**
-**UE5 inference (NNE, ONNX export) — no changes required.**
+**Architecture decisions:**
+- **Dual value heads** — local attention-based critic (256-dim) + centralized MLP critic (71-dim) with learnable mixing α
+- **Three separate policies** retained — Strike/Vanguard/Support have opposing spatial objectives
+- **ONNX export unchanged** — actor input remains 226-dim; global state suffix is stripped
 
 ---
 
@@ -213,7 +215,8 @@ Add a MAPPO-specific validation test to `run_validation()` in `train.py`:
 
 | Risk | Mitigation |
 |---|---|
-| Global state not available in early episodes (pre-reset) | Default to `zeros(70)` in env_wrapper |
-| Shared critic causes gradient interference between roles | Monitor per-role `vf_explained_var`; fall back to 3 role-specific critics if needed |
-| 296-dim obs breaks existing checkpoints | Checkpoints store actor weights only (226-dim input unchanged); restore actor weights, reinitialize critic |
-| Schola gRPC info channel size limit | `FTeamWorldState` is 70 floats = 280 bytes; well within gRPC message limits |
+| Global state not available (C++ broadcast not implemented) | Default to `zeros(71)` in env_wrapper; critic learns on zero input until broadcast is live |
+| Shared critic causes gradient interference between roles | Monitor per-role `vf_explained_var` and `mappo/value_mix_alpha`; fall back to 3 role-specific critics if needed |
+| 297-dim obs breaks existing checkpoints | Checkpoints store actor weights (226-dim input unchanged); restore actor weights, reinitialize critic + mixing param |
+| Mixing α collapses to 0 or 1 | Monitor `value_mix_alpha` in TensorBoard; if it saturates, clamp logit range |
+| Schola gRPC info channel size limit | `FDETeamWorldState` is 71 floats = 284 bytes; well within gRPC message limits |

@@ -121,8 +121,13 @@ void ADEAgent::BeginPlay()
 		StimuliSource->RegisterForSense(TSubclassOf<UAISense_Sight>());
 	}
 
-	// Cache MatchManager reference (avoids per-step GetAllActorsOfClass world scan)
-	CachedMatchManager = FindMatchManagerForEnv();
+	// Cache MatchManager reference.
+	// SpawnAgent() injects it directly via SetCachedMatchManager(); only fall back
+	// to a world scan for pre-placed or standalone agents where no injection occurred.
+	if (!CachedMatchManager)
+	{
+		CachedMatchManager = FindMatchManagerForEnv();
+	}
 
 	// Initialize GAS abilities from data asset
 	InitializeGASAbilities();
@@ -136,11 +141,16 @@ void ADEAgent::BeginPlay()
 
 	if (bIsTraining)
 	{
+		// Timer interval must match the attack fire rate so RL agents shoot
+		// at the same speed as BT (Script AI) agents that check every tick.
+		const float AttackCooldown = (AbilityData && AbilityData->AttackConfig.Speed > 0.0f)
+			? 1.0f / AbilityData->AttackConfig.Speed
+			: 0.15f;
 		GetWorld()->GetTimerManager().SetTimer(
 			TrainingAbilityTimerHandle,
 			this,
 			&ADEAgent::ProcessTrainingAbilities,
-			0.2f,
+			AttackCooldown,
 			true
 		);
 		UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: TrainingAbilityTimer started (active=%s)"),
@@ -281,7 +291,12 @@ void ADEAgent::SetTeamID_Implementation(int32 NewTeamID) { TeamID = NewTeamID; }
 void ADEAgent::SetEnvID_Implementation(int32 NewEnvID)
 {
 	EnvID = NewEnvID;
-	CachedMatchManager = FindMatchManagerForEnv();
+	// Only scan if the injected MM doesn't match (or no MM was injected).
+	// SpawnAgent() injects the correct reference; pre-placed agents still need the scan.
+	if (!CachedMatchManager || CachedMatchManager->GetEnvID() != EnvID)
+	{
+		CachedMatchManager = FindMatchManagerForEnv();
+	}
 }
 
 
@@ -613,15 +628,18 @@ void ADEAgent::ResetCharacter()
 	// Defensive: re-ensure training ability timer is running.
 	// BeginPlay may have missed it if AgentMode was set after initial BeginPlay,
 	// or the timer handle may have been invalidated during episode transition.
-	if (ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training)
+	if ((ScholaAgent && ScholaAgent->AgentMode == EDynamicEQSAgentMode::Training) || bIsScriptedAI)
 	{
 		if (!GetWorld()->GetTimerManager().IsTimerActive(TrainingAbilityTimerHandle))
 		{
+			const float AttackCooldown = (AbilityData && AbilityData->AttackConfig.Speed > 0.0f)
+				? 1.0f / AbilityData->AttackConfig.Speed
+				: 0.15f;
 			GetWorld()->GetTimerManager().SetTimer(
 				TrainingAbilityTimerHandle,
 				this,
 				&ADEAgent::ProcessTrainingAbilities,
-				0.2f,
+				AttackCooldown,
 				true
 			);
 			UE_LOG(LogTemp, Warning, TEXT("[DEAgent] %s: Re-started ProcessTrainingAbilities timer in ResetCharacter"), *GetName());
@@ -745,7 +763,17 @@ void ADEAgent::SetCommandedClass(EDEClassType NewClass)
 	{
 		ScholaAgent->UpdateCommandedClass(NewClass);
 	}
+	else if (bIsScriptedAI)
+	{
+		ScriptedClassOverride = NewClass;
+	}
 
+	ApplyClassAppearance(NewClass);
+}
+
+void ADEAgent::SetCommandedClassDirect(EDEClassType NewClass)
+{
+	ScriptedClassOverride = NewClass;
 	ApplyClassAppearance(NewClass);
 }
 
@@ -823,9 +851,7 @@ EDEClassType ADEAgent::GetCommandedClass() const
 {
 	if (!ScholaAgent)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[DEAgent] Schola Agent has null"));
-
-		return EDEClassType::Strike;
+		return ScriptedClassOverride;
 	}
 
 	return ScholaAgent->GetCommandedClass();
@@ -892,19 +918,87 @@ void ADEAgent::ResetStepDamage() { if (CombatStats) CombatStats->ResetStepDamage
 
 void ADEAgent::ProcessTrainingAbilities()
 {
-	if (!bIsAlive || !AbilitySystemComponent) return;
+	if (!bIsAlive)
+	{
+		return;
+	}
+	if (!AbilitySystemComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[DEAgent:%s] ProcessTrainingAbilities skipped: no ASC"), *GetName());
+		return;
+	}
 
-	// Activate attack ability via GAS tag
-	FGameplayTagContainer AttackTag;
-	AttackTag.AddTag(DEGameplayTags::Ability_Attack);
-	AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
+	const EDEClassType CurrentClass = GetCommandedClass();
 
-	// Activate heal ability only for Support class
-	if (ScholaAgent->GetCommandedClass() == EDEClassType::Support)
+	// ---- Attack ability ----
+	if (CurrentClass == EDEClassType::Support)
+	{
+		// Support class is blocked from attacking in CanActivateAbility — skip silently
+	}
+	else
+	{
+		FGameplayTagContainer AttackTag;
+		AttackTag.AddTag(DEGameplayTags::Ability_Attack);
+		const bool bAttackActivated = AbilitySystemComponent->TryActivateAbilitiesByTag(AttackTag);
+
+		if (!bAttackActivated)
+		{
+			// Diagnose why attack failed
+			FString Reason;
+			if (!AttackAbility)
+			{
+				Reason = TEXT("AttackAbility not granted");
+			}
+			else if (AbilitySystemComponent->HasMatchingGameplayTag(DEGameplayTags::State_Dead))
+			{
+				Reason = TEXT("State.Dead tag active");
+			}
+			else if (!AttackAbility->CanFire())
+			{
+				if (AttackAbility->GetCurrentAmmo() <= 0)
+					Reason = FString::Printf(TEXT("reloading (ammo=0, cooldown=%.2f)"), AttackAbility->GetRemainingCooldown());
+				else
+					Reason = FString::Printf(TEXT("on cooldown (remaining=%.2fs)"), AttackAbility->GetRemainingCooldown());
+			}
+			else
+			{
+				Reason = TEXT("no valid target (none in range or no LOS)");
+			}
+		}
+	}
+
+	// ---- Heal ability (Support only) ----
+	if (CurrentClass == EDEClassType::Support)
 	{
 		FGameplayTagContainer HealTag;
 		HealTag.AddTag(DEGameplayTags::Ability_Heal);
-		AbilitySystemComponent->TryActivateAbilitiesByTag(HealTag);
+		const bool bHealActivated = AbilitySystemComponent->TryActivateAbilitiesByTag(HealTag);
+
+		if (!bHealActivated)
+		{
+			// Diagnose why heal failed
+			FString Reason;
+			if (!HealAbility)
+			{
+				Reason = TEXT("HealAbility not granted");
+			}
+			else if (AbilitySystemComponent->HasMatchingGameplayTag(DEGameplayTags::State_Dead))
+			{
+				Reason = TEXT("State.Dead tag active");
+			}
+			else if (AttributeSet && AttributeSet->GetMana() <= 0.0f)
+			{
+				Reason = TEXT("mana depleted (0)");
+			}
+			else if (!HealAbility->HasInjuredAllyInRange())
+			{
+				Reason = TEXT("no injured ally in range");
+			}
+			else
+			{
+				Reason = TEXT("heal tick interval not elapsed or GAS blocked");
+			}
+		}
 	}
 	else if (HealAbility)
 	{
