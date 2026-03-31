@@ -1,0 +1,205 @@
+# DE v10.2 - Ray Cluster Configuration
+# Head:    1x g4dn.xlarge  (On-demand, GPU for policy inference)
+# Workers: 4x c5.2xlarge   (Spot, CPU rollout workers)
+#
+# Usage:
+#   ray up aws/cluster.yaml
+#   ray submit aws/cluster.yaml training/train.py
+#   ray down aws/cluster.yaml -y
+
+cluster_name: de-v10-2
+
+# Maximum number of workers (excludes head)
+max_workers: 5
+
+# Autoscaler — scale up/down based on resource demand
+upscaling_speed: 1.0
+idle_timeout_minutes: 10
+
+# Docker image used on all nodes
+docker:
+  image: "725948482484.dkr.ecr.ap-northeast-2.amazonaws.com/de:v10-2-latest"
+  container_name: "ray_container"
+  pull_before_run: true
+  run_options:
+    - "--shm-size=6g"      # Large shared memory for Ray object store (>30% of 16GB RAM)
+    - "--ulimit nofile=65536:65536"
+
+provider:
+    type: aws
+    region: ap-northeast-2
+    availability_zone: ap-northeast-2a
+    subnet_id: subnet-0146d1456989f3ebe
+    security_group_ids:
+        - sg-0985bdb906b249278
+    iam_instance_profile: de-v10-2-dev-ray-node-profile
+    cache_stopped_nodes: false
+
+auth:
+  ssh_user: ubuntu
+  ssh_private_key: ~/.ssh/de-v10-2-dev-key.pem
+
+###############################################################################
+# Head Node — g4dn.xlarge (4 vCPU, 16 GB RAM, 1x T4 GPU, on-demand)
+head_node_type: gpu_head
+
+###############################################################################
+# Node Types
+###############################################################################
+available_node_types:
+  gpu_head:
+    node_config:
+      InstanceType: g4dn.xlarge
+      ImageId: ami-06de8403979cc515c   # Deep Learning AMI GPU PyTorch (Ubuntu 20.04) ap-northeast-2
+      KeyName: de-v10-2-dev-key
+      AssociatePublicIpAddress: true 
+      SecurityGroupIds:
+        - sg-07ff92e7b4a628c37
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 200
+            VolumeType: gp3
+            DeleteOnTermination: true
+      TagSpecifications:
+        - ResourceType: instance
+          Tags:
+            - Key: Name
+              Value: de-head
+            - Key: Project
+              Value: de-v10-2
+    resources:
+      CPU: 4
+      GPU: 1
+    min_workers: 0
+    max_workers: 0
+
+  cpu_worker:
+    node_config:
+      InstanceType: c5.4xlarge
+      ImageId: ami-0f18bd265771a947f
+      KeyName: de-v10-2-dev-key
+
+      # Spot configuration — set max price to ~2x on-demand to avoid frequent interruption
+      InstanceMarketOptions:
+        MarketType: spot
+        SpotOptions:
+          SpotInstanceType: persistent
+          InstanceInterruptionBehavior: stop
+          MaxPrice: "0.60"   # USD/hr  (~2x on-demand ~$0.34 for c5.4xlarge)
+
+      # Private subnet for workers (no public IP, egress via NAT)
+      SubnetId: subnet-0e50f4935bc115d59
+      SecurityGroupIds:
+        - sg-0985bdb906b249278
+
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 50
+            VolumeType: gp3
+            DeleteOnTermination: true
+
+      TagSpecifications:
+        - ResourceType: instance
+          Tags:
+            - Key: Name
+              Value: de-worker
+            - Key: Project
+              Value: de-v10-2
+
+    resources:
+      CPU: 16
+
+    min_workers: 0
+    max_workers: 10
+
+
+###############################################################################
+# File Mounts — sync local code to all nodes before startup
+###############################################################################
+file_mounts:
+  "/home/ubuntu/de/DE_Training": "."
+
+# Patterns to exclude from sync
+rsync_exclude:
+  - "**/__pycache__"
+  - "**/*.pyc"
+  - "**/training_results"
+  - "**/.git"
+  - "**/.vs"
+
+###############################################################################
+# Initialisation Commands (run once on first boot)
+###############################################################################
+initialization_commands:
+  # Authenticate Docker with ECR (uses IAM instance role — no credentials needed)
+  # Login as both root (for sudo docker) and ubuntu (for Ray's DockerCommandRunner)
+  - aws ecr get-login-password --region ap-northeast-2 | sudo docker login --username AWS --password-stdin 725948482484.dkr.ecr.ap-northeast-2.amazonaws.com
+  - mkdir -p ~/.docker && sudo cp /root/.docker/config.json ~/.docker/config.json && sudo chown ubuntu:ubuntu ~/.docker/config.json
+
+  # System packages
+  - sudo apt-get update -q
+  - sudo apt-get install -y -q awscli s3fs fuse
+
+  # Mount S3 bucket via s3fs (IAM role — no credentials needed)
+  - |
+    BUCKET=$(aws s3api list-buckets --query "Buckets[?starts_with(Name,'de-v10-2')].Name | [0]" --output text)
+    sudo mkdir -p /mnt/s3-training
+    echo "de-v10-2-dev-training-22de2017 /mnt/s3-training fuse.s3fs _netdev,allow_other,iam_role=auto,umask=0022 0 0" | sudo tee -a /etc/fstab
+    sudo mount -a || true
+    echo "S3 bucket mounted at /mnt/s3-training (bucket=de-v10-2-dev-training-22de2017)"
+
+  # Download UE5 Linux binary from S3
+  - |
+    BUCKET=$(aws s3api list-buckets --query "Buckets[?starts_with(Name,'de-v10-2')].Name | [0]" --output text)
+    aws s3 sync s3://de-v10-2-dev-training-22de2017/ue5-binary/Linux/ /home/ubuntu/de/Linux/ --no-progress
+    chmod +x /home/ubuntu/de/Linux/DE/Binaries/Linux/DE
+    chmod +x /home/ubuntu/de/Linux/DE.sh
+    echo "UE5 binary ready at /home/ubuntu/de/Linux/"
+
+  # Create local checkpoint symlink pointing to S3 mount
+  - mkdir -p /home/ubuntu/de/checkpoints
+  - ln -sfn /mnt/s3-training/checkpoints /home/ubuntu/de/checkpoints/s3 || true
+
+
+###############################################################################
+# Setup Commands (run on every restart, inside Docker container)
+# NOTE: Heavy pip installs (torch/ray) belong in the Docker image, not here.
+#       Only sync code from S3 on restart to avoid filling disk.
+###############################################################################
+setup_commands:
+  - |
+    aws s3 sync s3://$(aws s3api list-buckets \
+      --query "Buckets[?starts_with(Name,'de-v10-2')].Name | [0]" \
+      --output text)/code/ /home/ubuntu/de/ --exclude "*.pyc" || true
+
+###############################################################################
+# Head Start Commands
+###############################################################################
+head_start_ray_commands:
+  - ray stop || true
+  - >
+    ray start
+    --head
+    --port=6379
+    --ray-client-server-port=10001
+    --object-manager-port=8076
+    --node-manager-port=8077
+    --dashboard-host=0.0.0.0
+    --dashboard-port=8265
+    --num-cpus=4
+    --num-gpus=1
+    --block
+
+###############################################################################
+# Worker Start Commands
+###############################################################################
+worker_start_ray_commands:
+  - ray stop || true
+  - >
+    ray start
+    --address=$RAY_HEAD_IP:6379
+    --num-cpus=16
+    --num-gpus=0
+    --block

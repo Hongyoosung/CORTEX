@@ -1,0 +1,1345 @@
+{
+	"folders": [
+		{
+			"name": "DE",
+			"path": "."
+		},
+		{
+			"name": "UE5",
+			"path": "C:\\Program Files\\Epic Games\\UE_5.6"
+		}
+	],
+	"settings": {
+		"typescript.tsc.autoDetect": "off",
+		"npm.autoDetect": "off",
+		"terminal.integrated.env.windows": {
+			"PATH": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\ThirdParty\\DotNet\\8.0.300\\win-x64;${env:PATH}",
+			"DOTNET_ROOT": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\ThirdParty\\DotNet\\8.0.300\\win-x64",
+			"DOTNET_HOST_PATH": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\ThirdParty\\DotNet\\8.0.300\\win-x64\\dotnet.exe",
+			"DOTNET_MULTILEVEL_LOOKUP": "0",
+			"DOTNET_ROLL_FORWARD": "LatestMajor"
+		}
+	},
+	"extensions": {
+		"recommendations": [
+			"ms-vscode.cpptools",
+			"ms-dotnettools.csharp"
+		]
+	},
+	"tasks": {
+		"version": "2.0.0",
+		"tasks": [
+			{
+				"label": "DE Win64 Debug Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Debug Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Win64 Debug Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Debug Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 DebugGame Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 DebugGame Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Win64 DebugGame Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 DebugGame Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Development Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Development Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Win64 Development Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Development Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Test Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Test Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Win64 Test Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Test Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Shipping Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Shipping Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Win64 Shipping Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Win64 Shipping Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Win64",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Debug Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Debug Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Linux Debug Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Debug Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux DebugGame Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux DebugGame Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Linux DebugGame Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux DebugGame Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Development Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Development Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Linux Development Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Development Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Test Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Test Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Linux Test Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Test Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Shipping Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Shipping Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE Linux Shipping Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE Linux Shipping Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"Linux",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Debug Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Debug Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE LinuxArm64 Debug Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Debug Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 DebugGame Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 DebugGame Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE LinuxArm64 DebugGame Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 DebugGame Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Development Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Development Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE LinuxArm64 Development Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Development Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Test Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Test Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE LinuxArm64 Test Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Test Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Test",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Shipping Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Shipping Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DE LinuxArm64 Shipping Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DE LinuxArm64 Shipping Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DE",
+					"LinuxArm64",
+					"Shipping",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 Debug Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 Debug Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DEEditor Win64 Debug Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 Debug Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 DebugGame Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 DebugGame Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DEEditor Win64 DebugGame Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 DebugGame Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 Development Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 Development Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DEEditor Win64 Development Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Win64 Development Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DEEditor",
+					"Win64",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux Debug Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux Debug Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DEEditor Linux Debug Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux Debug Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"Debug",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux DebugGame Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux DebugGame Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DEEditor Linux DebugGame Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux DebugGame Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"DebugGame",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux Development Build",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux Development Rebuild",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Build.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"dependsOn": [
+					"DEEditor Linux Development Clean"
+				],
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"label": "DEEditor Linux Development Clean",
+				"group": "build",
+				"command": "Engine\\Build\\BatchFiles\\Clean.bat",
+				"args": [
+					"DEEditor",
+					"Linux",
+					"Development",
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-waitmutex"
+				],
+				"problemMatcher": "$msCompile",
+				"type": "shell",
+				"options": {
+					"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			}
+		]
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "Launch DE (Debug)",
+				"request": "launch",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-Debug.exe",
+				"preLaunchTask": "DE Win64 Debug Build",
+				"args": [
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Launch DE (DebugGame)",
+				"request": "launch",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-DebugGame.exe",
+				"preLaunchTask": "DE Win64 DebugGame Build",
+				"args": [
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Launch DE (Development)",
+				"request": "launch",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame.exe",
+				"preLaunchTask": "DE Win64 Development Build",
+				"args": [
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Launch DE (Test)",
+				"request": "launch",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-Test.exe",
+				"preLaunchTask": "DE Win64 Test Build",
+				"args": [
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Launch DE (Shipping)",
+				"request": "launch",
+				"program": "C:\\Users\\PC\\Documents\\GitHub\\DE\\Binaries\\Win64\\UnrealGame-Win64-Shipping.exe",
+				"preLaunchTask": "DE Win64 Shipping Build",
+				"args": [
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Launch DEEditor (Debug)",
+				"request": "launch",
+				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor-Win64-Debug.exe",
+				"preLaunchTask": "DEEditor Win64 Debug Build",
+				"args": [
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject"
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Launch DEEditor (DebugGame)",
+				"request": "launch",
+				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor-Win64-DebugGame.exe",
+				"preLaunchTask": "DEEditor Win64 DebugGame Build",
+				"args": [
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject"
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Launch DEEditor (Development)",
+				"request": "launch",
+				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor.exe",
+				"preLaunchTask": "DEEditor Win64 Development Build",
+				"args": [
+					"C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject"
+				],
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
+				"stopAtEntry": false,
+				"console": "integratedTerminal",
+				"type": "cppvsdbg",
+				"visualizerFile": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Extras\\VisualStudioDebugging\\Unreal.natvis",
+				"sourceFileMap": {
+					"D:\\build\\++UE5\\Sync": "C:\\Program Files\\Epic Games\\UE_5.6",
+					"Z:\\UEVFS\\DE": "C:\\Users\\PC\\Documents\\GitHub\\DE",
+					"Z:\\UEVFS\\Root": "C:\\Program Files\\Epic Games\\UE_5.6"
+				}
+			},
+			{
+				"name": "Generate Project Files",
+				"type": "coreclr",
+				"request": "launch",
+				"preLaunchTask": "UnrealBuildTool Win64 Development Build",
+				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Build\\BatchFiles\\RunUBT.bat",
+				"args": [
+					"-projectfiles",
+					"-vscode",
+					"-project=C:\\Users\\PC\\Documents\\GitHub\\DE\\DE.uproject",
+					"-game",
+					"-engine",
+					"-dotnet"
+				],
+				"env": {
+					"PATH": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\ThirdParty\\DotNet\\8.0.300\\win-x64;${env:PATH}",
+					"DOTNET_ROOT": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\ThirdParty\\DotNet\\8.0.300\\win-x64",
+					"DOTNET_HOST_PATH": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\ThirdParty\\DotNet\\8.0.300\\win-x64\\dotnet.exe",
+					"DOTNET_MULTILEVEL_LOOKUP": "0",
+					"DOTNET_ROLL_FORWARD": "LatestMajor"
+				},
+				"console": "integratedTerminal",
+				"stopAtEntry": false,
+				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6"
+			}
+		]
+	}
+}

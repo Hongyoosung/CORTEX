@@ -1,0 +1,240 @@
+// File: Schola/Trainers/DETrainer.h
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Schola/Base/DynamicEQSTrainerBase.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Types/DERewardTypes.h"
+#include "Types/DEEQSTypes.h"
+#include "Types/DEObservationTypes.h"
+#include "Types/DEClassTypes.h"
+#include "Types/DEGameStateTypes.h"
+#include "Team/DETeamWorldState.h"
+#include "DETrainer.generated.h"
+
+class UDEScholaAgent;
+class UDEScholaTransitionLogger;
+class ADEAgent;
+class ADECapturePoint;
+class ADEMatchManager;
+class ADEScholaEnvironment;
+
+
+/**
+ * Schola Trainer
+ *
+ * Responsibilities:
+ * - Train Executor Agent RL Policy (Translates Commander's class into EQS weights)
+ * - Bridge between Python (RLlib/Gym) and UE5
+ * - Policy training conditioned on Commanded Class
+ * - Action collection and application in the form of EQS weights
+ * - Team-level reward calculation based on assigned class from Squad Commander
+ *
+ * Action Space: Box(7) - Continuous EQS weights [-1, 1]
+ * Observation Space: Box(167) - Entity-centric V2 (handled by DETacticalObserver)
+ *
+ * Episode termination is driven by DEMatchManager::OnMatchConditionMet.
+ * MaxEpisodeSteps (inherited from ADynamicEQSTrainerBase) acts as a safety
+ * net only — set it to 9999 in the editor; do not use it to configure match length.
+ */
+UCLASS(Blueprintable)
+class DE_API ADETrainer : public ADynamicEQSTrainerBase
+{
+    GENERATED_BODY()
+
+public:
+    //=========================================
+    // Lifecycle & Initialization
+    //=========================================
+
+    ADETrainer();
+
+    virtual void BeginPlay() override;
+    virtual void Tick(float DeltaTime) override;
+
+    /** Initialize the trainer after spawning */
+    void InitializeDETrainer(UDEScholaAgent* InAgent);
+
+
+    //=========================================
+    // ADynamicEQSTrainerBase Overrides
+    //=========================================
+
+    virtual float ComputeReward() override;
+    virtual EAgentTrainingStatus ComputeStatus() override;
+    virtual void GetInfo(TMap<FString, FString>& Info) override;
+    virtual void ResetTrainer() override;
+    virtual void ResetEpisode() override;
+    virtual void OnCompletion() override;
+
+
+    //=========================================
+    // Schola RL Interface
+    //=========================================
+
+    /** Legacy utility — not called by Schola (DETacticalObserver handles observations) */
+    TArray<float> GetObservation();
+
+    /** Checks if the current episode should terminate */
+    bool IsEpisodeDone();
+
+    /** Bound to DEMatchManager::OnMatchConditionMet — signals episode end */
+    UFUNCTION()
+    void OnMatchEnded(EDEMatchState WinnerState, int32 WinningTeamID);
+
+
+    //=========================================
+    // Debug & Utility Functions
+    //=========================================
+
+    /** Returns current training statistics */
+    UFUNCTION(BlueprintCallable, Category = "Training|Stats")
+    void GetTrainingStats(int32& OutEpisodes, float& OutAvgReward, float& OutAvgLength) const;
+
+    /** Logs detailed reward breakdown to console */
+    UFUNCTION(BlueprintCallable, Category = "Debug")
+    void LogRewardBreakdown() const;
+
+    /** Draws visual debug information in the world */
+    UFUNCTION(BlueprintCallable, Category = "Debug")
+    void DrawTrainingDebug(float DeltaTime);
+
+    /** Validates if the EQS weights are within valid ranges */
+    bool ValidateEQSWeights(const FDEEQSWeightParameters& Weights) const;
+
+
+    //=========================================
+    // Public Training Configuration
+    //=========================================
+
+    /** Toggle for visual debug helpers */
+    UPROPERTY(EditAnywhere, Category = "Debug")
+    bool bEnableDebugVisualization = false;
+
+
+protected:
+    //=========================================
+    // Internal Helper Functions
+    //=========================================
+
+    /** Collects per-step agent state snapshot for reward computation */
+    FDEAgentSnapshot GatherStateSnapshot();
+
+    /** Computes team-aligned reward based on commanded class quality */
+    float ComputeCommandedClassReward(EDEClassType CommandedClass,
+        const FDEAgentSnapshot& Prev,
+        const FDEAgentSnapshot& Current,
+        const FDEEQSWeightParameters& Action);
+
+    /** Logs transitions for World Model offline training */
+    void LogTransition(const FDEAgentSnapshot& InState,
+        EDEClassType CommandedClass,
+        const FDEEQSWeightParameters& Action,
+        float Reward,
+        const FDEAgentSnapshot& NextState,
+        bool bDone);
+
+    /** Updates internal training metrics and averages */
+    void UpdateTrainingStatistics();
+
+    /**
+     * Build FDETeamWorldState from this agent's team perspective.
+     * Used by GetInfo() to broadcast global state for MAPPO centralized critic.
+     */
+    FDETeamWorldState BuildTeamWorldState() const;
+
+
+    //=========================================
+    // Internal State - Actor & Component References
+    //=========================================
+
+    /** Reference to the Schola Agent */
+    UPROPERTY()
+    UDEScholaAgent* DEAgent;
+
+    /** The character being controlled by this trainer */
+    UPROPERTY()
+    ADEAgent* ControlledCharacter;
+
+    /** Cached match manager for O(1) ally/enemy access */
+    UPROPERTY()
+    ADEMatchManager* CachedMatchManager;
+
+    /** Cached environment owner for match state queries */
+    UPROPERTY()
+    ADEScholaEnvironment* CachedScholaEnvironment = nullptr;
+
+    /** Transition logger for data collection */
+    UPROPERTY()
+    UDEScholaTransitionLogger* TransitionLogger;
+
+    /** Cached capture point references for observations */
+    UPROPERTY()
+    TArray<ADECapturePoint*> CachedCapturePoints;
+
+
+    //=========================================
+    // Internal State - RL Data & Observations
+    //=========================================
+
+    /** Snapshots for reward calculation (previous and current step) */
+    FDEAgentSnapshot PreviousObservation;
+    FDEAgentSnapshot CurrentObservation;
+
+    /** Most recent action applied */
+    FDEEQSWeightParameters LastAction;
+
+    /** Current class commanded by the Squad Commander */
+    EDEClassType CachedCommandedClass;
+
+
+    //=========================================
+    // Internal State - Training Metrics & Rewards
+    //=========================================
+
+    /** Lifetime cumulative reward (monotonically increasing) */
+    float CumulativeLifetimeReward = 0.0f;
+
+    /** Cumulative reward for the current episode */
+    float EpisodeReward = 0.0f;
+
+    /** Cached reward from the last action step */
+    float CachedStepReward = 0.0f;
+
+    /** Step counter for the current episode */
+    int32 CurrentEpisodeSteps = 0;
+
+    /** Flag indicating a new reward is ready for consumption */
+    bool bHasNewReward = false;
+
+    /** True once ComputeStatus() has returned a terminal status for this episode.
+     *  Prevents repeated Truncated signals that confuse the Python env wrapper. */
+    bool bEpisodeCompleted = false;
+
+    /** Set by OnMatchEnded — DEMatchManager fired OnMatchConditionMet this episode. */
+    bool bMatchEnded = false;
+
+    /** Diagnostics for post-respawn state */
+    bool bWasDeadLastTick = false;
+
+
+    //=========================================
+    // Internal State - Global Statistics & Watchdogs
+    //=========================================
+
+    /** Total number of episodes completed */
+    int32 TotalEpisodes = 0;
+
+    /** Cumulative reward across all episodes */
+    float CumulativeReward = 0.0f;
+
+    /** Rolling average of episode lengths */
+    float AverageEpisodeLength = 0.0f;
+
+    /** Ticks elapsed since last new action was received */
+    int32 TicksWithoutNewWeights = 0;
+
+    /** Threshold for freeze warning logs (~5s at 60Hz) */
+    static constexpr int32 FreezeWatchdogInterval = 300;
+};

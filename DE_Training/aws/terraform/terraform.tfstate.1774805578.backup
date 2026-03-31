@@ -1,0 +1,103 @@
+{
+  "version": 4,
+  "terraform_version": "1.14.8",
+  "serial": 52,
+  "lineage": "008f6c1d-2b68-e991-c671-0c92f951309d",
+  "outputs": {
+    "iam_instance_profile_name": {
+      "value": "de-v10-2-dev-ray-node-profile",
+      "type": "string"
+    },
+    "key_pair_name": {
+      "value": "de-v10-2-dev-key",
+      "type": "string"
+    },
+    "s3_bucket_arn": {
+      "value": "arn:aws:s3:::de-v10-2-dev-training-27783968",
+      "type": "string"
+    },
+    "s3_bucket_name": {
+      "value": "de-v10-2-dev-training-27783968",
+      "type": "string"
+    },
+    "vpc_id": {
+      "value": "vpc-09a87c0c50609ba64",
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 1,
+          "attributes": {
+            "arn": "arn:aws:ec2:us-east-1:725948482484:vpc/vpc-09a87c0c50609ba64",
+            "assign_generated_ipv6_cidr_block": false,
+            "cidr_block": "10.0.0.0/16",
+            "default_network_acl_id": "acl-026b762fe703748c6",
+            "default_route_table_id": "rtb-01d9858ac27d89a80",
+            "default_security_group_id": "sg-0b9a616f6c141ed4f",
+            "dhcp_options_id": "dopt-054e9e709eda03fe0",
+            "enable_dns_hostnames": true,
+            "enable_dns_support": true,
+            "enable_network_address_usage_metrics": false,
+            "id": "vpc-09a87c0c50609ba64",
+            "instance_tenancy": "default",
+            "ipv4_ipam_pool_id": null,
+            "ipv4_netmask_length": null,
+            "ipv6_association_id": "",
+            "ipv6_cidr_block": "",
+            "ipv6_cidr_block_network_border_group": "",
+            "ipv6_ipam_pool_id": "",
+            "ipv6_netmask_length": 0,
+            "main_route_table_id": "rtb-01d9858ac27d89a80",
+            "owner_id": "725948482484",
+            "tags": {
+              "Environment": "dev",
+              "ManagedBy": "Terraform",
+              "Name": "de-v10-2-dev-vpc",
+              "Project": "de-v10-2"
+            },
+            "tags_all": {
+              "Environment": "dev",
+              "ManagedBy": "Terraform",
+              "Name": "de-v10-2-dev-vpc",
+              "Project": "de-v10-2"
+            }
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0,
+          "private": "eyJzY2hlbWFfdmVyc2lvbiI6IjEifQ=="
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "random_id",
+      "name": "bucket_suffix",
+      "provider": "provider[\"registry.terraform.io/hashicorp/random\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "b64_std": "J3g5aA==",
+            "b64_url": "J3g5aA",
+            "byte_length": 4,
+            "dec": "662190440",
+            "hex": "27783968",
+            "id": "J3g5aA",
+            "keepers": null,
+            "prefix": null
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0
+        }
+      ]
+    }
+  ],
+  "check_results": null
+}

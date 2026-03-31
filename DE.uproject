@@ -1,0 +1,68 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.6",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "DE",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"AIModule",
+				"Engine",
+				"CoreUObject"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "LearningAgents",
+			"Enabled": true
+		},
+		{
+			"Name": "StateTree",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayStateTree",
+			"Enabled": true
+		},
+		{
+			"Name": "StructUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "Schola",
+			"Enabled": true
+		},
+		{
+			"Name": "NNERuntimeORT",
+			"Enabled": true
+		},
+		{
+			"Name": "NNEDenoiser",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Win64",
+				"Linux",
+				"Mac"
+			]
+		},
+		{
+			"Name": "GameplayAbilities",
+			"Enabled": true
+		},
+		{
+			"Name": "CascadeToNiagaraConverter",
+			"Enabled": true
+		}
+	]
+}

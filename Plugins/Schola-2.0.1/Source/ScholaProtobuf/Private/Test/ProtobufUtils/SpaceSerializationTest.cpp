@@ -1,0 +1,113 @@
+// Copyright (c) 2025 Advanced Micro Devices, Inc. All Rights Reserved.
+
+#include "Misc/AutomationTest.h"
+
+#include "ProtobufUtils/ProtobufSerializer.h"
+
+#include "Spaces/DictSpace.h"
+#include "Spaces/MultiBinarySpace.h"
+#include "Spaces/DiscreteSpace.h"
+#include "Spaces/MultiDiscreteSpace.h"
+#include "Spaces/BoxSpace.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProtobufDiscreteSpaceSerializationTest, "Schola.Protobuf.Serialization.Spaces.Discrete", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FProtobufDiscreteSpaceSerializationTest::RunTest(const FString& Parameters)
+{
+	TInstancedStruct<FSpace> Inst;
+	Inst.InitializeAs<FDiscreteSpace>();
+	FDiscreteSpace* Space = Inst.GetMutablePtr<FDiscreteSpace>();
+	Space->High = 7;
+
+	Schola::Space OutProto;
+	ProtobufSerializer::ToProto(Inst, &OutProto);
+
+	TestTrue(TEXT("Discrete space serialized as discrete_space"), OutProto.has_discrete_space());
+	if (OutProto.has_discrete_space())
+	{
+		TestEqual(TEXT("DiscreteSpace.high == 7"), OutProto.discrete_space().high(), 7);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProtobufMultiDiscreteSpaceSerializationTest, "Schola.Protobuf.Serialization.Spaces.MultiDiscrete", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FProtobufMultiDiscreteSpaceSerializationTest::RunTest(const FString& Parameters)
+{
+	TInstancedStruct<FSpace> Inst;
+	Inst.InitializeAs<FMultiDiscreteSpace>();
+	FMultiDiscreteSpace* Space = Inst.GetMutablePtr<FMultiDiscreteSpace>();
+	Space->High = TArray<int>({3,4,5});
+
+	Schola::Space OutProto;
+	ProtobufSerializer::ToProto(Inst, &OutProto);
+
+	TestTrue(TEXT("MultiDiscrete space serialized as multi_discrete_space"), OutProto.has_multi_discrete_space());
+	if (OutProto.has_multi_discrete_space())
+	{
+		auto& Repeated = OutProto.multi_discrete_space().high();
+		TestEqual(TEXT("MultiDiscrete high size == 3"), (int)Repeated.size(), 3);
+		TestEqual(TEXT("High[0] == 3"), Repeated.Get(0), 3);
+		TestEqual(TEXT("High[1] == 4"), Repeated.Get(1), 4);
+		TestEqual(TEXT("High[2] == 5"), Repeated.Get(2), 5);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProtobufMultiBinarySpaceSerializationTest, "Schola.Protobuf.Serialization.Spaces.MultiBinary", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FProtobufMultiBinarySpaceSerializationTest::RunTest(const FString& Parameters)
+{
+	TInstancedStruct<FSpace> Inst;
+	Inst.InitializeAs<FMultiBinarySpace>();
+	FMultiBinarySpace* Space = Inst.GetMutablePtr<FMultiBinarySpace>();
+	Space->Shape = 8;
+
+	Schola::Space OutProto;
+	ProtobufSerializer::ToProto(Inst, &OutProto);
+
+	TestTrue(TEXT("MultiBinary space serialized as multi_binary_space"), OutProto.has_multi_binary_space());
+	if (OutProto.has_multi_binary_space())
+	{
+		TestEqual(TEXT("MultiBinary.shape == 8"), OutProto.multi_binary_space().shape(), 8);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FProtobufBoxSpaceSerializationTest, "Schola.Protobuf.Serialization.Spaces.Box", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FProtobufBoxSpaceSerializationTest::RunTest(const FString& Parameters)
+{
+	TInstancedStruct<FSpace> Inst;
+	Inst.InitializeAs<FBoxSpace>();
+	FBoxSpace* Space = Inst.GetMutablePtr<FBoxSpace>();
+
+	// Add two dimensions
+	FBoxSpaceDimension DimA;
+	DimA.Low = -1.0f;
+	DimA.High = 1.0f;
+	FBoxSpaceDimension DimB;
+	DimB.Low = 0.0f;
+	DimB.High = 2.0f;
+	Space->Dimensions = TArray<FBoxSpaceDimension>({DimA, DimB});
+	Space->Shape = TArray<int>({2});
+
+	Schola::Space OutProto;
+	ProtobufSerializer::ToProto(Inst, &OutProto);
+
+	TestTrue(TEXT("Box space serialized as box_space"), OutProto.has_box_space());
+	if (OutProto.has_box_space())
+	{
+		auto& Dims = OutProto.box_space().dimensions();
+		TestEqual(TEXT("BoxSpace has 2 dims"), (int)Dims.size(), 2);
+		TestTrue(TEXT("Dimension 0 low == -1.0"), FMath::IsNearlyEqual((float)Dims.Get(0).low(), -1.0f));
+		TestTrue(TEXT("Dimension 0 high == 1.0"), FMath::IsNearlyEqual((float)Dims.Get(0).high(), 1.0f));
+		TestTrue(TEXT("Dimension 1 low == 0.0"), FMath::IsNearlyEqual((float)Dims.Get(1).low(), 0.0f));
+		TestTrue(TEXT("Dimension 1 high == 2.0"), FMath::IsNearlyEqual((float)Dims.Get(1).high(), 2.0f));
+
+		auto& Shape = OutProto.box_space().shape_dimensions();
+		TestEqual(TEXT("BoxSpace.shape_dimensions size == 1"), (int)Shape.size(), 1);
+		TestEqual(TEXT("BoxSpace.shape_dimensions[0] == 2"), Shape.Get(0), 2);
+	}
+
+	return true;
+}

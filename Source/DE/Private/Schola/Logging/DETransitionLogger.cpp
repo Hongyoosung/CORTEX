@@ -1,0 +1,247 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Schola/Logging/DETransitionLogger.h"
+#include "Characters/DEAgent.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformFileManager.h"
+
+UDETransitionLogger::UDETransitionLogger()
+{
+	PrimaryComponentTick.bCanEverTick = false;
+}
+
+void UDETransitionLogger::BeginPlay()
+{
+	Super::BeginPlay();
+
+	OwnerCharacter = Cast<ADEAgent>(GetOwner());
+
+	// Create output directory if it doesn't exist
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	FString FullPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() + OutputDirectory);
+
+	if (!PlatformFile.DirectoryExists(*FullPath))
+	{
+		PlatformFile.CreateDirectoryTree(*FullPath);
+		UE_LOG(LogTemp, Log, TEXT("DETransitionLogger: Created directory %s"), *FullPath);
+	}
+
+	TransitionBuffer.Reserve(FlushBatchSize);
+}
+
+void UDETransitionLogger::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// Flush any remaining transitions
+	if (TransitionBuffer.Num() > 0)
+	{
+		FlushToDisk();
+	}
+
+	// Close file handle
+	if (FileHandle)
+	{
+		delete FileHandle;
+		FileHandle = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void UDETransitionLogger::LogTransition(
+	const TArray<float>& State,
+	EDEClassType OptionType,
+	const FVector& TargetPosition,
+	float OptionDuration,
+	const TArray<float>& EQSWeights,
+	float Reward,
+	const TArray<float>& NextState,
+	bool bDone)
+{
+	if (!bLoggingEnabled)
+	{
+		return;
+	}
+
+	FDETransition Transition;
+	Transition.State = State;
+	Transition.OptionType = OptionType;
+	Transition.TargetPosition = TargetPosition;
+	Transition.OptionDuration = OptionDuration;
+	Transition.EQSWeights = EQSWeights;
+	Transition.Reward = Reward;
+	Transition.NextState = NextState;
+	Transition.bDone = bDone;
+	Transition.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	Transition.AgentID = OwnerCharacter ? OwnerCharacter->AgentID : -1;
+	Transition.TeamID = OwnerCharacter ? OwnerCharacter->GetTeamID_Implementation() : -1;
+	Transition.EpisodeID = CurrentEpisodeID;
+
+	TransitionBuffer.Add(Transition);
+	TotalTransitions++;
+	EpisodeTransitions++;
+
+	// Flush if buffer full
+	if (TransitionBuffer.Num() >= FlushBatchSize)
+	{
+		FlushToDisk();
+	}
+
+	UE_LOG(LogTemp, VeryVerbose, TEXT("DETransitionLogger: Logged transition %d (Episode %d, Agent %d)"),
+		TotalTransitions, CurrentEpisodeID, Transition.AgentID);
+}
+
+void UDETransitionLogger::StartEpisode()
+{
+	CurrentEpisodeID++;
+	EpisodeTransitions = 0;
+
+	UE_LOG(LogTemp, Log, TEXT("DETransitionLogger: Started episode %d"), CurrentEpisodeID);
+}
+
+void UDETransitionLogger::EndEpisode(bool bTeamWon)
+{
+	// Flush remaining transitions
+	if (TransitionBuffer.Num() > 0)
+	{
+		FlushToDisk();
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("DETransitionLogger: Ended episode %d (%s, %d transitions)"),
+		CurrentEpisodeID,
+		bTeamWon ? TEXT("Victory") : TEXT("Defeat"),
+		EpisodeTransitions);
+}
+
+void UDETransitionLogger::FlushToDisk()
+{
+	if (TransitionBuffer.Num() == 0)
+	{
+		return;
+	}
+
+	WriteToCSV(TransitionBuffer);
+	TransitionBuffer.Empty();
+
+	UE_LOG(LogTemp, Verbose, TEXT("DETransitionLogger: Flushed %d transitions to disk"), TransitionBuffer.Num());
+}
+
+void UDETransitionLogger::WriteToCSV(const TArray<FDETransition>& Transitions)
+{
+	FString FilePath = GetCSVFilePath();
+
+	// Check if file exists to determine if we need header
+	bool bFileExists = FPlatformFileManager::Get().GetPlatformFile().FileExists(*FilePath);
+
+	// Build CSV content
+	FString CSVContent;
+
+	// Write header if new file
+	if (!bFileExists)
+	{
+		CSVContent += TEXT("EpisodeID,AgentID,TeamID,Timestamp,");
+
+		// State columns (52-dim)
+		for (int32 i = 0; i < 52; ++i)
+		{
+			CSVContent += FString::Printf(TEXT("State_%d,"), i);
+		}
+
+		CSVContent += TEXT("OptionType,TargetX,TargetY,TargetZ,OptionDuration,");
+
+		// EQS weights (7-dim)
+		for (int32 i = 0; i < 7; ++i)
+		{
+			CSVContent += FString::Printf(TEXT("EQSWeight_%d,"), i);
+		}
+
+		CSVContent += TEXT("Reward,");
+
+		// NextState columns (52-dim)
+		for (int32 i = 0; i < 52; ++i)
+		{
+			CSVContent += FString::Printf(TEXT("NextState_%d,"), i);
+		}
+
+		CSVContent += TEXT("Done\n");
+	}
+
+	// Write data rows
+	for (const FDETransition& Trans : Transitions)
+	{
+		// Episode metadata
+		CSVContent += FString::Printf(TEXT("%d,%d,%d,%.3f,"),
+			Trans.EpisodeID,
+			Trans.AgentID,
+			Trans.TeamID,
+			Trans.Timestamp);
+
+		// State
+		CSVContent += SerializeObservation(Trans.State) + TEXT(",");
+
+		// Option
+		CSVContent += FString::Printf(TEXT("%d,"), static_cast<int32>(Trans.OptionType));
+
+		// Target position
+		CSVContent += FString::Printf(TEXT("%.2f,%.2f,%.2f,"),
+			Trans.TargetPosition.X,
+			Trans.TargetPosition.Y,
+			Trans.TargetPosition.Z);
+
+		// Option duration
+		CSVContent += FString::Printf(TEXT("%.2f,"), Trans.OptionDuration);
+
+		// EQS weights
+		for (int32 i = 0; i < Trans.EQSWeights.Num(); ++i)
+		{
+			CSVContent += FString::Printf(TEXT("%.4f,"), Trans.EQSWeights[i]);
+		}
+
+		// Pad if less than 8 weights
+		for (int32 i = Trans.EQSWeights.Num(); i < 8; ++i)
+		{
+			CSVContent += TEXT("0.0,");
+		}
+
+		// Reward
+		CSVContent += FString::Printf(TEXT("%.4f,"), Trans.Reward);
+
+		// Next state
+		CSVContent += SerializeObservation(Trans.NextState) + TEXT(",");
+
+		// Done
+		CSVContent += FString::Printf(TEXT("%d\n"), Trans.bDone ? 1 : 0);
+	}
+
+	// Append to file
+	FFileHelper::SaveStringToFile(
+		CSVContent,
+		*FilePath,
+		FFileHelper::EEncodingOptions::AutoDetect,
+		&IFileManager::Get(),
+		FILEWRITE_Append
+	);
+}
+
+FString UDETransitionLogger::SerializeObservation(const TArray<float>& ObsArray) const
+{
+	FString Result;
+
+	for (int32 i = 0; i < ObsArray.Num(); ++i)
+	{
+		Result += FString::Printf(TEXT("%.4f"), ObsArray[i]);
+		if (i < ObsArray.Num() - 1)
+		{
+			Result += TEXT(",");
+		}
+	}
+
+	return Result;
+}
+
+FString UDETransitionLogger::GetCSVFilePath() const
+{
+	FString FileName = FString::Printf(TEXT("transitions_episode_%d.csv"), CurrentEpisodeID);
+	FString FullPath = FPaths::ProjectDir() + OutputDirectory + TEXT("/") + FileName;
+	return FPaths::ConvertRelativePathToFull(FullPath);
+}

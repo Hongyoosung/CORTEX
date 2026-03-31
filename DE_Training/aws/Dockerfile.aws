@@ -1,0 +1,138 @@
+# DE v10.2 — AWS Training Dockerfile
+#
+# Differences from local Dockerfile:
+#   - Non-root user (de) for security
+#   - ENV DISPLAY=:0 for UE5 headless / virtual framebuffer compatibility
+#   - NVIDIA CUDA base for GPU inference on g4dn head node
+#   - s3fs + awscli pre-installed for checkpoint syncing
+#
+# Build & push:
+#   docker build -f aws/Dockerfile.aws -t de:v10-2-latest .
+#   docker tag de:v10-2-latest \
+#       <account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest
+#   aws ecr get-login-password | docker login --username AWS --password-stdin \
+#       <account>.dkr.ecr.us-east-1.amazonaws.com
+#   docker push <account>.dkr.ecr.us-east-1.amazonaws.com/de:v10-2-latest
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+###############################################################################
+# System dependencies
+###############################################################################
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build tools
+    build-essential \
+    git \
+    curl \
+    wget \
+    # Process utilities
+    procps \
+    htop \
+    rsync \
+    # X11 / virtual display (required by some UE5 plugins that probe $DISPLAY)
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    xvfb \
+    # FUSE / S3 mount
+    s3fs \
+    fuse \
+    # AWS CLI
+    awscli \
+    # Python
+    python3.10 \
+    python3.10-dev \
+    python3.10-distutils \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.10 the default python
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 && \
+    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
+###############################################################################
+# Non-root user for security
+###############################################################################
+ARG UID=1001
+ARG GID=1001
+
+RUN groupadd -g ${GID} de && \
+    useradd -u ${UID} -g de -m -s /bin/bash de && \
+    (getent group fuse || groupadd fuse) && \
+    usermod -aG fuse de
+
+###############################################################################
+# Python packages (installed as root for system-wide availability)
+###############################################################################
+WORKDIR /app
+
+COPY ./DE_Training/requirements.txt ./requirements.txt
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    # wandb for experiment tracking
+    pip install --no-cache-dir wandb && \
+    # PyTorch with CUDA 12.1
+    pip install --no-cache-dir \
+        torch>=2.0.0 \
+        --extra-index-url https://download.pytorch.org/whl/cu121
+
+# Schola UE5 gRPC bridge
+COPY Plugins/Schola-2.0.1/Resources/python /tmp/schola
+RUN pip install --no-cache-dir /tmp/schola[rllib] && \
+    rm -rf /tmp/schola
+
+###############################################################################
+# Copy application code & Scripts
+###############################################################################
+WORKDIR /app
+
+# 1. 전체 소스 코드 복사 (./DE_Training 폴더 내부가 /app으로 들어감)
+COPY ./DE_Training/ .
+
+# 2. S3 헬퍼 스크립트를 시스템 경로로 직접 복사
+# 빌드 컨텍스트(CORTEX) 기준으로 경로를 명시하여 안전하게 복사합니다.
+COPY ./DE_Training/aws/scripts/mount_s3.sh /usr/local/bin/mount_s3.sh
+
+# 3. 권한 설정 (한 번의 RUN 레이어로 합쳐서 효율화)
+RUN chown -R de:de /app && \
+    chown de:de /usr/local/bin/mount_s3.sh && \
+    chmod +x /usr/local/bin/mount_s3.sh
+
+###############################################################################
+# Environment variables
+###############################################################################
+
+# Virtual display — required by UE5 plugins that probe $DISPLAY at import time
+ENV DISPLAY=:0
+
+# Ray / RLlib
+ENV RAY_DISABLE_MEMORY_MONITOR=1
+ENV RAY_memory_usage_threshold=0.95
+ENV OMP_NUM_THREADS=1
+
+# Training defaults (overridable via docker run -e or cluster.yaml env_vars)
+ENV NUM_WORKERS=4
+ENV NUM_ITERATIONS=500
+ENV HOST=host.docker.internal
+ENV PORT=50051
+
+# W&B — set WANDB_API_KEY at runtime; do NOT bake credentials into the image
+ENV WANDB_PROJECT=de-v10-2
+
+
+
+###############################################################################
+# Ports / Healthcheck / User / Entrypoint
+###############################################################################
+EXPOSE 6006 8265 50051 50052 50053 50054
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import ray; import torch; import schola; print('ok')" || exit 1
+
+USER de
+
+CMD ["python", "train_rllib.py"]

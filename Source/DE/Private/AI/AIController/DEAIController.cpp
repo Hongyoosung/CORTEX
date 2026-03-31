@@ -1,0 +1,181 @@
+
+
+#include "AI/AIController/DEAIController.h"
+#include "Characters/DEAgent.h"
+#include "Perception/AISenseConfig_Sight.h"
+#include "Perception/AISenseConfig_Hearing.h"
+#include "Perception/AISenseConfig_Damage.h"
+#include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
+#include "BehaviorTree/BlackboardComponent.h"
+
+
+ADEAIController::ADEAIController(const FObjectInitializer& ObjectInitializer)
+    : Super(ObjectInitializer)
+{
+    // Components 생성
+    AIPerception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("AIPerception"));
+    SetPerceptionComponent(*AIPerception);
+
+    // Perception 설정
+    SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
+    SightConfig->SightRadius = 3000.0f;           // 30m 시야
+    SightConfig->LoseSightRadius = 3500.0f;
+    SightConfig->PeripheralVisionAngleDegrees = 90.0f;
+    SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+    SightConfig->DetectionByAffiliation.bDetectNeutrals = true;   // DEAgent uses custom TeamID, not IGenericTeamAgentInterface → all actors appear Neutral to UE5
+    SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+
+    HearingConfig = CreateDefaultSubobject<UAISenseConfig_Hearing>(TEXT("HearingConfig"));
+    HearingConfig->HearingRange = 2000.0f;        // 20m 청각
+    HearingConfig->DetectionByAffiliation.bDetectEnemies = true;
+
+    DamageConfig = CreateDefaultSubobject<UAISenseConfig_Damage>(TEXT("DamageConfig"));
+
+    AIPerception->ConfigureSense(*SightConfig);
+    AIPerception->ConfigureSense(*HearingConfig);
+    AIPerception->ConfigureSense(*DamageConfig);
+    AIPerception->SetDominantSense(SightConfig->GetSenseImplementation());
+
+    // Perception 콜백 바인딩
+    AIPerception->OnPerceptionUpdated.AddDynamic(this, &ADEAIController::OnPerceptionUpdated);
+    AIPerception->OnTargetPerceptionUpdated.AddDynamic(this, &ADEAIController::OnTargetPerceptionUpdated);
+
+    // Tick must stay enabled — AAIController::Tick() drives UpdateControlRotation()
+    // which rotates the pawn toward the focus point (enemy target).
+    PrimaryActorTick.bCanEverTick = true;
+}
+
+void ADEAIController::BeginPlay()
+{
+    Super::BeginPlay();
+    UE_LOG(LogTemp, Log, TEXT("[DEAIC] BeginPlay — Controller: %s"), *GetName());
+}
+
+void ADEAIController::OnPossess(APawn* InPawn)
+{
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC] ===== OnPossess BEGIN ====="));
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   Controller : %s"), *GetName());
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   Pawn       : %s"), InPawn ? *InPawn->GetName() : TEXT("NULL"));
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT Asset   : %s"), BehaviorTreeAsset ? *BehaviorTreeAsset->GetName() : TEXT("NULL — assign in BP_AIC!"));
+
+    Super::OnPossess(InPawn);
+
+    // --- Blackboard component check ---
+    UBlackboardComponent* BB = GetBlackboardComponent();
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BB (after Super::OnPossess): %s"), BB ? *BB->GetName() : TEXT("NULL"));
+
+    // --- BehaviorTreeComponent check ---
+    UBrainComponent* Brain = GetBrainComponent();
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BrainComponent: %s  (class: %s)"),
+        Brain ? *Brain->GetName() : TEXT("NULL"),
+        Brain ? *Brain->GetClass()->GetName() : TEXT("N/A"));
+
+    if (!BehaviorTreeAsset)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEAIC] ✗ BehaviorTreeAsset is NULL — BT will NOT run! Assign BT_DEAgent in BP_AIC defaults."));
+        return;
+    }
+
+    // --- BB asset match check ---
+    if (BehaviorTreeAsset->BlackboardAsset)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT expects BB: %s"), *BehaviorTreeAsset->BlackboardAsset->GetName());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT has no BlackboardAsset set — BB keys will be missing!"));
+    }
+
+    bool bSuccess = RunBehaviorTree(BehaviorTreeAsset);
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   RunBehaviorTree: %s"), bSuccess ? TEXT("✓ SUCCESS") : TEXT("✗ FAILED"));
+
+    if (bSuccess)
+    {
+        // Verify BT is actually active after start
+        UBrainComponent* BrainAfter = GetBrainComponent();
+        bool bBTRunning = BrainAfter && BrainAfter->IsRunning();
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BT running after start: %s"), bBTRunning ? TEXT("✓ YES") : TEXT("✗ NO — check BB asset mismatch"));
+
+        UBlackboardComponent* BBAfter = GetBlackboardComponent();
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC]   BB valid after start  : %s"), BBAfter ? TEXT("✓ YES") : TEXT("✗ NO"));
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC] ===== OnPossess END ====="));
+}
+
+void ADEAIController::OnUnPossess()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[DEAIC] OnUnPossess called on %s — BT will stop!"), *GetName());
+    Super::OnUnPossess();
+}
+
+void ADEAIController::OnPerceptionUpdated(const TArray<AActor*>& UpdatedActors)
+{
+    // 적 감지 시 즉시 Blackboard 업데이트
+    TArray<AActor*> PerceivedActors;
+    AIPerception->GetCurrentlyPerceivedActors(
+        UAISense_Sight::StaticClass(),
+        PerceivedActors
+    );
+
+    UBlackboardComponent* BB = GetBlackboardComponent();
+    if (!BB)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEAIC] OnPerceptionUpdated — BB is NULL (BT not running?), skipping."));
+        return;
+    }
+
+    // Filter by EnvID and TeamID for parallel environment isolation
+    ADEAgent* Self = Cast<ADEAgent>(GetPawn());
+    AActor* BestEnemy = nullptr;
+
+    const int32 SelfEnvID  = Self ? Self->GetEnvID_Implementation()  : -1;
+    const int32 SelfTeamID = Self ? Self->GetTeamID_Implementation() : -1;
+
+
+    if (Self)
+    {
+        for (AActor* Actor : PerceivedActors)
+        {
+            ADEAgent* Other = Cast<ADEAgent>(Actor);
+            if (!Other) continue;
+
+            const int32 OtherEnvID  = Other->GetEnvID_Implementation();
+            const int32 OtherTeamID = Other->GetTeamID_Implementation();
+
+
+            if (OtherEnvID == SelfEnvID && OtherTeamID != SelfTeamID)
+            {
+                BestEnemy = Other;
+                break;
+            }
+        }
+    }
+
+    // Support agents have no offensive capability — never set an attack target.
+    const bool bIsSupport = Self && (Self->GetCommandedClass() == EDEClassType::Support);
+
+    if (BestEnemy && !bIsSupport)
+    {
+        BB->SetValueAsObject(TEXT("TargetEnemy"), BestEnemy);
+        BB->SetValueAsBool(TEXT("HasTarget"), true);
+    }
+    else
+    {
+        // Only clear HasTarget when the stored TargetEnemy is also gone.
+        // OnPerceptionUpdated fires for all stimuli (damage, hearing, etc.);
+        // a non-sight update would return no sight actors and incorrectly
+        // clear HasTarget even though TargetEnemy is still a valid enemy.
+        AActor* ExistingTarget = Cast<AActor>(BB->GetValueAsObject(TEXT("TargetEnemy")));
+        if (!ExistingTarget || !IsValid(ExistingTarget))
+        {
+            BB->SetValueAsObject(TEXT("TargetEnemy"), nullptr);
+            BB->SetValueAsBool(TEXT("HasTarget"), false);
+        }
+    }
+}
+
+void ADEAIController::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
+{
+}

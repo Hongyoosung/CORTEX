@@ -3,6 +3,7 @@
 
 # vs config
 *.vsconfig
+.vscode/
 
 # gitarrtibutes
 *.gitattributes
@@ -156,3 +157,5 @@ coverage.xml
 
 # Assets
 Content/ModularSciFi/
+
+Linux/
