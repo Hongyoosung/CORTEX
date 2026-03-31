@@ -159,3 +159,5 @@ coverage.xml
 Content/ModularSciFi/
 
 Linux/
+
+*.code-workspace
