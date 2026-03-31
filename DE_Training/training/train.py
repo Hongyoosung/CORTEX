@@ -24,6 +24,12 @@ from typing import Dict
 from collections import defaultdict
 import json
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from policy import (
@@ -449,6 +455,19 @@ def train_with_rllib(args):
 
     tb = SummaryWriter(log_dir=os.path.join(output_dir, "tb"))
 
+    if WANDB_AVAILABLE:
+        wandb.init(
+            project="de-training",
+            name=timestamp,
+            config={
+                "num_workers": DETrainingConfig.NUM_WORKERS,
+                "iterations": args.iterations,
+                "checkpoint_freq": args.checkpoint_freq,
+            },
+            resume="allow",
+        )
+
+
     config = create_ppo_config()
     print("\nConnecting to UE5...")
     try:
@@ -629,6 +648,28 @@ def train_with_rllib(args):
 
         tb.flush()
 
+        if WANDB_AVAILABLE:
+            wandb.log({
+                "reward/mean": reward,
+                "reward/max": float(reward_max) if reward_max is not None and not np.isnan(float(reward_max)) else None,
+                "reward/min": float(reward_min) if reward_min is not None and not np.isnan(float(reward_min)) else None,
+                "env/episode_len_mean": ep_len,
+                "env/episodes_completed": cumul_episodes,
+                "performance/steps_per_sec": steps_per_sec,
+                "curriculum/tier": curriculum.get_tier(),
+                "iteration": i + 1,
+            }, step=cumul_steps)
+
+        # Sync checkpoint to S3 after every iteration
+        s3_bucket = os.environ.get("S3_BUCKET", "")
+        if s3_bucket:
+            os.system(
+                f"aws s3 sync {output_dir}/ "
+                f"s3://{s3_bucket}/results/{timestamp}/ "
+                f"--exclude '*.pyc' --region ap-northeast-2 --quiet"
+            )
+            print(f"  >> S3 sync → s3://{s3_bucket}/results/{timestamp}/")
+
         print(f"{i+1:>3}/{args.iterations:<3}  {reward:>10.2f}  "
               f"{ep_len:>8.1f}  {cumul_steps:>12}  {dt:>7.1f}s  {curriculum.get_tier():>5}")
 
@@ -673,6 +714,8 @@ def train_with_rllib(args):
             onnx_path = os.path.join(output_dir, f"de_policy_{role_name}.onnx")
             model.export_onnx(onnx_path)
 
+    if WANDB_AVAILABLE:
+        wandb.finish()
     tb.close()
     algo.stop()
     ray.shutdown()
