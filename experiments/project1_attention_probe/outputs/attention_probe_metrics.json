@@ -1,0 +1,81 @@
+{
+  "run_timestamp": "2026-06-02T16:18:29",
+  "checkpoint": "C:\\Users\\PC\\Documents\\GitHub\\DE\\DE_Training\\training_results\\20260328_032546\\best",
+  "torch_version": "2.5.1+cu121",
+  "numpy_version": "2.2.6",
+  "roles": [
+    "strike",
+    "vanguard",
+    "support"
+  ],
+  "scenarios": [
+    "ally_clustered",
+    "ally_spread",
+    "enemy_converged",
+    "enemy_dispersed"
+  ],
+  "padding_stress_k": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "per_role": {
+    "strike": {
+      "padding_suppression_max": 0.0,
+      "ally_self_deltamax_clustered_vs_spread": 0.0945,
+      "enemy_self_deltamax_converged_vs_dispersed": 0.1165,
+      "ally_cross_focus_shift_clustered_vs_spread": false,
+      "ally_cross_top_clustered": 2,
+      "ally_cross_top_spread": 2,
+      "ally_cross_tv_shift_clustered_vs_spread": 0.1347,
+      "enemy_cross_tv_shift_converged_vs_dispersed": 0.0741,
+      "self_cross_consistency": 0.417,
+      "ally_obj_pref_clustered": -0.00707,
+      "ally_obj_pref_spread": 0.02863,
+      "objective_preference_shift": 0.0357,
+      "dup_risk_response_self_plus_cross": 0.0357,
+      "dup_risk_response_cross_only": 0.01789,
+      "dup_risk_self_attn_gain": 0.01781
+    },
+    "vanguard": {
+      "padding_suppression_max": 0.0,
+      "ally_self_deltamax_clustered_vs_spread": 0.1086,
+      "enemy_self_deltamax_converged_vs_dispersed": 0.0394,
+      "ally_cross_focus_shift_clustered_vs_spread": false,
+      "ally_cross_top_clustered": 2,
+      "ally_cross_top_spread": 2,
+      "ally_cross_tv_shift_clustered_vs_spread": 0.0677,
+      "enemy_cross_tv_shift_converged_vs_dispersed": 0.0137,
+      "self_cross_consistency": 0.917,
+      "ally_obj_pref_clustered": -0.15853,
+      "ally_obj_pref_spread": -0.15876,
+      "objective_preference_shift": -0.00023,
+      "dup_risk_response_self_plus_cross": -0.00023,
+      "dup_risk_response_cross_only": 0.00724,
+      "dup_risk_self_attn_gain": -0.00747
+    },
+    "support": {
+      "padding_suppression_max": 0.0,
+      "ally_self_deltamax_clustered_vs_spread": 0.0582,
+      "enemy_self_deltamax_converged_vs_dispersed": 0.0185,
+      "ally_cross_focus_shift_clustered_vs_spread": false,
+      "ally_cross_top_clustered": 2,
+      "ally_cross_top_spread": 2,
+      "ally_cross_tv_shift_clustered_vs_spread": 0.0831,
+      "enemy_cross_tv_shift_converged_vs_dispersed": 0.0114,
+      "self_cross_consistency": 0.583,
+      "ally_obj_pref_clustered": -0.07221,
+      "ally_obj_pref_spread": -0.0856,
+      "objective_preference_shift": -0.0134,
+      "dup_risk_response_self_plus_cross": -0.0134,
+      "dup_risk_response_cross_only": -0.00739,
+      "dup_risk_self_attn_gain": -0.00601
+    }
+  },
+  "global": {
+    "padding_suppression_max": 0.0,
+    "self_cross_consistency": 0.639
+  }
+}
