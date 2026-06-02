@@ -74,20 +74,37 @@ def load_role_policies(checkpoint_dir):
     checkpoint_dir = os.path.abspath(checkpoint_dir)
     models = {}
     for policy_name, role in ROLE_FROM_POLICY.items():
-        pkl = os.path.join(checkpoint_dir, "policies", policy_name, "policy_state.pkl")
-        if not os.path.exists(pkl):
-            print(f"  [SKIP] {pkl} not found")
+        pol_dir = os.path.join(checkpoint_dir, "policies", policy_name)
+        pt = os.path.join(pol_dir, "policy_sd.pt")
+        pkl = os.path.join(pol_dir, "policy_state.pkl")
+        if os.path.exists(pt):
+            # Pre-extracted plain state dict (see extract_weights.py) — preferred,
+            # avoids ray-version pickle issues.
+            sd = {k: (v if isinstance(v, torch.Tensor) else torch.as_tensor(v))
+                  for k, v in torch.load(pt, map_location="cpu").items()}
+        elif os.path.exists(pkl):
+            state = _tolerant_load(pkl)
+            sd = _strip_to_policy_state_dict(state.get("weights", {}))
+        else:
+            print(f"  [SKIP] {pol_dir} has no policy_sd.pt or policy_state.pkl")
             continue
-        state = _tolerant_load(pkl)
-        sd = _strip_to_policy_state_dict(state.get("weights", {}))
 
-        model = EntityCentricPolicy()
+        # Auto-detect architecture: the Self+Cross model has intra-set
+        # self-attention modules (ally_self_attn.*); the Cross-only ablation
+        # (EntityCentricPolicy_NoSelfAttn) does not. Loading the wrong class
+        # with strict=False would silently leave modules at random init.
+        has_self_attn = any("self_attn" in k for k in sd)
+        model = EntityCentricPolicy() if has_self_attn else EntityCentricPolicy_NoSelfAttn()
+        variant = "Self+Cross" if has_self_attn else "Cross-only"
+
         missing, unexpected = model.load_state_dict(sd, strict=False)
+        # Ignore log_std (not used at inference) when judging a clean load.
+        missing = [k for k in missing if not k.endswith("log_std")]
         if missing:
             print(f"  [warn] {role}: missing keys {missing}")
         if unexpected:
             print(f"  [warn] {role}: unexpected keys {unexpected}")
         model.eval()
         models[role] = (model, sd)
-        print(f"  Loaded {role:9s} from {policy_name}")
+        print(f"  Loaded {role:9s} ({variant}) from {policy_name}")
     return models

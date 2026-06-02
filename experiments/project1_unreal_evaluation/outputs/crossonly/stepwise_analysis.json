@@ -1,0 +1,33 @@
+{
+  "n_team_steps": 15108,
+  "mean_alive_per_step": 5.0,
+  "nearest": {
+    "mean_unique_objectives": 1.592,
+    "mean_coverage": 0.3184,
+    "mean_max_cluster_size": 4.102,
+    "unique_obj_distribution": {
+      "1": 0.4647,
+      "2": 0.4791,
+      "3": 0.056,
+      "4": 0.0003,
+      "5": 0.0
+    }
+  },
+  "assigned": {
+    "mean_unique_objectives": 2.039,
+    "mean_coverage": 0.4078,
+    "mean_max_cluster_size": 3.565,
+    "unique_obj_distribution": {
+      "1": 0.1553,
+      "2": 0.652,
+      "3": 0.1913,
+      "4": 0.0015,
+      "5": 0.0
+    }
+  },
+  "coverage_nearest_by_episode_third": {
+    "early": 0.2778,
+    "mid": 0.3571,
+    "late": 0.3201
+  }
+}

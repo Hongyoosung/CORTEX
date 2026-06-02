@@ -20,6 +20,7 @@ Config/
 # ── Training outputs (large, bind-mounted as volumes instead) ─────────────────
 DE_Training/training_results/
 DE_Training/models/
+DE_Training/.venv/
 DE_Training/__pycache__/
 DE_Training/**/__pycache__/
 DE_Training/**/*.pyc

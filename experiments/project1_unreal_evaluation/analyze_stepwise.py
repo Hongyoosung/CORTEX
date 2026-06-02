@@ -14,6 +14,7 @@ import csv
 import glob
 import json
 import os
+import sys
 from collections import defaultdict
 
 import numpy as np
@@ -22,8 +23,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "outputs")
 
 
-def load_rows():
-    f = sorted(glob.glob(os.path.join(OUT, "unreal_eval_stepwise_*.csv")))[-1]
+def load_rows(search_dir=None):
+    d = search_dir or OUT
+    f = sorted(glob.glob(os.path.join(d, "unreal_eval_stepwise_*.csv")))[-1]
     rows = []
     with open(f) as fh:
         for r in csv.DictReader(fh):
@@ -32,7 +34,10 @@ def load_rows():
 
 
 def main():
-    rows, f = load_rows()
+    # Optional arg: directory containing unreal_eval_stepwise_*.csv (output written there)
+    search_dir = sys.argv[1] if len(sys.argv) > 1 else None
+    out_dir = search_dir or OUT
+    rows, f = load_rows(search_dir)
     print(f"Loaded {len(rows)} rows from {os.path.basename(f)}")
 
     # Group by (env, episode, step) -> list of (role, assigned, nearest)
@@ -102,7 +107,7 @@ def main():
         },
     }
 
-    with open(os.path.join(OUT, "stepwise_analysis.json"), "w") as fh:
+    with open(os.path.join(out_dir, "stepwise_analysis.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
 
     print(json.dumps(summary, indent=2))

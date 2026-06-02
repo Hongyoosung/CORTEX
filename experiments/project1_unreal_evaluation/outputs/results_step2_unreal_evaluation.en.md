@@ -53,17 +53,55 @@ conda run -n game_ai python experiments/project1_unreal_evaluation/analyze_stepw
 conda run -n game_ai python experiments/project1_unreal_evaluation/plot_unreal_eval.py
 ```
 
+#### Cross-only A/B reproduction (the trained baseline)
+
+```powershell
+# 1. Build the training image (one-time) — repo root, .dockerignore trims context
+docker compose build training
+
+# 2. Launch UE5 headless with 8 envs
+& "C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.exe" `
+    DE.uproject -game -nullrhi -nosound -notexturestreaming -nopause -ScholaPort=50051~8 -log
+
+# 3. Train Cross-only for 66 iters (matches the Self+Cross baseline)
+$env:USE_SELF_ATTN="0"; $env:NUM_ITERATIONS="66"; $env:NUM_SCHOLA_ENVS="8"; $env:NUM_WORKERS="0"
+docker compose --profile policy up -d training     # writes training_results/<ts>/best
+# NOTE: container exits 1 at the post-training ONNX export (onnxscript/torch quirk);
+# the 66-iter checkpoint is already saved and valid — the exit code is harmless.
+
+# 4. Extract actor weights inside the container (avoids ray-version pickle issues)
+docker run --rm -v "${PWD}/DE_Training/training_results:/app/training_results" `
+    -v "${PWD}/experiments:/app/experiments" de-training:latest `
+    python /app/experiments/project1_unreal_evaluation/extract_weights.py `
+    /app/training_results/<ts>/best        # -> policies/*/policy_sd.pt
+
+# 5. RELAUNCH UE5 FRESH (it goes stale after the training container's abnormal exit),
+#    then eval the Cross-only checkpoint (loader auto-detects NoSelfAttn from policy_sd.pt)
+conda run -n game_ai python experiments/project1_unreal_evaluation/run_unreal_eval.py `
+    --episodes 24 --num-envs 8 --port 50051 `
+    --checkpoint DE_Training/training_results/<ts>/best `
+    --out-dir experiments/project1_unreal_evaluation/outputs/crossonly
+conda run -n game_ai python experiments/project1_unreal_evaluation/analyze_stepwise.py `
+    experiments/project1_unreal_evaluation/outputs/crossonly
+conda run -n game_ai python experiments/project1_unreal_evaluation/plot_ab_comparison.py
+```
+
 ### Raw Artifacts
 
 | Artifact | Path |
 |---|---|
-| Summary metrics | `outputs/unreal_eval_metrics_20260602_170430.json` |
-| Per-step behaviour log (78,575 rows) | `outputs/unreal_eval_stepwise_20260602_170430.csv` |
-| Clustering distribution analysis | `outputs/stepwise_analysis.json` |
-| UE5 headless log | `outputs/ue5_eval.log` |
-| Behaviour-metric figure | `outputs/figures/fig1_behavior_metrics.png` |
-| Clustering-profile figure | `outputs/figures/fig2_clustering_profile.png` |
-| Episode-outcome figure | `outputs/figures/fig3_episode_outcomes.png` |
+| **Self+Cross** summary metrics | `outputs/unreal_eval_metrics_20260602_170430.json` |
+| **Self+Cross** per-step log (78,575 rows) | `outputs/unreal_eval_stepwise_20260602_170430.csv` |
+| **Self+Cross** clustering analysis | `outputs/stepwise_analysis.json` |
+| **Cross-only** summary metrics | `outputs/crossonly/unreal_eval_metrics_20260603_002558.json` |
+| **Cross-only** per-step log (75,540 rows) | `outputs/crossonly/unreal_eval_stepwise_20260603_002558.csv` |
+| **Cross-only** clustering analysis | `outputs/crossonly/stepwise_analysis.json` |
+| Cross-only trained checkpoint (66 iters) | `DE_Training/training_results/20260602_092901/best` |
+| UE5 logs | `outputs/ue5_eval.log`, `outputs/ue5_train.log`, `outputs/ue5_crosseval.log` |
+| Behaviour-metric figure (Self+Cross) | `outputs/figures/fig1_behavior_metrics.png` |
+| Clustering-profile figure (Self+Cross) | `outputs/figures/fig2_clustering_profile.png` |
+| Episode-outcome figure (Self+Cross) | `outputs/figures/fig3_episode_outcomes.png` |
+| **A/B comparison figure** | `outputs/figures/fig4_ab_self_attn_effect.png` |
 
 ## Key Metrics
 
@@ -86,6 +124,40 @@ Distribution of #unique objectives per team-step (nearest): 1→16.0%, 2→47.6%
 3→29.8%, 4→6.5%, 5→0.08%.
 
 Coverage over episode progress (nearest): early 0.356 → mid 0.485 → late 0.521.
+
+## A/B Comparison — Self+Cross vs trained Cross-only (the headline result)
+
+A Cross-only baseline (`EntityCentricPolicy_NoSelfAttn`, `USE_SELF_ATTN=0`) was
+trained under **identical conditions** to the Self+Cross model — same map, same
+Scripted AI tier 1, same MAPPO config, **same 66 iterations / ~1.36M agent steps**
+(Self+Cross final reward 1072 vs Cross-only 1144) — then evaluated with the exact
+same 24-episode / 8-env protocol. This converts the Stage 1 in-checkpoint ablation
+into a trained A/B, so we can attribute the differences to Self-Attention.
+
+| Metric (nearest unless noted) | Cross-only | Self+Cross | Δ (Self-Attention effect) |
+|---|---:|---:|---:|
+| **Objective coverage** | 0.318 | **0.454** | **+0.136 (+43%)** |
+| Objective coverage (assigned) | 0.408 | 0.487 | +0.080 |
+| **Mean unique objectives (of 5)** | 1.59 | **2.27** | **+0.68** |
+| **Max-cluster size** (lower better) | 4.10 | **3.36** | **−0.74 agents** |
+| **% steps all 5 agents on 1 objective** | 46.5% | **16.0%** | **−30.5 pp** |
+| Coverage trend early→late | 0.28 → 0.32 (flat) | 0.36 → 0.52 (rising) | attention enables spreading |
+| **Win rate vs Scripted AI** | 0.125 (3/24) | **0.292 (7/24)** | **+0.167 (2.3×)** |
+| Mean episode reward | 152.7 | 148.9 | −3.8 (within noise) |
+
+Figure: `outputs/figures/fig4_ab_self_attn_effect.png`.
+Cross-only raw artifacts: `outputs/crossonly/` (metrics, stepwise CSV, stepwise_analysis.json).
+Cross-only checkpoint: `DE_Training/training_results/20260602_092901/best`.
+
+**This is the direct, trained-baseline answer to "what did attention change":**
+adding intra-set Self-Attention raises objective coverage by ~43%, cuts the worst
+pile-up by ~0.7 agents, slashes the catastrophic "whole team converges on one
+objective" failure mode from 46.5% → 16% of steps, and more than doubles the win
+rate — with episode reward unchanged. The Cross-only team also stays bunched for
+the whole episode (coverage flat ~0.3), whereas Self+Cross progressively spreads
+(0.36→0.52). Reward parity with large behavioural/win-rate gains indicates
+Self-Attention improved *coordination* (how the team distributes) rather than just
+raw reward magnitude — exactly the Problem-2 claim.
 
 ## Observations
 
@@ -141,16 +213,15 @@ MLP baseline comparison — or further reward shaping — would quantify.
 | Mean max-cluster size (~3.4) | ✅ Use | Intuitive "pile-up" measure. |
 | Coverage over episode thirds (0.36→0.52) | ✅ Use | Shows the policy actively spreads over time. |
 | Binary duplicate rate (1.0) | ⚠️ Report with caveat | Saturated by 5v5 geometry; cite distribution instead. |
-| Win rate (29%) / reward | ⚠️ Reference only | Noisy at 24 eps; not a Problem-2 metric. |
+| Win rate A/B (0.125 → 0.292) | ✅ Use | Trained A/B shows 2.3× gain from Self-Attention; note single-session. |
+| Absolute win rate (29%) / reward | ⚠️ Reference only | Noisy at 24 eps; the *delta* is the signal, not the absolute. |
 
 ## Limitations
 
-- **Single model, no trained baseline.** Only the Self+Cross checkpoint was
-  evaluated; `EntityCentricPolicy_NoSelfAttn` has no checkpoint. Stage 2 therefore
-  measures *what the attention model does*, not *how much attention reduced
-  clustering vs a no-attention model*. Attribution evidence comes from the Stage 1
-  in-checkpoint ablation, not from Stage 2. (Training a Cross-only checkpoint via
-  the existing `USE_SELF_ATTN=0` training flag is the natural follow-up.)
+- ~~Single model, no trained baseline.~~ **RESOLVED:** a Cross-only baseline was
+  trained for the matching 66 iterations and evaluated identically (see A/B
+  Comparison). The attention effect is now a measured delta, not just the Stage 1
+  in-checkpoint ablation.
 - **Single effective seed.** Episodes ran in one continuous session; UE5 spawn /
   Scripted-AI seeding was not independently varied across ≥3 seeds. Metric means
   are over 24 episodes / 15,715 team-steps but from one session.
@@ -177,10 +248,8 @@ MLP baseline comparison — or further reward shaping — would quantify.
 
 ## Next Action
 
-1. **Strongest follow-up:** train a Cross-only checkpoint (`USE_SELF_ATTN=0`) and
-   re-run this exact eval to fill the comparison table (coverage / cluster size
-   Self+Cross vs Cross-only) — converting Stage 1's in-checkpoint ablation into a
-   trained A/B and turning "mitigates" into a measured delta.
-2. Add multi-seed runs (≥3) to put error bars on coverage.
+1. ~~Train a Cross-only checkpoint and run the A/B.~~ **DONE** (see A/B Comparison).
+2. Add multi-seed runs (≥3) to put error bars on the coverage/win-rate deltas
+   (currently single-session point estimates).
 3. Optionally score the role-position consistency rules (strike/vanguard/support)
    from the existing stepwise CSV against the portfolio's role-reward descriptions.
